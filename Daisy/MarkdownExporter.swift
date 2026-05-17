@@ -14,7 +14,7 @@ import os
 
 enum MarkdownExporter {
     private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "Exporter")
-    private static let lastFolderBookmarkKey = "hola.lastExportFolderBookmark"
+    private static let lastFolderBookmarkKey = "daisy.lastExportFolderBookmark"
 
     // MARK: - Render
 
@@ -44,6 +44,15 @@ enum MarkdownExporter {
             if let platform = meeting.meetingPlatform {
                 lines.append("daisy_event_platform: \(platform)")
             }
+            // Attendees from the EKEvent — powers the
+            // "Speaker A → Alex" mapping UI in SessionDetailView.
+            if !meeting.attendees.isEmpty {
+                let quoted = meeting.attendees.map(yamlQuote).joined(separator: ", ")
+                lines.append("daisy_event_attendees: [\(quoted)]")
+            }
+            // Empty placeholder — user fills via Detail view; we
+            // upsert this same key when they pick a mapping.
+            lines.append("daisy_speaker_map: {}")
         }
         lines.append("tags: [meeting, transcript, daisy]")
         lines.append("---")
@@ -144,7 +153,7 @@ enum MarkdownExporter {
             return url
         } catch {
             log.error("Failed to write transcript: \(error.localizedDescription, privacy: .public)")
-            NSAlert.holaError("Couldn't save transcript", error.localizedDescription)
+            NSAlert.daisyError("Couldn't save transcript", error.localizedDescription)
             return nil
         }
     }
@@ -198,20 +207,20 @@ enum MarkdownExporter {
         return "\(stamp)-\(safeTitle).md"
     }
 
-    private static func iso(_ date: Date) -> String {
+    nonisolated private static func iso(_ date: Date) -> String {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f.string(from: date)
     }
 
-    private static func humanDate(_ date: Date) -> String {
+    nonisolated private static func humanDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
         return f.string(from: date)
     }
 
-    private static func formatDuration(_ seconds: TimeInterval) -> String {
+    nonisolated private static func formatDuration(_ seconds: TimeInterval) -> String {
         let total = Int(seconds.rounded())
         let h = total / 3600
         let m = (total % 3600) / 60
@@ -220,7 +229,7 @@ enum MarkdownExporter {
         return String(format: "%d:%02d", m, s)
     }
 
-    private static func yamlQuote(_ s: String) -> String {
+    nonisolated private static func yamlQuote(_ s: String) -> String {
         let escaped = s
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
@@ -230,7 +239,7 @@ enum MarkdownExporter {
 
 extension NSAlert {
     @MainActor
-    static func holaError(_ title: String, _ message: String) {
+    static func daisyError(_ title: String, _ message: String) {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message

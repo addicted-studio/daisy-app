@@ -231,11 +231,21 @@ final class RecordingSession {
         await micTranscriber.stop()
         await systemTranscriber.stop()
 
-        // Save markdown next to the audio archive.
+        // Save markdown next to the audio archive. A failure here means
+        // the user just lost their transcript on disk — surface it
+        // loudly rather than swallowing.
         if let dir = sessionDirectory {
             let url = dir.appendingPathComponent("transcript.md")
             let md = MarkdownExporter.renderMarkdown(session: self)
-            try? md.write(to: url, atomically: true, encoding: .utf8)
+            do {
+                try md.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                log.error("Failed to write transcript.md: \(error.localizedDescription)")
+                ToastCenter.shared.show(
+                    "Couldn’t save transcript file. Check Console for details.",
+                    style: .error
+                )
+            }
         }
 
         // Auto-summarize via the user's chosen provider (separate from STT).
@@ -246,11 +256,18 @@ final class RecordingSession {
                 title: title,
                 localeHint: localeHintForSummary
             )
-            if let dir = sessionDirectory,
-               let summary = summarizer.lastSummary,
-               let data = try? JSONEncoder().encode(summary) {
+            if let dir = sessionDirectory, let summary = summarizer.lastSummary {
                 let url = dir.appendingPathComponent("summary.json")
-                try? data.write(to: url)
+                do {
+                    let data = try JSONEncoder().encode(summary)
+                    try data.write(to: url)
+                } catch {
+                    log.error("Failed to write summary.json: \(error.localizedDescription)")
+                    ToastCenter.shared.show(
+                        "Couldn’t save summary file. Check Console for details.",
+                        style: .error
+                    )
+                }
             }
         }
 

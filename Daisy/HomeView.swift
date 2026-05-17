@@ -323,7 +323,7 @@ private struct RecentSessionRow: View {
                         if session.hasSummary {
                             Text("·")
                             Image(systemName: "sparkles")
-                                .foregroundStyle(.purple)
+                                .foregroundStyle(Color.daisyAccent)
                         }
                     }
                     .font(.caption)

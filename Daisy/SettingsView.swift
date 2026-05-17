@@ -133,13 +133,26 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Global shortcut", selection: $settings.recordHotkey) {
-                    ForEach(HotkeyChoice.allCases) { choice in
-                        Text(choice.label).tag(choice)
+                HStack {
+                    Text("Global shortcut")
+                    Spacer()
+                    HotkeyRecorder(value: $settings.recordHotkey)
+                }
+                Menu("Choose preset…") {
+                    ForEach(HotkeyChoice.allPresets) { preset in
+                        Button {
+                            settings.recordHotkey = preset
+                        } label: {
+                            if preset == settings.recordHotkey {
+                                Label(preset.label, systemImage: "checkmark")
+                            } else {
+                                Text(preset.label)
+                            }
+                        }
                     }
                 }
-                .pickerStyle(.menu)
-                Text("Pressed from any app, starts a new recording or stops the current one. Choose “Disabled” to opt out.")
+                .menuStyle(.borderlessButton)
+                Text("Pressed from any app, starts a new recording or stops the current one. Click the shortcut pill to record your own combination, or pick a preset.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -192,6 +205,23 @@ struct SettingsView: View {
             } header: {
                 Text("Screenshots")
             }
+
+            Section {
+                Toggle(isOn: $settings.autoSummarize) {
+                    Text("Summarize automatically when recording stops")
+                    Text("Runs the selected AI provider on the transcript the moment you stop recording — meeting summary, next actions, and a follow-up draft for clients or partners. Configure the provider in Settings → AI.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!summarizerAvailable)
+                if !summarizerAvailable {
+                    Text("AI provider isn’t ready — open Settings → AI to configure it.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            } header: {
+                Text("Auto-summary")
+            }
         }
         .formStyle(.grouped)
     }
@@ -241,7 +271,7 @@ struct SettingsView: View {
         Group {
             switch whisper.state {
             case .ready:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.daisySuccess)
             case .downloading, .loading:
                 ProgressView().controlSize(.small)
             case .failed:
@@ -334,17 +364,10 @@ struct SettingsView: View {
                 Text("Status")
             }
 
-            Section {
-                Toggle(isOn: $settings.autoSummarize) {
-                    Text("Summarize when recording stops")
-                    Text("Generates a summary, action items, decisions, and follow-ups via the selected provider when you stop recording.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .disabled(!summarizerAvailable)
-            } header: {
-                Text("Behavior")
-            }
+            // The "auto-summarize on stop" toggle used to live here, but
+            // logically it's a capture-time behaviour, not a provider
+            // configuration — moved to the Capture tab where the user
+            // already configures what happens during/after a recording.
         }
         .formStyle(.grouped)
     }
@@ -429,7 +452,7 @@ struct SettingsView: View {
         Group {
             switch summarizer.availability {
             case .available:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.daisySuccess)
             case .unavailable:
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyError)
             case .unknown:
@@ -468,7 +491,7 @@ struct SettingsView: View {
                 ProgressView().controlSize(.small)
             case .success(let msg):
                 Label(msg, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.daisySuccess)
                     .font(.caption)
                     .lineLimit(2)
             case .failure(let msg):
@@ -550,7 +573,7 @@ struct SettingsView: View {
                 ProgressView().controlSize(.small)
             case .success(let msg):
                 Label(msg, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.daisySuccess)
                     .font(.caption)
                     .lineLimit(2)
             case .failure(let msg):

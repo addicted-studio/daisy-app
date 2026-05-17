@@ -26,6 +26,30 @@ nonisolated struct AudioChunk: @unchecked Sendable {
     let time: AVAudioTime
 }
 
+/// Thread-safe counter for archive-file write failures that happen on
+/// the AVAudioEngine render thread. The tap closure can't reach into
+/// MainActor state to log or toast inline (and shouldn't — render
+/// thread must stay fast), so we accumulate and surface a single
+/// summary on stop().
+private final class WriteErrorBox: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<(count: Int, first: (any Error)?)>(initialState: (0, nil))
+
+    func record(_ error: any Error) {
+        lock.withLock { state in
+            state.count += 1
+            if state.first == nil { state.first = error }
+        }
+    }
+
+    func snapshot() -> (count: Int, first: (any Error)?) {
+        lock.withLock { $0 }
+    }
+
+    func reset() {
+        lock.withLock { $0 = (0, nil) }
+    }
+}
+
 nonisolated enum DaisyError: LocalizedError {
     case noMicrophone
     case speechUnauthorized
@@ -88,6 +112,8 @@ final class AudioRecorder {
     private let analyzer = SpectrumAnalyzer()
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "AudioRecorder")
+    @ObservationIgnored
+    private let writeErrors = WriteErrorBox()
 
     // MARK: - API
 
@@ -133,10 +159,20 @@ final class AudioRecorder {
         let continuationRef = bufferContinuation
         let fileRef = audioFile
         let analyzerRef = analyzer
+        let writeErrorsRef = writeErrors
+        writeErrors.reset()
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
-            // Render thread — keep work minimal.
-            try? fileRef?.write(from: buffer)
+            // Render thread — keep work minimal. Buffer-write failures
+            // are accumulated and surfaced once at stop() rather than
+            // touching MainActor state per buffer.
+            if let fileRef {
+                do {
+                    try fileRef.write(from: buffer)
+                } catch {
+                    writeErrorsRef.record(error)
+                }
+            }
             continuationRef?.yield(AudioChunk(pcm: buffer, time: time))
 
             let peak = Self.peakLevelDB(of: buffer)
@@ -193,6 +229,21 @@ final class AudioRecorder {
         spectrumBands = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
         state = .stopped
         log.info("AudioRecorder stopped after \(self.elapsed, privacy: .public)s")
+
+        // Surface any render-thread write failures. A few drops are
+        // tolerable (transient disk pressure), a flood means the
+        // archive is likely incomplete.
+        let (errCount, firstErr) = writeErrors.snapshot()
+        if errCount > 0 {
+            let firstMessage = firstErr?.localizedDescription ?? "unknown"
+            log.error("\(errCount, privacy: .public) audio buffer write(s) failed during recording. First: \(firstMessage, privacy: .public)")
+            if errCount > 25 {
+                ToastCenter.shared.show(
+                    "Audio archive may be incomplete — \(errCount) write errors.",
+                    style: .warning
+                )
+            }
+        }
     }
 
     func reset() {

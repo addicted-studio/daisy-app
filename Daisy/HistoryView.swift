@@ -32,12 +32,16 @@ struct HistoryView: View {
             sessionList
                 .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
             // Manual vertical divider drawn full-bleed so it visually
-            // extends from the window's toolbar edge to the bottom,
-            // no SwiftUI Divider-truncation in the middle of layout.
+            // extends from the window's title-bar edge to the bottom.
+            // `.ignoresSafeArea(.container, edges: .top)` on the
+            // divider alone (not the whole HStack) extends just this
+            // hairline up through the toolbar safe area, without
+            // pulling the rest of the content under the toolbar.
             Rectangle()
                 .fill(Color.daisyDivider)
                 .frame(width: 0.5)
                 .frame(maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .top)
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -154,12 +158,30 @@ struct HistoryView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
 
-            // Plain list — no `.sidebar` style, so no frosted glass.
-            List(selection: $selectedID) {
+            // Tap-based selection — `List(selection:)` on `.plain`
+            // paints its own system gray fill that we couldn't fully
+            // suppress with `.listRowBackground`. Dropping the
+            // selection binding kills the system paint entirely; we
+            // handle highlight + tap manually for full colour
+            // control. Trade-off: arrow-key navigation between rows
+            // is lost. Mouse + context-menu still work.
+            List {
                 ForEach(filteredSessions) { session in
                     SessionRow(session: session)
-                        .tag(session.id)
                         .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(session.id == selectedID
+                                      ? Color.daisyAccent.opacity(0.18)
+                                      : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedID = session.id
+                        }
                         .contextMenu {
                             sessionContextMenu(for: session)
                         }
@@ -296,7 +318,7 @@ private struct SessionRow: View {
             if session.hasSummary {
                 Image(systemName: "sparkles")
                     .font(.caption2)
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(Color.daisyAccent)
                     .help("Has AI summary")
             }
         }

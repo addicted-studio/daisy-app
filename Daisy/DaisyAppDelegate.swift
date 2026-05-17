@@ -18,25 +18,44 @@ import SwiftUI
 final class DaisyAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Explicit belt-and-braces: ensure we have a Dock icon and
-        // Cmd+Tab presence even if SwiftUI's scene inference glitched.
         NSApp.setActivationPolicy(.regular)
 
-        // Tint the main NSWindow's background to warm cream and make
-        // the title bar transparent so it picks up the window
-        // background instead of system white. This is the AppKit
-        // path that SwiftUI's `.containerBackground(_:for: .window)`
-        // doesn't reach on macOS 26 — `containerBackground` colors
-        // the content view but the title bar zone remains painted
-        // by NSTitlebarContainerView's default material until you
-        // flip these NSWindow flags.
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
-                window.backgroundColor = Self.warmCream
-                window.titlebarAppearsTransparent = true
-                window.styleMask.insert(.fullSizeContentView)
+                self.applyWarmChrome(to: window)
             }
         }
+
+        // SwiftUI's scene delegate keeps resetting
+        // `presentationOptions` AFTER we set them — at unpredictable
+        // points during the fullscreen transition. Single-shot
+        // asyncAfter(N) is racy. Solution: a repeating Timer that
+        // re-forces `autoHideMenuBar + autoHideToolbar` every 0.5s
+        // for the first 5 seconds after entering fullscreen. By the
+        // 5-second mark SwiftUI has finished its transition dance
+        // and our flags stick.
+        // Note on fullscreen + menubar: macOS 26 doesn't let
+        // third-party apps tint the system menubar (NSMainMenu is
+        // system-managed). Earlier attempts to force `.hideMenuBar`
+        // / `.autoHideMenuBar` were silently reverted by SwiftUI's
+        // scene delegate. We accept the native behaviour — system
+        // menubar appears at the top of fullscreen with its own
+        // material backdrop. Our cream `containerBackground` still
+        // tints everything below it.
+    }
+
+    // MARK: - Chrome
+
+    /// Minimum-viable chrome to make NSWindow wear our cream colour.
+    /// Per macOS-dev agent audit, the previous extras
+    /// (`titlebarSeparatorStyle = .none`, `toolbarStyle = .unified`,
+    /// the recursive NSVisualEffectView walk) were no-ops in Tahoe
+    /// — Liquid Glass uses a private `_NSGlassBackdropView`, not
+    /// NSVisualEffectView, so traversal couldn't touch it.
+    private func applyWarmChrome(to window: NSWindow) {
+        window.backgroundColor = Self.warmCream
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
     }
 
     /// Cream window-background NSColor matching `daisyBgPrimary`.

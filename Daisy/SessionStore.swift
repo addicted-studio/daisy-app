@@ -164,6 +164,33 @@ final class SessionStore {
         }
     }
 
+    /// Persist a speaker-to-attendee mapping for a session. Rewrites
+    /// the `daisy_speaker_map:` frontmatter line as a YAML inline
+    /// dict (`{A: "Alex", B: "Maria"}`) and refreshes the store so
+    /// the Detail view re-renders with the new names.
+    func updateSpeakerMap(_ map: [String: String], for session: StoredSession) async {
+        guard let url = session.transcriptURL else { return }
+        do {
+            var text = try String(contentsOf: url, encoding: .utf8)
+            let encoded = Self.encodeYAMLDict(map)
+            text = Self.upsertFrontmatter(in: text, key: "daisy_speaker_map", value: encoded)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            await refresh()
+        } catch {
+            log.error("Speaker map save failed: \(error.localizedDescription, privacy: .public)")
+            lastError = error.localizedDescription
+        }
+    }
+
+    nonisolated static func encodeYAMLDict(_ map: [String: String]) -> String {
+        if map.isEmpty { return "{}" }
+        let pairs = map.keys.sorted().map { k in
+            let v = map[k] ?? ""
+            return "\(k): \"\(v.replacingOccurrences(of: "\"", with: "\\\""))\""
+        }
+        return "{\(pairs.joined(separator: ", "))}"
+    }
+
     /// Move a session to a folder. Rewrites the `daisy_folder:` line
     /// in the transcript markdown frontmatter (adding it if missing)
     /// and reloads the store so chips / lists update.
@@ -279,10 +306,15 @@ final class SessionStore {
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
 
-        // Folder slug — parsed once at load; UI binds via FolderStore.
+        // Folder slug + speaker mapping — parsed once at load.
         var folderSlug = "inbox"
+        var attendees: [String] = []
+        var speakerMap: [String: String] = [:]
         if let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
-            folderSlug = parseFrontmatter(in: text).folder ?? "inbox"
+            let fm = parseFrontmatter(in: text)
+            folderSlug = fm.folder ?? "inbox"
+            attendees = fm.attendees
+            speakerMap = fm.speakerMap
         }
 
         return StoredSession(
@@ -299,7 +331,9 @@ final class SessionStore {
             screenshotURLs: screenshots,
             summary: summary,
             transcriptURL: fm.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
-            folderSlug: folderSlug
+            folderSlug: folderSlug,
+            meetingAttendees: attendees,
+            speakerMap: speakerMap
         )
     }
 
@@ -368,6 +402,13 @@ struct StoredSession: Identifiable, Sendable {
     /// Folder slug, taken from `daisy_folder:` frontmatter. Defaults
     /// to "inbox" for transcripts that predate folder support.
     let folderSlug: String
+    /// Attendees captured from the bound EKEvent when this session
+    /// was started from the calendar. Empty otherwise.
+    let meetingAttendees: [String]
+    /// User-supplied mapping from speaker id (`"A"`, `"B"`, …) to
+    /// real attendee name. Read from `daisy_speaker_map:`
+    /// frontmatter. Empty until user fills it in via Detail view.
+    let speakerMap: [String: String]
 
     var hasSummary: Bool { summary != nil }
     var hasScreenshots: Bool { !screenshotURLs.isEmpty }
@@ -396,6 +437,8 @@ nonisolated private struct ParsedFrontmatter {
     var started: String?
     var durationSec: Int?
     var folder: String?
+    var attendees: [String] = []
+    var speakerMap: [String: String] = [:]
     /// Markdown body after the closing `---`. Empty if no frontmatter.
     var body: String
 }
@@ -431,10 +474,54 @@ nonisolated private func parseFrontmatter(in markdown: String) -> ParsedFrontmat
         case "started":       parsed.started = valueRaw
         case "duration_sec":  parsed.durationSec = Int(valueRaw)
         case "daisy_folder":  parsed.folder = valueRaw.lowercased()
+        case "daisy_event_attendees":
+            parsed.attendees = parseYAMLArray(valueRaw)
+        case "daisy_speaker_map":
+            parsed.speakerMap = parseYAMLDict(valueRaw)
         default:              break
         }
     }
     let body = lines[(endIdx + 1)...].joined(separator: "\n")
     parsed.body = body
     return parsed
+}
+
+/// Parse a YAML-style inline array — `["Alex", "Maria", "Boris"]`.
+/// Tolerant: ignores quotes, trims whitespace, drops empties.
+nonisolated private func parseYAMLArray(_ raw: String) -> [String] {
+    var trimmed = raw.trimmingCharacters(in: .whitespaces)
+    if trimmed.hasPrefix("["), trimmed.hasSuffix("]") {
+        trimmed = String(trimmed.dropFirst().dropLast())
+    }
+    return trimmed
+        .split(separator: ",")
+        .map { item in
+            var s = item.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("\""), s.hasSuffix("\""), s.count >= 2 {
+                s = String(s.dropFirst().dropLast())
+            }
+            return s
+        }
+        .filter { !$0.isEmpty }
+}
+
+/// Parse a YAML-style inline dict — `{A: "Alex", B: "Maria"}`.
+nonisolated private func parseYAMLDict(_ raw: String) -> [String: String] {
+    var trimmed = raw.trimmingCharacters(in: .whitespaces)
+    if trimmed.hasPrefix("{"), trimmed.hasSuffix("}") {
+        trimmed = String(trimmed.dropFirst().dropLast())
+    }
+    var out: [String: String] = [:]
+    for pair in trimmed.split(separator: ",") {
+        guard let colon = pair.firstIndex(of: ":") else { continue }
+        let key = String(pair[..<colon]).trimmingCharacters(in: .whitespaces)
+        var value = String(pair[pair.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+        if value.hasPrefix("\""), value.hasSuffix("\""), value.count >= 2 {
+            value = String(value.dropFirst().dropLast())
+        }
+        if !key.isEmpty, !value.isEmpty {
+            out[key] = value
+        }
+    }
+    return out
 }

@@ -27,43 +27,22 @@ struct DaisyApp: App {
     @State private var floatingPanel: FloatingPanelController
 
     init() {
+        // One-shot migration of legacy `hola.*` preference keys to
+        // `daisy.*`. Must run BEFORE AppSettings is constructed so the
+        // migrated values are read in this same launch.
+        UserDefaultsMigration.runIfNeeded()
+
         let s = AppSettings()
         let sess = RecordingSession(settings: s)
         _settings = State(wrappedValue: s)
         _session = State(wrappedValue: sess)
         _floatingPanel = State(wrappedValue: FloatingPanelController(session: sess))
 
-        // Initial wiring of global hotkey + meeting auto-start. Both
-        // are re-applied reactively in MainView's onChange handlers
-        // when the user flips a setting; this initial pass makes them
-        // work from app launch even before the user opens the window.
-        HotkeyManager.shared.register(choice: s.recordHotkey) {
-            Task { await sess.toggleByHotkey() }
-        }
-        if s.autoStartOnMeeting {
-            MeetingDetector.shared.start { _ in
-                // Auto-start only starts. If we're already recording
-                // (another meeting in progress), we leave it alone —
-                // `start()` itself guards on status.
-                Task { await sess.start() }
-            }
-        }
-        if s.autoStartFromCalendar && s.calendarAccessGranted {
-            CalendarService.shared.start(
-                lookaheadHours: 24,
-                autoStartOnMeeting: true
-            ) { meeting in
-                Task { await sess.startFromMeeting(meeting) }
-            }
-        } else if s.calendarAccessGranted {
-            // Permission already granted in a previous session — keep
-            // the upcoming-meetings cache warm for the Home view even
-            // though auto-start is off.
-            CalendarService.shared.start(
-                lookaheadHours: 24,
-                autoStartOnMeeting: false
-            ) { _ in }
-        }
+        // Initial wiring of hotkey + meeting auto-start + calendar.
+        // Re-applied reactively in MainView's .onChange handlers when
+        // the user flips the relevant setting. Centralised in
+        // `ServiceWiring` so both call sites can't drift apart.
+        ServiceWiring.applyAll(settings: s, session: sess)
     }
 
     var body: some Scene {
@@ -87,7 +66,7 @@ struct DaisyApp: App {
         // and toolbar items live in the detail-pane portion only.
 
         MenuBarExtra {
-            ContentView(session: session)
+            ContentView(session: session, settings: settings)
                 .frame(width: 420, height: 580)
         } label: {
             Image(nsImage: DaisyMark.menuBarImage)

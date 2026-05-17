@@ -134,9 +134,9 @@ final class FloatingPanelController {
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
-        // Don't let AppKit draw its own rectangular window shadow — that's
-        // the "странный контейнер" Egor saw under the daisy. SwiftUI draws
-        // a tighter shadow that hugs the circle.
+        // Don't let AppKit draw its own rectangular window shadow — it
+        // produces a visible rectangular halo around the round widget.
+        // SwiftUI draws a tighter shadow that hugs the circle.
         panel.hasShadow = false
         panel.level = .floating
         panel.collectionBehavior = [

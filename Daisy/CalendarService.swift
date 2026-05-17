@@ -64,6 +64,12 @@ struct DaisyMeeting: Identifiable, Hashable, Sendable {
     let meetingPlatform: String?
     /// Calendar colour for UI dot.
     let calendarColorHex: String?
+    /// Display names of invitees (excluding the organizer when
+    /// possible). Powers the "Speaker A → Alex" mapping UI in
+    /// SessionDetailView. Empty list if the calendar event had no
+    /// attendees attached, or only had email addresses without
+    /// display names.
+    let attendees: [String]
 
     var id: String { localID }
     var isMeeting: Bool { meetingURL != nil }
@@ -257,6 +263,7 @@ private extension DaisyMeeting {
         let detected = Self.detectMeetingURL(in: ekEvent)
         let cgColor = ekEvent.calendar?.cgColor
         let hex = cgColor.flatMap(Self.hexString(from:))
+        let names = Self.projectAttendees(ekEvent.attendees)
 
         self.init(
             externalID: ekEvent.calendarItemExternalIdentifier,
@@ -268,8 +275,41 @@ private extension DaisyMeeting {
             notes: ekEvent.notes,
             meetingURL: detected?.url,
             meetingPlatform: detected?.platform,
-            calendarColorHex: hex
+            calendarColorHex: hex,
+            attendees: names
         )
+    }
+
+    /// Extract human-readable display names from EKParticipant list.
+    /// Falls back to URL last-path component (typically email user
+    /// portion) when `.name` is nil — common for Google Calendar
+    /// events synced via CalDAV where iOS gets only email addresses.
+    /// Deduplicates and trims.
+    nonisolated static func projectAttendees(_ raw: [EKParticipant]?) -> [String] {
+        guard let raw else { return [] }
+        var seen = Set<String>()
+        var out: [String] = []
+        for p in raw {
+            let name = p.name?.trimmingCharacters(in: .whitespaces)
+            let display: String
+            if let name, !name.isEmpty {
+                display = name
+            } else if let url = p.url as URL?,
+                      url.scheme == "mailto" || url.absoluteString.contains("@") {
+                // mailto:alex@company.com → "alex"
+                let local = url.absoluteString
+                    .replacingOccurrences(of: "mailto:", with: "")
+                    .split(separator: "@").first.map(String.init) ?? ""
+                if local.isEmpty { continue }
+                display = local
+            } else {
+                continue
+            }
+            if seen.insert(display.lowercased()).inserted {
+                out.append(display)
+            }
+        }
+        return out
     }
 
     /// Inspect location → url → notes for a known meeting platform

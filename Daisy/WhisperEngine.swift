@@ -34,15 +34,15 @@ final class WhisperEngine {
     /// `_626MB` variant is mixed-bit quantized to ~626 MB while
     /// retaining ~99% of large-v3 accuracy — Argmax's officially
     /// recommended default for multilingual.
+    /// Curated two-model lineup. Removed tiny/base/small/medium and
+    /// large-v2 / large-v3-non-turbo to kill paradox-of-choice in
+    /// Settings. Most users never benchmark themselves; we pick the
+    /// sane defaults for them. Power users who genuinely need other
+    /// sizes can be re-enabled via Advanced settings later if there's
+    /// demand.
     static let availableModels: [(id: String, label: String, sizeMB: Int)] = [
-        ("tiny",                     "Tiny — fastest, low accuracy",                          39),
-        ("base",                     "Base — small, decent",                                  74),
-        ("small",                    "Small — balanced",                                     244),
-        ("medium",                   "Medium — high quality (multilingual)",                 769),
-        ("large-v3-v20240930_626MB", "Standard — large-v3 turbo, quantized (recommended)",   626),
-        ("large-v3-v20240930",       "Highest quality — large-v3 turbo, full",              1500),
-        ("large-v2",                 "Large v2 — older multilingual",                       1550),
-        ("large-v3",                 "Large v3 — full precision",                           1550),
+        ("large-v3-v20240930_626MB", "Standard — fast, multilingual (recommended)",  626),
+        ("large-v3-v20240930",       "Highest accuracy — large-v3 turbo, full",     1500),
     ]
 
     /// First-run default — `large-v3-v20240930_626MB`. 626 MB quantized
@@ -80,7 +80,7 @@ final class WhisperEngine {
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Whisper")
 
-    private static let modelKey = "hola.whisperModelID"
+    private static let modelKey = "daisy.whisperModelID"
 
     private init() {
         let stored = UserDefaults.standard.string(forKey: Self.modelKey) ?? Self.defaultModelID

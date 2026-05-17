@@ -98,12 +98,15 @@ struct MainView: View {
                 .padding(.horizontal, 6)
             }
         }
-        // NO `.toolbarBackground(...)` / `.toolbarBackgroundVisibility(...)`.
-        // On macOS 26 Liquid Glass those force a solid bar across
-        // the full window-toolbar zone, painting over the sidebar's
-        // top edge. Native Mail / Notes / Finder leave toolbar
-        // background to system defaults (.automatic) — that's what
-        // lets the sidebar material flow up to the title bar.
+        // `.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)`
+        // (NOT `.visible` — `.visible` paints a solid bar that
+        // breaks sidebar-to-top). `.hidden` tells macOS 26 NOT to
+        // composite its Liquid Glass material under the toolbar,
+        // which is what was leaving white strips around toolbar
+        // items + in the fullscreen aux-toolbar window. Window's
+        // own `backgroundColor` (cream, set in DaisyAppDelegate)
+        // then shows through cleanly.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .frame(minWidth: 860, minHeight: 560)
         // Warm ivory window background — matches mydaisy.io and
         // defeats macOS's default cool-gray windowBackgroundColor.
@@ -119,6 +122,7 @@ struct MainView: View {
         // SwiftUI `.tint` from the nearest ancestor that owns the
         // selection style.
         .tint(Color.daisyAccentSoft)
+        .modifier(ToastOverlay())
         // Keep the local sidebar selection mirrored with the shared
         // AppNavigation state so external surfaces (menu bar / widget)
         // can switch sections by mutating `AppNavigation.shared`.
@@ -129,46 +133,29 @@ struct MainView: View {
         .onChange(of: nav.section) { _, new in
             if sidebarSelection != new { sidebarSelection = new }
         }
-        // Reactive re-registration when the user changes the hotkey
-        // or flips auto-start in Settings. Initial registration is
-        // done in DaisyApp.init so it works even before the window
-        // is first opened.
+        // Reactive re-wiring when the user changes the hotkey or
+        // flips auto-start in Settings. Initial wiring is done in
+        // DaisyApp.init via the same ServiceWiring helpers so the
+        // two call sites can't drift apart.
         .onChange(of: settings.recordHotkey) { _, new in
-            HotkeyManager.shared.register(choice: new) {
-                Task { await session.toggleByHotkey() }
-            }
+            ServiceWiring.applyHotkey(choice: new, session: session)
         }
         .onChange(of: settings.autoStartOnMeeting) { _, enabled in
-            if enabled {
-                MeetingDetector.shared.start { _ in
-                    Task { await session.start() }
-                }
-            } else {
-                MeetingDetector.shared.stop()
-            }
+            ServiceWiring.applyMeetingAutoStart(enabled: enabled, session: session)
         }
-        .onChange(of: settings.autoStartFromCalendar) { _, enabled in
-            CalendarService.shared.setAutoStart(enabled)
+        .onChange(of: settings.autoStartFromCalendar) { _, _ in
+            ServiceWiring.applyCalendar(settings: settings, session: session)
         }
         // When EventKit's authorisation status flips (typically via
         // the system prompt fired from Home's Connect button or from
-        // Settings), mirror it into AppSettings and wire up the
-        // service with the proper auto-start handler.
+        // Settings), mirror it into AppSettings and re-apply the
+        // wiring with the proper auto-start handler.
         .onChange(of: CalendarService.shared.authorizationStatus) { _, status in
             let granted = (status == .fullAccess)
             if settings.calendarAccessGranted != granted {
                 settings.calendarAccessGranted = granted
             }
-            if granted {
-                CalendarService.shared.start(
-                    lookaheadHours: 24,
-                    autoStartOnMeeting: settings.autoStartFromCalendar
-                ) { meeting in
-                    Task { await session.startFromMeeting(meeting) }
-                }
-            } else {
-                CalendarService.shared.stop()
-            }
+            ServiceWiring.applyCalendar(settings: settings, session: session)
         }
     }
 

@@ -2,22 +2,31 @@
 //  ContentView.swift
 //  Daisy
 //
-//  Main popover view. Title, locale, record button, live transcript with
-//  source labels (you / system), Apple Intelligence summary card, export
-//  controls (Save .md, Copy, Send to Notion / Claude), settings.
+//  Main popover view. Title field with calendar event picker, locale,
+//  record button (badge shows the configured global hotkey), live
+//  transcript with source labels (you / system), Apple Intelligence
+//  summary card, export controls (Copy markdown / Send to Notion or
+//  Claude), kebab for history / settings / reveal-in-Finder. The
+//  transcript auto-saves to the session folder on stop — there is no
+//  Save button.
 //
 
 import SwiftUI
 import AppKit
+import EventKit
 
 struct ContentView: View {
     @Bindable var session: RecordingSession
+    @Bindable var settings: AppSettings
     @Environment(\.openWindow) private var openWindow
 
-    @State private var lastSavedURL: URL?
     @State private var lastNotionURL: URL?
     @State private var sendError: String?
     @State private var notionSending = false
+    /// Calendar event the user picked for this session, if any. Sent
+    /// to `session.startFromMeeting(_:)` so the transcript markdown
+    /// carries the event binding in its frontmatter.
+    @State private var selectedMeeting: DaisyMeeting?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,7 +44,7 @@ struct ContentView: View {
             errorBanner
             footer
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.daisyBgPrimary)
         .onAppear {
             if session.localeIdentifier.isEmpty {
                 session.localeIdentifier = "auto"
@@ -50,22 +59,116 @@ struct ContentView: View {
             HStack(spacing: 8) {
                 Text("Daisy")
                     .font(.headline)
-                Text("· local meeting capture")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
                 Spacer()
                 LocalePicker(localeIdentifier: $session.localeIdentifier)
                     .disabled(session.status == .recording || session.status == .summarizing)
             }
 
-            TextField("Meeting title", text: $session.title, prompt: Text("Untitled meeting"))
-                .textFieldStyle(.plain)
-                .font(.title3.weight(.medium))
+            HStack(spacing: 6) {
+                TextField("Meeting title", text: $session.title, prompt: Text("Untitled meeting"))
+                    .textFieldStyle(.plain)
+                    .font(.title3.weight(.medium))
+                meetingPicker
+            }
 
             statusRow
             recordButton
         }
         .padding(16)
+    }
+
+    /// Calendar pull-down — lets the user bind this session to an
+    /// upcoming event. Selecting prefills the title and tells
+    /// `handlePrimaryAction` to use `startFromMeeting(_:)`.
+    private var meetingPicker: some View {
+        Menu {
+            if CalendarService.shared.authorizationStatus != .fullAccess {
+                Button {
+                    AppNavigation.shared.section = .settings
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    Label("Connect Calendar in Settings…", systemImage: "gear")
+                }
+            } else if upcomingMeetingChoices.isEmpty {
+                Text("No upcoming meetings")
+            } else {
+                if selectedMeeting != nil {
+                    Button {
+                        selectedMeeting = nil
+                        session.title = ""
+                    } label: {
+                        Label("Clear selection", systemImage: "xmark.circle")
+                    }
+                    Divider()
+                }
+                ForEach(upcomingMeetingChoices) { meeting in
+                    Button {
+                        selectedMeeting = meeting
+                        session.title = meeting.title
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text(meeting.title)
+                                Text(meetingTimeLabel(meeting))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if selectedMeeting?.id == meeting.id {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: selectedMeeting == nil ? "calendar" : "calendar.badge.checkmark")
+                .foregroundStyle(selectedMeeting == nil ? Color.secondary : Color.daisyAccent)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(meetingPickerHelp)
+        .disabled(session.status == .recording || session.status == .summarizing)
+    }
+
+    /// Upcoming events with a meeting URL, capped to the next 6 hours
+    /// — anything further out clutters the picker and isn't what the
+    /// user is about to join right now.
+    private var upcomingMeetingChoices: [DaisyMeeting] {
+        let now = Date()
+        let cutoff = now.addingTimeInterval(6 * 3600)
+        return CalendarService.shared.upcomingMeetings
+            .filter { $0.startDate <= cutoff && $0.endDate >= now }
+    }
+
+    private var meetingPickerHelp: String {
+        switch CalendarService.shared.authorizationStatus {
+        case .fullAccess:
+            return selectedMeeting == nil
+                ? "Bind this recording to an upcoming calendar event"
+                : "Selected: \(selectedMeeting?.title ?? "")"
+        default:
+            return "Connect Calendar to bind recordings to events"
+        }
+    }
+
+    private func meetingTimeLabel(_ meeting: DaisyMeeting) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        let start = f.string(from: meeting.startDate)
+        let mins = Int(meeting.startDate.timeIntervalSinceNow / 60)
+        if mins > 60 {
+            return "\(start) · in \(mins / 60)h \(mins % 60)m"
+        } else if mins > 0 {
+            return "\(start) · in \(mins)m"
+        } else if mins > -60 {
+            return "\(start) · now"
+        } else {
+            return "\(start) · started \(-mins)m ago"
+        }
     }
 
     private var statusRow: some View {
@@ -133,39 +236,62 @@ struct ContentView: View {
 
     // MARK: - Record button
 
+    /// Solid-orange capsule that mirrors the sidebar `RecordCapsule`
+    /// in the main window — same visual grammar (Apple system orange
+    /// = mic-active), so the user reads "this is THE record button"
+    /// the same way whether they're in the popover or the main app.
     private var recordButton: some View {
         Button {
             handlePrimaryAction()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: primaryIcon)
-                Text(primaryLabel).fontWeight(.medium)
+                    .font(.callout.weight(.semibold))
+                Text(primaryLabel)
+                    .font(.callout.weight(.medium))
                 Spacer()
-                Text("Space")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                if let label = hotkeyBadgeLabel {
+                    Text(label)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.75))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(.white.opacity(0.18))
+                        )
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(primaryTint.opacity(0.16))
-            .foregroundStyle(primaryTint)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .foregroundStyle(.white)
+            .background(
+                Capsule(style: .continuous).fill(primaryFill)
+            )
+            .overlay(
+                Capsule(style: .continuous).strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+            )
+            .glassEffect(in: Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
-        .keyboardShortcut(.space, modifiers: [])
         .disabled(disablePrimary)
+    }
+
+    /// Configured global hotkey label, or nil if the user disabled it.
+    /// The badge inside the Record button mirrors what's in Settings →
+    /// Hotkey — the *actual* shortcut, not a hardcoded "Space".
+    private var hotkeyBadgeLabel: String? {
+        let choice = settings.recordHotkey
+        guard choice.keyCode != nil else { return nil }
+        return choice.label
     }
 
     private var primaryLabel: String {
         switch session.status {
         case .recording: return "Stop"
-        case .preparing: return "Asking…"
-        case .stopping: return "Stopping…"
+        case .preparing: return "Preparing…"
+        case .stopping:  return "Stopping…"
         case .summarizing: return "Summarizing…"
-        default: return "Record"
+        default:         return "Record"
         }
     }
 
@@ -178,12 +304,14 @@ struct ContentView: View {
         }
     }
 
-    private var primaryTint: Color {
+    /// Solid capsule fill — orange both at rest (Start) and while
+    /// recording. Matches `RecordCapsule.fill` in main sidebar.
+    private var primaryFill: Color {
         switch session.status {
         case .recording: return .daisyRecording
-        case .summarizing: return .daisyWarning
-        case .preparing, .stopping: return .secondary
-        default: return .accentColor
+        case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
+        case .failed: return .daisyError
+        default: return .daisyRecording
         }
     }
 
@@ -202,7 +330,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkles")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(Color.daisyAccent)
                     Text("Summary")
                         .font(.subheadline.weight(.semibold))
                     Spacer()
@@ -323,7 +451,11 @@ struct ContentView: View {
         switch session.status {
         case .recording: return "Listening…"
         case .finished: return "No speech was captured."
-        default: return "Press Space or click Record to begin."
+        default:
+            if let label = hotkeyBadgeLabel {
+                return "Press \(label) or click Record to begin."
+            }
+            return "Click Record to begin."
         }
     }
 
@@ -353,44 +485,29 @@ struct ContentView: View {
     }
 
     // MARK: - Footer
+    //
+    // All bottom controls share one visual grammar: `.bordered`
+    // capsules, `.regular` control size. Save was removed — sessions
+    // auto-persist their transcript.md to the session folder on stop,
+    // so an explicit Save was duplicate work the user shouldn't think
+    // about. Reveal-in-Finder lives on the kebab now.
 
     private var footer: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Button {
                 MarkdownExporter.copyToClipboard(session: session)
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
             .buttonStyle(.bordered)
+            .controlSize(.regular)
             .keyboardShortcut("c", modifiers: [.command])
             .disabled(!hasSegments)
             .help("Copy markdown to clipboard")
 
-            Button {
-                if let url = MarkdownExporter.saveWithPanel(session: session) {
-                    lastSavedURL = url
-                }
-            } label: {
-                Label("Save", systemImage: "square.and.arrow.down")
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut("s", modifiers: [.command])
-            .disabled(!hasSegments)
-            .help("Save .md to a folder (Obsidian vault, etc.)")
-
             sendMenu
 
             Spacer()
-
-            if let url = lastSavedURL {
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                } label: {
-                    Image(systemName: "folder")
-                }
-                .buttonStyle(.borderless)
-                .help("Reveal saved transcript in Finder")
-            }
 
             ellipsisMenu
         }
@@ -416,15 +533,16 @@ struct ContentView: View {
             }
         } label: {
             HStack(spacing: 4) {
+                Image(systemName: "paperplane")
                 Text("Send to")
                 if notionSending {
                     ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "chevron.down").font(.caption2)
                 }
             }
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
         .fixedSize()
         .disabled(!hasSegments)
     }
@@ -437,6 +555,14 @@ struct ContentView: View {
                 Label("Summarize now", systemImage: "sparkles")
             }
             .disabled(!hasSegments || session.summarizer.isSummarizing)
+
+            if let url = autoSavedTranscriptURL {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } label: {
+                    Label("Reveal transcript in Finder", systemImage: "folder")
+                }
+            }
 
             Button {
                 AppNavigation.shared.section = .history
@@ -460,7 +586,7 @@ struct ContentView: View {
 
             Button("New session", role: .destructive) {
                 session.reset()
-                lastSavedURL = nil
+                selectedMeeting = nil
                 lastNotionURL = nil
                 sendError = nil
             }
@@ -473,14 +599,29 @@ struct ContentView: View {
             }
             .keyboardShortcut("q", modifiers: [.command])
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .menuIndicator(.hidden)
         .fixedSize()
     }
 
     private var hasSegments: Bool {
         session.segments.contains(where: { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty })
+    }
+
+    /// Path of the auto-saved transcript markdown for the current
+    /// session, if it has been written. RecordingSession writes
+    /// `transcript.md` next to the audio archive on stop — the kebab
+    /// uses this so the user can pop the file open without going
+    /// through a Save dialog.
+    private var autoSavedTranscriptURL: URL? {
+        guard session.status == .finished,
+              let dir = session.sessionDirectory else { return nil }
+        let url = dir.appendingPathComponent("transcript.md")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     // MARK: - Actions
@@ -490,7 +631,11 @@ struct ContentView: View {
         case .recording:
             Task { await session.stop() }
         default:
-            Task { await session.start() }
+            if let meeting = selectedMeeting {
+                Task { await session.startFromMeeting(meeting) }
+            } else {
+                Task { await session.start() }
+            }
         }
     }
 
@@ -608,6 +753,7 @@ private struct LocalePicker: View {
 }
 
 #Preview {
-    ContentView(session: RecordingSession(settings: AppSettings()))
+    let s = AppSettings()
+    ContentView(session: RecordingSession(settings: s), settings: s)
         .frame(width: 420, height: 580)
 }
