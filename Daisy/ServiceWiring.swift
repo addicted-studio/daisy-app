@@ -66,10 +66,21 @@ enum ServiceWiring {
         }
     }
 
+    /// Start or stop the local MCP server based on the user's
+    /// preference. Loopback-only; opt-in. Idempotent.
+    static func applyMCPServer(settings: AppSettings) {
+        if settings.mcpServerEnabled {
+            MCPServer.shared.start(port: settings.mcpServerPort)
+        } else {
+            MCPServer.shared.stop()
+        }
+    }
+
     /// Convenience for full initial wiring at launch.
     static func applyAll(settings: AppSettings, session: RecordingSession) {
         applyHotkey(choice: settings.recordHotkey, session: session)
         applyMeetingAutoStart(enabled: settings.autoStartOnMeeting, session: session)
         applyCalendar(settings: settings, session: session)
+        applyMCPServer(settings: settings)
     }
 }

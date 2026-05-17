@@ -1,0 +1,149 @@
+//
+//  MCPDispatcher.swift
+//  Daisy
+//
+//  Runs a configured `MCPIntegration` against a finished session:
+//
+//   1. Build the placeholder map from the session (title, summary,
+//      action items, follow-up, transcript, etc.)
+//   2. Substitute into the integration's JSON arguments template
+//   3. Open a short-lived MCPClient, call the configured tool, close
+//   4. Surface success / failure via ToastCenter
+//
+//  No retries, no queueing — if it fails, the user re-fires from the
+//  kebab menu. Keeps the path simple and predictable.
+//
+
+import Foundation
+import os
+
+@MainActor
+enum MCPDispatcher {
+    private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "MCPDispatcher")
+
+    /// Send `session` through `integration`. Idempotent from
+    /// Daisy's side — re-sending creates another page/issue/etc on
+    /// the destination side (we don't track previous sends).
+    @discardableResult
+    static func send(_ integration: MCPIntegration, for session: StoredSession) async -> Bool {
+        guard let url = URL(string: integration.baseURL), url.scheme != nil else {
+            ToastCenter.shared.show("\(integration.name): invalid server URL", style: .error)
+            return false
+        }
+
+        ToastCenter.shared.show("Sending to \(integration.name)…", style: .info)
+
+        let placeholders = makePlaceholders(for: session)
+        let arguments: AnyJSON
+        do {
+            arguments = try buildArguments(template: integration.argumentsTemplate, placeholders: placeholders)
+        } catch {
+            log.error("Template substitution failed: \(error.localizedDescription, privacy: .public)")
+            ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
+            return false
+        }
+
+        let client = MCPClient(baseURL: url)
+        do {
+            try await client.connect()
+            try await client.initialize()
+            let text = try await client.callTool(name: integration.toolName, arguments: arguments)
+            client.disconnect()
+            let snippet = text.isEmpty ? "" : " — " + String(text.prefix(80))
+            ToastCenter.shared.show("Sent to \(integration.name)\(snippet)", style: .success)
+            log.info("MCP send to \(integration.name, privacy: .public): ok")
+            return true
+        } catch {
+            client.disconnect()
+            log.error("MCP send to \(integration.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
+            return false
+        }
+    }
+
+    // MARK: - Placeholders
+
+    /// What `{{...}}` keys the dispatcher knows. Order matters in
+    /// the substitution loop (longest prefix first) so that, e.g.,
+    /// `{{actionItemsBullets}}` doesn't get mangled by an earlier
+    /// pass over `{{actionItems}}`.
+    private static func makePlaceholders(for session: StoredSession) -> [(key: String, value: String)] {
+        let summary = session.summary
+        let actionItems = summary?.actionItems ?? []
+        let bullets = actionItems.map { "- " + $0 }.joined(separator: "\n")
+        let joined = actionItems.joined(separator: "; ")
+        return [
+            // Longest first so prefix-overlapping keys don't collide.
+            ("{{actionItemsBullets}}", bullets),
+            ("{{clientFollowUp}}", summary?.clientFollowUp ?? ""),
+            ("{{actionItems}}", joined),
+            ("{{transcript}}", session.transcriptText),
+            ("{{summary}}", summary?.summary ?? ""),
+            ("{{folder}}", session.folderSlug),
+            ("{{locale}}", session.locale),
+            ("{{title}}", session.title),
+            ("{{date}}", ISO8601DateFormatter().string(from: session.startedAt)),
+        ]
+    }
+
+    private static func buildArguments(
+        template: String,
+        placeholders: [(key: String, value: String)]
+    ) throws -> AnyJSON {
+        var t = template
+        for (key, value) in placeholders {
+            t = t.replacingOccurrences(of: key, with: escapeForJSONString(value))
+        }
+        guard let data = t.data(using: .utf8) else {
+            throw DispatcherError.encodingFailed
+        }
+        do {
+            return try JSONDecoder().decode(AnyJSON.self, from: data)
+        } catch {
+            throw DispatcherError.invalidJSON(error.localizedDescription)
+        }
+    }
+
+    /// Escape a string for safe drop-in between double-quotes inside
+    /// a JSON template. Mirrors the escape table MCPSummarizer uses
+    /// for the same reason; kept duplicated to avoid coupling the two
+    /// templating call sites.
+    private static func escapeForJSONString(_ s: String) -> String {
+        var out = ""
+        out.reserveCapacity(s.count)
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "\"":   out += "\\\""
+            case "\\":   out += "\\\\"
+            case "\n":   out += "\\n"
+            case "\r":   out += "\\r"
+            case "\t":   out += "\\t"
+            case "\u{08}": out += "\\b"
+            case "\u{0C}": out += "\\f"
+            default:
+                if scalar.value < 0x20 {
+                    out += String(format: "\\u%04x", scalar.value)
+                } else {
+                    out += String(scalar)
+                }
+            }
+        }
+        return out
+    }
+
+    // MARK: - Errors
+
+    private enum DispatcherError: LocalizedError {
+        case encodingFailed
+        case invalidJSON(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .encodingFailed:
+                return "Couldn't encode the arguments template as UTF-8."
+            case .invalidJSON(let detail):
+                return "Arguments template isn't valid JSON after substitution: \(detail)"
+            }
+        }
+    }
+}

@@ -22,6 +22,10 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         case idle
         case starting
         case capturing
+        /// Stream torn down but bufferContinuation is preserved so
+        /// upstream consumers (Transcriber) keep their for-await
+        /// loops alive across pause/resume.
+        case paused
         case stopped
     }
 
@@ -51,7 +55,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     }
 
     func start() async throws {
-        guard state == .idle || state == .stopped else { return }
+        guard state == .idle || state == .stopped || state == .paused else { return }
         state = .starting
         lastError = nil
 
@@ -112,7 +116,8 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
 
     func stop() async {
         guard let s = stream else {
-            state = .stopped
+            if state != .paused { state = .stopped }
+            else { state = .stopped }
             return
         }
         do { try await s.stopCapture() }
@@ -121,6 +126,30 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         bufferContinuation?.finish()
         bufferContinuation = nil
         state = .stopped
+    }
+
+    /// Soft pause: tear down the SCStream but keep the
+    /// bufferContinuation alive so the upstream Transcriber's
+    /// for-await loop doesn't terminate. ScreenCaptureKit has no
+    /// native pause — we rebuild a fresh stream in `resume()` and
+    /// route it to the same continuation.
+    func pause() async {
+        guard state == .capturing, let s = stream else { return }
+        do { try await s.stopCapture() }
+        catch { log.error("Pause error: \(error.localizedDescription, privacy: .public)") }
+        stream = nil
+        state = .paused
+        log.info("SystemAudio paused")
+    }
+
+    /// Resume after `pause()`: build a new SCStream with the same
+    /// config and route its output to the existing continuation.
+    func resume() async throws {
+        guard state == .paused else { return }
+        // Re-run the full discover + filter + config dance — display
+        // topology can change while we were paused (Mac plugged into
+        // a different monitor, etc.).
+        try await start()
     }
 
     // MARK: - SCStreamOutput

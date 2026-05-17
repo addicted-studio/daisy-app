@@ -46,11 +46,264 @@ struct SettingsView: View {
             notionTab
                 .tabItem { Label("Notion", systemImage: "doc.text") }
                 .scrollContentBackground(.hidden)
+
+            mcpTab
+                .tabItem { Label("MCP", systemImage: "antenna.radiowaves.left.and.right") }
+                .scrollContentBackground(.hidden)
+
+            autoActionsTab
+                .tabItem { Label("Auto-actions", systemImage: "paperplane") }
+                .scrollContentBackground(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .background(Color.daisyBgPrimary)
         .task { await summarizer.refreshAvailability() }
+    }
+
+    private func graceLabel(seconds: Int) -> String {
+        if seconds == 0 { return "On the dot" }
+        if seconds < 60 { return "\(seconds) s" }
+        let mins = seconds / 60
+        let rem = seconds % 60
+        if rem == 0 { return "\(mins) min" }
+        return "\(mins) min \(rem) s"
+    }
+
+    // MARK: - Auto-actions (Phase 6c)
+
+    @Bindable private var integrationStore = MCPIntegrationStore.shared
+    @State private var editingIntegration: MCPIntegration?
+    @State private var showingNewIntegrationSheet: Bool = false
+
+    private var autoActionsTab: some View {
+        Form {
+            Section {
+                if integrationStore.integrations.isEmpty {
+                    Text("No integrations yet. Add one to push finished sessions into Notion, Linear, or any MCP-compatible service.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(integrationStore.integrations) { integration in
+                        integrationRow(integration)
+                    }
+                }
+            } header: {
+                Text("Integrations")
+            } footer: {
+                Text("Each integration is a destination Daisy can send a finished session to via MCP. The `Send to {name}` action shows up in the session's kebab menu in History. Disabled integrations don't appear there.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section {
+                HStack(spacing: 8) {
+                    Menu {
+                        Button("Blank integration") {
+                            editingIntegration = MCPIntegration(
+                                name: "New integration",
+                                baseURL: "http://127.0.0.1:11436",
+                                toolName: "",
+                                argumentsTemplate: "{}",
+                                enabled: true
+                            )
+                        }
+                        Divider()
+                        Text("Templates").font(.caption).foregroundStyle(.secondary)
+                        Button("Notion (create_page)") {
+                            editingIntegration = MCPIntegration.notionDefault()
+                        }
+                        Button("Linear (create_issue)") {
+                            editingIntegration = MCPIntegration.linearDefault()
+                        }
+                    } label: {
+                        Label("Add integration", systemImage: "plus")
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(item: $editingIntegration) { integration in
+            IntegrationEditor(
+                initial: integration,
+                onSave: { updated in
+                    if integrationStore.integrations.contains(where: { $0.id == updated.id }) {
+                        integrationStore.update(updated)
+                    } else {
+                        integrationStore.add(updated)
+                    }
+                    editingIntegration = nil
+                },
+                onCancel: { editingIntegration = nil }
+            )
+            .frame(minWidth: 580, minHeight: 520)
+        }
+    }
+
+    @ViewBuilder
+    private func integrationRow(_ integration: MCPIntegration) -> some View {
+        HStack(spacing: 10) {
+            Toggle(
+                "",
+                isOn: Binding(
+                    get: { integration.enabled },
+                    set: { newValue in
+                        var copy = integration
+                        copy.enabled = newValue
+                        integrationStore.update(copy)
+                    }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(integration.name)
+                    .font(.callout.weight(.medium))
+                Text("\(integration.toolName) · \(integration.baseURL)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            Button {
+                editingIntegration = integration
+            } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.borderless)
+            .help("Edit")
+            Button(role: .destructive) {
+                integrationStore.remove(id: integration.id)
+            } label: {
+                Image(systemName: "trash")
+                    .foregroundStyle(Color.daisyError)
+            }
+            .buttonStyle(.borderless)
+            .help("Delete")
+        }
+    }
+
+    // MARK: - MCP server (Phase 6a)
+
+    @State private var mcpPortText: String = ""
+
+    private var mcpTab: some View {
+        Form {
+            Section {
+                Toggle(isOn: $settings.mcpServerEnabled) {
+                    Text("Run local MCP server")
+                    Text("Lets Claude Desktop, Claude Code, Cowork, Cursor and any other MCP-compatible client read your Daisy transcripts and summaries. Bound to 127.0.0.1 only — nothing ever leaves this Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                mcpStatusRow
+            } header: {
+                Text("Server")
+            }
+
+            Section {
+                HStack {
+                    Text("Port")
+                    Spacer()
+                    TextField("54321", text: $mcpPortText, prompt: Text("54321"))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 90)
+                        .onSubmit { commitMCPPort() }
+                }
+                Text("Default 54321. Change only if another app on this Mac is already bound to that port.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Network")
+            }
+
+            Section {
+                Text(mcpConfigSnippet)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                    )
+
+                HStack {
+                    Spacer()
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(mcpConfigSnippet, forType: .string)
+                        ToastCenter.shared.show("MCP config copied", style: .success)
+                    } label: {
+                        Label("Copy snippet", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            } header: {
+                Text("Claude Desktop config")
+            } footer: {
+                Text("Paste this into ~/Library/Application Support/Claude/claude_desktop_config.json under the top-level \"mcpServers\" key. Restart Claude Desktop to pick it up. Same shape works for any client that speaks MCP over SSE.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { mcpPortText = String(settings.mcpServerPort) }
+        .onChange(of: settings.mcpServerPort) { _, new in
+            mcpPortText = String(new)
+        }
+    }
+
+    @ViewBuilder
+    private var mcpStatusRow: some View {
+        HStack(spacing: 8) {
+            switch MCPServer.shared.state {
+            case .stopped:
+                Image(systemName: "circle.fill").foregroundStyle(.tertiary)
+                Text("Not running").foregroundStyle(.secondary)
+            case .starting(let port):
+                ProgressView().controlSize(.small)
+                Text("Starting on port \(port)…").foregroundStyle(.secondary)
+            case .running(let port):
+                Image(systemName: "circle.fill").foregroundStyle(Color.daisySuccess)
+                Text("Listening on 127.0.0.1:\(port)").fontWeight(.medium)
+            case .failed(let msg):
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyError)
+                Text(msg).foregroundStyle(.secondary).lineLimit(3)
+            }
+            Spacer()
+        }
+        .font(.caption)
+    }
+
+    private var mcpConfigSnippet: String {
+        let port = settings.mcpServerPort
+        return """
+        {
+          "mcpServers": {
+            "daisy": {
+              "url": "http://127.0.0.1:\(port)/sse"
+            }
+          }
+        }
+        """
+    }
+
+    private func commitMCPPort() {
+        let trimmed = mcpPortText.trimmingCharacters(in: .whitespaces)
+        if let p = Int(trimmed), p > 0, p <= 65535 {
+            settings.mcpServerPort = p
+        } else {
+            mcpPortText = String(settings.mcpServerPort)
+            ToastCenter.shared.show("Port must be 1–65535", style: .warning)
+        }
     }
 
     // MARK: - Calendar permission row
@@ -133,6 +386,17 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $settings.floatingWidgetEnabled) {
+                    Text("Show floating widget")
+                    Text("Pops a small daisy mark above all other windows while a session is active. Tap to pause / resume, right-click for Stop & save. The menu bar item and main window stay available either way — this is just an extra always-visible affordance.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Floating widget")
+            }
+
+            Section {
                 HStack {
                     Text("Global shortcut")
                     Spacer()
@@ -182,6 +446,30 @@ struct SettingsView: View {
                 .disabled(!settings.calendarAccessGranted)
             } header: {
                 Text("Auto-start · calendar")
+            }
+
+            Section {
+                Toggle(isOn: $settings.autoStopFromCalendar) {
+                    Text("Stop automatically when the event ends")
+                    Text("For sessions bound to a calendar event, Daisy schedules a Stop & save at the event's end time plus a grace period. You get a cancellable warning toast 30 seconds before — if the conversation runs over, click Keep going and the timer resets.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!settings.calendarAccessGranted)
+
+                if settings.autoStopFromCalendar {
+                    Stepper(value: $settings.autoStopGraceSec, in: 0...1800, step: 30) {
+                        HStack {
+                            Text("Grace period")
+                            Spacer()
+                            Text(graceLabel(seconds: settings.autoStopGraceSec))
+                                .monospaced()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: {
+                Text("Auto-stop · calendar")
             }
 
             Section {
@@ -364,6 +652,20 @@ struct SettingsView: View {
                 Text("Status")
             }
 
+            Section {
+                Picker("Summary language", selection: $settings.summaryLanguage) {
+                    ForEach(SummaryLanguage.allCases) { lang in
+                        Text(lang.displayName).tag(lang.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text("Pin the language the AI writes the summary in. Decoupled from the transcript — you can record in one language and read the summary in another (handy for sending follow-ups to clients in a different language).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Summary language")
+            }
+
             // The "auto-summarize on stop" toggle used to live here, but
             // logically it's a capture-time behaviour, not a provider
             // configuration — moved to the Capture tab where the user
@@ -444,6 +746,71 @@ struct SettingsView: View {
                     Spacer()
                     summaryTestStatusView
                 }
+            }
+
+        case .mcp:
+            Section {
+                HStack {
+                    Text("Server URL")
+                    Spacer()
+                    TextField("http://127.0.0.1:11435", text: $settings.mcpSummarizerURL)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                }
+                HStack {
+                    Text("Tool name")
+                    Spacer()
+                    TextField("chat", text: $settings.mcpSummarizerToolName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                }
+                Text("Daisy connects to your MCP server over HTTP+SSE and calls one tool per summarize. Most local-LLM wrappers expose either a `chat` or `complete` tool — check your wrapper's `tools/list` for the exact name.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("MCP server")
+            }
+
+            Section {
+                TextEditor(text: $settings.mcpSummarizerArgumentsTemplate)
+                    .font(.system(.callout, design: .monospaced))
+                    .frame(minHeight: 160)
+                    .padding(6)
+                    .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                    )
+                HStack {
+                    Button("Reset to default") {
+                        settings.mcpSummarizerArgumentsTemplate = MCPSummarizer.defaultArgumentsTemplate
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    Spacer()
+                }
+                Text("JSON template for the tool's `arguments`. Three placeholders get substituted before sending: `{{system}}` (Daisy's system prompt), `{{transcript}}` (meeting title + body), `{{title}}` (meeting title alone). Edit the `model` field to match a model your wrapper has pulled.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Arguments template")
+            }
+
+            Section {
+                HStack {
+                    Button("Test summary") {
+                        Task { await testSummaryProvider() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(summaryTestResult == .testing
+                              || settings.mcpSummarizerURL.isEmpty
+                              || settings.mcpSummarizerToolName.isEmpty)
+                    Spacer()
+                    summaryTestStatusView
+                }
+                Text("Sends a short fixture transcript through your MCP server. Confirms the URL is reachable, the tool exists, and the response parses into the expected schema.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

@@ -62,7 +62,7 @@ struct SessionDetailView: View {
             Button {
                 attemptReSummarize()
             } label: {
-                toolbarIcon("sparkles")
+                toolbarIcon("sparkles", outerEdge: .leading)
             }
             .buttonStyle(.borderless)
             .help("Re-summarize via current provider")
@@ -106,6 +106,7 @@ struct SessionDetailView: View {
                 } label: {
                     Label("Send to Claude", systemImage: "sparkles")
                 }
+                mcpIntegrationsMenuItems
                 Divider()
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([session.directoryURL])
@@ -119,7 +120,7 @@ struct SessionDetailView: View {
                     Label("Delete", systemImage: "trash")
                 }
             } label: {
-                toolbarIcon("ellipsis")
+                toolbarIcon("ellipsis", outerEdge: .trailing)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -167,16 +168,37 @@ struct SessionDetailView: View {
     /// SF Symbols' default multicolor on `sparkles`. Horizontal
     /// padding gives the auto-fitted Liquid Glass pill breathing
     /// room around the glyph instead of hugging the edge.
-    private func toolbarIcon(_ name: String) -> some View {
+    /// User-configured MCP integrations — one menu item per enabled
+    /// integration. Empty when the user hasn't set anything up;
+    /// nothing renders in that case (no spacer Divider).
+    @ViewBuilder
+    private var mcpIntegrationsMenuItems: some View {
+        let store = MCPIntegrationStore.shared
+        let enabled = store.enabledIntegrations
+        if !enabled.isEmpty {
+            Divider()
+            ForEach(enabled) { integration in
+                Button {
+                    Task { await MCPDispatcher.send(integration, for: session) }
+                } label: {
+                    Label("Send to \(integration.name)", systemImage: "paperplane")
+                }
+            }
+        }
+    }
+
+    /// One toolbar glyph. Base 10pt horizontal padding gives all
+    /// icons inner breathing room. `outerEdge` adds an extra 8pt on
+    /// the specified side — used for the first (`.leading`) and
+    /// last (`.trailing`) items so they're not kissing the pill
+    /// border while the middle items keep their tighter spacing.
+    private func toolbarIcon(_ name: String, outerEdge: Edge.Set = []) -> some View {
         Image(systemName: name)
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(Color.daisyTextPrimary)
             .font(.body.weight(.medium))
-            // Lateral padding gives the auto-fitted Liquid Glass pill
-            // breathing room around the glyph instead of hugging the
-            // edge. Bumped from 4 → 10 so the leftmost and rightmost
-            // icons aren't kissing the capsule border.
             .padding(.horizontal, 10)
+            .padding(outerEdge, 8)
     }
 
     // MARK: - Header (title + metadata; actions live in toolbar)
@@ -209,73 +231,105 @@ struct SessionDetailView: View {
 
     // MARK: - Summary
 
+    // Summary sections rendered as a plain MD-style document — no
+    // coloured AI card, no sparkles header, no border. The user reads
+    // this like a normal write-up: H2 heading, body text, bullets.
+    // Each section is independent so the gestalt is "one document"
+    // rather than "a feature card".
+    @ViewBuilder
     private func summarySection(_ summary: MeetingSummary) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles").foregroundStyle(Color.daisyAccent)
-                Text("Summary").font(.headline)
-            }
+        mdSection(title: "Meeting") {
             Text(summary.summary)
-                .font(.callout)
+                .font(.body)
+                .foregroundStyle(.primary)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
 
-            if !summary.actionItems.isEmpty {
-                listBlock(title: "Action items", items: summary.actionItems)
-            }
-            if !summary.decisions.isEmpty {
-                listBlock(title: "Decisions", items: summary.decisions)
-            }
-            if !summary.followUps.isEmpty {
-                listBlock(title: "Follow-ups", items: summary.followUps)
+        if !summary.actionItems.isEmpty {
+            mdSection(title: "Next actions") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(summary.actionItems.enumerated()), id: \.offset) { _, item in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: "square")
+                                .font(.body)
+                                .foregroundStyle(.tertiary)
+                            Text(item)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.daisyAccent.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.daisyAccent.opacity(0.18), lineWidth: 1)
-        )
-    }
 
-    private func listBlock(title: String, items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                HStack(alignment: .top, spacing: 6) {
-                    Text("•").foregroundStyle(.tertiary)
-                    Text(item).font(.callout).textSelection(.enabled)
+        if !summary.clientFollowUp.isEmpty {
+            mdSection(title: "Follow-up for client / partner") {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(summary.clientFollowUp)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
+                        ToastCenter.shared.show("Follow-up draft copied", style: .success)
+                    } label: {
+                        Image(systemName: "doc.on.doc").font(.callout)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Copy the draft message")
                 }
             }
         }
     }
 
+    /// Document-style section: H2-weight heading, hairline rule under
+    /// it, body content. Used for Meeting / Next actions / Follow-up /
+    /// Transcript so the whole detail view reads as a single MD doc.
+    @ViewBuilder
+    private func mdSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Color.daisyTextPrimary)
+                Rectangle()
+                    .fill(Color.daisyDivider)
+                    .frame(height: 0.5)
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - Screenshots
 
     private var screenshotsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "photo.on.rectangle.angled").foregroundStyle(.secondary)
-                Text("Screenshots").font(.headline)
-                Text("(\(session.screenshotURLs.count))")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(session.screenshotURLs, id: \.self) { url in
-                        AsyncImage(url: url) { image in
-                            image.resizable().scaledToFill()
-                        } placeholder: {
-                            Color.gray.opacity(0.2)
-                        }
-                        .frame(width: 160, height: 100)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .onTapGesture(count: 2) {
-                            NSWorkspace.shared.open(url)
-                        }
+        mdSection(title: "Screenshots (\(session.screenshotURLs.count))") {
+            screenshotStrip
+        }
+    }
+
+    private var screenshotStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(session.screenshotURLs, id: \.self) { url in
+                    AsyncImage(url: url) { image in
+                        image.resizable().scaledToFill()
+                    } placeholder: {
+                        Color.gray.opacity(0.2)
+                    }
+                    .frame(width: 160, height: 100)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .onTapGesture(count: 2) {
+                        NSWorkspace.shared.open(url)
                     }
                 }
             }
@@ -285,23 +339,21 @@ struct SessionDetailView: View {
     // MARK: - Transcript
 
     private var transcriptSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                Image(systemName: "text.alignleft").foregroundStyle(.secondary)
-                Text("Transcript").font(.headline)
-            }
+        mdSection(title: "Transcript") {
+            VStack(alignment: .leading, spacing: 12) {
+                speakerMappingSection
 
-            speakerMappingSection
-
-            if session.transcriptText.isEmpty {
-                Text("No transcript text on disk.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            } else {
-                Text(mappedTranscriptText)
-                    .font(.system(.callout, design: .default))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if session.transcriptText.isEmpty {
+                    Text("No transcript text on disk.")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text(mappedTranscriptText)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }

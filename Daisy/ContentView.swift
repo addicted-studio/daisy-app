@@ -72,9 +72,44 @@ struct ContentView: View {
             }
 
             statusRow
-            recordButton
+            HStack(spacing: 8) {
+                recordButton
+                    .frame(maxWidth: .infinity)
+                if showsStopButton {
+                    stopButton
+                }
+            }
         }
         .padding(16)
+    }
+
+    /// Companion to the primary pause/resume capsule. Visible only
+    /// when a session is active (recording or paused) — full stop &
+    /// save is destructive (runs final transcribe + summary + writes
+    /// markdown) so it gets its own deliberate button rather than
+    /// hiding behind the same tap target as pause.
+    private var stopButton: some View {
+        Button {
+            Task { await session.stop() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "stop.fill")
+                    .font(.callout.weight(.semibold))
+                Text("Stop & save")
+                    .font(.callout.weight(.medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .foregroundStyle(Color.daisyTextPrimary)
+            .background(
+                Capsule(style: .continuous).fill(Color.daisyBgElevated)
+            )
+            .overlay(
+                Capsule(style: .continuous).strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Finish the session: run the final transcribe, save markdown, and (if enabled) summarize.")
     }
 
     /// Calendar pull-down — lets the user bind this session to an
@@ -206,6 +241,7 @@ struct ContentView: View {
         case .idle: return .daisyTextTertiary
         case .preparing, .stopping: return .daisyWarning
         case .recording: return .daisyRecording
+        case .paused: return .daisyCenterIdle
         case .summarizing: return .daisyWarning
         case .finished: return .daisySuccess
         case .failed: return .daisyError
@@ -227,6 +263,7 @@ struct ContentView: View {
                 return "Preparing…"
             }
         case .recording: return "Recording locally · on-device transcription"
+        case .paused: return "Paused · capture stopped, session held"
         case .stopping: return "Stopping…"
         case .summarizing: return "Apple Intelligence is summarizing…"
         case .finished: return "Done"
@@ -287,7 +324,8 @@ struct ContentView: View {
 
     private var primaryLabel: String {
         switch session.status {
-        case .recording: return "Stop"
+        case .recording: return "Pause"
+        case .paused: return "Resume"
         case .preparing: return "Preparing…"
         case .stopping:  return "Stopping…"
         case .summarizing: return "Summarizing…"
@@ -297,7 +335,8 @@ struct ContentView: View {
 
     private var primaryIcon: String {
         switch session.status {
-        case .recording: return "stop.fill"
+        case .recording: return "pause.fill"
+        case .paused: return "play.fill"
         case .summarizing: return "sparkles"
         case .preparing, .stopping: return "hourglass"
         default: return "record.circle"
@@ -306,9 +345,11 @@ struct ContentView: View {
 
     /// Solid capsule fill — orange both at rest (Start) and while
     /// recording. Matches `RecordCapsule.fill` in main sidebar.
+    /// Paused uses idle amber so the user reads "held, not live".
     private var primaryFill: Color {
         switch session.status {
         case .recording: return .daisyRecording
+        case .paused: return .daisyCenterIdle
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
         default: return .daisyRecording
@@ -322,47 +363,72 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Summary card
+    /// Whether the popover shows the Stop & save button alongside
+    /// the primary pause/resume control. Visible during an active
+    /// session (recording OR paused) — full finalize is destructive
+    /// so it lives outside the click-to-toggle widget.
+    private var showsStopButton: Bool {
+        switch session.status {
+        case .recording, .paused: return true
+        default: return false
+        }
+    }
+
+    // MARK: - Summary (MD-document style)
+    //
+    // No coloured "AI" card, no sparkles header, no provider badge —
+    // the summary reads as plain document sections so it sits naturally
+    // above the transcript and feels like one working write-up.
 
     @ViewBuilder
     private var summaryCard: some View {
         if let summary = session.summarizer.lastSummary {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(Color.daisyAccent)
-                    Text("Summary")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text("On-device")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            VStack(alignment: .leading, spacing: 16) {
+                mdSection(title: "Meeting") {
+                    Text(summary.summary)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                Text(summary.summary)
-                    .font(.callout)
-                    .textSelection(.enabled)
-
                 if !summary.actionItems.isEmpty {
-                    listSection(title: "Action items", items: summary.actionItems, symbol: "checkmark.circle")
+                    mdSection(title: "Next actions") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(summary.actionItems.enumerated()), id: \.offset) { _, item in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Image(systemName: "square")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                    Text(item)
+                                        .font(.callout)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                    }
                 }
-                if !summary.decisions.isEmpty {
-                    listSection(title: "Decisions", items: summary.decisions, symbol: "flag")
-                }
-                if !summary.followUps.isEmpty {
-                    listSection(title: "Follow-ups", items: summary.followUps, symbol: "questionmark.circle")
+                if !summary.clientFollowUp.isEmpty {
+                    mdSection(title: "Follow-up for client / partner") {
+                        HStack(alignment: .top, spacing: 6) {
+                            Text(summary.clientFollowUp)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
+                                ToastCenter.shared.show("Follow-up draft copied", style: .success)
+                            } label: {
+                                Image(systemName: "doc.on.doc").font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .help("Copy the draft message")
+                        }
+                    }
                 }
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.purple.opacity(0.25), lineWidth: 1)
-            )
         } else if session.summarizer.isSummarizing {
             HStack {
                 ProgressView().controlSize(.small)
@@ -374,24 +440,26 @@ struct ContentView: View {
         }
     }
 
-    private func listSection(title: String, items: [String], symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: symbol)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .padding(.top, 3)
-                    Text(item)
-                        .font(.callout)
-                        .textSelection(.enabled)
-                }
+    /// MD-style section header: H3 weight + hairline divider. Mirrors
+    /// `mdSection` in SessionDetailView so the popover and the main
+    /// window read with the same typographic grammar.
+    @ViewBuilder
+    private func mdSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.daisyTextPrimary)
+                Rectangle()
+                    .fill(Color.daisyDivider)
+                    .frame(height: 0.5)
             }
+            content()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Transcript
@@ -629,8 +697,12 @@ struct ContentView: View {
     private func handlePrimaryAction() {
         switch session.status {
         case .recording:
-            Task { await session.stop() }
-        default:
+            session.pause()
+        case .paused:
+            Task { await session.resume() }
+        case .preparing, .stopping, .summarizing:
+            return
+        case .idle, .finished, .failed:
             if let meeting = selectedMeeting {
                 Task { await session.startFromMeeting(meeting) }
             } else {

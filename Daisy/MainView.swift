@@ -95,7 +95,11 @@ struct MainView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
                 }
-                .padding(.horizontal, 6)
+                // Inner padding sits inside the auto-fitted Liquid
+                // Glass brand pill — bumped from 6 → 12 so the
+                // mark + wordmark have room from the pill's left
+                // and right edges instead of hugging them.
+                .padding(.horizontal, 12)
             }
         }
         // `.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)`
@@ -156,6 +160,17 @@ struct MainView: View {
                 settings.calendarAccessGranted = granted
             }
             ServiceWiring.applyCalendar(settings: settings, session: session)
+        }
+        .onChange(of: settings.mcpServerEnabled) { _, _ in
+            ServiceWiring.applyMCPServer(settings: settings)
+        }
+        .onChange(of: settings.mcpServerPort) { _, _ in
+            // Re-apply when the port changes, but only if the server
+            // is currently enabled — otherwise editing the port
+            // shouldn't side-effect a stopped server.
+            if settings.mcpServerEnabled {
+                ServiceWiring.applyMCPServer(settings: settings)
+            }
         }
     }
 

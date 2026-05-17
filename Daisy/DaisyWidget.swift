@@ -127,19 +127,41 @@ struct DaisyWidget: View {
 
     @ViewBuilder
     private var contextMenuItems: some View {
-        // Primary action — start or stop.
-        if session.status == .recording {
+        // Primary actions adapt to the current state. Click-to-toggle
+        // on the widget handles the pause/resume flow; the right-click
+        // menu is where Stop & save lives because it's destructive and
+        // shouldn't be a stray tap.
+        switch session.status {
+        case .recording:
+            Button {
+                session.pause()
+            } label: {
+                Label("Pause", systemImage: "pause.fill")
+            }
             Button {
                 Task { await session.stop() }
             } label: {
-                Label("Stop recording", systemImage: "stop.fill")
+                Label("Stop & save", systemImage: "stop.fill")
             }
-        } else if canStartFromHere(session.status) {
+        case .paused:
+            Button {
+                Task { await session.resume() }
+            } label: {
+                Label("Resume", systemImage: "play.fill")
+            }
+            Button {
+                Task { await session.stop() }
+            } label: {
+                Label("Stop & save", systemImage: "stop.fill")
+            }
+        case .idle, .finished, .failed:
             Button {
                 Task { await session.start() }
             } label: {
                 Label("Start recording", systemImage: "record.circle")
             }
+        case .preparing, .stopping, .summarizing:
+            EmptyView()
         }
 
         Divider()
@@ -232,6 +254,10 @@ struct DaisyWidget: View {
             return max(0.12, bands[bandIndex])
         case .preparing, .stopping, .summarizing:
             return 0.60
+        case .paused:
+            // Paused reads as "held" — petals settled, not animating
+            // with the (now-zero) spectrum bands.
+            return 0.30
         case .idle, .finished, .failed:
             return 0.30
         }
@@ -251,6 +277,10 @@ struct DaisyWidget: View {
             return Color.white.opacity(opacity)
         case .recording:
             return Color(white: 0.97)
+        case .paused:
+            // Slightly dimmer than recording so paused reads as
+            // "still here, but quiet".
+            return Color.white.opacity(0.78)
         case .idle:
             return Color.white.opacity(0.72)
         case .finished, .failed:
@@ -289,6 +319,11 @@ struct DaisyWidget: View {
         switch status {
         // Recording = macOS systemOrange (inherits the OS mic-active dot).
         case .recording: return .daisyRecording
+        // Paused = dim amber. Distinct from idle (cool white) and
+        // recording (bright orange) so the widget reads as "held"
+        // at a glance — same hue family as recording so the user
+        // doesn't think the session ended.
+        case .paused: return Color.daisyCenterIdle
         // Finished + processing → plain white. The "done" celebration
         // is the scale-pop animation, not a colour change.
         case .preparing, .stopping, .summarizing, .finished: return Color.white.opacity(0.92)
@@ -302,7 +337,8 @@ struct DaisyWidget: View {
     private var tooltip: String {
         switch session.status {
         case .idle: return "Click to record"
-        case .recording: return "Click to stop"
+        case .recording: return "Click to pause"
+        case .paused: return "Click to resume · right-click for Stop & save"
         case .preparing: return "Preparing…"
         case .stopping: return "Stopping…"
         case .summarizing: return "Summarizing…"
@@ -314,7 +350,8 @@ struct DaisyWidget: View {
     private var accessibilityLabel: String {
         switch session.status {
         case .idle: return "Daisy. Start recording."
-        case .recording: return "Daisy. Recording. Tap to stop."
+        case .recording: return "Daisy. Recording. Tap to pause."
+        case .paused: return "Daisy. Paused. Tap to resume."
         case .preparing: return "Daisy. Preparing to record."
         case .stopping: return "Daisy. Stopping."
         case .summarizing: return "Daisy. Summarizing transcript."
@@ -335,7 +372,9 @@ struct DaisyWidget: View {
     private func togglePrimary() {
         switch session.status {
         case .recording:
-            Task { await session.stop() }
+            session.pause()
+        case .paused:
+            Task { await session.resume() }
         case .preparing, .stopping, .summarizing:
             return
         default:

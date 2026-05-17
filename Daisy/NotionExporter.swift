@@ -120,28 +120,19 @@ actor NotionExporter {
         }
 
         if let summary = data.summary {
-            children.append(heading2("Summary"))
+            children.append(heading2("Meeting"))
             children.append(paragraph(summary.summary))
 
             if !summary.actionItems.isEmpty {
-                children.append(heading2("Action items"))
+                children.append(heading2("Next actions"))
                 for item in summary.actionItems {
                     children.append(todo(item))
                 }
             }
 
-            if !summary.decisions.isEmpty {
-                children.append(heading2("Decisions"))
-                for item in summary.decisions {
-                    children.append(bullet(item))
-                }
-            }
-
-            if !summary.followUps.isEmpty {
-                children.append(heading2("Follow-ups"))
-                for item in summary.followUps {
-                    children.append(bullet(item))
-                }
+            if !summary.clientFollowUp.isEmpty {
+                children.append(heading2("Follow-up for client / partner"))
+                children.append(paragraph(summary.clientFollowUp))
             }
 
             children.append(divider())

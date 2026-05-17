@@ -14,13 +14,25 @@ struct HistoryView: View {
     @Bindable var store = SessionStore.shared
     @Bindable var folders = FolderStore.shared
     @State private var query: String = ""
-    @State private var selectedID: StoredSession.ID?
+    /// Selected session IDs. Multi-select via Shift-click (range)
+    /// and Cmd-click (toggle). When exactly one is selected, the
+    /// detail pane shows it. When several, the pane shows a "N
+    /// selected" empty-state with a bulk-delete CTA.
+    @State private var selectedIDs: Set<StoredSession.ID> = []
     /// Active folder filter. `nil` = show all folders.
     @State private var folderFilter: SessionFolder? = nil
-    /// Pending delete confirmation — holds the session about to be
-    /// removed. `nil` means no confirmation pending.
-    @State private var pendingDelete: StoredSession? = nil
+    /// Pending delete confirmation. Carries the sessions about to
+    /// be removed (1 for context-menu, N for multi-select).
+    @State private var pendingDelete: [StoredSession] = []
     @State private var refreshRotation: Double = 0
+
+    /// Single selected session, used as a derived view for the
+    /// detail pane. `nil` when 0 or >1 selected.
+    private var singleSelected: StoredSession? {
+        guard selectedIDs.count == 1,
+              let id = selectedIDs.first else { return nil }
+        return store.sessions.first(where: { $0.id == id })
+    }
 
     var body: some View {
         // Plain HStack instead of NavigationSplitView — we don't need
@@ -49,29 +61,82 @@ struct HistoryView: View {
         .frame(minWidth: 760, minHeight: 480)
         .task { await store.refresh() }
         .onAppear {
-            if selectedID == nil {
-                selectedID = store.sessions.first?.id
+            if selectedIDs.isEmpty, let first = store.sessions.first?.id {
+                selectedIDs = [first]
             }
+        }
+        // Backspace / forward-Delete on the History view trigger the
+        // bulk-delete confirmation. `.onDeleteCommand` only fires
+        // when the responder chain has a focused view that opted in —
+        // our rows use a manual gesture model, so the List never
+        // receives focus and `.onDeleteCommand` never fires. Hidden
+        // buttons with `.keyboardShortcut` work without focus.
+        //
+        // `.disabled(...)` guards both buttons so neither hijacks
+        // Backspace while the user is typing in the search field
+        // (TextField captures the key first anyway, but this is
+        // belt-and-braces).
+        .background {
+            Group {
+                Button("Delete selected sessions") {
+                    requestBulkDelete()
+                }
+                .keyboardShortcut(.delete, modifiers: [])
+
+                Button("Forward-delete selected sessions") {
+                    requestBulkDelete()
+                }
+                .keyboardShortcut(.deleteForward, modifiers: [])
+            }
+            .hidden()
+            .disabled(selectedIDs.isEmpty)
         }
         .alert(
-            "Delete this session?",
+            deleteAlertTitle,
             isPresented: Binding(
-                get: { pendingDelete != nil },
-                set: { if !$0 { pendingDelete = nil } }
-            ),
-            presenting: pendingDelete
-        ) { session in
-            Button("Cancel", role: .cancel) { pendingDelete = nil }
+                get: { !pendingDelete.isEmpty },
+                set: { if !$0 { pendingDelete = [] } }
+            )
+        ) {
+            Button("Cancel", role: .cancel) { pendingDelete = [] }
             Button("Delete", role: .destructive) {
+                let victims = pendingDelete
                 Task {
-                    await store.delete(session)
-                    if selectedID == session.id { selectedID = nil }
-                    pendingDelete = nil
+                    if victims.count == 1, let only = victims.first {
+                        await store.delete(only)
+                    } else {
+                        await store.deleteMany(victims)
+                    }
+                    selectedIDs.subtract(victims.map(\.id))
+                    pendingDelete = []
                 }
             }
-        } message: { _ in
-            Text("Audio, transcript, summary and screenshots will be removed from disk. This can't be undone.")
+        } message: {
+            Text(deleteAlertMessage)
         }
+    }
+
+    /// Resolve the current selection into a delete-confirmation
+    /// request. No-op if nothing's selected. Shared by the Backspace
+    /// shortcut and (potentially) any future bulk-delete button.
+    private func requestBulkDelete() {
+        let toDelete = store.sessions.filter { selectedIDs.contains($0.id) }
+        guard !toDelete.isEmpty else { return }
+        pendingDelete = toDelete
+    }
+
+    private var deleteAlertTitle: String {
+        let n = pendingDelete.count
+        if n <= 1 { return "Delete this session?" }
+        return "Delete \(n) sessions?"
+    }
+
+    private var deleteAlertMessage: String {
+        let n = pendingDelete.count
+        if n <= 1 {
+            return "Audio, transcript, summary and screenshots will be removed from disk. This can't be undone."
+        }
+        return "Audio, transcript, summary and screenshots for all \(n) sessions will be removed from disk. This can't be undone."
     }
 
     // MARK: - Row context menu
@@ -80,6 +145,10 @@ struct HistoryView: View {
     /// Send to Notion / Send to Claude / Reveal / Delete. Skips
     /// "Re-summarize" because that's a heavy async op better
     /// triggered from the detail view's banner-feedback flow.
+    ///
+    /// If the user right-clicked a row that's part of a multi-
+    /// selection, Delete applies to the whole selection (matches
+    /// Finder behaviour). Otherwise it acts on just this row.
     @ViewBuilder
     private func sessionContextMenu(for session: StoredSession) -> some View {
         Menu {
@@ -110,9 +179,19 @@ struct HistoryView: View {
         }
         Divider()
         Button(role: .destructive) {
-            pendingDelete = session
+            let multi = store.sessions.filter { selectedIDs.contains($0.id) }
+            if multi.count > 1, multi.contains(where: { $0.id == session.id }) {
+                pendingDelete = multi
+            } else {
+                pendingDelete = [session]
+            }
         } label: {
-            Label("Delete", systemImage: "trash")
+            let multi = selectedIDs.count
+            if multi > 1 && selectedIDs.contains(session.id) {
+                Label("Delete \(multi) selected", systemImage: "trash")
+            } else {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 
@@ -158,13 +237,14 @@ struct HistoryView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
 
-            // Tap-based selection — `List(selection:)` on `.plain`
-            // paints its own system gray fill that we couldn't fully
-            // suppress with `.listRowBackground`. Dropping the
-            // selection binding kills the system paint entirely; we
-            // handle highlight + tap manually for full colour
-            // control. Trade-off: arrow-key navigation between rows
-            // is lost. Mouse + context-menu still work.
+            // Manual selection model so we keep brand-coloured highlight
+            // instead of the system gray that `List(selection:)` paints
+            // on `.plain`. Shift / Cmd-click are handled here:
+            //   • bare click  → select only this row
+            //   • Cmd-click   → toggle this row in the selection
+            //   • Shift-click → extend selection from anchor to this row
+            // (matches Finder / Mail conventions). Anchor is the last
+            // row that was selected by a bare click.
             List {
                 ForEach(filteredSessions) { session in
                     SessionRow(session: session)
@@ -174,14 +254,12 @@ struct HistoryView: View {
                         .padding(.vertical, 4)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(session.id == selectedID
+                                .fill(selectedIDs.contains(session.id)
                                       ? Color.daisyAccent.opacity(0.18)
                                       : Color.clear)
                         )
                         .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedID = session.id
-                        }
+                        .gesture(rowTapGesture(for: session))
                         .contextMenu {
                             sessionContextMenu(for: session)
                         }
@@ -211,10 +289,58 @@ struct HistoryView: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if let id = selectedID, let session = store.sessions.first(where: { $0.id == id }) {
+        if let session = singleSelected {
             SessionDetailView(session: session)
+        } else if selectedIDs.count > 1 {
+            multiSelectDetail
         } else {
             emptyDetail
+        }
+    }
+
+    private var multiSelectDetail: some View {
+        ContentUnavailableView {
+            Label("\(selectedIDs.count) sessions selected", systemImage: "doc.on.doc")
+        } description: {
+            Text("Press ⌫ to delete the selection, or click a single row to read its transcript.")
+        } actions: {
+            Button(role: .destructive) {
+                pendingDelete = store.sessions.filter { selectedIDs.contains($0.id) }
+            } label: {
+                Label("Delete \(selectedIDs.count) sessions…", systemImage: "trash")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.daisyError)
+        }
+    }
+
+    /// SwiftUI gesture that runs the multi-select / single-select
+    /// logic. Read the current event's modifier flags from NSEvent
+    /// (SwiftUI's `.onTapGesture` doesn't carry modifiers).
+    private func rowTapGesture(for session: StoredSession) -> some Gesture {
+        TapGesture().onEnded {
+            let mods = NSEvent.modifierFlags
+            if mods.contains(.shift), let anchor = selectedIDs.first ?? store.sessions.first?.id {
+                // Range select between anchor and this row.
+                let ids = filteredSessions.map(\.id)
+                if let a = ids.firstIndex(of: anchor),
+                   let b = ids.firstIndex(of: session.id) {
+                    let range = a <= b ? a...b : b...a
+                    selectedIDs = Set(ids[range])
+                    return
+                }
+                selectedIDs = [session.id]
+            } else if mods.contains(.command) {
+                // Toggle this row in the selection.
+                if selectedIDs.contains(session.id) {
+                    selectedIDs.remove(session.id)
+                } else {
+                    selectedIDs.insert(session.id)
+                }
+            } else {
+                // Bare click — single select.
+                selectedIDs = [session.id]
+            }
         }
     }
 

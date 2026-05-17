@@ -23,12 +23,18 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     case appleIntelligence
     case anthropic
     case openai
+    /// Talks to a user-configured local MCP server that wraps a
+    /// local LLM (Ollama / llama.cpp / LM Studio via an MCP shim).
+    /// Closes the language gap Apple Intelligence leaves around RU,
+    /// UA, PL and friends without any data leaving the Mac.
+    case mcp
 
     var displayName: String {
         switch self {
         case .appleIntelligence: return "Apple Intelligence (on-device)"
         case .anthropic: return "Anthropic Claude API"
         case .openai: return "OpenAI GPT API"
+        case .mcp: return "Local LLM via MCP"
         }
     }
 
@@ -37,15 +43,16 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .appleIntelligence: return "Apple Intelligence"
         case .anthropic: return "Anthropic"
         case .openai: return "OpenAI"
+        case .mcp: return "MCP"
         }
     }
 
     var isLocal: Bool {
-        self == .appleIntelligence
+        self == .appleIntelligence || self == .mcp
     }
 
     var requiresAPIKey: Bool {
-        self != .appleIntelligence
+        self == .anthropic || self == .openai
     }
 
     var privacyTag: String {
@@ -56,6 +63,8 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
             return "Transcript is sent to api.anthropic.com using your API key."
         case .openai:
             return "Transcript is sent to api.openai.com using your API key."
+        case .mcp:
+            return "Transcript is sent to your configured MCP server. Stays on this Mac if the server is on 127.0.0.1."
         }
     }
 }
@@ -137,13 +146,12 @@ enum SummaryPrompt {
         before or after. The JSON must match this exact schema:
 
         {
-          "summary": "2-4 sentence overview of the meeting",
-          "actionItems": ["Imperative action item", "..."],
-          "followUps": ["Open question or unresolved topic", "..."],
-          "decisions": ["Concrete decision made", "..."]
+          "summary": "2-4 sentence overview of what the meeting was about and what was discussed",
+          "actionItems": ["Imperative next step the participants will take after the call, e.g. 'Send invoice to client'", "..."],
+          "clientFollowUp": "Ready-to-send follow-up message a client or partner could receive. Second person, polite-professional, 80-180 words, no greeting boilerplate beyond one short opener. Empty string if the meeting had no external counterpart."
         }
 
-        Empty arrays are acceptable. Write all text in \(lang).
+        Empty arrays and empty strings are acceptable. Write all text in \(lang).
         """
     }
 
@@ -161,23 +169,25 @@ enum SummaryPrompt {
 
 /// Cloud providers respond as JSON text; this DTO is decoded from that
 /// text and then mapped into the canonical `MeetingSummary` struct.
-struct CloudSummaryDTO: Codable {
+/// Marked `nonisolated` (along with its extension below) so the
+/// `nonisolated` providers — Anthropic, OpenAI, MCP — can decode
+/// without an actor hop. The struct holds only Sendable scalars,
+/// so cross-actor use is safe.
+nonisolated struct CloudSummaryDTO: Codable {
     let summary: String
     let actionItems: [String]?
-    let followUps: [String]?
-    let decisions: [String]?
+    let clientFollowUp: String?
 
     func toMeetingSummary() -> MeetingSummary {
         MeetingSummary(
             summary: summary,
             actionItems: actionItems ?? [],
-            followUps: followUps ?? [],
-            decisions: decisions ?? []
+            clientFollowUp: clientFollowUp ?? ""
         )
     }
 }
 
-extension CloudSummaryDTO {
+nonisolated extension CloudSummaryDTO {
     /// Tolerant decoder: many models wrap JSON in ```json … ``` fences
     /// despite the prompt asking them not to. Strip those before decode.
     static func decode(from text: String) throws -> CloudSummaryDTO {

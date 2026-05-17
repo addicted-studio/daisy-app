@@ -160,6 +160,32 @@ final class Transcriber {
         }
     }
 
+    /// Soft pause. Kill the live re-transcribe timer so no rolling
+    /// Whisper passes run while we're paused — but keep the
+    /// consumerTask alive (no audio is flowing anyway because the
+    /// upstream capture is paused), keep accumulated segments
+    /// visible, keep `isRunning == true` so the rest of the app
+    /// reads us as "still in a session".
+    func pause() {
+        guard isRunning else { return }
+        liveTimer?.invalidate()
+        liveTimer = nil
+        // Wait out any in-flight transcribe in a detached task so
+        // we don't block the UI. If it finishes after we resume,
+        // its result will land on the same segment maps.
+    }
+
+    /// Re-arm the live re-transcribe timer.
+    func resume() {
+        guard isRunning, liveTimer == nil else { return }
+        liveTimer = Timer.scheduledTimer(withTimeInterval: liveIntervalSec, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let strong = self else { return }
+                strong.kickLiveTranscribe()
+            }
+        }
+    }
+
     func stop() async {
         guard isRunning else { return }
         liveTimer?.invalidate()

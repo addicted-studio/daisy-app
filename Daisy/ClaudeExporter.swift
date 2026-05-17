@@ -28,22 +28,17 @@ enum ClaudeExporter {
         lines.append("")
 
         if let summary = data.summary {
-            lines.append("## Summary")
+            lines.append("## Meeting")
             lines.append(summary.summary)
             lines.append("")
             if !summary.actionItems.isEmpty {
-                lines.append("## Action items")
+                lines.append("## Next actions")
                 for item in summary.actionItems { lines.append("- [ ] \(item)") }
                 lines.append("")
             }
-            if !summary.decisions.isEmpty {
-                lines.append("## Decisions")
-                for d in summary.decisions { lines.append("- \(d)") }
-                lines.append("")
-            }
-            if !summary.followUps.isEmpty {
-                lines.append("## Follow-ups")
-                for f in summary.followUps { lines.append("- \(f)") }
+            if !summary.clientFollowUp.isEmpty {
+                lines.append("## Follow-up draft for client / partner")
+                lines.append(summary.clientFollowUp)
                 lines.append("")
             }
         }
@@ -57,8 +52,8 @@ enum ClaudeExporter {
         lines.append("---")
         lines.append("")
         lines.append("Please:")
-        lines.append("1. Confirm the action items capture everything important — flag anything I'm missing.")
-        lines.append("2. Draft a short follow-up message I can send to the other party.")
+        lines.append("1. Confirm the next actions capture everything important — flag anything I'm missing.")
+        lines.append("2. Tighten the follow-up draft (or write one if it's empty) so I can send it as-is.")
         lines.append("3. If you spot any commitments I made that I should track, list them separately.")
 
         return lines.joined(separator: "\n")

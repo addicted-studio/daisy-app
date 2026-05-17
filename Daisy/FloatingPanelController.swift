@@ -15,15 +15,23 @@ import Observation
 @MainActor
 final class FloatingPanelController {
     private let session: RecordingSession
+    private let settings: AppSettings
     private var panel: NSPanel?
+    /// Secondary panel anchored above the daisy that hosts the
+    /// "Are we done?" bubble. Built lazily; lives only while
+    /// `session.silenceMonitor.questionVisible == true`.
+    private var bubblePanel: NSPanel?
     private var hasPositionedOnce = false
     /// When set, the panel stays hidden until this date — regardless of
     /// session status. Set by the right-click "Hide for…" menu.
     private var suspendedUntil: Date?
 
-    init(session: RecordingSession) {
+    init(session: RecordingSession, settings: AppSettings) {
         self.session = session
+        self.settings = settings
         startObserving()
+        startObservingSettings()
+        startObservingSilence()
         // Re-anchor if the user changes display layout.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -92,18 +100,154 @@ final class FloatingPanelController {
         }
     }
 
+    /// Parallel observation hook for `settings.floatingWidgetEnabled`.
+    /// Re-applies visibility immediately so toggling the master
+    /// switch in Settings shows/hides the panel without needing a
+    /// session-status change to retrigger.
+    private func startObservingSettings() {
+        withObservationTracking {
+            _ = settings.floatingWidgetEnabled
+        } onChange: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.applyVisibility(for: self.session.status)
+                self.startObservingSettings()
+            }
+        }
+    }
+
     private func applyVisibility(for status: RecordingSession.Status) {
+        // Master switch: the floating widget is opt-in (Settings →
+        // Capture → "Show floating widget"). When OFF, the panel
+        // never appears regardless of session state.
+        guard settings.floatingWidgetEnabled else {
+            hide()
+            return
+        }
         switch status {
-        case .recording, .summarizing, .preparing, .stopping, .finished, .failed:
+        case .recording, .paused, .summarizing, .preparing, .stopping, .finished, .failed:
             // Daisy stays on screen through the whole arc — including
             // the brief `.stopping` transition (was causing a flicker
             // when going stopping → summarizing) and after the session
             // ends, until the user explicitly starts a new one or hides
-            // it via the right-click menu.
+            // it via the right-click menu. `.paused` keeps the widget
+            // visible so the user can tap to resume.
             show()
         case .idle:
             hide()
         }
+    }
+
+    /// Re-evaluate visibility against the current session state.
+    /// Called by MainView when `settings.floatingWidgetEnabled`
+    /// flips, so the widget appears/disappears the moment the
+    /// toggle changes without needing a status change to retrigger.
+    func reevaluateVisibility() {
+        applyVisibility(for: session.status)
+    }
+
+    // MARK: - Silence bubble
+
+    /// Watches `session.silenceMonitor.questionVisible` and shows /
+    /// hides the bubble panel accordingly. Self-rearming, same shape
+    /// as `startObserving()`.
+    private func startObservingSilence() {
+        applyBubbleVisibility()
+        withObservationTracking {
+            _ = session.silenceMonitor.questionVisible
+        } onChange: {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.applyBubbleVisibility()
+                self.startObservingSilence()
+            }
+        }
+    }
+
+    private func applyBubbleVisibility() {
+        let shouldShow = settings.floatingWidgetEnabled
+            && session.silenceMonitor.questionVisible
+            && session.status == .recording
+        if shouldShow {
+            showBubble()
+        } else {
+            hideBubble()
+        }
+    }
+
+    private func showBubble() {
+        if bubblePanel == nil { buildBubblePanel() }
+        positionBubble()
+        bubblePanel?.orderFrontRegardless()
+    }
+
+    private func hideBubble() {
+        bubblePanel?.orderOut(nil)
+    }
+
+    private func buildBubblePanel() {
+        let bubble = SilenceBubble(
+            onConfirm: { [weak self] in
+                guard let self else { return }
+                self.session.silenceMonitor.acknowledge()
+                Task { await self.session.stop() }
+            },
+            onDismiss: { [weak self] in
+                self?.session.silenceMonitor.snooze()
+            }
+        )
+        let hosting = NSHostingController(rootView: bubble)
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.backgroundColor = CGColor.clear
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 260, height: 92),
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .stationary,
+            .fullScreenAuxiliary,
+            .ignoresCycle
+        ]
+        panel.isMovableByWindowBackground = false
+        panel.isReleasedWhenClosed = false
+        panel.hidesOnDeactivate = false
+        panel.contentViewController = hosting
+        panel.contentView?.wantsLayer = true
+        panel.contentView?.layer?.backgroundColor = CGColor.clear
+        // Make the bubble accept clicks without stealing focus from
+        // whatever the user was just doing.
+        panel.becomesKeyOnlyIfNeeded = true
+        self.bubblePanel = panel
+    }
+
+    /// Park the bubble above the daisy panel, horizontally centered.
+    /// Falls back to top-right of the screen if the daisy panel has
+    /// no frame yet (early startup race).
+    private func positionBubble() {
+        guard let bubblePanel else { return }
+        let bubbleSize = bubblePanel.frame.size
+        let anchor: NSRect = panel?.frame ?? defaultBubbleAnchor()
+        let x = anchor.midX - bubbleSize.width / 2
+        // 8pt gap between the bubble's bottom edge and the daisy's
+        // top edge.
+        let y = anchor.maxY + 8
+        bubblePanel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func defaultBubbleAnchor() -> NSRect {
+        guard let screen = NSScreen.main else {
+            return NSRect(x: 100, y: 100, width: 80, height: 80)
+        }
+        let visible = screen.visibleFrame
+        return NSRect(x: visible.maxX - 120, y: visible.maxY - 160, width: 80, height: 80)
     }
 
     // MARK: - Panel construction

@@ -19,6 +19,13 @@ final class RecordingSession {
         case idle
         case preparing
         case recording
+        /// Soft pause: audio capture stopped and live transcription
+        /// halted, but the session is preserved. On `resume()` we
+        /// reopen the capture pipelines and keep appending to the
+        /// same audio archive + transcript. From `paused` you can
+        /// either `resume()` (back to .recording) or `stop()`
+        /// (full finalize, summary, etc.).
+        case paused
         case stopping
         case summarizing
         case finished
@@ -57,6 +64,13 @@ final class RecordingSession {
     let screenshots: ScreenshotCapture
     let micTranscriber: Transcriber
     let systemTranscriber: Transcriber
+    /// Watches recorder.levelDB during recording and flips
+    /// `questionVisible` after ~3 min of continuous quiet so the
+    /// floating widget can pop an "Are we done?" callout. The
+    /// session owns it (matches start/pause/resume/stop lifecycle).
+    /// `var` (not `let`) only so the init can assign a `self`-aware
+    /// monitor after the rest of the stored state is up.
+    private(set) var silenceMonitor: SilenceMonitor!
 
     // Re-exported recorder state.
     var elapsed: TimeInterval { recorder.elapsed }
@@ -78,6 +92,17 @@ final class RecordingSession {
     private let systemAudio: SystemAudioCapture
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Session")
 
+    /// Schedule that fires the actual Stop & save at calendar end +
+    /// grace. Lifecycle owned by start/stop/reset.
+    private var autoStopTimer: Timer?
+    /// Schedule that fires 30s before `autoStopTimer` to give the
+    /// user a Cancel-able warning toast.
+    private var autoStopWarningTimer: Timer?
+    /// Set true when the user clicks "Keep going" on the warning
+    /// toast — suppresses any further auto-stop attempts in this
+    /// session (no point pestering them every 30s).
+    private var autoStopSuppressed: Bool = false
+
     init(settings: AppSettings, localeIdentifier: String = "auto") {
         self.settings = settings
         self.localeIdentifier = localeIdentifier
@@ -87,6 +112,8 @@ final class RecordingSession {
         self.systemTranscriber = Transcriber(localeIdentifier: localeIdentifier, source: .systemAudio)
         self.summarizer = Summarizer.shared
         self.screenshots = ScreenshotCapture()
+        self.silenceMonitor = nil  // assigned below once `self` is usable
+        self.silenceMonitor = SilenceMonitor(session: self)
 
         // Preload the Whisper + diarization models so the first
         // Record click is instant and the post-process speaker
@@ -98,17 +125,21 @@ final class RecordingSession {
 
     // MARK: - Lifecycle
 
-    /// Convenience for global hotkey / auto-start triggers: start if
-    /// idle/finished/failed, stop if recording, no-op otherwise.
+    /// Convenience for global hotkey / widget tap: start if idle/
+    /// finished/failed, pause if recording, resume if paused.
     /// Transitional states (preparing/stopping/summarizing) are
-    /// intentionally ignored so a hammered hotkey can't interrupt
-    /// in-flight work.
+    /// ignored so a hammered hotkey can't interrupt in-flight work.
+    /// Note: the hotkey/widget never *fully stops* a session — that
+    /// requires the explicit Stop & save action from the popover or
+    /// the widget's right-click menu.
     func toggleByHotkey() async {
         switch status {
         case .idle, .finished, .failed:
             await start()
         case .recording:
-            await stop()
+            pause()
+        case .paused:
+            await resume()
         case .preparing, .stopping, .summarizing:
             return
         }
@@ -201,15 +232,159 @@ final class RecordingSession {
             let screenshotsDir = dir.appendingPathComponent("screenshots", isDirectory: true)
             await screenshots.start(intervalSec: settings.screenshotIntervalSec, into: screenshotsDir)
         }
+
+        // Calendar-bound sessions can opt into auto-stop at end+grace.
+        scheduleAutoStopIfNeeded()
+        silenceMonitor.start()
+    }
+
+    // MARK: - Auto-stop (calendar-bound)
+
+    /// Schedule the auto-stop fire + 30s warning toast if the
+    /// session is bound to a calendar event AND the user has the
+    /// auto-stop preference on. No-op otherwise (manual sessions are
+    /// never auto-stopped).
+    private func scheduleAutoStopIfNeeded() {
+        cancelAutoStop()
+        autoStopSuppressed = false
+        guard settings.autoStopFromCalendar,
+              let meeting = boundMeeting else { return }
+        let now = Date()
+        let fireDate = meeting.endDate.addingTimeInterval(TimeInterval(settings.autoStopGraceSec))
+        guard fireDate > now else { return }
+
+        // Warning toast fires up to 30s before the actual stop —
+        // gives the user a chance to Cancel without the stop hitting
+        // mid-sentence. Skip the warning if the entire grace window
+        // is shorter than 30s.
+        let warningLead: TimeInterval = 30
+        let warningDate = fireDate.addingTimeInterval(-warningLead)
+        if warningDate > now {
+            autoStopWarningTimer = Timer.scheduledTimer(
+                withTimeInterval: warningDate.timeIntervalSince(now),
+                repeats: false
+            ) { [weak self] _ in
+                // Rebind to a strong `let` so the Task closure
+                // captures by value — otherwise Swift 6 flags the
+                // outer `weak self` var as a captured mutable
+                // reference crossing concurrency boundaries.
+                guard let self else { return }
+                Task { @MainActor in self.fireAutoStopWarning() }
+            }
+        }
+
+        autoStopTimer = Timer.scheduledTimer(
+            withTimeInterval: fireDate.timeIntervalSince(now),
+            repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in await self.performAutoStop() }
+        }
+        log.info("Auto-stop scheduled for \(fireDate.description, privacy: .public)")
+    }
+
+    private func cancelAutoStop() {
+        autoStopTimer?.invalidate()
+        autoStopWarningTimer?.invalidate()
+        autoStopTimer = nil
+        autoStopWarningTimer = nil
+    }
+
+    private func fireAutoStopWarning() {
+        guard status == .recording || status == .paused, !autoStopSuppressed else { return }
+        ToastCenter.shared.showAction(
+            "Meeting ended — Daisy will stop & save in 30 seconds.",
+            actionLabel: "Keep going",
+            style: .warning,
+            duration: .seconds(30)
+        ) { [weak self] in
+            guard let self else { return }
+            self.cancelAutoStop()
+            self.autoStopSuppressed = true
+            ToastCenter.shared.show("Auto-stop cancelled for this session.", style: .info)
+        }
+    }
+
+    private func performAutoStop() async {
+        guard status == .recording || status == .paused, !autoStopSuppressed else { return }
+        ToastCenter.shared.show("Meeting ended — stopping & saving.", style: .info, duration: .seconds(2))
+        await stop()
+    }
+
+    // MARK: - Pause / Resume
+
+    /// Soft pause. Audio capture and live transcription halt but the
+    /// session state is preserved: same directory, same audio files,
+    /// same accumulated segments. No celebration animation, no
+    /// summary run — just a quiet hold. On `resume()` we re-open the
+    /// pipelines and continue appending to the same archives.
+    ///
+    /// Privacy intent: clicking the floating widget mid-meeting
+    /// shouldn't capture a side-conversation you didn't intend to
+    /// record. Pause cuts the input stream entirely, not just the
+    /// live transcript view.
+    func pause() {
+        guard status == .recording else { return }
+        recorder.pause()
+        Task { await systemAudio.pause() }
+        micTranscriber.pause()
+        systemTranscriber.pause()
+        screenshots.stop()
+        silenceMonitor.pause()
+        status = .paused
+        log.info("Session paused after \(self.elapsed, privacy: .public)s")
+    }
+
+    /// Resume a paused session. Audio capture restarts; the existing
+    /// audio archive is appended to so the .caf file ends up as one
+    /// continuous recording (gaps are simply absent, not silent).
+    func resume() async {
+        guard status == .paused else { return }
+        do {
+            try recorder.resume()
+        } catch {
+            log.error("Resume mic failed: \(error.localizedDescription, privacy: .public)")
+            status = .failed("Couldn't resume mic capture: \(error.localizedDescription)")
+            return
+        }
+        if settings.captureSystemAudio {
+            do {
+                try await systemAudio.resume()
+            } catch {
+                log.error("Resume system audio failed: \(error.localizedDescription, privacy: .public)")
+                // Soft-fail: continue mic-only, same as during start.
+            }
+        }
+        micTranscriber.resume()
+        systemTranscriber.resume()
+        if settings.screenshotsEnabled, let dir = sessionDirectory {
+            let screenshotsDir = dir.appendingPathComponent("screenshots", isDirectory: true)
+            await screenshots.start(intervalSec: settings.screenshotIntervalSec, into: screenshotsDir)
+        }
+        silenceMonitor.resume()
+        status = .recording
+        log.info("Session resumed")
     }
 
     func stop() async {
-        guard status == .recording else { return }
+        // Full finalize — explicit user action. Allowed from both
+        // .recording and .paused (the latter so the user can pause
+        // first, change their mind, then commit). Anything else is a
+        // no-op so transient states aren't interrupted.
+        guard status == .recording || status == .paused else { return }
+        if status == .paused {
+            // Make sure any half-open paused pipelines are fully
+            // torn down before the final transcribe.
+            recorder.stop()
+            await systemAudio.stop()
+        }
         status = .stopping
 
         recorder.stop()
         await systemAudio.stop()
         screenshots.stop()
+        silenceMonitor.stop()
+        cancelAutoStop()
 
         // Defensive: if the user hit Stop within ~1 second of Start
         // (or any other path that didn't actually capture audio),
@@ -288,6 +463,8 @@ final class RecordingSession {
         micTranscriber.reset()
         systemTranscriber.reset()
         screenshots.stop()
+        silenceMonitor.stop()
+        cancelAutoStop()
         summarizer.clear()
         sessionDirectory = nil
         micArchiveURL = nil
@@ -358,10 +535,22 @@ final class RecordingSession {
         status = priorStatus
     }
 
-    /// Two-letter ISO code derived from `localeIdentifier`. Passed to
-    /// the summary provider so cloud LLMs answer in the same language
-    /// as the transcript. `nil` for auto-detect.
+    /// Two-letter ISO code that pins the *summary* language. Order of
+    /// precedence:
+    ///   1. `settings.summaryLanguage` — user's explicit override
+    ///      ("write the summary in English regardless of transcript
+    ///      language"). The most common reason to set it is recording
+    ///      in one language but reading the summary in another.
+    ///   2. Transcript locale (`localeIdentifier`) — historical
+    ///      default. Cloud LLMs answer in the transcript's language.
+    ///   3. `nil` — auto-detect from transcript content.
     private var localeHintForSummary: String? {
+        // 1. Explicit override.
+        let override = settings.summaryLanguage
+        if !override.isEmpty, override != SummaryLanguage.auto.id {
+            return override
+        }
+        // 2. Fall back to transcript locale.
         let prefix = localeIdentifier
             .split(separator: "-")
             .first

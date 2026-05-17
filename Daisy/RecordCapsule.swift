@@ -29,7 +29,7 @@ struct RecordCapsule: View {
                     .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if session.status == .recording {
+                if session.status == .recording || session.status == .paused {
                     Text(formatTime(session.elapsed))
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.85))
@@ -59,9 +59,14 @@ struct RecordCapsule: View {
     // MARK: - Action
 
     private func handleTap() {
+        // Sidebar capsule mirrors the widget: tap toggles
+        // pause/resume during an active session. Stop & save is the
+        // dedicated Stop button in the popover / kebab — not here.
         switch session.status {
         case .recording:
-            Task { await session.stop() }
+            session.pause()
+        case .paused:
+            Task { await session.resume() }
         case .idle, .finished, .failed:
             Task { await session.start() }
         case .preparing, .stopping, .summarizing:
@@ -73,7 +78,8 @@ struct RecordCapsule: View {
 
     private var icon: String {
         switch session.status {
-        case .recording:                              return "stop.fill"
+        case .recording:                              return "pause.fill"
+        case .paused:                                  return "play.fill"
         case .preparing, .stopping, .summarizing:     return "hourglass"
         default:                                       return "record.circle"
         }
@@ -81,7 +87,8 @@ struct RecordCapsule: View {
 
     private var label: String {
         switch session.status {
-        case .recording:    return "Stop"
+        case .recording:    return "Pause"
+        case .paused:       return "Resume"
         case .preparing:    return "Preparing…"
         case .stopping:     return "Stopping…"
         case .summarizing:  return "Summarizing…"
@@ -94,6 +101,7 @@ struct RecordCapsule: View {
     private var fill: Color {
         switch session.status {
         case .recording:                              return .daisyRecording
+        case .paused:                                  return .daisyCenterIdle
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
         // Idle Start uses the same orange family as recording — the
@@ -126,7 +134,8 @@ struct RecordCapsule: View {
 
     private var helpText: String {
         switch session.status {
-        case .recording:    return "Stop recording (Space)"
+        case .recording:    return "Pause (Space)"
+        case .paused:       return "Resume (Space)"
         case .idle:         return "Start a new recording (Space)"
         case .finished:     return "Start another recording (Space)"
         case .failed:       return "Try recording again"

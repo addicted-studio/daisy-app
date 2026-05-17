@@ -12,6 +12,12 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Localhost MCP server (Phase 6a) — lets sandboxed Daisy.app
+	     listen on a loopback TCP port so external MCP clients
+	     (Claude Desktop, Claude Code, Cowork, etc.) can query
+	     transcripts and summaries via JSON-RPC over HTTP/SSE. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
 </dict>

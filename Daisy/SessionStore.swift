@@ -164,6 +164,27 @@ final class SessionStore {
         }
     }
 
+    /// Bulk delete — used by the History view's multi-select shortcut.
+    /// One refresh at the end instead of N to avoid UI thrash.
+    /// Per-session errors are logged but don't stop the loop.
+    func deleteMany(_ sessions: [StoredSession]) async {
+        var firstError: String?
+        for session in sessions {
+            do {
+                try FileManager.default.removeItem(at: session.directoryURL)
+            } catch {
+                log.error("Delete failed for \(session.title, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                if firstError == nil {
+                    firstError = error.localizedDescription
+                }
+            }
+        }
+        await refresh()
+        if let firstError {
+            lastError = firstError
+        }
+    }
+
     /// Persist a speaker-to-attendee mapping for a session. Rewrites
     /// the `daisy_speaker_map:` frontmatter line as a YAML inline
     /// dict (`{A: "Alex", B: "Maria"}`) and refreshes the store so
@@ -422,8 +443,7 @@ struct StoredSession: Identifiable, Sendable {
         if let s = summary {
             if s.summary.lowercased().contains(q) { return true }
             if s.actionItems.contains(where: { $0.lowercased().contains(q) }) { return true }
-            if s.decisions.contains(where: { $0.lowercased().contains(q) }) { return true }
-            if s.followUps.contains(where: { $0.lowercased().contains(q) }) { return true }
+            if s.clientFollowUp.lowercased().contains(q) { return true }
         }
         return false
     }

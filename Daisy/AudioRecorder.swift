@@ -79,6 +79,11 @@ final class AudioRecorder {
     enum RecordingState: Equatable {
         case idle
         case recording
+        /// Engine is paused but the tap, audio file handle and
+        /// bufferContinuation are preserved. `resume()` re-arms
+        /// the engine and writes continue appending to the same
+        /// .caf file.
+        case paused
         case stopped
     }
 
@@ -108,6 +113,12 @@ final class AudioRecorder {
     private var elapsedTimer: Timer?
     @ObservationIgnored
     private var startedAt: Date?
+    /// Sum of completed active intervals before the current one.
+    /// `elapsed` is computed as `accumulatedActiveSec + (now - startedAt)`
+    /// so a pause/resume cycle doesn't make the counter jump over
+    /// the time the user was paused — `elapsed` measures audio
+    /// captured, not wall clock.
+    private var accumulatedActiveSec: TimeInterval = 0
     @ObservationIgnored
     private let analyzer = SpectrumAnalyzer()
     @ObservationIgnored
@@ -207,6 +218,7 @@ final class AudioRecorder {
 
         startedAt = Date()
         elapsed = 0
+        accumulatedActiveSec = 0
         state = .recording
 
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -216,8 +228,54 @@ final class AudioRecorder {
         log.info("AudioRecorder started")
     }
 
-    func stop() {
+    /// Soft pause. Engine stops processing buffers, but the tap, the
+    /// audio file handle and the bufferContinuation all stay alive —
+    /// `resume()` re-arms the engine and writes continue appending
+    /// to the same .caf file with no perceptible gap (audio time
+    /// jumps; wall clock doesn't, by design).
+    func pause() {
         guard state == .recording else { return }
+        engine.pause()
+        elapsedTimer?.invalidate()
+        elapsedTimer = nil
+        // Bank the active interval that just ended so `elapsed`
+        // doesn't reset when we resume.
+        if let startedAt {
+            accumulatedActiveSec += Date().timeIntervalSince(startedAt)
+        }
+        startedAt = nil
+        // Level + spectrum visually decay to zero while paused so
+        // the widget reads as "not listening" rather than "frozen".
+        levelDB = -160
+        spectrumBands = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
+        state = .paused
+        log.info("AudioRecorder paused after \(self.elapsed, privacy: .public)s")
+    }
+
+    /// Resume after `pause()`. Re-starts the engine without touching
+    /// the tap or the file handle — the existing AVAudioFile keeps
+    /// writing where it left off.
+    func resume() throws {
+        guard state == .paused else { return }
+        do {
+            try engine.start()
+        } catch {
+            throw DaisyError.audioEngineFailed(error.localizedDescription)
+        }
+        // Open a new active interval; `tick` will sum it with
+        // `accumulatedActiveSec` for the user-visible elapsed value.
+        startedAt = Date()
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.tick() }
+        }
+        state = .recording
+        log.info("AudioRecorder resumed")
+    }
+
+    func stop() {
+        // Tolerate stop-from-paused too: the explicit Stop & save
+        // path may come straight from a paused session.
+        guard state == .recording || state == .paused else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         bufferContinuation?.finish()
@@ -247,9 +305,11 @@ final class AudioRecorder {
     }
 
     func reset() {
-        if state == .recording { stop() }
+        if state == .recording || state == .paused { stop() }
         state = .idle
         elapsed = 0
+        accumulatedActiveSec = 0
+        startedAt = nil
         levelDB = -160
         archivedFileURL = nil
         lastError = nil
@@ -259,7 +319,7 @@ final class AudioRecorder {
 
     private func tick() {
         guard let startedAt else { return }
-        elapsed = Date().timeIntervalSince(startedAt)
+        elapsed = accumulatedActiveSec + Date().timeIntervalSince(startedAt)
     }
 
     nonisolated private static func peakLevelDB(of buffer: AVAudioPCMBuffer) -> Float {

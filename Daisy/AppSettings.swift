@@ -28,6 +28,17 @@ final class AppSettings {
         didSet { defaults.set(autoSummarize, forKey: Self.k_autoSummarize) }
     }
 
+    /// Language the summary itself is written in. Decoupled from
+    /// the transcript locale because users often record meetings in
+    /// one language but want the summary in another (e.g. record RU,
+    /// summarise EN for a partner who'll read the notes).
+    ///
+    /// Stored as the value of `SummaryLanguage.id`. "auto" means
+    /// "use the transcript's language" — the historical behaviour.
+    var summaryLanguage: String {
+        didSet { defaults.set(summaryLanguage, forKey: Self.k_summaryLanguage) }
+    }
+
     /// Global record-toggle hotkey. `.none` disables. Stored in
     /// UserDefaults as JSON (struct, not enum any more).
     var recordHotkey: HotkeyChoice {
@@ -57,6 +68,73 @@ final class AppSettings {
     /// EventKit itself is the source of truth.
     var calendarAccessGranted: Bool {
         didSet { defaults.set(calendarAccessGranted, forKey: Self.k_calendarAccessGranted) }
+    }
+
+    /// Whether the floating Daisy widget (the petal mark) appears on
+    /// top of other windows during recording / paused / summarizing.
+    /// ON by default — the widget is the always-visible affordance
+    /// for pause / resume / stop without having to find the menu bar
+    /// or main window. Users who don't want it can flip it off in
+    /// Settings → Capture.
+    var floatingWidgetEnabled: Bool {
+        didSet { defaults.set(floatingWidgetEnabled, forKey: Self.k_floatingWidgetEnabled) }
+    }
+
+    /// When ON and the current session is bound to a calendar event,
+    /// Daisy schedules an auto-stop at `meeting.endDate + grace`.
+    /// A cancellable warning toast lets the user keep the session
+    /// going past the calendar end if the conversation runs over.
+    var autoStopFromCalendar: Bool {
+        didSet { defaults.set(autoStopFromCalendar, forKey: Self.k_autoStopFromCalendar) }
+    }
+
+    /// Seconds past the calendar event's end before the auto-stop
+    /// fires (default 300 = 5 min). Picked to cover the usual
+    /// "wrap up, say goodbye, hop off" tail.
+    var autoStopGraceSec: Int {
+        didSet { defaults.set(autoStopGraceSec, forKey: Self.k_autoStopGraceSec) }
+    }
+
+    // ─── MCP server (Phase 6a) ────────────────────────────────────────
+    //
+    // Daisy can expose its sessions to external AI clients (Claude
+    // Desktop, Claude Code, Cowork, Cursor, …) via the Model Context
+    // Protocol. Transport: HTTP + SSE on a loopback port — nothing
+    // ever leaves the Mac. Opt-in.
+
+    /// Whether the local MCP server is running.
+    var mcpServerEnabled: Bool {
+        didSet { defaults.set(mcpServerEnabled, forKey: Self.k_mcpServerEnabled) }
+    }
+
+    /// Loopback TCP port the MCP server binds to. Default 54321;
+    /// user can change it if there's a conflict.
+    var mcpServerPort: Int {
+        didSet { defaults.set(mcpServerPort, forKey: Self.k_mcpServerPort) }
+    }
+
+    // ─── MCP summarizer (Phase 6b) ────────────────────────────────────
+    //
+    // Daisy can ALSO be an MCP client — used by the .mcp provider
+    // to call a user-configured local LLM wrapper. Independent from
+    // the server above; same protocol, opposite direction.
+
+    /// Base URL of the MCP server that wraps the local LLM.
+    /// Empty string means unconfigured.
+    var mcpSummarizerURL: String {
+        didSet { defaults.set(mcpSummarizerURL, forKey: Self.k_mcpSummarizerURL) }
+    }
+
+    /// Tool name to call on that server.
+    var mcpSummarizerToolName: String {
+        didSet { defaults.set(mcpSummarizerToolName, forKey: Self.k_mcpSummarizerToolName) }
+    }
+
+    /// JSON template for the tool's `arguments` field. Supports
+    /// `{{system}}` / `{{transcript}}` / `{{title}}` placeholders
+    /// which Daisy substitutes before sending.
+    var mcpSummarizerArgumentsTemplate: String {
+        didSet { defaults.set(mcpSummarizerArgumentsTemplate, forKey: Self.k_mcpSummarizerArgsTemplate) }
     }
 
     // Secret prefs — mirrored in Keychain, exposed read/write here for the
@@ -105,6 +183,7 @@ final class AppSettings {
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
         self.autoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool ?? true
+        self.summaryLanguage = defaults.string(forKey: Self.k_summaryLanguage) ?? SummaryLanguage.auto.id
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will
@@ -118,6 +197,22 @@ final class AppSettings {
         self.autoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? false
         self.autoStartFromCalendar = defaults.object(forKey: Self.k_autoStartFromCalendar) as? Bool ?? false
         self.calendarAccessGranted = defaults.bool(forKey: Self.k_calendarAccessGranted)
+        // Default ON: `object(forKey:)` returns nil for unset keys, so
+        // `as? Bool ?? true` picks up explicit user choices (true OR
+        // false) and falls through to true only on a clean install.
+        self.floatingWidgetEnabled = defaults.object(forKey: Self.k_floatingWidgetEnabled) as? Bool ?? true
+        self.autoStopFromCalendar = defaults.bool(forKey: Self.k_autoStopFromCalendar)
+        let storedGrace = defaults.integer(forKey: Self.k_autoStopGraceSec)
+        self.autoStopGraceSec = storedGrace > 0 ? storedGrace : 300
+        self.mcpServerEnabled = defaults.bool(forKey: Self.k_mcpServerEnabled)
+        let storedPort = defaults.integer(forKey: Self.k_mcpServerPort)
+        self.mcpServerPort = storedPort > 0 ? storedPort : 54321
+        self.mcpSummarizerURL = defaults.string(forKey: Self.k_mcpSummarizerURL)
+            ?? MCPSummarizer.defaultBaseURLString
+        self.mcpSummarizerToolName = defaults.string(forKey: Self.k_mcpSummarizerToolName)
+            ?? MCPSummarizer.defaultToolName
+        self.mcpSummarizerArgumentsTemplate = defaults.string(forKey: Self.k_mcpSummarizerArgsTemplate)
+            ?? MCPSummarizer.defaultArgumentsTemplate
         self.notionToken = KeychainStore.get(account: SecretKey.notionToken) ?? ""
         self.notionParentID = KeychainStore.get(account: SecretKey.notionParentID) ?? ""
         self.anthropicAPIKey = KeychainStore.get(account: SecretKey.anthropicAPIKey) ?? ""
@@ -142,8 +237,63 @@ final class AppSettings {
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_autoSummarize = "daisy.autoSummarize"
+    private static let k_summaryLanguage = "daisy.summaryLanguage"
     private static let k_recordHotkey = "daisy.recordHotkey"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
     private static let k_autoStartFromCalendar = "daisy.autoStartFromCalendar"
     private static let k_calendarAccessGranted = "daisy.calendarAccessGranted"
+    private static let k_floatingWidgetEnabled = "daisy.floatingWidgetEnabled"
+    private static let k_autoStopFromCalendar = "daisy.autoStopFromCalendar"
+    private static let k_autoStopGraceSec = "daisy.autoStopGraceSec"
+    private static let k_mcpServerEnabled = "daisy.mcpServerEnabled"
+    private static let k_mcpServerPort = "daisy.mcpServerPort"
+    private static let k_mcpSummarizerURL = "daisy.mcpSummarizer.url"
+    private static let k_mcpSummarizerToolName = "daisy.mcpSummarizer.toolName"
+    private static let k_mcpSummarizerArgsTemplate = "daisy.mcpSummarizer.argsTemplate"
+}
+
+// MARK: - SummaryLanguage
+
+/// Languages the user can pin the AI summary to. Decoupled from
+/// transcription locale — the transcript stays in its captured
+/// language, only the summary text is shifted.
+///
+/// `id` is the 2-letter ISO code stored in `AppSettings.summaryLanguage`,
+/// or the literal `"auto"` for "use the transcript's language".
+/// `displayName` is what the picker shows. The order roughly mirrors
+/// `Transcriber.availableLocales` so the two pickers feel related.
+enum SummaryLanguage: String, CaseIterable, Identifiable, Sendable {
+    case auto
+    case en
+    case ru
+    case uk
+    case pl
+    case es
+    case fr
+    case de
+    case it
+    case pt
+    case ja
+    case ko
+    case zh
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .auto: return "Auto · same as transcript"
+        case .en:   return "English"
+        case .ru:   return "Русский"
+        case .uk:   return "Українська"
+        case .pl:   return "Polski"
+        case .es:   return "Español"
+        case .fr:   return "Français"
+        case .de:   return "Deutsch"
+        case .it:   return "Italiano"
+        case .pt:   return "Português"
+        case .ja:   return "日本語"
+        case .ko:   return "한국어"
+        case .zh:   return "中文"
+        }
+    }
 }

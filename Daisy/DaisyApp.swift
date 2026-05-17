@@ -36,7 +36,7 @@ struct DaisyApp: App {
         let sess = RecordingSession(settings: s)
         _settings = State(wrappedValue: s)
         _session = State(wrappedValue: sess)
-        _floatingPanel = State(wrappedValue: FloatingPanelController(session: sess))
+        _floatingPanel = State(wrappedValue: FloatingPanelController(session: sess, settings: s))
 
         // Initial wiring of hotkey + meeting auto-start + calendar.
         // Re-applied reactively in MainView's .onChange handlers when

@@ -65,34 +65,28 @@ enum MarkdownExporter {
             lines.append("")
         }
 
-        // Apple Intelligence summary, if available.
+        // AI summary, if available. Three sections: meeting overview,
+        // next actions, and a ready-to-send follow-up for client /
+        // partner.
         if let summary = session.summarizer.lastSummary {
             lines.append("## Summary")
+            lines.append("")
+            lines.append("### Meeting")
             lines.append("")
             lines.append(summary.summary)
             lines.append("")
             if !summary.actionItems.isEmpty {
-                lines.append("### Action items")
+                lines.append("### Next actions")
                 lines.append("")
                 for item in summary.actionItems {
                     lines.append("- [ ] \(item)")
                 }
                 lines.append("")
             }
-            if !summary.decisions.isEmpty {
-                lines.append("### Decisions")
+            if !summary.clientFollowUp.isEmpty {
+                lines.append("### Follow-up for client / partner")
                 lines.append("")
-                for d in summary.decisions {
-                    lines.append("- \(d)")
-                }
-                lines.append("")
-            }
-            if !summary.followUps.isEmpty {
-                lines.append("### Follow-ups")
-                lines.append("")
-                for f in summary.followUps {
-                    lines.append("- \(f)")
-                }
+                lines.append(summary.clientFollowUp)
                 lines.append("")
             }
         }
