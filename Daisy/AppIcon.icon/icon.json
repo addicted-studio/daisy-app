@@ -1,0 +1,98 @@
+{
+  "fill" : {
+    "solid" : "srgb:0.83137,0.62745,0.30588,1.00000"
+  },
+  "groups" : [
+    {
+      "blur-material" : 0.5,
+      "hidden" : false,
+      "layers" : [
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:1.00000,0.60784,0.01569,1.00000",
+              "srgb:0.98039,0.30196,0.02353,1.00000"
+            ]
+          },
+          "glass" : true,
+          "hidden" : true,
+          "image-name" : "lightning.svg",
+          "name" : "lightning",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              92.1875
+            ]
+          }
+        },
+        {
+          "fill" : {
+            "solid" : "display-p3:1.00000,0.60784,0.01569,1.00000"
+          },
+          "glass" : true,
+          "image-name" : "Vector-1.svg",
+          "name" : "Vector-1"
+        }
+      ],
+      "lighting" : "individual",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "blend-mode" : "normal",
+      "blur-material" : 0.5,
+      "hidden" : false,
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "linear-gradient" : [
+              "extended-gray:1.00000,1.00000",
+              "extended-gray:1.00000,0.25168"
+            ]
+          },
+          "hidden" : true,
+          "image-name" : "frame.svg",
+          "name" : "frame",
+          "opacity" : 0.75
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "linear-gradient" : [
+              "extended-gray:1.00000,1.00000",
+              "extended-gray:1.00000,0.75089"
+            ]
+          },
+          "image-name" : "Vector.svg",
+          "name" : "Vector",
+          "opacity" : 1
+        }
+      ],
+      "lighting" : "combined",
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.5
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

@@ -1,0 +1,635 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B9BBC7332FB863E90016C22C /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = B9BBC7322FB863E90016C22C /* FluidAudio */; };
+		B9F5F19B2FB75DA300E26A7A /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = B9F5F19A2FB75DA300E26A7A /* WhisperKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B9F5F12A2FB74DA000E26A7A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B9F5F1142FB74D9F00E26A7A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B9F5F11B2FB74D9F00E26A7A;
+			remoteInfo = Daisy;
+		};
+		B9F5F1342FB74DA000E26A7A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B9F5F1142FB74D9F00E26A7A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B9F5F11B2FB74D9F00E26A7A;
+			remoteInfo = Daisy;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		B9F5F11C2FB74D9F00E26A7A /* Daisy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Daisy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B9F5F1292FB74DA000E26A7A /* DaisyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DaisyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B9F5F1332FB74DA000E26A7A /* DaisyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DaisyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		B9F5F11E2FB74D9F00E26A7A /* Daisy */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Daisy;
+			sourceTree = "<group>";
+		};
+		B9F5F12C2FB74DA000E26A7A /* DaisyTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DaisyTests;
+			sourceTree = "<group>";
+		};
+		B9F5F1362FB74DA000E26A7A /* DaisyUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DaisyUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B9F5F1192FB74D9F00E26A7A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B9BBC7332FB863E90016C22C /* FluidAudio in Frameworks */,
+				B9F5F19B2FB75DA300E26A7A /* WhisperKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F5F1262FB74DA000E26A7A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F5F1302FB74DA000E26A7A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		B9F5F1132FB74D9F00E26A7A = {
+			isa = PBXGroup;
+			children = (
+				B9F5F11E2FB74D9F00E26A7A /* Daisy */,
+				B9F5F12C2FB74DA000E26A7A /* DaisyTests */,
+				B9F5F1362FB74DA000E26A7A /* DaisyUITests */,
+				B9F5F11D2FB74D9F00E26A7A /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		B9F5F11D2FB74D9F00E26A7A /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B9F5F11C2FB74D9F00E26A7A /* Daisy.app */,
+				B9F5F1292FB74DA000E26A7A /* DaisyTests.xctest */,
+				B9F5F1332FB74DA000E26A7A /* DaisyUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B9F5F11B2FB74D9F00E26A7A /* Daisy */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9F5F13D2FB74DA000E26A7A /* Build configuration list for PBXNativeTarget "Daisy" */;
+			buildPhases = (
+				B9F5F1182FB74D9F00E26A7A /* Sources */,
+				B9F5F1192FB74D9F00E26A7A /* Frameworks */,
+				B9F5F11A2FB74D9F00E26A7A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B9F5F11E2FB74D9F00E26A7A /* Daisy */,
+			);
+			name = Daisy;
+			packageProductDependencies = (
+				B9F5F19A2FB75DA300E26A7A /* WhisperKit */,
+				B9BBC7322FB863E90016C22C /* FluidAudio */,
+			);
+			productName = Daisy;
+			productReference = B9F5F11C2FB74D9F00E26A7A /* Daisy.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B9F5F1282FB74DA000E26A7A /* DaisyTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9F5F1402FB74DA000E26A7A /* Build configuration list for PBXNativeTarget "DaisyTests" */;
+			buildPhases = (
+				B9F5F1252FB74DA000E26A7A /* Sources */,
+				B9F5F1262FB74DA000E26A7A /* Frameworks */,
+				B9F5F1272FB74DA000E26A7A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B9F5F12B2FB74DA000E26A7A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B9F5F12C2FB74DA000E26A7A /* DaisyTests */,
+			);
+			name = DaisyTests;
+			packageProductDependencies = (
+			);
+			productName = DaisyTests;
+			productReference = B9F5F1292FB74DA000E26A7A /* DaisyTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		B9F5F1322FB74DA000E26A7A /* DaisyUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B9F5F1432FB74DA000E26A7A /* Build configuration list for PBXNativeTarget "DaisyUITests" */;
+			buildPhases = (
+				B9F5F12F2FB74DA000E26A7A /* Sources */,
+				B9F5F1302FB74DA000E26A7A /* Frameworks */,
+				B9F5F1312FB74DA000E26A7A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B9F5F1352FB74DA000E26A7A /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				B9F5F1362FB74DA000E26A7A /* DaisyUITests */,
+			);
+			name = DaisyUITests;
+			packageProductDependencies = (
+			);
+			productName = DaisyUITests;
+			productReference = B9F5F1332FB74DA000E26A7A /* DaisyUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B9F5F1142FB74D9F00E26A7A /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					B9F5F11B2FB74D9F00E26A7A = {
+						CreatedOnToolsVersion = 26.2;
+					};
+					B9F5F1282FB74DA000E26A7A = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = B9F5F11B2FB74D9F00E26A7A;
+					};
+					B9F5F1322FB74DA000E26A7A = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = B9F5F11B2FB74D9F00E26A7A;
+					};
+				};
+			};
+			buildConfigurationList = B9F5F1172FB74D9F00E26A7A /* Build configuration list for PBXProject "Daisy" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = B9F5F1132FB74D9F00E26A7A;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B9F5F11D2FB74D9F00E26A7A /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B9F5F11B2FB74D9F00E26A7A /* Daisy */,
+				B9F5F1282FB74DA000E26A7A /* DaisyTests */,
+				B9F5F1322FB74DA000E26A7A /* DaisyUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B9F5F11A2FB74D9F00E26A7A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F5F1272FB74DA000E26A7A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F5F1312FB74DA000E26A7A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B9F5F1182FB74D9F00E26A7A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F5F1252FB74DA000E26A7A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B9F5F12F2FB74DA000E26A7A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B9F5F12B2FB74DA000E26A7A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B9F5F11B2FB74D9F00E26A7A /* Daisy */;
+			targetProxy = B9F5F12A2FB74DA000E26A7A /* PBXContainerItemProxy */;
+		};
+		B9F5F1352FB74DA000E26A7A /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B9F5F11B2FB74D9F00E26A7A /* Daisy */;
+			targetProxy = B9F5F1342FB74DA000E26A7A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		B9F5F13B2FB74DA000E26A7A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B9F5F13C2FB74DA000E26A7A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		B9F5F13E2FB74DA000E26A7A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = Daisy/Daisy.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleIconName = AppIcon;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Daisy reads your calendar to detect upcoming meetings.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.Daisy;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B9F5F13F2FB74DA000E26A7A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = Daisy/Daisy.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleIconName = AppIcon;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Daisy reads your calendar to detect upcoming meetings.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.Daisy;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		B9F5F1412FB74DA000E26A7A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.DaisyTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Daisy.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daisy";
+			};
+			name = Debug;
+		};
+		B9F5F1422FB74DA000E26A7A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.DaisyTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Daisy.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Daisy";
+			};
+			name = Release;
+		};
+		B9F5F1442FB74DA000E26A7A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.DaisyUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Daisy;
+			};
+			name = Debug;
+		};
+		B9F5F1452FB74DA000E26A7A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = LW64FQXZCU;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.DaisyUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Daisy;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B9F5F1172FB74D9F00E26A7A /* Build configuration list for PBXProject "Daisy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9F5F13B2FB74DA000E26A7A /* Debug */,
+				B9F5F13C2FB74DA000E26A7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B9F5F13D2FB74DA000E26A7A /* Build configuration list for PBXNativeTarget "Daisy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9F5F13E2FB74DA000E26A7A /* Debug */,
+				B9F5F13F2FB74DA000E26A7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B9F5F1402FB74DA000E26A7A /* Build configuration list for PBXNativeTarget "DaisyTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9F5F1412FB74DA000E26A7A /* Debug */,
+				B9F5F1422FB74DA000E26A7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B9F5F1432FB74DA000E26A7A /* Build configuration list for PBXNativeTarget "DaisyUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B9F5F1442FB74DA000E26A7A /* Debug */,
+				B9F5F1452FB74DA000E26A7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+		B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B9BBC7322FB863E90016C22C /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+		B9F5F19A2FB75DA300E26A7A /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = B9F5F1142FB74D9F00E26A7A /* Project object */;
+}
