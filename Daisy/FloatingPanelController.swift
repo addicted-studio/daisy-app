@@ -165,9 +165,16 @@ final class FloatingPanelController {
     }
 
     private func applyBubbleVisibility() {
+        // Allow the bubble during .paused too — the long-pause case
+        // is exactly when the user has most likely forgotten about
+        // a session quietly draining battery. Filtering on
+        // `.recording` alone (the v1.0 condition) hid the prompt
+        // for the more common failure mode.
+        let isActiveSession = session.status == .recording
+            || session.status == .paused
         let shouldShow = settings.floatingWidgetEnabled
             && session.silenceMonitor.questionVisible
-            && session.status == .recording
+            && isActiveSession
         if shouldShow {
             showBubble()
         } else {

@@ -182,7 +182,7 @@ struct HomeView: View {
             }
             Spacer(minLength: 8)
             Button("Open Settings") {
-                calendar.openSystemSettingsIfDenied()
+                calendar.openCalendarPrivacy()
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
@@ -221,7 +221,10 @@ struct HomeView: View {
                 VStack(spacing: 4) {
                     ForEach(Array(store.sessions.prefix(5))) { session in
                         RecentSessionRow(session: session) {
-                            nav.section = .history
+                            // Deep-link into the History view with
+                            // this session pre-selected, instead of
+                            // dumping the user on the default row.
+                            nav.openInHistory(session.id)
                         }
                     }
                 }

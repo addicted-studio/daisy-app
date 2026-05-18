@@ -51,7 +51,7 @@ struct IntegrationEditor: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "paperplane.circle.fill")
-                .foregroundStyle(Color.daisyAccent)
+                .foregroundStyle(.secondary)
                 .font(.title2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(initial.name == "New integration" ? "New integration" : "Edit integration")

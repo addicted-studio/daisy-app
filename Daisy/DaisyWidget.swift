@@ -319,11 +319,12 @@ struct DaisyWidget: View {
         switch status {
         // Recording = macOS systemOrange (inherits the OS mic-active dot).
         case .recording: return .daisyRecording
-        // Paused = dim amber. Distinct from idle (cool white) and
-        // recording (bright orange) so the widget reads as "held"
-        // at a glance — same hue family as recording so the user
-        // doesn't think the session ended.
-        case .paused: return Color.daisyCenterIdle
+        // Paused = cool neutral gray. Deliberately OUT of the
+        // warm orange/amber family — orange means "live capture",
+        // so paused has to read as "not live" at a glance. Stays
+        // visually distinct from idle (white) and finished (white)
+        // by keeping the centre filled rather than ghostly.
+        case .paused: return Color.daisyPaused
         // Finished + processing → plain white. The "done" celebration
         // is the scale-pop animation, not a colour change.
         case .preparing, .stopping, .summarizing, .finished: return Color.white.opacity(0.92)

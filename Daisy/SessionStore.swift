@@ -58,43 +58,74 @@ final class SessionStore {
         lastError = nil
         defer { isLoading = false }
 
-        let dir: URL
-        do { dir = try Self.sessionsDirectory() }
-        catch {
-            lastError = error.localizedDescription
-            sessions = []
-            return
+        // Scan BOTH the default container location AND the user-
+        // picked folder (if set). Old sessions don't get auto-moved
+        // when the user changes the folder — they stay where they
+        // were and History continues to list them.
+        var roots: [(url: URL, ticket: SessionsFolder.AccessTicket?)] = []
+        if let defaultDir = try? Self.defaultSessionsDirectory() {
+            roots.append((defaultDir, nil))
+        }
+        if let userBase = SessionsFolder.resolveUserFolder() {
+            // Acquire security scope just for the scan; release at
+            // function exit via the ticket array's cleanup below.
+            if userBase.startAccessingSecurityScopedResource() {
+                let userSessionsDir = userBase
+                    .appendingPathComponent("Daisy/Sessions", isDirectory: true)
+                // Touch-create — the dir may not exist yet if the
+                // user picked the folder but hasn't recorded anything
+                // there yet.
+                try? FileManager.default.createDirectory(
+                    at: userSessionsDir,
+                    withIntermediateDirectories: true
+                )
+                let ticket = SessionsFolder.AccessTicket(url: userBase, securityScoped: true)
+                roots.append((userSessionsDir, ticket))
+            } else {
+                log.warning("Couldn't acquire security scope for user sessions folder during scan")
+            }
+        }
+        defer {
+            for root in roots { root.ticket?.release() }
         }
 
-        let entries: [URL]
-        do {
-            entries = try FileManager.default.contentsOfDirectory(
-                at: dir,
-                includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
-            )
-        } catch {
-            log.error("Could not list sessions dir: \(error.localizedDescription, privacy: .public)")
-            lastError = error.localizedDescription
+        guard !roots.isEmpty else {
+            lastError = "Couldn't resolve any sessions folder."
             sessions = []
             return
         }
 
         var loaded: [StoredSession] = []
         var orphansToTrash: [URL] = []
-        for url in entries {
-            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-            guard isDir else { continue }
-            switch Self.classify(directory: url) {
-            case .valid(let session):
-                loaded.append(session)
-            case .orphan:
-                orphansToTrash.append(url)
-            case .unreadable:
-                break
+        for root in roots {
+            let entries: [URL]
+            do {
+                entries = try FileManager.default.contentsOfDirectory(
+                    at: root.url,
+                    includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+                    options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+                )
+            } catch {
+                log.error("Could not list \(root.url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                continue
+            }
+            for url in entries {
+                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                guard isDir else { continue }
+                switch Self.classify(directory: url) {
+                case .valid(let session):
+                    loaded.append(session)
+                case .orphan:
+                    orphansToTrash.append(url)
+                case .unreadable:
+                    break
+                }
             }
         }
-        // Most recent first.
+        // Most recent first. Session ids are directory names — the
+        // ISO timestamps — so cross-folder collisions are essentially
+        // impossible (two recordings starting at the same millisecond
+        // would have to come from different installs of Daisy).
         sessions = loaded.sorted(by: { $0.startedAt > $1.startedAt })
 
         // Best-effort cleanup of empty stub directories — they get
@@ -129,28 +160,90 @@ final class SessionStore {
         let hasSystem = fm.fileExists(atPath: systemURL.path)
         let hasTranscript = fm.fileExists(atPath: transcriptURL.path)
 
-        // An "empty stub" = no audio AND no transcript. start() always
-        // writes one of these by the time it finishes preparing; if
-        // neither exists, the recording never actually began.
-        if !hasMic && !hasSystem && !hasTranscript {
-            return .orphan
+        // Examine transcript.md once up-front — needed both to decide
+        // husk-vs-valid and (later) for parseSession.
+        var transcriptBodyEmpty = true
+        var hasMeaningfulFrontmatter = false
+        if hasTranscript,
+           let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
+            let parsed = parseFrontmatter(in: text)
+            transcriptBodyEmpty = parsed.body
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
+            // `title` and `started` are the two fields stop() writes
+            // on a successful finish. If either is present we treat
+            // the transcript as "real" even if the body is empty
+            // (e.g. zero-segment recording that nonetheless completed
+            // its lifecycle and deserves a History entry).
+            hasMeaningfulFrontmatter = parsed.title != nil || parsed.started != nil
         }
 
-        // Transcript exists but is empty (no body after frontmatter)
-        // AND no audio either — also an orphan.
-        if !hasMic && !hasSystem,
-           let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
-            let body = parseFrontmatter(in: text).body
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if body.isEmpty {
+        // Orphan = directory that exists on disk but represents no
+        // recoverable session. Three shapes occur in the wild:
+        //
+        //  (a) Empty folder — start() created the directory but never
+        //      wrote audio or transcript (immediate crash / force-quit
+        //      before AudioRecorder.start, or stop() pressed before
+        //      capture began).
+        //  (b) Audio-only, no transcript.md — recording captured
+        //      .caf data but the app died before stop() could flush
+        //      transcript.md. The .caf alone has no metadata and no
+        //      playback UI in Daisy, so it'd render as "Untitled,
+        //      0:00, today" — actively misleading.
+        //  (c) Audio + transcript.md with empty body AND no
+        //      meaningful frontmatter — partial stop(), aborted
+        //      between file creation and content write.
+        //  (d) No audio + transcript.md with empty body — start()
+        //      wrote the YAML shell, then user reset() before any
+        //      audio arrived.
+        //
+        // All four are husks. Auto-delete them so they don't pile up
+        // in the user's History (observed during QA 2026-05-17: two
+        // (b)-shaped husks from dev crashes on May 16 / 17 showed up
+        // alongside a single real recording, looking like dupes).
+        //
+        // The 5-minute age guard avoids racing against an in-flight
+        // recording: between `mkdir` and the first audio frame there's
+        // a window where a freshly-started session looks like (a),
+        // and we never want to nuke that.
+        let isEmpty   = !hasMic && !hasSystem && !hasTranscript
+        let audioOnly = (hasMic || hasSystem) && !hasTranscript
+        let audioPlusEmptyShell = (hasMic || hasSystem)
+            && hasTranscript
+            && transcriptBodyEmpty
+            && !hasMeaningfulFrontmatter
+        let transcriptShellOnly = !hasMic && !hasSystem
+            && hasTranscript
+            && transcriptBodyEmpty
+
+        let isHusk = isEmpty || audioOnly || audioPlusEmptyShell || transcriptShellOnly
+        if isHusk {
+            if directoryAgeSeconds(directory) >= 300 {
                 return .orphan
             }
+            // Young husk — possibly an in-flight recording. Don't
+            // delete, don't show in History either (would just flash
+            // a confusing "Untitled · 0:00" row during the window).
+            return .unreadable
         }
 
         guard let session = parseSession(at: directory) else {
             return .unreadable
         }
         return .valid(session)
+    }
+
+    /// Seconds since `directory` was last modified. Used as the age
+    /// guard for husk cleanup. Returns `.greatestFiniteMagnitude` if
+    /// mtime can't be read — that errs on the side of "old enough to
+    /// delete" rather than leaking husks indefinitely on systems with
+    /// quirky filesystem metadata.
+    nonisolated static func directoryAgeSeconds(_ directory: URL) -> TimeInterval {
+        let values = try? directory.resourceValues(forKeys: [.contentModificationDateKey])
+        guard let mtime = values?.contentModificationDate else {
+            return .greatestFiniteMagnitude
+        }
+        return Date().timeIntervalSince(mtime)
     }
 
     /// Permanently delete a session's folder + its contents.
@@ -271,7 +364,11 @@ final class SessionStore {
 
     // MARK: - Filesystem helpers
 
-    static func sessionsDirectory() throws -> URL {
+    /// Sessions directory inside the app's container. Always
+    /// readable, used as the fallback when no user-picked folder
+    /// is set AND also scanned alongside the user folder so old
+    /// sessions remain visible after the user reroutes.
+    static func defaultSessionsDirectory() throws -> URL {
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -380,18 +477,30 @@ final class SessionStore {
     }
 
     nonisolated private static func dateFromFolderName(_ name: String) -> Date? {
-        // Folder names look like 2026-05-16T22-30-00+08-00 (we replaced
-        // ":" with "-" when writing). Reverse that for ISO parsing.
-        let reverted = name.replacingOccurrences(of: "-", with: ":", options: [], range: nil)
-        // The date "2026:05:16T22:30:00+08:00" — broken. Don't go that
-        // path. Better: parse manually.
-        _ = reverted
+        // Folder names come from `ISO8601DateFormatter` with the
+        // `:` characters in time/offset replaced by `-` for FAT/
+        // sandbox safety. Two shapes occur depending on whether the
+        // formatter's timeZone was UTC (Z suffix) or local (offset).
+        // The current production format is UTC → Z suffix, but older
+        // folders may still carry an explicit offset, so we accept
+        // both.
+        //
+        //   2026-05-17T12-37-36Z           (UTC, Z suffix)
+        //   2026-05-16T22-30-00+08-00      (explicit offset)
+        //
+        // Restore colons before handing off to ISO8601DateFormatter.
+        let zRegex      = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})Z$/
+        let offsetRegex = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})([+-])(\d{2})-(\d{2})$/
 
-        // Format yyyy-MM-dd'T'HH-mm-ss(+|-)HH-mm — restore colons in time + offset.
-        let regex = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})([+-])(\d{2})-(\d{2})$/
-        guard let m = name.wholeMatch(of: regex) else { return nil }
-        let restored = "\(m.1)-\(m.2)-\(m.3)T\(m.4):\(m.5):\(m.6)\(m.7)\(m.8):\(m.9)"
-        return iso.date(from: restored)
+        if let m = name.wholeMatch(of: zRegex) {
+            let restored = "\(m.1)-\(m.2)-\(m.3)T\(m.4):\(m.5):\(m.6)Z"
+            return iso.date(from: restored)
+        }
+        if let m = name.wholeMatch(of: offsetRegex) {
+            let restored = "\(m.1)-\(m.2)-\(m.3)T\(m.4):\(m.5):\(m.6)\(m.7)\(m.8):\(m.9)"
+            return iso.date(from: restored)
+        }
+        return nil
     }
 
     // ISO8601DateFormatter is documented as thread-safe but not declared

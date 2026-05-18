@@ -126,12 +126,11 @@ final class CalendarService {
         return status
     }
 
-    /// Opens System Settings → Privacy → Calendars so the user can
-    /// flip access back on after a denial. No-op if access is already
-    /// granted.
-    func openSystemSettingsIfDenied() {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        guard status == .denied || status == .restricted || status == .writeOnly else { return }
+    /// Always opens System Settings → Privacy → Calendars.
+    /// Used by both "Revoke…" (when access is granted — sends the
+    /// user to the panel where they can flip Daisy off) AND the
+    /// re-grant flow after a denial.
+    func openCalendarPrivacy() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {
             NSWorkspace.shared.open(url)
         }

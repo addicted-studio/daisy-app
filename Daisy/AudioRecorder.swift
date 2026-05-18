@@ -143,10 +143,19 @@ final class AudioRecorder {
     }
 
     /// Begin capturing microphone audio. Pass an `archiveURL` to also write
-    /// a .caf file for later replay/re-processing.
-    func start(archiveURL: URL? = nil) throws {
+    /// a .caf file for later replay/re-processing. `preferredDeviceUID`
+    /// is the stable `kAudioDevicePropertyDeviceUID` of the device the
+    /// user picked in Settings; pass empty string (or nil) to follow
+    /// the macOS system default.
+    func start(archiveURL: URL? = nil, preferredDeviceUID: String? = nil) throws {
         guard state != .recording else { return }
         lastError = nil
+
+        // Point AVAudioEngine.inputNode at the user-picked device
+        // (if any) BEFORE we sample its output format — switching
+        // devices after `outputFormat` is captured leaves us writing
+        // to a file with the wrong sample rate / channel count.
+        applyPreferredInputDevice(uid: preferredDeviceUID ?? "")
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -301,6 +310,43 @@ final class AudioRecorder {
                     style: .warning
                 )
             }
+        }
+    }
+
+    /// Point `engine.inputNode`'s underlying HAL audio unit at a
+    /// specific `AudioDeviceID`. Pass an empty UID (or pass through
+    /// a UID that resolves to nil — the saved device has been
+    /// unplugged) to leave the unit on the macOS system default,
+    /// which is the v1.0 behaviour.
+    ///
+    /// Must be called BEFORE `engine.start()` and BEFORE we sample
+    /// `inputNode.outputFormat`. Switching device after format
+    /// capture would leave us writing the archive .caf at the wrong
+    /// sample rate / channel count for the actual hardware.
+    private func applyPreferredInputDevice(uid: String) {
+        guard !uid.isEmpty else { return }
+        guard var deviceID = AudioInputDevices.deviceID(forUID: uid) else {
+            log.warning("Saved mic UID \(uid, privacy: .public) not connected — falling back to system default")
+            return
+        }
+        guard let audioUnit = engine.inputNode.audioUnit else {
+            log.error("engine.inputNode.audioUnit is nil — can't route to preferred device")
+            return
+        }
+        // `kAudioOutputUnitProperty_CurrentDevice` is the right
+        // property name even for AUHAL units configured as inputs;
+        // AVAudioEngine wraps an AUHAL on its inputNode for exactly
+        // this purpose.
+        let status = AudioUnitSetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+        )
+        if status != noErr {
+            log.error("AudioUnitSetProperty(CurrentDevice) failed (status \(status, privacy: .public))")
         }
     }
 

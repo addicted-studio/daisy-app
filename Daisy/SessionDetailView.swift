@@ -192,13 +192,27 @@ struct SessionDetailView: View {
     /// the specified side — used for the first (`.leading`) and
     /// last (`.trailing`) items so they're not kissing the pill
     /// border while the middle items keep their tighter spacing.
+    ///
+    /// Trailing padding has to be done with a real `Color.clear`
+    /// spacer view rather than `.padding(.trailing, …)`: a `Menu`'s
+    /// label in macOS 26's toolbar reserves layout for the hidden
+    /// menu indicator and clips trailing modifiers, but it can't
+    /// clip an actual sibling view. Same trick on the leading side
+    /// for symmetry / future-proofing.
     private func toolbarIcon(_ name: String, outerEdge: Edge.Set = []) -> some View {
-        Image(systemName: name)
-            .symbolRenderingMode(.monochrome)
-            .foregroundStyle(Color.daisyTextPrimary)
-            .font(.body.weight(.medium))
-            .padding(.horizontal, 10)
-            .padding(outerEdge, 8)
+        HStack(spacing: 0) {
+            if outerEdge.contains(.leading) {
+                Color.clear.frame(width: 8)
+            }
+            Image(systemName: name)
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .font(.body.weight(.medium))
+                .padding(.horizontal, 10)
+            if outerEdge.contains(.trailing) {
+                Color.clear.frame(width: 8)
+            }
+        }
     }
 
     // MARK: - Header (title + metadata; actions live in toolbar)

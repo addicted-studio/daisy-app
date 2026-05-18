@@ -88,15 +88,42 @@ struct HotkeyChoice: Hashable, Codable, Sendable, Identifiable {
     /// nil if the event has no modifiers (a bare letter as a global
     /// hotkey would hijack typing).
     static func fromNSEvent(_ event: NSEvent) -> HotkeyChoice? {
-        let carbonKey = UInt32(event.keyCode)
-        let carbonMods = nsToCarbonModifiers(event.modifierFlags)
-        // Require at least one non-shift modifier — otherwise the
-        // global hotkey would steal every keystroke from every app.
+        fromKeyCode(event.keyCode, modifierFlags: event.modifierFlags)
+    }
+
+    /// Same shape as `fromNSEvent` but takes raw keyCode + flags so
+    /// callers can override the modifier source. Used by
+    /// HotkeyRecorder which tracks modifiers via `.flagsChanged`
+    /// separately — on some macOS / keyboard combos the keyDown
+    /// event's `modifierFlags` arrive empty even when the user is
+    /// holding ⌘/⌃/⌥.
+    ///
+    /// Accepted:
+    ///   • any key + at least one of ⌘ / ⌃ / ⌥
+    ///   • function keys (F1–F20) on their own (rarely typed,
+    ///     no risk of hijacking ordinary input)
+    static func fromKeyCode(_ keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> HotkeyChoice? {
+        let carbonKey = UInt32(keyCode)
+        let carbonMods = nsToCarbonModifiers(modifierFlags)
         let strongMods: UInt32 = UInt32(cmdKey | controlKey | optionKey)
-        if carbonMods & strongMods == 0 { return nil }
+        let hasStrongModifier = (carbonMods & strongMods) != 0
+        let isBareFunctionKey = Self.functionKeyCodes.contains(carbonKey) && carbonMods == 0
+        guard hasStrongModifier || isBareFunctionKey else { return nil }
         let label = humanLabel(keyCode: carbonKey, modifiers: carbonMods)
         return HotkeyChoice(keyCode: carbonKey, modifiers: carbonMods, label: label)
     }
+
+    /// kVK_F1 … kVK_F20 — virtual keycodes for the function row.
+    /// Allowed as bare hotkeys because nobody types them as
+    /// ordinary characters, so binding e.g. F5 as Daisy's toggle
+    /// won't hijack normal typing the way bare "K" would.
+    private static let functionKeyCodes: Set<UInt32> = [
+        UInt32(kVK_F1),  UInt32(kVK_F2),  UInt32(kVK_F3),  UInt32(kVK_F4),
+        UInt32(kVK_F5),  UInt32(kVK_F6),  UInt32(kVK_F7),  UInt32(kVK_F8),
+        UInt32(kVK_F9),  UInt32(kVK_F10), UInt32(kVK_F11), UInt32(kVK_F12),
+        UInt32(kVK_F13), UInt32(kVK_F14), UInt32(kVK_F15), UInt32(kVK_F16),
+        UInt32(kVK_F17), UInt32(kVK_F18), UInt32(kVK_F19), UInt32(kVK_F20),
+    ]
 
     /// NSEvent.ModifierFlags → Carbon modifier bitmask.
     private static func nsToCarbonModifiers(_ flags: NSEvent.ModifierFlags) -> UInt32 {

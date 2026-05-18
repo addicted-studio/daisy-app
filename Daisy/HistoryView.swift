@@ -61,9 +61,17 @@ struct HistoryView: View {
         .frame(minWidth: 760, minHeight: 480)
         .task { await store.refresh() }
         .onAppear {
+            consumePendingSelection()
             if selectedIDs.isEmpty, let first = store.sessions.first?.id {
                 selectedIDs = [first]
             }
+        }
+        // Deep-link arrival: HomeView (and similar) can request a
+        // specific session via `AppNavigation.openInHistory(_:)`.
+        // We react to that request both on first appear (above) and
+        // any subsequent arrivals while the view is already mounted.
+        .onChange(of: AppNavigation.shared.pendingHistorySelection) { _, _ in
+            consumePendingSelection()
         }
         // Backspace / forward-Delete on the History view trigger the
         // bulk-delete confirmation. `.onDeleteCommand` only fires
@@ -114,6 +122,18 @@ struct HistoryView: View {
         } message: {
             Text(deleteAlertMessage)
         }
+    }
+
+    /// Pull the pending session id from `AppNavigation`, focus the
+    /// row, and clear the request so it doesn't fire again. Called
+    /// on appear AND on changes — the latter handles deep-links
+    /// while the History tab is already the active one.
+    private func consumePendingSelection() {
+        guard let pending = AppNavigation.shared.pendingHistorySelection else { return }
+        if store.sessions.contains(where: { $0.id == pending }) {
+            selectedIDs = [pending]
+        }
+        AppNavigation.shared.pendingHistorySelection = nil
     }
 
     /// Resolve the current selection into a delete-confirmation

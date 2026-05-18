@@ -18,6 +18,7 @@ struct SettingsView: View {
     @Bindable var whisper = WhisperEngine.shared
     @Bindable var summarizer = Summarizer.shared
     @Bindable var calendar = CalendarService.shared
+    @Bindable var mcpServer = MCPServer.shared
 
     @State private var notionTestResult: TestResult = .idle
     @State private var summaryTestResult: TestResult = .idle
@@ -28,6 +29,23 @@ struct SettingsView: View {
         case success(String)
         case failure(String)
     }
+
+    /// Last summary produced by Test summary — drives the preview
+    /// block that shows up after a successful run. Cleared on each
+    /// new test so the preview always matches the latest probe.
+    @State private var summaryTestPreview: MeetingSummary?
+
+    /// Bumped after the user picks / clears the sessions folder so
+    /// the displayed path refreshes. `SessionsFolder` is plain
+    /// UserDefaults under the hood — not @Observable — so SwiftUI
+    /// needs a state nudge to re-read the path.
+    @State private var storageRefreshTick: Int = 0
+    /// Live list of input devices for the Capture-tab mic picker.
+    /// Re-read on captureTab .task and on the Refresh button so the
+    /// picker reflects current plugged-in hardware without us having
+    /// to subscribe to CoreAudio hot-plug notifications (added in
+    /// post-launch hardening).
+    @State private var micDevices: [AudioInputDevice] = []
 
     var body: some View {
         TabView {
@@ -43,22 +61,182 @@ struct SettingsView: View {
                 .tabItem { Label("Summary", systemImage: "text.bubble") }
                 .scrollContentBackground(.hidden)
 
-            notionTab
-                .tabItem { Label("Notion", systemImage: "doc.text") }
+            integrationsTab
+                .tabItem { Label("Destinations", systemImage: "paperplane") }
                 .scrollContentBackground(.hidden)
 
             mcpTab
-                .tabItem { Label("MCP", systemImage: "antenna.radiowaves.left.and.right") }
+                .tabItem { Label("Sharing", systemImage: "antenna.radiowaves.left.and.right") }
                 .scrollContentBackground(.hidden)
 
-            autoActionsTab
-                .tabItem { Label("Auto-actions", systemImage: "paperplane") }
+            aboutTab
+                .tabItem { Label("About", systemImage: "info.circle") }
                 .scrollContentBackground(.hidden)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // macOS Settings convention: ~700pt fixed-width per tab. Without
+        // a minimum the form collapses and Hotkey rows cramp horizontally.
+        .frame(minWidth: 640, idealWidth: 720, minHeight: 540, maxHeight: .infinity)
         .padding()
         .background(Color.daisyBgPrimary)
         .task { await summarizer.refreshAvailability() }
+    }
+
+    /// Label shown on the preset Menu's trigger. Always reflects
+    /// the currently-active shortcut — whether it's a canonical
+    /// preset or a custom combo the user recorded via Press keys.
+    /// "Custom · ⌥⌘X" makes the state legible at a glance; if
+    /// nothing is configured (`.none`), fall back to a hint.
+    private var presetMenuLabel: String {
+        let current = settings.recordHotkey
+        if current.keyCode == nil {
+            return "Choose preset"
+        }
+        if current.isPreset {
+            return current.label
+        }
+        return "Custom — \(current.label)"
+    }
+
+    // MARK: - MCP summarizer wrapper presets
+
+    /// Known local-LLM MCP wrappers. Each defines a sensible
+    /// `(baseURL, toolName, argumentsTemplate)` triple so the user
+    /// can pick from a Menu instead of hand-writing JSON.
+    private enum MCPSummarizerPreset {
+        case ollama
+        case lmStudio
+        case llamaCpp
+
+        var baseURL: String {
+            switch self {
+            case .ollama:   return "http://127.0.0.1:11435"
+            case .lmStudio: return "http://127.0.0.1:1234"
+            case .llamaCpp: return "http://127.0.0.1:8080"
+            }
+        }
+        var toolName: String {
+            switch self {
+            case .ollama, .lmStudio: return "chat"
+            case .llamaCpp:          return "complete"
+            }
+        }
+        var template: String {
+            switch self {
+            case .ollama:
+                return """
+                {
+                  "model": "qwen2.5:7b-instruct",
+                  "messages": [
+                    {"role": "system", "content": "{{system}}"},
+                    {"role": "user", "content": "{{transcript}}"}
+                  ],
+                  "format": "json"
+                }
+                """
+            case .lmStudio:
+                return """
+                {
+                  "model": "qwen2.5-7b-instruct",
+                  "messages": [
+                    {"role": "system", "content": "{{system}}"},
+                    {"role": "user", "content": "{{transcript}}"}
+                  ],
+                  "response_format": {"type": "json_object"}
+                }
+                """
+            case .llamaCpp:
+                return """
+                {
+                  "prompt": "{{system}}\\n\\n{{transcript}}",
+                  "n_predict": 1024,
+                  "temperature": 0.2
+                }
+                """
+            }
+        }
+    }
+
+    private func applyMCPSummarizerPreset(_ preset: MCPSummarizerPreset) {
+        settings.mcpSummarizerURL = preset.baseURL
+        settings.mcpSummarizerToolName = preset.toolName
+        settings.mcpSummarizerArgumentsTemplate = preset.template
+    }
+
+    // MARK: - Storage (sessions folder)
+
+    /// Row showing the currently-configured sessions folder + buttons
+    /// to change or reset it. `storageRefreshTick` is bound to the
+    /// HStack via `.id(...)` — that both reads the @State (so
+    /// SwiftUI tracks it) and forces a fresh view identity each time
+    /// the tick changes, which is exactly what we need since
+    /// SessionsFolder reads UserDefaults directly (not @Observable).
+    @ViewBuilder
+    private var storageRow: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sessions folder")
+                    .font(.callout.weight(.medium))
+                Text(storageDisplayPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Button("Choose folder…") {
+                    if SessionsFolder.presentPicker() != nil {
+                        storageRefreshTick &+= 1
+                        ToastCenter.shared.show("New recordings will land here.", style: .success)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                if SessionsFolder.hasUserFolder {
+                    Button("Reset to default") {
+                        SessionsFolder.clearUserFolder()
+                        storageRefreshTick &+= 1
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .id(storageRefreshTick)
+    }
+
+    private var storageDisplayPath: String {
+        SessionsFolder.userFolderDisplayPath()
+            ?? SessionsFolder.defaultContainerLabel
+    }
+
+    /// Stacked field row used by the Notion section (and reusable
+    /// anywhere we need label-above-field-above-caption). Wraps
+    /// content in `HStack { ... Spacer() }` so Form doesn't try to
+    /// pull the leading Text out as a row label.
+    @ViewBuilder
+    private func notionField<Field: View>(
+        label: String,
+        caption: String,
+        @ViewBuilder field: () -> Field
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label).font(.callout.weight(.medium))
+                Spacer()
+            }
+            field()
+            HStack {
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+        }
     }
 
     private func graceLabel(seconds: Int) -> String {
@@ -76,11 +254,61 @@ struct SettingsView: View {
     @State private var editingIntegration: MCPIntegration?
     @State private var showingNewIntegrationSheet: Bool = false
 
-    private var autoActionsTab: some View {
+    /// Unified destinations tab — first-party Notion credentials at
+    /// the top (REST API, simplest path), then the open-ended list
+    /// of MCP integrations below. Both feed the same "Send to …"
+    /// kebab in History; keeping them on one page so the user has a
+    /// single place to manage everywhere a session can be pushed.
+    private var integrationsTab: some View {
         Form {
+            // Notion — first-party REST connector, simplest setup.
+            //
+            // Each row is wrapped in a VStack with a leading-edge
+            // `HStack { Text; Spacer }` for the label. Without the
+            // HStack+Spacer, Form's auto-labelling sees the leading
+            // `Text` as a row label and pulls it out into the left
+            // column — breaking the "label above field" layout.
+            // The Spacer forces Form to treat the whole VStack as
+            // one block of row content.
+            Section {
+                notionField(
+                    label: "Integration secret",
+                    caption: "Paste your Notion integration secret."
+                ) {
+                    SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                notionField(
+                    label: "Parent page ID",
+                    caption: "The 32-character ID at the end of the page URL — with or without dashes."
+                ) {
+                    TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                HStack {
+                    Button("Test connection") {
+                        Task { await testNotion() }
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
+                    Spacer()
+                    testStatusView
+                }
+                Text("Create an internal integration at notion.so/profile/integrations, then share the parent page with it so Daisy can write under it. Test creates a probe page you can delete.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Notion")
+            }
+
+            // MCP integrations — generic, multiple destinations.
             Section {
                 if integrationStore.integrations.isEmpty {
-                    Text("No integrations yet. Add one to push finished sessions into Notion, Linear, or any MCP-compatible service.")
+                    Text("No MCP integrations yet. Add one to push finished sessions into Linear, a custom Notion database, or any other MCP-compatible service.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
@@ -89,7 +317,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("Integrations")
+                Text("MCP integrations")
             } footer: {
                 Text("Each integration is a destination Daisy can send a finished session to via MCP. The `Send to {name}` action shows up in the session's kebab menu in History. Disabled integrations don't appear there.")
                     .font(.caption2)
@@ -109,10 +337,11 @@ struct SettingsView: View {
                             )
                         }
                         Divider()
+                        // Notion has a first-class section above — no
+                        // template here to avoid two-ways-to-add-Notion
+                        // mental-model confusion. Linear stays as the
+                        // canonical MCP template starter.
                         Text("Templates").font(.caption).foregroundStyle(.secondary)
-                        Button("Notion (create_page)") {
-                            editingIntegration = MCPIntegration.notionDefault()
-                        }
                         Button("Linear (create_issue)") {
                             editingIntegration = MCPIntegration.linearDefault()
                         }
@@ -121,6 +350,7 @@ struct SettingsView: View {
                     }
                     .menuStyle(.button)
                     .buttonStyle(.bordered)
+                    .menuIndicator(.hidden)
                 }
             }
         }
@@ -146,7 +376,7 @@ struct SettingsView: View {
     private func integrationRow(_ integration: MCPIntegration) -> some View {
         HStack(spacing: 10) {
             Toggle(
-                "",
+                integration.name,
                 isOn: Binding(
                     get: { integration.enabled },
                     set: { newValue in
@@ -158,6 +388,8 @@ struct SettingsView: View {
             )
             .toggleStyle(.switch)
             .controlSize(.small)
+            // VoiceOver still reads the label even when hidden;
+            // sighted users see the name in the VStack alongside.
             .labelsHidden()
 
             VStack(alignment: .leading, spacing: 2) {
@@ -177,14 +409,18 @@ struct SettingsView: View {
             }
             .buttonStyle(.borderless)
             .help("Edit")
+            .accessibilityLabel("Edit \(integration.name)")
             Button(role: .destructive) {
                 integrationStore.remove(id: integration.id)
             } label: {
+                // `role: .destructive` already styles this red on
+                // macOS — no manual `foregroundStyle` so we don't
+                // bypass system hover/disabled states.
                 Image(systemName: "trash")
-                    .foregroundStyle(Color.daisyError)
             }
             .buttonStyle(.borderless)
             .help("Delete")
+            .accessibilityLabel("Delete \(integration.name)")
         }
     }
 
@@ -196,21 +432,25 @@ struct SettingsView: View {
         Form {
             Section {
                 Toggle(isOn: $settings.mcpServerEnabled) {
-                    Text("Run local MCP server")
-                    Text("Lets Claude Desktop, Claude Code, Cowork, Cursor and any other MCP-compatible client read your Daisy transcripts and summaries. Bound to 127.0.0.1 only — nothing ever leaves this Mac.")
+                    Text("Let AI clients read your sessions")
+                    Text("So Claude Desktop, Cursor and other MCP-compatible tools on this Mac can read your transcripts and summaries. Bound to 127.0.0.1 only — nothing leaves this Mac.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 mcpStatusRow
             } header: {
-                Text("Server")
+                Text("Local server")
             }
 
             Section {
                 HStack {
                     Text("Port")
                     Spacer()
-                    TextField("54321", text: $mcpPortText, prompt: Text("54321"))
+                    // Empty `""` as first arg avoids the Form-quirk
+                    // where the first string becomes a row label
+                    // (would render a duplicate "54321" above the
+                    // field). Real prompt goes through `prompt:`.
+                    TextField("", text: $mcpPortText, prompt: Text("54321"))
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 90)
                         .onSubmit { commitMCPPort() }
@@ -247,9 +487,9 @@ struct SettingsView: View {
                     .controlSize(.small)
                 }
             } header: {
-                Text("Claude Desktop config")
+                Text("Connect a client")
             } footer: {
-                Text("Paste this into ~/Library/Application Support/Claude/claude_desktop_config.json under the top-level \"mcpServers\" key. Restart Claude Desktop to pick it up. Same shape works for any client that speaks MCP over SSE.")
+                Text("Paste into ~/Library/Application Support/Claude/claude_desktop_config.json under \"mcpServers\", then restart Claude Desktop. The same URL works in any client that speaks MCP over SSE.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -264,23 +504,19 @@ struct SettingsView: View {
     @ViewBuilder
     private var mcpStatusRow: some View {
         HStack(spacing: 8) {
-            switch MCPServer.shared.state {
+            switch mcpServer.state {
             case .stopped:
-                Image(systemName: "circle.fill").foregroundStyle(.tertiary)
-                Text("Not running").foregroundStyle(.secondary)
+                StatusBadge(state: .idle, message: nil)
+                Text("Not running").font(.caption).foregroundStyle(.secondary)
             case .starting(let port):
-                ProgressView().controlSize(.small)
-                Text("Starting on port \(port)…").foregroundStyle(.secondary)
+                StatusBadge(state: .busy, message: "Starting on port \(port)…")
             case .running(let port):
-                Image(systemName: "circle.fill").foregroundStyle(Color.daisySuccess)
-                Text("Listening on 127.0.0.1:\(port)").fontWeight(.medium)
+                StatusBadge(state: .ok, message: "Listening on 127.0.0.1:\(port)")
             case .failed(let msg):
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyError)
-                Text(msg).foregroundStyle(.secondary).lineLimit(3)
+                StatusBadge(state: .err, message: msg)
             }
             Spacer()
         }
-        .font(.caption)
     }
 
     private var mcpConfigSnippet: String {
@@ -317,7 +553,7 @@ struct SettingsView: View {
                 Text("Calendar access granted").fontWeight(.medium)
                 Spacer()
                 Button("Revoke…") {
-                    calendar.openSystemSettingsIfDenied()
+                    calendar.openCalendarPrivacy()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -350,7 +586,7 @@ struct SettingsView: View {
                 Text("Calendar access denied").foregroundStyle(.secondary)
                 Spacer()
                 Button("Open System Settings…") {
-                    calendar.openSystemSettingsIfDenied()
+                    calendar.openCalendarPrivacy()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -359,7 +595,7 @@ struct SettingsView: View {
                 Text("Full access needed — current permission is write-only").foregroundStyle(.secondary)
                 Spacer()
                 Button("Open System Settings…") {
-                    calendar.openSystemSettingsIfDenied()
+                    calendar.openCalendarPrivacy()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -373,8 +609,14 @@ struct SettingsView: View {
     // MARK: - Capture
 
     private var captureTab: some View {
+        captureTabForm
+            .task { refreshMicDevices() }
+    }
+
+    private var captureTabForm: some View {
         Form {
             Section {
+                micPickerRow
                 Toggle(isOn: $settings.captureSystemAudio) {
                     Text("Capture system audio")
                     Text("Records the other side of the meeting (Zoom, Meet, Telegram). macOS will ask for Screen & System Audio Recording permission the first time.")
@@ -386,9 +628,18 @@ struct SettingsView: View {
             }
 
             Section {
+                storageRow
+                Text("Audio, transcripts, summaries and screenshots are written to `Daisy/Sessions/` inside this folder. Existing recordings stay where they were — Daisy reads from both the new and the old location.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Storage")
+            }
+
+            Section {
                 Toggle(isOn: $settings.floatingWidgetEnabled) {
-                    Text("Show floating widget")
-                    Text("Pops a small daisy mark above all other windows while a session is active. Tap to pause / resume, right-click for Stop & save. The menu bar item and main window stay available either way — this is just an extra always-visible affordance.")
+                    Text("Keep it on top of other windows")
+                    Text("A small daisy mark sits above your apps while recording. Tap to pause or resume; right-click for Stop & save. The menu bar item and main window stay available either way.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -397,26 +648,29 @@ struct SettingsView: View {
             }
 
             Section {
-                HStack {
-                    Text("Global shortcut")
-                    Spacer()
+                LabeledContent("Global shortcut") {
                     HotkeyRecorder(value: $settings.recordHotkey)
                 }
-                Menu("Choose preset…") {
-                    ForEach(HotkeyChoice.allPresets) { preset in
-                        Button {
-                            settings.recordHotkey = preset
-                        } label: {
-                            if preset == settings.recordHotkey {
-                                Label(preset.label, systemImage: "checkmark")
-                            } else {
-                                Text(preset.label)
+                LabeledContent("Preset") {
+                    Menu {
+                        ForEach(HotkeyChoice.allPresets) { preset in
+                            Button {
+                                settings.recordHotkey = preset
+                            } label: {
+                                if preset == settings.recordHotkey {
+                                    Label(preset.label, systemImage: "checkmark")
+                                } else {
+                                    Text(preset.label)
+                                }
                             }
                         }
+                    } label: {
+                        Text(presetMenuLabel)
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                 }
-                .menuStyle(.borderlessButton)
-                Text("Pressed from any app, starts a new recording or stops the current one. Click the shortcut pill to record your own combination, or pick a preset.")
+                Text("Pressed from any app, toggles pause / resume during a session or starts a new one. Combos must include ⌘, ⌃ or ⌥ — or a bare function key (F1–F20). Bare letters would hijack normal typing.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -425,51 +679,50 @@ struct SettingsView: View {
 
             Section {
                 Toggle(isOn: $settings.autoStartOnMeeting) {
-                    Text("Start automatically when a meeting app opens")
-                    Text("Daisy will begin recording the moment Zoom, Microsoft Teams, Webex, Telegram or Discord launches. Apps that were already open when you started Daisy are left alone.")
+                    Text("Start when a meeting app opens")
+                    Text("Daisy begins recording the moment Zoom, Microsoft Teams, Webex, Telegram or Discord launches. Apps that were already open when you started Daisy are left alone.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } header: {
-                Text("Auto-start · app launch")
+                Text("Auto-start on app launch")
             }
 
             Section {
                 calendarPermissionRow
 
                 Toggle(isOn: $settings.autoStartFromCalendar) {
-                    Text("Start automatically at the scheduled time")
-                    Text("Daisy reads your calendar, finds events with a Zoom / Google Meet / Teams / Webex link in them, and starts recording at the moment they begin. This is how browser-based meetings (Google Meet in Chrome) get covered. Up to 2 minutes late is still OK — Daisy will start if you’re running behind.")
+                    Text("Start at the scheduled time")
+                    Text("Daisy reads your calendar, finds events with a Zoom, Google Meet, Teams or Webex link, and starts recording when they begin. Covers browser-based meetings (Google Meet in Chrome). Up to 2 minutes late is still OK.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .disabled(!settings.calendarAccessGranted)
-            } header: {
-                Text("Auto-start · calendar")
-            }
 
-            Section {
                 Toggle(isOn: $settings.autoStopFromCalendar) {
-                    Text("Stop automatically when the event ends")
-                    Text("For sessions bound to a calendar event, Daisy schedules a Stop & save at the event's end time plus a grace period. You get a cancellable warning toast 30 seconds before — if the conversation runs over, click Keep going and the timer resets.")
+                    Text("Stop when the event ends")
+                    Text("For sessions bound to a calendar event, Daisy runs Stop & save at the event's end time plus a grace period. A warning toast appears 30 seconds before — if the conversation runs over, click Keep going and the timer resets.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .disabled(!settings.calendarAccessGranted)
 
                 if settings.autoStopFromCalendar {
-                    Stepper(value: $settings.autoStopGraceSec, in: 0...1800, step: 30) {
-                        HStack {
-                            Text("Grace period")
-                            Spacer()
-                            Text(graceLabel(seconds: settings.autoStopGraceSec))
-                                .monospaced()
-                                .foregroundStyle(.secondary)
-                        }
+                    Picker("Grace period", selection: $settings.autoStopGraceSec) {
+                        Text("On the dot").tag(0)
+                        Text("1 min").tag(60)
+                        Text("2 min").tag(120)
+                        Text("5 min").tag(300)
+                        Text("10 min").tag(600)
+                        Text("15 min").tag(900)
+                        Text("30 min").tag(1800)
+                        Text("1 hour").tag(3600)
                     }
+                    .pickerStyle(.menu)
+                    .disabled(!settings.calendarAccessGranted)
                 }
             } header: {
-                Text("Auto-stop · calendar")
+                Text("Calendar")
             }
 
             Section {
@@ -494,24 +747,70 @@ struct SettingsView: View {
                 Text("Screenshots")
             }
 
-            Section {
-                Toggle(isOn: $settings.autoSummarize) {
-                    Text("Summarize automatically when recording stops")
-                    Text("Runs the selected AI provider on the transcript the moment you stop recording — meeting summary, next actions, and a follow-up draft for clients or partners. Configure the provider in Settings → AI.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .disabled(!summarizerAvailable)
-                if !summarizerAvailable {
-                    Text("AI provider isn’t ready — open Settings → AI to configure it.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            } header: {
-                Text("Auto-summary")
-            }
+            // Auto-summary moved to the Summary tab — it sits next
+            // to the provider config it depends on.
         }
         .formStyle(.grouped)
+    }
+
+    // Microphone selector row in the Capture tab. Empty UID == follow
+    // the macOS system default (the v1.0 behaviour). For the default
+    // option we suffix the name of the device currently in that slot
+    // so the user knows what "system default" actually resolves to
+    // right now ("System default (AirPods Pro)") — far more useful
+    // than a bare "System default" label.
+    @ViewBuilder
+    private var micPickerRow: some View {
+        LabeledContent("Microphone") {
+            HStack(spacing: 8) {
+                Picker("", selection: $settings.selectedMicDeviceUID) {
+                    Text(systemDefaultLabel).tag("")
+                    if !micDevices.isEmpty {
+                        Divider()
+                        ForEach(micDevices) { device in
+                            Text(device.name).tag(device.uid)
+                        }
+                    }
+                    // If the saved UID isn't in the live list (device
+                    // unplugged since selection), include a disabled
+                    // placeholder so the Picker can still display the
+                    // current value rather than silently snapping to
+                    // System default. The user sees that something is
+                    // missing and can act on it.
+                    if !settings.selectedMicDeviceUID.isEmpty,
+                       !micDevices.contains(where: { $0.uid == settings.selectedMicDeviceUID }) {
+                        Divider()
+                        Text("Saved device (not connected)")
+                            .tag(settings.selectedMicDeviceUID)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+
+                Button {
+                    refreshMicDevices()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help("Re-scan input devices")
+            }
+        }
+        Text("Daisy uses this device for the microphone track. Pick \"System default\" to follow your macOS Sound settings.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var systemDefaultLabel: String {
+        if let current = micDevices.first(where: { $0.isSystemDefault }) {
+            return "System default (\(current.name))"
+        }
+        return "System default"
+    }
+
+    private func refreshMicDevices() {
+        micDevices = AudioInputDevices.list()
     }
 
     // MARK: - Transcription (Whisper)
@@ -535,19 +834,19 @@ struct SettingsView: View {
 
             Section {
                 HStack(spacing: 8) {
-                    whisperStatusIcon
-                    Text(whisperStatusText).fontWeight(.medium)
+                    StatusBadge(state: whisperBadgeState, message: whisperStatusText)
                     Spacer()
                     Button("Reload") { Task { await whisper.reload() } }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .tint(Color.daisyTextPrimary)
                         .disabled(isWhisperLoading)
                 }
                 whisperStatusBody
             } header: {
-                Text("Status")
+                Text("Model status")
             } footer: {
-                Text("First time a model is selected it downloads from Hugging Face (argmaxinc/whisperkit-coreml). The model is stored inside the app's container and reused for subsequent meetings.")
+                Text("First time you pick a model, Daisy downloads it from Hugging Face. Files live inside the app's container and get reused for every meeting after.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -555,18 +854,12 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    private var whisperStatusIcon: some View {
-        Group {
-            switch whisper.state {
-            case .ready:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.daisySuccess)
-            case .downloading, .loading:
-                ProgressView().controlSize(.small)
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyError)
-            case .notLoaded:
-                Image(systemName: "circle.dotted").foregroundStyle(.secondary)
-            }
+    private var whisperBadgeState: StatusBadge.State {
+        switch whisper.state {
+        case .ready:                 return .ok
+        case .downloading, .loading: return .busy
+        case .failed:                return .err
+        case .notLoaded:             return .idle
         }
     }
 
@@ -636,20 +929,20 @@ struct SettingsView: View {
 
             Section {
                 HStack(spacing: 8) {
-                    summarizerStatusIcon
-                    Text(summarizerStatusText).fontWeight(.medium)
+                    StatusBadge(state: summarizerBadgeState, message: summarizerStatusText)
                     Spacer()
                     Button("Refresh") {
                         Task { await summarizer.refreshAvailability() }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .tint(Color.daisyTextPrimary)
                 }
                 Text(summarizerStatusBody)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("Status")
+                Text("Provider status")
             }
 
             Section {
@@ -659,17 +952,29 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                Text("Pin the language the AI writes the summary in. Decoupled from the transcript — you can record in one language and read the summary in another (handy for sending follow-ups to clients in a different language).")
+                Text("The summary will always be written in this language, even if the meeting itself was in another. Handy when you record in one language and send the follow-up in another.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Summary language")
             }
 
-            // The "auto-summarize on stop" toggle used to live here, but
-            // logically it's a capture-time behaviour, not a provider
-            // configuration — moved to the Capture tab where the user
-            // already configures what happens during/after a recording.
+            Section {
+                Toggle(isOn: $settings.autoSummarize) {
+                    Text("Summarize when recording stops")
+                    Text("Runs the selected provider on the transcript the moment you stop — meeting overview, next actions, and a follow-up draft for clients or partners.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!summarizerAvailable)
+                if !summarizerAvailable {
+                    Text("Provider isn’t ready yet — set it up in the section above first.")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyWarning)
+                }
+            } header: {
+                Text("Auto-summary")
+            }
         }
         .formStyle(.grouped)
     }
@@ -712,7 +1017,12 @@ struct SettingsView: View {
                     Spacer()
                     summaryTestStatusView
                 }
+                Text("Sends a realistic two-person client call through the provider so you can see exactly what a finished session will look like — and confirm the response parses correctly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+
+            summaryTestPreviewSection
 
         case .openai:
             Section {
@@ -746,54 +1056,85 @@ struct SettingsView: View {
                     Spacer()
                     summaryTestStatusView
                 }
+                Text("Sends a realistic two-person client call through the provider so you can see exactly what a finished session will look like — and confirm the response parses correctly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+
+            summaryTestPreviewSection
 
         case .mcp:
             Section {
-                HStack {
-                    Text("Server URL")
-                    Spacer()
+                LabeledContent("Server URL") {
                     TextField("http://127.0.0.1:11435", text: $settings.mcpSummarizerURL)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 280)
                 }
-                HStack {
-                    Text("Tool name")
-                    Spacer()
+                LabeledContent("Tool name") {
                     TextField("chat", text: $settings.mcpSummarizerToolName)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 280)
                 }
-                Text("Daisy connects to your MCP server over HTTP+SSE and calls one tool per summarize. Most local-LLM wrappers expose either a `chat` or `complete` tool — check your wrapper's `tools/list` for the exact name.")
+                Text("Daisy connects over HTTP+SSE and calls one tool per summarize. Most local-LLM wrappers expose a `chat` or `complete` tool — check your wrapper's docs for the exact name.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("MCP server")
+                Text("Local LLM connection")
             }
 
+            // Presets — let users pick a known wrapper's shape so
+            // they never have to hand-write JSON.
             Section {
-                TextEditor(text: $settings.mcpSummarizerArgumentsTemplate)
-                    .font(.system(.callout, design: .monospaced))
-                    .frame(minHeight: 160)
-                    .padding(6)
-                    .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-                    )
-                HStack {
-                    Button("Reset to default") {
-                        settings.mcpSummarizerArgumentsTemplate = MCPSummarizer.defaultArgumentsTemplate
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                HStack(spacing: 8) {
+                    Text("Use template for")
                     Spacer()
+                    Menu("Pick wrapper") {
+                        Button("Ollama (chat tool)") {
+                            applyMCPSummarizerPreset(.ollama)
+                        }
+                        Button("LM Studio (chat tool)") {
+                            applyMCPSummarizerPreset(.lmStudio)
+                        }
+                        Button("llama.cpp (complete tool)") {
+                            applyMCPSummarizerPreset(.llamaCpp)
+                        }
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                 }
-                Text("JSON template for the tool's `arguments`. Three placeholders get substituted before sending: `{{system}}` (Daisy's system prompt), `{{transcript}}` (meeting title + body), `{{title}}` (meeting title alone). Edit the `model` field to match a model your wrapper has pulled.")
+                Text("Fills the URL, tool name, and arguments template with sensible defaults for that wrapper. You can still edit anything by hand below.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("Arguments template")
+                Text("Quick setup")
+            }
+
+            // Engineering escape hatch — hand-edit the raw JSON. Most
+            // users never open this; preset above covers the
+            // common cases.
+            Section {
+                DisclosureGroup("Advanced — raw JSON template") {
+                    TextEditor(text: $settings.mcpSummarizerArgumentsTemplate)
+                        .font(.system(.callout, design: .monospaced))
+                        .frame(minHeight: 160)
+                        .padding(6)
+                        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                        )
+                    HStack {
+                        Button("Reset to default") {
+                            settings.mcpSummarizerArgumentsTemplate = MCPSummarizer.defaultArgumentsTemplate
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        Spacer()
+                    }
+                    Text("JSON template for the tool's `arguments`. Three placeholders get substituted before sending: `{{system}}` (Daisy's system prompt), `{{transcript}}` (meeting title + body), `{{title}}` (meeting title alone). Edit the `model` field to match a model your wrapper has pulled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section {
@@ -808,23 +1149,20 @@ struct SettingsView: View {
                     Spacer()
                     summaryTestStatusView
                 }
-                Text("Sends a short fixture transcript through your MCP server. Confirms the URL is reachable, the tool exists, and the response parses into the expected schema.")
+                Text("Sends a realistic two-person client call through your MCP server. Confirms the URL is reachable, the tool exists, the response parses into the expected schema — and shows you what a finished session will look like.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            summaryTestPreviewSection
         }
     }
 
-    private var summarizerStatusIcon: some View {
-        Group {
-            switch summarizer.availability {
-            case .available:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.daisySuccess)
-            case .unavailable:
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyError)
-            case .unknown:
-                Image(systemName: "questionmark.circle.fill").foregroundStyle(.secondary)
-            }
+    private var summarizerBadgeState: StatusBadge.State {
+        switch summarizer.availability {
+        case .available: return .ok
+        case .unavailable: return .warn
+        case .unknown: return .busy
         }
     }
 
@@ -850,105 +1188,146 @@ struct SettingsView: View {
     }
 
     private var summaryTestStatusView: some View {
-        Group {
-            switch summaryTestResult {
-            case .idle:
-                EmptyView()
-            case .testing:
-                ProgressView().controlSize(.small)
-            case .success(let msg):
-                Label(msg, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(Color.daisySuccess)
-                    .font(.caption)
-                    .lineLimit(2)
-            case .failure(let msg):
-                Label(msg, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.daisyError)
-                    .font(.caption)
-                    .lineLimit(3)
+        switch summaryTestResult {
+        case .idle:        StatusBadge(state: .idle)
+        case .testing:     StatusBadge(state: .busy)
+        case .success(let msg): StatusBadge(state: .ok, message: msg)
+        case .failure(let msg): StatusBadge(state: .err, message: msg)
+        }
+    }
+
+    /// Inline preview that shows what the rendered summary looks
+    /// like after a successful Test summary. Mirrors the typography
+    /// SessionDetailView uses for real sessions — same MD-document
+    /// grammar (H3 heading + hairline + body) so the test result
+    /// reads as a faithful demo of "this is what you'll see after
+    /// a real meeting".
+    @ViewBuilder
+    private var summaryTestPreviewSection: some View {
+        if let preview = summaryTestPreview {
+            Section {
+                VStack(alignment: .leading, spacing: 14) {
+                    DisclosureGroup {
+                        Text(Self.fixtureTranscript)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
+                    } label: {
+                        Text("Test transcript (\(Self.fixtureTitle))")
+                            .font(.caption.weight(.medium))
+                    }
+
+                    Divider()
+
+                    previewMDSection(title: "Meeting") {
+                        Text(preview.summary)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if !preview.actionItems.isEmpty {
+                        previewMDSection(title: "Next actions") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(preview.actionItems.enumerated()), id: \.offset) { _, item in
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Image(systemName: "square")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                        Text(item)
+                                            .font(.callout)
+                                            .textSelection(.enabled)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if !preview.clientFollowUp.isEmpty {
+                        previewMDSection(title: "Follow-up for client / partner") {
+                            Text(preview.clientFollowUp)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            } header: {
+                Text("Preview · what a real session looks like")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func previewMDSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.daisyTextPrimary)
+            Rectangle()
+                .fill(Color.daisyDivider)
+                .frame(height: 0.5)
+            content()
         }
     }
 
     private func testSummaryProvider() async {
         summaryTestResult = .testing
-        // Tiny test transcript so we don't burn many tokens.
-        let probeTranscript = """
-        [you] Hi, this is a quick connection test from Daisy.
-        We discussed two items: confirming the API works, and noting the model name.
-        Decision: ship after this test passes.
-        """
+        summaryTestPreview = nil
         await summarizer.summarize(
-            transcript: probeTranscript,
-            title: "Daisy — connection test",
+            transcript: Self.fixtureTranscript,
+            title: Self.fixtureTitle,
             localeHint: "en"
         )
         if let err = summarizer.lastError {
             summaryTestResult = .failure(err)
-        } else if summarizer.lastSummary != nil {
-            summaryTestResult = .success("Got a summary back — provider works.")
+        } else if let summary = summarizer.lastSummary {
+            summaryTestResult = .success("Summary came through.")
+            summaryTestPreview = summary
         } else {
-            summaryTestResult = .failure("No response.")
+            summaryTestResult = .failure("No response — provider didn't return anything.")
         }
     }
 
-    // MARK: - Notion
+    // MARK: - Test fixture
+    //
+    // Realistic two-person client call so the model has actual
+    // material to summarise — a couple of concrete next actions,
+    // one decision, and an obvious follow-up to send to the
+    // client. Renders into a populated MeetingSummary the preview
+    // can show as a "this is what a finished session looks like"
+    // demo right inside Settings.
 
-    private var notionTab: some View {
-        Form {
-            Section {
-                SecureField("secret_xxxxxxxxxxxxxxxxxxxxxxx", text: $settings.notionToken)
-                    .textFieldStyle(.roundedBorder)
-                Text("Create a Notion internal integration at notion.so/profile/integrations, copy the token, and share the parent page with that integration.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Integration token")
-            }
+    private static let fixtureTitle = "Brand site · homepage direction review"
 
-            Section {
-                TextField("a1b2c3d4e5f6...", text: $settings.notionParentID)
-                    .textFieldStyle(.roundedBorder)
-                Text("32-character page ID — the long string at the end of the page URL, with or without dashes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Parent page ID")
-            }
+    private static let fixtureTranscript = """
+    [you] Thanks for jumping on. I pulled together two directions for the homepage hero based on what you mentioned last week. Want to walk through them?
+    [client] Yeah, let's do it. I want to know which one we're locking in before I show the team on Friday.
+    [you] OK. Direction one leans into the product photography — big image, very little copy. Direction two is more editorial: copy-first, the product appears lower down the fold.
+    [client] I like the editorial one. We get more room for the value prop. But honestly, the product photo on direction one is much stronger than what we have today.
+    [you] Right. What if we keep the editorial structure but commission a couple of fresh product shots for it? Say two scenes — one lifestyle, one studio.
+    [client] That works for me. Can you scope what a new shoot would cost and send a number by Thursday? I'd rather not be guessing on budget when I'm in front of the team.
+    [you] Will do — I'll have a quote in your inbox Thursday morning. Quick check: what about the testimonials section? You mentioned wanting to feature the new enterprise quote.
+    [client] Yes, please include it. I'll send you the approved version tonight.
+    [you] Perfect. So to recap: we go with the editorial direction, you send the testimonial tonight, I send a shoot budget Thursday, and we lock the homepage layout on the call next Tuesday.
+    [client] Great. Let's also book 30 minutes Friday to look at the mobile breakpoints — I have a couple of concerns there I want to flag before they freeze.
+    [you] Done. I'll send the invite right after this call.
+    """
 
-            Section {
-                HStack {
-                    Button("Test connection") {
-                        Task { await testNotion() }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
-                    Spacer()
-                    testStatusView
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
+    // MARK: - Notion (helpers used by integrationsTab)
 
     private var testStatusView: some View {
-        Group {
-            switch notionTestResult {
-            case .idle:
-                EmptyView()
-            case .testing:
-                ProgressView().controlSize(.small)
-            case .success(let msg):
-                Label(msg, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(Color.daisySuccess)
-                    .font(.caption)
-                    .lineLimit(2)
-            case .failure(let msg):
-                Label(msg, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.daisyError)
-                    .font(.caption)
-                    .lineLimit(3)
-            }
+        switch notionTestResult {
+        case .idle:        StatusBadge(state: .idle)
+        case .testing:     StatusBadge(state: .busy)
+        case .success(let msg): StatusBadge(state: .ok, message: msg)
+        case .failure(let msg): StatusBadge(state: .err, message: msg)
         }
     }
 
@@ -964,11 +1343,122 @@ struct SettingsView: View {
         )
         do {
             let url = try await NotionExporter.shared.createMeetingPage(probe)
-            notionTestResult = .success("Test page created.")
+            notionTestResult = .success("Test page created in Notion.")
             NSWorkspace.shared.open(url)
         } catch {
             notionTestResult = .failure(error.localizedDescription)
         }
+    }
+
+    // MARK: - About
+
+    private var aboutTab: some View {
+        Form {
+            // Brand row — mark + name + tagline + version
+            Section {
+                HStack(spacing: 14) {
+                    DaisyMark(size: 44, tint: .primary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Daisy")
+                            .font(.title2.weight(.semibold))
+                        Text("Local meeting capture for Mac.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Text(versionLine)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section {
+                aboutRow(
+                    icon: "globe",
+                    title: "Website",
+                    detail: "mydaisy.io",
+                    url: URL(string: "https://mydaisy.io")
+                )
+                aboutRow(
+                    icon: "chevron.left.forwardslash.chevron.right",
+                    title: "Source code",
+                    detail: "github.com/d5zn/daisy-app",
+                    url: URL(string: "https://github.com/d5zn/daisy-app")
+                )
+                aboutRow(
+                    icon: "doc.text",
+                    title: "License",
+                    detail: "BUSL-1.1 — source-available",
+                    url: URL(string: "https://github.com/d5zn/daisy-app/blob/main/LICENSE")
+                )
+                aboutRow(
+                    icon: "envelope",
+                    title: "Contact",
+                    detail: "hi@mydaisy.io",
+                    url: URL(string: "mailto:hi@mydaisy.io")
+                )
+            } header: {
+                Text("Links")
+            }
+
+            Section {
+                aboutRow(
+                    icon: "building.2",
+                    title: "Made by",
+                    detail: "Addicted Studio",
+                    url: URL(string: "https://addicted.sh")
+                )
+                Text("Daisy is built so your meetings stay on your Mac — audio, transcript, and summary, all on-device by default. Cloud LLMs (Anthropic, OpenAI) and MCP integrations are strictly opt-in.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Studio")
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    /// Single row in the About tab: leading icon + label + trailing
+    /// link-styled detail that opens the URL on click.
+    @ViewBuilder
+    private func aboutRow(
+        icon: String,
+        title: String,
+        detail: String,
+        url: URL?
+    ) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .frame(width: 18)
+                .foregroundStyle(.secondary)
+            Text(title)
+            Spacer()
+            if let url {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(detail)
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(Color.daisyAccent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(title): \(detail)")
+            } else {
+                Text(detail).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var versionLine: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+        return "Version \(version) (\(build))"
     }
 }
 

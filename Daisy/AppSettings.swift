@@ -18,6 +18,18 @@ final class AppSettings {
     var captureSystemAudio: Bool {
         didSet { defaults.set(captureSystemAudio, forKey: Self.k_captureSystemAudio) }
     }
+
+    /// Persistent UID of the user-picked microphone, or empty string
+    /// to follow the macOS system default (the legacy v1.0 behaviour).
+    /// We store UID rather than `AudioDeviceID` because UID is stable
+    /// across reboots and reconnects; `AudioDeviceID` is not.
+    /// `AudioRecorder` resolves UID → live `AudioDeviceID` at every
+    /// recording start, and silently falls back to system default if
+    /// the saved device is gone (unplugged headset, removed USB
+    /// interface, etc.).
+    var selectedMicDeviceUID: String {
+        didSet { defaults.set(selectedMicDeviceUID, forKey: Self.k_selectedMicDeviceUID) }
+    }
     var screenshotsEnabled: Bool {
         didSet { defaults.set(screenshotsEnabled, forKey: Self.k_screenshotsEnabled) }
     }
@@ -178,7 +190,12 @@ final class AppSettings {
     private let defaults = UserDefaults.standard
 
     init() {
-        self.captureSystemAudio = defaults.object(forKey: Self.k_captureSystemAudio) as? Bool ?? false
+        // Default ON: a meeting capture app capturing only the mic
+        // misses half the conversation. macOS permission prompt
+        // fires lazily on first record, so the cost of `true` here
+        // is zero until the user actually starts recording.
+        self.captureSystemAudio = defaults.object(forKey: Self.k_captureSystemAudio) as? Bool ?? true
+        self.selectedMicDeviceUID = defaults.string(forKey: Self.k_selectedMicDeviceUID) ?? ""
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
@@ -194,7 +211,10 @@ final class AppSettings {
         } else {
             self.recordHotkey = .ctrlOptCmdR
         }
-        self.autoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? false
+        // Default ON: Daisy is a meeting capture app — the
+        // "starts recording the moment Zoom/Teams/etc opens"
+        // behaviour is the headline feature, not an opt-in.
+        self.autoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? true
         self.autoStartFromCalendar = defaults.object(forKey: Self.k_autoStartFromCalendar) as? Bool ?? false
         self.calendarAccessGranted = defaults.bool(forKey: Self.k_calendarAccessGranted)
         // Default ON: `object(forKey:)` returns nil for unset keys, so
@@ -234,6 +254,7 @@ final class AppSettings {
     }
 
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
+    private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_autoSummarize = "daisy.autoSummarize"

@@ -92,6 +92,14 @@ final class RecordingSession {
     private let systemAudio: SystemAudioCapture
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Session")
 
+    /// Security-scoped access ticket for the user-picked sessions
+    /// folder, if one is configured. Acquired at start, released at
+    /// stop/reset. Sandbox apps lose access to user-picked URLs once
+    /// the matching `stopAccessing` runs, so keeping the ticket
+    /// alive for the whole recording is required for the audio
+    /// engine's writes to land.
+    private var sessionsFolderTicket: SessionsFolder.AccessTicket?
+
     /// Schedule that fires the actual Stop & save at calendar end +
     /// grace. Lifecycle owned by start/stop/reset.
     private var autoStopTimer: Timer?
@@ -201,7 +209,10 @@ final class RecordingSession {
         let micAudio = recorder.buffers
         micTranscriber.start(consuming: micAudio, startedAt: nowStarted)
         do {
-            try recorder.start(archiveURL: micArchive)
+            try recorder.start(
+                archiveURL: micArchive,
+                preferredDeviceUID: settings.selectedMicDeviceUID
+            )
         } catch {
             micTranscriber.reset()
             status = .failed(error.localizedDescription)
@@ -385,6 +396,11 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()
+        // NOTE: do NOT release the user-folder ticket here yet —
+        // we still need to write transcript.md and summary.json
+        // below, both of which land inside the user-picked folder.
+        // Release happens at the bottom of stop() after all writes
+        // have flushed (or in the no-audio early-return path).
 
         // Defensive: if the user hit Stop within ~1 second of Start
         // (or any other path that didn't actually capture audio),
@@ -446,6 +462,9 @@ final class RecordingSession {
             }
         }
 
+        // All writers (audio, transcript.md, summary.json) have
+        // flushed by now — safe to release the security scope.
+        releaseSessionsFolderTicket()
         status = .finished
     }
 
@@ -465,6 +484,7 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()
+        releaseSessionsFolderTicket()
         summarizer.clear()
         sessionDirectory = nil
         micArchiveURL = nil
@@ -535,47 +555,64 @@ final class RecordingSession {
         status = priorStatus
     }
 
-    /// Two-letter ISO code that pins the *summary* language. Order of
-    /// precedence:
-    ///   1. `settings.summaryLanguage` — user's explicit override
-    ///      ("write the summary in English regardless of transcript
-    ///      language"). The most common reason to set it is recording
-    ///      in one language but reading the summary in another.
-    ///   2. Transcript locale (`localeIdentifier`) — historical
-    ///      default. Cloud LLMs answer in the transcript's language.
-    ///   3. `nil` — auto-detect from transcript content.
+    /// Two-letter ISO code that pins the *summary* language.
+    /// Precedence:
+    ///   1. `settings.summaryLanguage` — explicit user override.
+    ///   2. `localeIdentifier` — if it's a concrete language
+    ///      (not "auto").
+    ///   3. `LanguageDetector.detect(fullTranscriptText)` — sniff
+    ///      the actual transcript content. Necessary because in
+    ///      auto+auto we'd otherwise hand the prompt a nil hint and
+    ///      Claude/GPT default to English even on a clearly-Russian
+    ///      transcript.
+    ///   4. `nil` — couldn't detect, let model decide.
     private var localeHintForSummary: String? {
-        // 1. Explicit override.
         let override = settings.summaryLanguage
         if !override.isEmpty, override != SummaryLanguage.auto.id {
             return override
         }
-        // 2. Fall back to transcript locale.
         let prefix = localeIdentifier
             .split(separator: "-")
             .first
             .map(String.init)?
             .lowercased()
-        if prefix == nil || prefix == "auto" { return nil }
-        return prefix
+        if let prefix, prefix != "auto" {
+            return prefix
+        }
+        return LanguageDetector.detect(fullTranscriptText)
     }
 
     // MARK: - Internals
 
     private func makeSessionDirectory() throws -> URL {
+        // Acquire and hold the security-scoped folder for the
+        // entire recording lifetime. ticket.url is either the user-
+        // picked folder (Obsidian vault, ~/Documents/Meetings, …)
+        // or the app's container default. Released in stop()/reset().
+        guard let ticket = SessionsFolder.acquireBase() else {
+            throw NSError(
+                domain: "app.essazanov.Daisy",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Couldn't resolve a writable sessions folder."]
+            )
+        }
+        self.sessionsFolderTicket = ticket
+
         let fm = FileManager.default
-        let base = try fm.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
         let stamp = ISO8601DateFormatter()
         stamp.formatOptions = [.withInternetDateTime]
         let safeStamp = stamp.string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
-        let dir = base.appendingPathComponent("Daisy/Sessions/\(safeStamp)", isDirectory: true)
+        let dir = ticket.url.appendingPathComponent("Daisy/Sessions/\(safeStamp)", isDirectory: true)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    /// Release the security-scoped folder ticket. Called from
+    /// `stop()` and `reset()` so we don't hold the user's folder
+    /// open after a session is finalised.
+    private func releaseSessionsFolderTicket() {
+        sessionsFolderTicket?.release()
+        sessionsFolderTicket = nil
     }
 }

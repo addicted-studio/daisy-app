@@ -55,16 +55,18 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         self == .anthropic || self == .openai
     }
 
+    /// Six-words-ish, parallel structure so users can compare
+    /// providers at a glance: `"<destination> — <data flow>."`
     var privacyTag: String {
         switch self {
         case .appleIntelligence:
-            return "On-device — nothing leaves your Mac."
+            return "On-device — nothing is sent anywhere."
         case .anthropic:
-            return "Transcript is sent to api.anthropic.com using your API key."
+            return "Sent to Anthropic over HTTPS, using your API key."
         case .openai:
-            return "Transcript is sent to api.openai.com using your API key."
+            return "Sent to OpenAI over HTTPS, using your API key."
         case .mcp:
-            return "Transcript is sent to your configured MCP server. Stays on this Mac if the server is on 127.0.0.1."
+            return "Sent to your MCP server — stays local if it's on 127.0.0.1."
         }
     }
 }
@@ -112,7 +114,7 @@ enum SummaryProviderError: LocalizedError {
         case .modelUnavailable(let p, let reason):
             return "\(p): \(reason)"
         case .transcriptTooShort:
-            return "Transcript is too short to summarize."
+            return "Not enough was said yet — try a recording over a minute long."
         }
     }
 }

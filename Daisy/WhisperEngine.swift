@@ -232,27 +232,156 @@ final class WhisperEngine {
         await ensureLoaded()
         guard let box = kitBox else { throw WhisperEngineError.notReady }
 
+        // Anti-hallucination knobs. Whisper has a well-documented
+        // failure mode where silence or non-speech ambient sound
+        // (fans, packing tape, HVAC) gets decoded as text from its
+        // YouTube training data — "Thanks for watching!", "ご視聴
+        // ありがとうございました", "Спасибо за внимание" etc. The
+        // defaults in WhisperKit are conservative; we tighten them.
+        //
+        //   noSpeechThreshold       — segment dropped if Whisper's
+        //                             own "is this non-speech?" prob
+        //                             exceeds this. Lower = stricter.
+        //                             Default 0.6; we use 0.55.
+        //   compressionRatioThreshold — high compression = repetitive
+        //                             text ("chocolate chocolate
+        //                             chocolate"); above threshold,
+        //                             segment is discarded. 2.4 is the
+        //                             upstream recommendation.
+        //   logProbThreshold        — drop low-confidence segments
+        //                             (average log-prob below this).
+        //                             -1.0 is the upstream recommendation.
+        //   temperatureFallbackCount — re-sample with higher temperature
+        //                             up to N times when the above
+        //                             filters trigger. 3 gives a fair
+        //                             chance to recover from a bad
+        //                             greedy decode without burning
+        //                             too much latency on real silence.
         let options = DecodingOptions(
             task: .transcribe,
             language: language,
+            temperatureFallbackCount: 3,
             detectLanguage: language == nil,
             skipSpecialTokens: true,
             withoutTimestamps: false,
             wordTimestamps: false,
+            compressionRatioThreshold: 2.4,
+            logProbThreshold: -1.0,
+            noSpeechThreshold: 0.55,
             chunkingStrategy: .vad
         )
 
         let results = try await box.kit.transcribe(audioArray: samples, decodeOptions: options)
+
+        // Post-filter: even with the thresholds above, the most
+        // common YouTube-training-set artefacts slip through often
+        // enough to wreck the live transcript. Drop them by exact
+        // match against a curated blocklist, and collapse adjacent
+        // identical lines (also a hallucination signature — real
+        // speech rarely repeats verbatim back-to-back across
+        // multiple VAD-cut segments).
+        var previousText: String?
         return results.flatMap { result in
-            result.segments.map {
-                WhisperSegment(
-                    start: Double($0.start),
-                    end: Double($0.end),
-                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            result.segments.compactMap { seg -> WhisperSegment? in
+                let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                if Self.isKnownHallucination(text) { return nil }
+                // Adjacent-duplicate collapse: only fire when the
+                // text is long enough that a real repeat is implausible
+                // (avoids killing legitimate "yes, yes" or "ok ok").
+                if text.count >= 6, text == previousText { return nil }
+                previousText = text
+                return WhisperSegment(
+                    start: Double(seg.start),
+                    end: Double(seg.end),
+                    text: text
                 )
             }
         }
     }
+
+    /// Exact-match blocklist of frequent Whisper hallucinations seeded
+    /// from YouTube subtitles. Covers the three languages we expect
+    /// most ("en", "ru", "ja") plus universal music/applause markers.
+    /// Curated from upstream issues and from QA observations
+    /// (2026-05-18: tape-and-fan noise produced 8 consecutive
+    /// "チョコレートを作る" lines on a quiet desk recording).
+    nonisolated static func isKnownHallucination(_ text: String) -> Bool {
+        return Self.hallucinationBlocklist.contains(text)
+    }
+
+    nonisolated static let hallucinationBlocklist: Set<String> = [
+        // Japanese — YouTube outro phrases
+        "チョコレートを作る",
+        "チョコレートを作る。",
+        "ご視聴ありがとうございました",
+        "ご視聴ありがとうございました。",
+        "ご視聴ありがとうございます",
+        "ご視聴ありがとうございます。",
+        "ありがとうございました",
+        "ありがとうございました。",
+        "ありがとうございます",
+        "ありがとうございます。",
+        "バイバイ",
+        "バイバイ。",
+        "次回もお楽しみに",
+        "次回もお楽しみに。",
+        "見てくださってありがとうございました",
+        "また次の動画でお会いしましょう",
+        "フレッシュ",
+
+        // English — channel-outro boilerplate
+        "Thanks for watching!",
+        "Thanks for watching.",
+        "Thanks for watching",
+        "Thank you for watching!",
+        "Thank you for watching.",
+        "Thank you for watching",
+        "Please subscribe to my channel.",
+        "Please subscribe to my channel",
+        "Subscribe to the channel.",
+        "Subscribe to the channel",
+        "Don't forget to subscribe!",
+        "Don't forget to subscribe",
+        "Like and subscribe!",
+        "Like and subscribe",
+        "Bye.",
+        "Bye!",
+        "Bye-bye.",
+        "Bye-bye!",
+        "you",
+        "You",
+        "Thank you.",
+        "Thank you!",
+
+        // Russian — known fansub/subtitler artefacts
+        "Спасибо за внимание.",
+        "Спасибо за внимание!",
+        "Спасибо за внимание",
+        "Продолжение следует...",
+        "Продолжение следует…",
+        "Субтитры делал DimaTorzok",
+        "Субтитры сделал DimaTorzok",
+        "Субтитры создавал DimaTorzok",
+        "Корректор субтитров А.Семкин",
+        "Редактор субтитров А.Семкин",
+
+        // Universal sound-effect markers
+        "[Music]",
+        "[music]",
+        "[MUSIC]",
+        "[Music playing]",
+        "[Applause]",
+        "[applause]",
+        "[Laughter]",
+        "[laughter]",
+        "[Inaudible]",
+        "♪",
+        "♪♪",
+        "♪♪♪",
+        "(music)",
+        "(applause)",
+    ]
 }
 
 /// Sendable wrapper around the non-Sendable WhisperKit class so we can

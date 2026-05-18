@@ -101,7 +101,7 @@ struct RecordCapsule: View {
     private var fill: Color {
         switch session.status {
         case .recording:                              return .daisyRecording
-        case .paused:                                  return .daisyCenterIdle
+        case .paused:                                  return .daisyPaused
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
         // Idle Start uses the same orange family as recording — the

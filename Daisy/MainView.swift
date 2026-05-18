@@ -48,7 +48,21 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
 final class AppNavigation {
     static let shared = AppNavigation()
     var section: MainSection = .home
+    /// One-shot session selection request. HomeView (and any other
+    /// surface that needs to deep-link into a transcript) sets this
+    /// together with `section = .history`; HistoryView consumes and
+    /// clears it on appear / when it observes the change. nil means
+    /// "let the view pick its own default" — usually the first row.
+    var pendingHistorySelection: StoredSession.ID?
     private init() {}
+
+    /// Convenience for `Open this session in History`. Sets both
+    /// section and the pending selection so the History view jumps
+    /// straight to the correct row.
+    func openInHistory(_ id: StoredSession.ID) {
+        pendingHistorySelection = id
+        section = .history
+    }
 }
 
 // MARK: - MainView
@@ -198,6 +212,36 @@ struct MainView: View {
                     // render in macOS sidebar.
                     .listRowInsets(EdgeInsets(top: 14, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
+
+                // Stop & save lives next to the toggle capsule so a
+                // user mid-session can finalise without hunting in
+                // the kebab menu. Only shows during recording / paused.
+                if session.status == .recording || session.status == .paused {
+                    Button {
+                        Task { await session.stop() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "stop.fill")
+                                .font(.callout.weight(.semibold))
+                            Text("Stop & save")
+                                .font(.callout.weight(.medium))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(Color.daisyTextPrimary)
+                        .background(
+                            Capsule(style: .continuous).fill(Color.daisyBgElevated)
+                        )
+                        .overlay(
+                            Capsule(style: .continuous).strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                    .listRowBackground(Color.clear)
+                }
             }
         }
         .listStyle(.sidebar)

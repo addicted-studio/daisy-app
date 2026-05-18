@@ -241,7 +241,7 @@ struct ContentView: View {
         case .idle: return .daisyTextTertiary
         case .preparing, .stopping: return .daisyWarning
         case .recording: return .daisyRecording
-        case .paused: return .daisyCenterIdle
+        case .paused: return .daisyPaused
         case .summarizing: return .daisyWarning
         case .finished: return .daisySuccess
         case .failed: return .daisyError
@@ -345,11 +345,12 @@ struct ContentView: View {
 
     /// Solid capsule fill — orange both at rest (Start) and while
     /// recording. Matches `RecordCapsule.fill` in main sidebar.
-    /// Paused uses idle amber so the user reads "held, not live".
+    /// Paused uses a cool neutral gray (`daisyPaused`) so it can't
+    /// be mistaken for an active recording state.
     private var primaryFill: Color {
         switch session.status {
         case .recording: return .daisyRecording
-        case .paused: return .daisyCenterIdle
+        case .paused: return .daisyPaused
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
         default: return .daisyRecording
@@ -667,13 +668,24 @@ struct ContentView: View {
             }
             .keyboardShortcut("q", modifiers: [.command])
         } label: {
-            Image(systemName: "ellipsis")
+            // `Label(..).iconOnly` (vs a bare `Image`) keeps the
+            // text-line slot reserved in layout, so the bordered
+            // chrome inherits the same intrinsic height as Copy /
+            // Send to. The explicit `.frame(width:height:)` below
+            // then forces that height onto the *width* as well, so
+            // the capsule renders as a square — matching the visual
+            // weight of the two sibling pill buttons instead of
+            // floating as a wider ellipsis chip.
+            Label("More", systemImage: "ellipsis")
+                .labelStyle(.iconOnly)
         }
         .menuStyle(.button)
         .buttonStyle(.bordered)
         .controlSize(.regular)
         .menuIndicator(.hidden)
-        .fixedSize()
+        // 22pt is the standard height of `.controlSize(.regular)`
+        // bordered buttons on macOS 14+. Equal width = square.
+        .frame(width: 22, height: 22)
     }
 
     private var hasSegments: Bool {

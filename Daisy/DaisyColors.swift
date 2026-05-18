@@ -59,6 +59,15 @@ extension Color {
         dark:  Color(hex: 0xFFC266)
     )
 
+    /// Paused state. Cool neutral gray so the widget reads as
+    /// "held / not live" without borrowing any of the warm
+    /// recording-family hues. Deliberately distinct from idle (cool
+    /// white), recording (system orange), and finished (white).
+    static let daisyPaused = Color(
+        light: Color(hex: 0x9AA0A6),  // cool slate gray
+        dark:  Color(hex: 0x7D828B)
+    )
+
     // ─── Brand / surfaces ─────────────────────────────────────────────
 
     /// Main app background. Warm cream in light; deep warm-black in dark.
