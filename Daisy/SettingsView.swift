@@ -195,14 +195,20 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
                 if SessionsFolder.hasUserFolder {
+                    // Was .borderless + tertiary grey — read as plain
+                    // text, not as an actionable control. Promoted to
+                    // .bordered with primary tint so it sits visually
+                    // adjacent to Choose folder… as a peer secondary
+                    // action.
                     Button("Reset to default") {
                         SessionsFolder.clearUserFolder()
                         storageRefreshTick &+= 1
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .foregroundStyle(.secondary)
+                    .tint(Color.daisyTextPrimary)
                 }
             }
         }
@@ -485,6 +491,7 @@ struct SettingsView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+                    .tint(Color.daisyTextPrimary)
                 }
             } header: {
                 Text("Connect a client")
@@ -557,6 +564,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
             case .notDetermined:
                 Image(systemName: "calendar.badge.plus").foregroundStyle(.secondary)
                 Text("Calendar access not requested yet").foregroundStyle(.secondary)
@@ -1013,6 +1021,7 @@ struct SettingsView: View {
                         Task { await testSummaryProvider() }
                     }
                     .buttonStyle(.bordered)
+                    .tint(Color.daisyTextPrimary)
                     .disabled(summaryTestResult == .testing || settings.anthropicAPIKey.isEmpty)
                     Spacer()
                     summaryTestStatusView
@@ -1052,6 +1061,7 @@ struct SettingsView: View {
                         Task { await testSummaryProvider() }
                     }
                     .buttonStyle(.bordered)
+                    .tint(Color.daisyTextPrimary)
                     .disabled(summaryTestResult == .testing || settings.openaiAPIKey.isEmpty)
                     Spacer()
                     summaryTestStatusView
@@ -1129,6 +1139,7 @@ struct SettingsView: View {
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .tint(Color.daisyTextPrimary)
                         Spacer()
                     }
                     Text("JSON template for the tool's `arguments`. Three placeholders get substituted before sending: `{{system}}` (Daisy's system prompt), `{{transcript}}` (meeting title + body), `{{title}}` (meeting title alone). Edit the `model` field to match a model your wrapper has pulled.")
@@ -1143,6 +1154,7 @@ struct SettingsView: View {
                         Task { await testSummaryProvider() }
                     }
                     .buttonStyle(.bordered)
+                    .tint(Color.daisyTextPrimary)
                     .disabled(summaryTestResult == .testing
                               || settings.mcpSummarizerURL.isEmpty
                               || settings.mcpSummarizerToolName.isEmpty)

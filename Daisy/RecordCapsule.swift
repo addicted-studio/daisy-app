@@ -100,8 +100,14 @@ struct RecordCapsule: View {
 
     private var fill: Color {
         switch session.status {
-        case .recording:                              return .daisyRecording
-        case .paused:                                  return .daisyPaused
+        // Colour signals what happens ON CLICK, not current state:
+        //   recording → label says "Pause", click moves us to a
+        //   calm paused state, so the capsule is grey (no urgency).
+        //   paused    → label says "Resume", click re-enters active
+        //   recording, so the capsule is orange (the mic dot is
+        //   about to come back).
+        case .recording:                              return .daisyPaused
+        case .paused:                                  return .daisyRecording
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
         // Idle Start uses the same orange family as recording — the

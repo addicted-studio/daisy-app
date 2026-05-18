@@ -9,20 +9,16 @@
       "layers" : [
         {
           "fill" : {
-            "linear-gradient" : [
-              "display-p3:1.00000,0.60784,0.01569,1.00000",
-              "srgb:0.98039,0.30196,0.02353,1.00000"
-            ]
+            "solid" : "display-p3:1.00000,0.60784,0.01569,1.00000"
           },
           "glass" : true,
-          "hidden" : true,
-          "image-name" : "lightning.svg",
-          "name" : "lightning",
+          "image-name" : "Ellipse 6.svg",
+          "name" : "core",
           "position" : {
-            "scale" : 1,
+            "scale" : 24.9,
             "translation-in-points" : [
               0,
-              92.1875
+              0
             ]
           }
         },
@@ -31,8 +27,16 @@
             "solid" : "display-p3:1.00000,0.60784,0.01569,1.00000"
           },
           "glass" : true,
+          "hidden" : true,
           "image-name" : "Vector-1.svg",
-          "name" : "Vector-1"
+          "name" : "Vector-1",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         }
       ],
       "lighting" : "individual",
@@ -56,13 +60,20 @@
           "fill" : {
             "linear-gradient" : [
               "extended-gray:1.00000,1.00000",
-              "extended-gray:1.00000,0.25168"
+              "extended-gray:1.00000,0.75089"
             ]
           },
-          "hidden" : true,
-          "image-name" : "frame.svg",
-          "name" : "frame",
-          "opacity" : 0.75
+          "hidden" : false,
+          "image-name" : "Vector 2.svg",
+          "name" : "petals",
+          "opacity" : 1,
+          "position" : {
+            "scale" : 24.9,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         },
         {
           "blend-mode" : "normal",
@@ -72,6 +83,7 @@
               "extended-gray:1.00000,0.75089"
             ]
           },
+          "hidden" : true,
           "image-name" : "Vector.svg",
           "name" : "Vector",
           "opacity" : 1
@@ -83,6 +95,19 @@
         "opacity" : 0.5
       },
       "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
       "translucency" : {
         "enabled" : true,
         "value" : 0.5

@@ -207,14 +207,22 @@ final class FloatingPanelController {
         hosting.view.wantsLayer = true
         hosting.view.layer?.backgroundColor = CGColor.clear
 
+        // Initial size is a sensible default; the bubble's SwiftUI
+        // body actually sets `.frame(width: 220)` and lets vertical
+        // be intrinsic, so `setContentSize` after host layout will
+        // reshape this to the real measurement. Starting at 220×90
+        // means the first paint isn't grossly oversized.
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 92),
+            contentRect: NSRect(x: 0, y: 0, width: 220, height: 90),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.isOpaque = false
         panel.backgroundColor = .clear
+        // Let SwiftUI's shadow do the work — AppKit's window shadow
+        // adds a rectangular halo that doesn't follow the rounded
+        // corners (same reason the daisy widget panel turns it off).
         panel.hasShadow = false
         panel.level = .floating
         panel.collectionBehavior = [
@@ -232,21 +240,91 @@ final class FloatingPanelController {
         // Make the bubble accept clicks without stealing focus from
         // whatever the user was just doing.
         panel.becomesKeyOnlyIfNeeded = true
+        // Ask the hosting controller for its preferred size and resize
+        // the panel to match — otherwise the panel keeps the 240×100
+        // bootstrap rect and our positioning maths uses the wrong
+        // height when computing the "above the widget" Y.
+        hosting.view.layoutSubtreeIfNeeded()
+        let fitted = hosting.view.fittingSize
+        if fitted.width > 0, fitted.height > 0 {
+            panel.setContentSize(fitted)
+        }
         self.bubblePanel = panel
     }
 
-    /// Park the bubble above the daisy panel, horizontally centered.
-    /// Falls back to top-right of the screen if the daisy panel has
-    /// no frame yet (early startup race).
+    /// Park the bubble against the daisy panel, preferring above-
+    /// centered, with auto-flip below and clamping to the active
+    /// screen's visible frame. The naive "centered on widget" placement
+    /// pushed the right edge of the bubble off-screen when the widget
+    /// was anchored at bottom-right (the default) — bubble half-width
+    /// (130 pt) exceeded the widget's margin from the right edge.
+    ///
+    /// Layout algorithm:
+    ///   1. Pick the screen the daisy panel actually sits on (not
+    ///      `NSScreen.main` — that can return a different display on
+    ///      multi-monitor setups where the user moved the panel).
+    ///   2. Prefer placing the bubble ABOVE the widget, horizontally
+    ///      centered on it.
+    ///   3. Clamp the X so the bubble is fully inside the visible
+    ///      frame with an 8 pt inner gutter.
+    ///   4. If the bubble would clip the top of the screen, flip
+    ///      below the widget instead.
+    ///   5. If it would clip the bottom too (tiny screen), pin to
+    ///      the top of the visible frame.
     private func positionBubble() {
         guard let bubblePanel else { return }
         let bubbleSize = bubblePanel.frame.size
         let anchor: NSRect = panel?.frame ?? defaultBubbleAnchor()
-        let x = anchor.midX - bubbleSize.width / 2
-        // 8pt gap between the bubble's bottom edge and the daisy's
-        // top edge.
-        let y = anchor.maxY + 8
+        let screen = screenContaining(rect: anchor) ?? bestScreen() ?? NSScreen.main
+        guard let visible = screen?.visibleFrame else {
+            // Last-ditch: drop it where the old code would have, but
+            // at least keep the right edge off-screen.
+            bubblePanel.setFrameOrigin(NSPoint(x: anchor.midX - bubbleSize.width / 2,
+                                               y: anchor.maxY + 8))
+            return
+        }
+
+        let gutter: CGFloat = 8
+        let gap: CGFloat = 10
+
+        // Horizontal: center on widget, clamp into [minX, maxX].
+        let preferredX = anchor.midX - bubbleSize.width / 2
+        let minX = visible.minX + gutter
+        let maxX = visible.maxX - bubbleSize.width - gutter
+        let x = min(max(preferredX, minX), maxX)
+
+        // Vertical: prefer above. macOS coordinate space has Y going up,
+        // so "above the widget" = bigger Y.
+        let preferredY = anchor.maxY + gap
+        let yIfAbove = preferredY
+        let yIfBelow = anchor.minY - bubbleSize.height - gap
+
+        let topClamp = visible.maxY - bubbleSize.height - gutter
+        let bottomClamp = visible.minY + gutter
+
+        let y: CGFloat
+        if yIfAbove <= topClamp {
+            // Fits above — use it.
+            y = yIfAbove
+        } else if yIfBelow >= bottomClamp {
+            // Doesn't fit above; flip below.
+            y = yIfBelow
+        } else {
+            // Doesn't fit either way (very tiny screen / unusual
+            // dock layout). Pin to the top of the visible frame.
+            y = topClamp
+        }
+
         bubblePanel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    /// Find the screen whose `frame` contains the centre of `rect`.
+    /// Used to position the bubble on the same display as the daisy
+    /// panel — on multi-monitor setups `NSScreen.main` and the panel's
+    /// actual screen routinely diverge for borderless non-key panels.
+    private func screenContaining(rect: NSRect) -> NSScreen? {
+        let centre = NSPoint(x: rect.midX, y: rect.midY)
+        return NSScreen.screens.first(where: { $0.frame.contains(centre) })
     }
 
     private func defaultBubbleAnchor() -> NSRect {

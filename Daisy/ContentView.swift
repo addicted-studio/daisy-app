@@ -343,14 +343,21 @@ struct ContentView: View {
         }
     }
 
-    /// Solid capsule fill — orange both at rest (Start) and while
-    /// recording. Matches `RecordCapsule.fill` in main sidebar.
-    /// Paused uses a cool neutral gray (`daisyPaused`) so it can't
-    /// be mistaken for an active recording state.
+    /// Solid capsule fill. Colour signals what happens ON CLICK,
+    /// not the current state:
+    ///   • Recording → the button reads "Pause"; clicking it puts
+    ///     the session into a calm paused state, so the button itself
+    ///     is grey (no urgency to act).
+    ///   • Paused → the button reads "Resume"; clicking it re-enters
+    ///     active recording, so the button is orange (warm, the
+    ///     recording dot is about to come back).
+    /// Start (idle) and resting / unknown states default to orange,
+    /// matching `RecordCapsule.fill` in the main sidebar so the
+    /// primary CTA reads as one consistent control.
     private var primaryFill: Color {
         switch session.status {
-        case .recording: return .daisyRecording
-        case .paused: return .daisyPaused
+        case .recording: return .daisyPaused
+        case .paused:    return .daisyRecording
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
         default: return .daisyRecording
@@ -580,7 +587,14 @@ struct ContentView: View {
 
             ellipsisMenu
         }
-        .padding(12)
+        // Symmetric padding-12 was leaving the kebab visually flush
+        // with the right edge — the bordered chrome on the menu draws
+        // a fraction past its hit-rect at the rounded corners, eating
+        // perceived breathing room. Bumping trailing to 16 restores
+        // the same optical gutter Copy has on the left.
+        .padding(.leading, 12)
+        .padding(.trailing, 16)
+        .padding(.vertical, 12)
     }
 
     private var sendMenu: some View {

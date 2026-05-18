@@ -12,6 +12,9 @@ import Foundation
 import Observation
 import os
 import WhisperKit
+#if canImport(FluidAudio)
+import FluidAudio
+#endif
 
 @MainActor
 @Observable
@@ -69,6 +72,19 @@ final class WhisperEngine {
     private var kitBox: WhisperKitBox?
     @ObservationIgnored
     private var loadTask: Task<Void, Never>?
+    #if canImport(FluidAudio)
+    /// Silero VAD wrapper, loaded lazily alongside Whisper. Used as a
+    /// pre-pass on every `transcribe` call to gate out non-speech
+    /// audio before it reaches Whisper — the biggest single lever
+    /// against ambient-noise hallucinations (whisper.cpp #2286,
+    /// faster-whisper #843). Nil while loading or if load failed;
+    /// `transcribe` falls back to full-buffer Whisper in that case so
+    /// the user never sees a hard error from VAD.
+    @ObservationIgnored
+    private var vadBox: VadManagerBox?
+    @ObservationIgnored
+    private var vadLoadTask: Task<Void, Never>?
+    #endif
 
     // In-actor serialization for transcribe — WhisperKit isn't thread-safe
     // for simultaneous transcribes.
@@ -168,7 +184,42 @@ final class WhisperEngine {
             log.error("Whisper load failed: \(error.localizedDescription, privacy: .public)")
             state = .failed("Init failed: \(error.localizedDescription)")
         }
+
+        // Phase 3 — load Silero VAD in the background. Non-blocking:
+        // Whisper is already .ready, transcribe() will run without
+        // VAD until the first VAD load completes (and the first
+        // transcribe after that picks it up). This avoids stalling
+        // the "ready to record" UX on the Silero CoreML download.
+        ensureVADLoadStarted()
     }
+
+    #if canImport(FluidAudio)
+    /// Kick off Silero VAD model load if it isn't already loading /
+    /// loaded. Idempotent. Runs detached so it doesn't extend the
+    /// visible "loading Whisper" phase the user already waits through.
+    private func ensureVADLoadStarted() {
+        if vadBox != nil || vadLoadTask != nil { return }
+        vadLoadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                // Default threshold 0.85 is the FluidAudio recommended
+                // value; lower (e.g. 0.5) would let more borderline
+                // chunks through and partially undo what we're trying
+                // to gain here. We can revisit if we see real speech
+                // being clipped.
+                let cfg = VadConfig(defaultThreshold: 0.85)
+                let vad = try await VadManager(config: cfg)
+                self.vadBox = VadManagerBox(vad)
+                self.log.info("Silero VAD loaded")
+            } catch {
+                self.log.error("Silero VAD load failed (continuing without VAD): \(error.localizedDescription, privacy: .public)")
+            }
+            self.vadLoadTask = nil
+        }
+    }
+    #else
+    private func ensureVADLoadStarted() {}
+    #endif
 
     /// Off-main download — returns the folder containing the unpacked
     /// CoreML files. Progress is reported via the callback on the main
@@ -236,13 +287,20 @@ final class WhisperEngine {
         // failure mode where silence or non-speech ambient sound
         // (fans, packing tape, HVAC) gets decoded as text from its
         // YouTube training data — "Thanks for watching!", "ご視聴
-        // ありがとうございました", "Спасибо за внимание" etc. The
-        // defaults in WhisperKit are conservative; we tighten them.
+        // ありがとうございました", "Спасибо за внимание", or
+        // short single tokens like "so", "you", "はい".
+        //
+        // Thresholds tuned 2026-05-18 after QA feedback that
+        // ambient noise was still producing "so" / "はい" leaks
+        // through the 0.55 / -1.0 baseline. Tier-1 values
+        // cross-validated from whisper.cpp, faster-whisper and
+        // WhisperKit community issues — see CHANGELOG for citations.
         //
         //   noSpeechThreshold       — segment dropped if Whisper's
         //                             own "is this non-speech?" prob
         //                             exceeds this. Lower = stricter.
-        //                             Default 0.6; we use 0.55.
+        //                             Default 0.6 → 0.55 → 0.4 here.
+        //                             0.4 catches single-token leaks.
         //   compressionRatioThreshold — high compression = repetitive
         //                             text ("chocolate chocolate
         //                             chocolate"); above threshold,
@@ -253,10 +311,19 @@ final class WhisperEngine {
         //                             -1.0 is the upstream recommendation.
         //   temperatureFallbackCount — re-sample with higher temperature
         //                             up to N times when the above
-        //                             filters trigger. 3 gives a fair
-        //                             chance to recover from a bad
-        //                             greedy decode without burning
-        //                             too much latency on real silence.
+        //                             filters trigger. Kept at 3 — see
+        //                             the trade-off note in faster-whisper
+        //                             #621 (fallbacks can _increase_
+        //                             hallucinations on pure noise);
+        //                             revisit if the post-filter below
+        //                             stops being enough.
+        //
+        // Note on language locking: if the caller pinned a language
+        // (`language != nil`) we never auto-detect, which alone kills
+        // a class of hallucinations where Whisper drifts into the
+        // wrong language on noise (English speaker → spurious
+        // "ありがとうございました"). `Transcriber` snaps `language`
+        // to the locked locale after the first few confident segments.
         let options = DecodingOptions(
             task: .transcribe,
             language: language,
@@ -267,38 +334,155 @@ final class WhisperEngine {
             wordTimestamps: false,
             compressionRatioThreshold: 2.4,
             logProbThreshold: -1.0,
-            noSpeechThreshold: 0.55,
+            noSpeechThreshold: 0.4,
             chunkingStrategy: .vad
         )
 
-        let results = try await box.kit.transcribe(audioArray: samples, decodeOptions: options)
+        // ── VAD pre-pass ───────────────────────────────────────────
+        // Carve `samples` into speech-only spans before handing it
+        // to Whisper. This is the single biggest anti-hallucination
+        // lever (see the multi-source justification at the top of
+        // this method). If VAD isn't loaded yet (still downloading
+        // its CoreML model, or first transcribe of the session) we
+        // fall through to the legacy full-buffer Whisper path.
+        let speechSpans: [SpeechSpan] = await runVADPrepass(samples: samples)
 
-        // Post-filter: even with the thresholds above, the most
-        // common YouTube-training-set artefacts slip through often
-        // enough to wreck the live transcript. Drop them by exact
-        // match against a curated blocklist, and collapse adjacent
-        // identical lines (also a hallucination signature — real
-        // speech rarely repeats verbatim back-to-back across
-        // multiple VAD-cut segments).
+        // Run Whisper per speech span (or once on the whole buffer
+        // if VAD wasn't available). Per-span timings are translated
+        // back into the original-buffer coordinate space so the
+        // Transcriber doesn't notice the VAD slicing.
+        var allRaw: [(spanOffsetSec: Double, segs: [TranscriptionSegment])] = []
+        if speechSpans.isEmpty {
+            // VAD says "no speech" — skip Whisper entirely. This is
+            // the desired behaviour for ambient-noise-only buffers:
+            // empty result, no hallucinated text, no compute spent.
+            return []
+        }
+        for span in speechSpans {
+            let chunk: [Float]
+            let offsetSec: Double
+            if span.isFullBuffer {
+                chunk = samples
+                offsetSec = 0
+            } else {
+                let lo = max(0, min(samples.count, span.startSample))
+                let hi = max(lo, min(samples.count, span.endSample))
+                guard hi > lo else { continue }
+                chunk = Array(samples[lo..<hi])
+                offsetSec = Double(lo) / Self.audioSampleRate
+            }
+            // Skip pathologically short chunks — Whisper produces
+            // garbage on sub-200ms inputs even with our thresholds.
+            if Double(chunk.count) / Self.audioSampleRate < 0.20 { continue }
+            let results = try await box.kit.transcribe(audioArray: chunk, decodeOptions: options)
+            for result in results {
+                allRaw.append((offsetSec, result.segments))
+            }
+        }
+
+        // Post-filter pipeline. Each rule kills a distinct class of
+        // hallucination observed in QA; the comments name the class.
         var previousText: String?
-        return results.flatMap { result in
-            result.segments.compactMap { seg -> WhisperSegment? in
+        return allRaw.flatMap { (offsetSec, segs) in
+            segs.compactMap { seg -> WhisperSegment? in
                 let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { return nil }
+
+                // (1) Known YouTube-training artefacts (full phrases).
                 if Self.isKnownHallucination(text) { return nil }
-                // Adjacent-duplicate collapse: only fire when the
-                // text is long enough that a real repeat is implausible
-                // (avoids killing legitimate "yes, yes" or "ok ok").
+
+                // (2) Confidence filter. Hallucinated short tokens
+                // ("so", "はい", "you") almost always score below
+                // -0.7 avg log-prob. A blanket -0.8 cut kills the
+                // worst offenders without removing real-but-noisy
+                // speech (which typically scores -0.4 to -0.7).
+                if seg.avgLogprob < -0.8 { return nil }
+
+                // (3) Short-utterance + middling-confidence cut.
+                // 1–2 word segments with avgLogprob below -0.6 are
+                // suspect — real short answers ("yes", "ok", "да")
+                // score higher because Whisper's prior is strong on
+                // them. This catches the residual single-token leaks
+                // (2)'s harder threshold lets through.
+                let wordCount = text
+                    .split(whereSeparator: { $0.isWhitespace })
+                    .count
+                if wordCount <= 2 && seg.avgLogprob < -0.6 { return nil }
+
+                // (4) Adjacent-duplicate collapse. Only fires when
+                // the text is long enough that a real repeat is
+                // implausible (avoids killing "yes, yes" / "ok ok").
                 if text.count >= 6, text == previousText { return nil }
                 previousText = text
+
+                // Translate per-span timings back into the original
+                // buffer's coordinate space (`offsetSec` is 0 when
+                // VAD wasn't used or returned a full-buffer span).
                 return WhisperSegment(
-                    start: Double(seg.start),
-                    end: Double(seg.end),
+                    start: offsetSec + Double(seg.start),
+                    end: offsetSec + Double(seg.end),
                     text: text
                 )
             }
         }
     }
+
+    // MARK: - VAD pre-pass
+
+    /// What `runVADPrepass` returns: either concrete sample ranges
+    /// inside the input buffer (when VAD found speech) or a sentinel
+    /// "use the whole buffer" span (when VAD isn't loaded / errored).
+    /// An empty array means VAD ran and found no speech.
+    private struct SpeechSpan {
+        let startSample: Int
+        let endSample: Int
+        let isFullBuffer: Bool
+
+        static let fullBuffer = SpeechSpan(startSample: 0, endSample: 0, isFullBuffer: true)
+    }
+
+    /// Run Silero VAD on the input buffer and return the speech-only
+    /// spans. Returns `[.fullBuffer]` (single sentinel) if VAD isn't
+    /// available — that preserves v1.0 behaviour as a graceful
+    /// fallback. Returns `[]` if VAD ran but found no speech.
+    private func runVADPrepass(samples: [Float]) async -> [SpeechSpan] {
+        #if canImport(FluidAudio)
+        guard let vadBox else {
+            // VAD still loading or load failed — fall back to
+            // legacy full-buffer Whisper path.
+            return [.fullBuffer]
+        }
+        // FluidAudio's VadSegmentationConfig knobs are in seconds
+        // (TimeInterval). Defaults below cross-validated from the
+        // Silero Python community ranges, adjusted for meeting
+        // capture: a slightly more permissive minSpeechDuration so
+        // we don't drop short backchannels ("yes"), a longer
+        // minSilenceDuration so we don't fragment phrasing across
+        // breath pauses, and modest padding so word edges aren't
+        // shaved off by the gate.
+        var cfg = VadSegmentationConfig.default
+        cfg.minSpeechDuration  = 0.25     // 250 ms
+        cfg.minSilenceDuration = 0.50     // 500 ms
+        cfg.speechPadding      = 0.20     // 200 ms each side
+        cfg.maxSpeechDuration  = 14.0     // Whisper-friendly cap
+
+        do {
+            let segments = try await vadBox.vad.segmentSpeech(samples, config: cfg)
+            return segments.map { vs in
+                let start = Int(vs.startTime * Self.audioSampleRate)
+                let end   = Int(vs.endTime   * Self.audioSampleRate)
+                return SpeechSpan(startSample: start, endSample: end, isFullBuffer: false)
+            }
+        } catch {
+            log.error("VAD segmentSpeech failed (using full buffer): \(error.localizedDescription, privacy: .public)")
+            return [.fullBuffer]
+        }
+        #else
+        return [.fullBuffer]
+        #endif
+    }
+
+    nonisolated private static let audioSampleRate: Double = 16_000
 
     /// Exact-match blocklist of frequent Whisper hallucinations seeded
     /// from YouTube subtitles. Covers the three languages we expect
@@ -390,6 +574,17 @@ final class WhisperKitBox: @unchecked Sendable {
     let kit: WhisperKit
     init(_ kit: WhisperKit) { self.kit = kit }
 }
+
+#if canImport(FluidAudio)
+/// Sendable wrapper around the actor-isolated `VadManager` so we can
+/// stash it as a property on `WhisperEngine` (also actor-isolated)
+/// without Sendable complaints. `VadManager` itself is already an
+/// actor, so its API stays safe across actor hops.
+final class VadManagerBox: @unchecked Sendable {
+    let vad: VadManager
+    init(_ vad: VadManager) { self.vad = vad }
+}
+#endif
 
 /// One utterance returned by Whisper, with times in seconds relative to
 /// the start of the buffer it was transcribed from.

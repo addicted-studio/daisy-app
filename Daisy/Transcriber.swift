@@ -113,6 +113,24 @@ final class Transcriber {
     private var sessionStartedAt: Date?
     private var bucketIDs: [Int: UUID] = [:]
 
+    /// Language Whisper will use for every subsequent decode once we
+    /// see enough committed text to confidently identify it via
+    /// `LanguageDetector` (NLLanguageRecognizer). Stays nil for the
+    /// first few seconds of every session, then snaps to a 2-letter
+    /// ISO code and stays there.
+    ///
+    /// Why this exists: with `language: nil` Whisper auto-detects
+    /// per chunk, and on noisy / silent chunks it sometimes drifts
+    /// — an English meeting suddenly emits "ご視聴ありがとうござ
+    /// いました" because a moment of silence got classified as
+    /// Japanese. Pinning the language after we know what it is
+    /// kills that class of hallucination outright.
+    ///
+    /// Only used when the user picked "Auto-detect" in Settings
+    /// (`localeIdentifier == "auto"`). If they pinned a language
+    /// explicitly we honour that and never touch this field.
+    private var lockedLanguage: String?
+
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Transcriber")
 
     // MARK: - Tuning constants
@@ -216,6 +234,7 @@ final class Transcriber {
         isRunning = false
         lastError = nil
         sessionStartedAt = nil
+        lockedLanguage = nil
     }
 
     // MARK: - Audio ingestion
@@ -325,6 +344,7 @@ final class Transcriber {
                                       newCommitted.map(\.endSec).max() ?? 0)
             // Drop any old pending whose bucket is now covered.
             pendingSegments.removeAll { $0.endSec <= committedThroughSec }
+            updateLockedLanguageIfPossible()
         }
         pendingSegments = newPending
     }
@@ -397,14 +417,52 @@ final class Transcriber {
     // MARK: - Locale
 
     /// Whisper takes two-letter ISO codes (en, ru, …) or nil for auto.
+    ///
+    /// Resolution order:
+    ///   1. Explicit user choice in Settings (anything that isn't
+    ///      "auto") — always wins.
+    ///   2. Auto-detect WITH a snapped `lockedLanguage` — feed the
+    ///      locked code to Whisper so it stops auto-detecting per
+    ///      chunk and stops drifting on noise.
+    ///   3. Auto-detect, not yet locked — return nil so Whisper picks
+    ///      a language per chunk while we wait for enough committed
+    ///      text to lock on.
     private var languageHint: String? {
         let prefix = localeIdentifier
             .split(separator: "-")
             .first
             .map(String.init)?
             .lowercased()
-        if prefix == nil || prefix == "auto" { return nil }
-        return prefix
+        if let prefix, prefix != "auto" { return prefix }
+        return lockedLanguage
+    }
+
+    /// Try to snap `lockedLanguage` once we have enough committed
+    /// text to be sure. Called from `applyLivePass` after each
+    /// committed batch. Idempotent — once locked, stays locked for
+    /// the session.
+    private func updateLockedLanguageIfPossible() {
+        guard lockedLanguage == nil else { return }
+        // Only act when the user is on Auto-detect — if they pinned
+        // a language explicitly, no locking needed.
+        let isAuto = (
+            localeIdentifier.split(separator: "-").first.map(String.init)?.lowercased() ?? "auto"
+        ) == "auto"
+        guard isAuto else { return }
+        // Need a meaningful amount of confirmed text before we trust
+        // the detector. 3 committed segments + ~120 chars is the
+        // sweet spot in QA — earlier than that and pure-noise leaks
+        // ("so", "はい") through filter (1)–(3) can still bias the
+        // language detection.
+        guard committedSegments.count >= 3 else { return }
+        let text = committedSegments
+            .map(\.text)
+            .joined(separator: " ")
+        guard text.count >= 120 else { return }
+        if let detected = LanguageDetector.detect(text) {
+            lockedLanguage = detected
+            log.info("Locked transcription language to \(detected, privacy: .public) after \(self.committedSegments.count, privacy: .public) committed segments")
+        }
     }
 
     // MARK: - Locale catalog (exposed for UI)

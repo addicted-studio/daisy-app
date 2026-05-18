@@ -6,9 +6,15 @@
 //    • `DaisyMark` — SwiftUI View, used inside the app (settings, etc.)
 //    • `DaisyMark.menuBarImage` — pre-rendered template NSImage suitable
 //      for `MenuBarExtra(label:)`. Bypasses SwiftUI's templating because
-//      arbitrary Shape-based views in MenuBarExtra labels don't reliably
-//      get tinted by AppKit; an NSImage with `isTemplate = true` always
-//      gets the correct light/dark menu-bar treatment.
+//      arbitrary template-mode renderings in MenuBarExtra labels don't
+//      always pick up the correct light/dark tint; an explicit NSImage
+//      with `isTemplate = true` always gets the right treatment.
+//
+//  Rendering source of truth: `Assets.xcassets/DaisyMark.imageset` —
+//  one SVG with `preserves-vector-representation` + `template-rendering-
+//  intent: template`. That lets `Image("DaisyMark")` and AppKit's
+//  `NSImage(named:)` pull the same vector at any size and let the
+//  surrounding tint do the colouring.
 //
 
 import SwiftUI
@@ -18,29 +24,14 @@ struct DaisyMark: View {
     var size: CGFloat = 18
     var tint: Color = .primary
 
-    private let petalCount = 8
-
     var body: some View {
-        let centerR = size * 0.13
-        let petalGap = size * 0.01
-        let petalWidth = size * 0.18
-        let petalLength = size * 0.38
-
-        ZStack {
-            ForEach(0..<petalCount, id: \.self) { i in
-                let angle = Double(i) * 360.0 / Double(petalCount)
-                let offsetY = -(centerR + petalGap + petalLength / 2)
-                TeardropShape()
-                    .fill(tint)
-                    .frame(width: petalWidth, height: petalLength)
-                    .offset(y: offsetY)
-                    .rotationEffect(.degrees(angle))
-            }
-            Circle()
-                .fill(tint)
-                .frame(width: centerR * 2, height: centerR * 2)
-        }
-        .frame(width: size, height: size)
+        Image("DaisyMark")
+            .resizable()
+            .renderingMode(.template)
+            .interpolation(.high)
+            .scaledToFit()
+            .foregroundStyle(tint)
+            .frame(width: size, height: size)
     }
 }
 
@@ -48,23 +39,16 @@ struct DaisyMark: View {
 
 @MainActor
 extension DaisyMark {
-    /// Cached template NSImage rendered once at first access. Pixel size
-    /// = 18 × 2 = 36 px (Retina). `isTemplate = true` tells AppKit to
-    /// tint it black on a light menu bar and white on a dark one.
+    /// Cached template NSImage at 18×18 pt. `isTemplate = true` tells
+    /// AppKit to tint it black on a light menu bar and white on a dark
+    /// one. Pulled straight from the Asset Catalog so it tracks any
+    /// brand refresh automatically — no rasterised copies to keep in
+    /// sync.
     static let menuBarImage: NSImage = {
-        // Render the shape solid black on a transparent background;
-        // template tinting only uses the alpha channel anyway.
-        let view = DaisyMark(size: 18, tint: .black)
-            .frame(width: 18, height: 18)
-        let renderer = ImageRenderer(content: view)
-        renderer.scale = 2.0
-        if let img = renderer.nsImage {
-            img.isTemplate = true
-            // Point size matters for menu bar layout — pin to 18×18 pt.
-            img.size = NSSize(width: 18, height: 18)
-            return img
-        }
-        return NSImage()
+        let img = NSImage(named: "DaisyMark") ?? NSImage()
+        img.isTemplate = true
+        img.size = NSSize(width: 18, height: 18)
+        return img
     }()
 }
 
