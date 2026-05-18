@@ -181,6 +181,24 @@ final class Summarizer {
         lastError = nil
     }
 
+    /// Isolated "dry run" — used by Settings → Test summary so the
+    /// probe doesn't bleed into shared state. Does NOT touch
+    /// `lastSummary`, `lastError`, or `isSummarizing`, so an
+    /// in-flight real summary on the active session keeps its own
+    /// state.
+    ///
+    /// Returns either the produced summary or a thrown error, so the
+    /// caller can render its own one-shot preview without polluting
+    /// the singleton.
+    func runProbe(transcript: String, title: String, localeHint: String?) async throws -> MeetingSummary {
+        let provider = makeProvider()
+        return try await provider.summarize(
+            transcript: transcript,
+            title: title,
+            localeHint: localeHint
+        )
+    }
+
     // MARK: - Factory
 
     /// Build a provider instance for the currently selected kind.

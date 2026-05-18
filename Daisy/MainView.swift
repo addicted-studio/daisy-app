@@ -20,7 +20,7 @@ import SwiftUI
 // MARK: - Section enum
 
 enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
-    case home, history, settings
+    case home, history, settings, about
 
     var id: String { rawValue }
 
@@ -29,6 +29,7 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .home:     "Home"
         case .history:  "History"
         case .settings: "Settings"
+        case .about:    "About"
         }
     }
 
@@ -37,6 +38,7 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .home:     "house"
         case .history:  "list.bullet.rectangle"
         case .settings: "gearshape"
+        case .about:    "info.circle"
         }
     }
 }
@@ -282,6 +284,8 @@ struct MainView: View {
             HistoryView()
         case .settings:
             SettingsView(settings: settings)
+        case .about:
+            AboutView()
         }
     }
 }

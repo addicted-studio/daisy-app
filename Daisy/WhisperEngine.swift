@@ -238,6 +238,117 @@ final class WhisperEngine {
         )
     }
 
+    // MARK: - Cache inspection
+
+    /// One entry per downloaded Whisper model variant — folder URL,
+    /// the short variant id (e.g. `large-v3-v20240930_626MB`), and
+    /// the recursive byte size on disk. Used by the Transcription
+    /// settings tab to show "Models cached: X.X GB" and to offer a
+    /// one-click cleanup of variants the user isn't using.
+    struct CachedModel: Hashable, Sendable {
+        let variant: String
+        let url: URL
+        let sizeBytes: Int64
+    }
+
+    /// Enumerate downloaded model folders under
+    /// `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/`.
+    /// Sandboxed apps see that as their container's Documents
+    /// directory — same place WhisperKit.download writes to.
+    /// Returns an empty array if the folder doesn't exist yet
+    /// (no models ever downloaded).
+    nonisolated static func cachedModels() -> [CachedModel] {
+        guard let root = whisperCacheRoot() else { return [] }
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ) else { return [] }
+
+        return entries.compactMap { url in
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { return nil }
+            // WhisperKit prepends "openai_whisper-" to the variant
+            // when resolving the HF folder. Strip it back so callers
+            // can compare against `availableModels[*].id`.
+            let folderName = url.lastPathComponent
+            let prefix = "openai_whisper-"
+            let variant = folderName.hasPrefix(prefix)
+                ? String(folderName.dropFirst(prefix.count))
+                : folderName
+            return CachedModel(
+                variant: variant,
+                url: url,
+                sizeBytes: directorySize(at: url)
+            )
+        }
+    }
+
+    /// Total bytes consumed by every downloaded Whisper variant on
+    /// disk. Sum of `cachedModels().sizeBytes`. Convenience wrapper
+    /// so the UI doesn't have to fold the list itself.
+    nonisolated static func totalCacheSizeBytes() -> Int64 {
+        cachedModels().reduce(0) { $0 + $1.sizeBytes }
+    }
+
+    /// Remove every downloaded model variant except the one the user
+    /// currently has active. Idempotent — safe to call when there's
+    /// only one cached variant (it'll just no-op). Returns the freed
+    /// bytes for caller-side reporting.
+    @MainActor
+    func removeUnusedModels() async -> Int64 {
+        let active = modelID
+        let cached = Self.cachedModels()
+        let fm = FileManager.default
+        var freed: Int64 = 0
+        for model in cached where model.variant != active {
+            do {
+                try fm.removeItem(at: model.url)
+                freed += model.sizeBytes
+                log.info("Removed cached Whisper model \(model.variant, privacy: .public) (\(model.sizeBytes) bytes)")
+            } catch {
+                log.error("Failed to remove \(model.variant, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        return freed
+    }
+
+    /// Root directory of WhisperKit's model cache inside the sandbox.
+    /// Mirrors WhisperKit's own internal path resolution — kept
+    /// in one place so a future Argmax-side change to the layout is
+    /// a one-spot fix here.
+    nonisolated private static func whisperCacheRoot() -> URL? {
+        guard let docs = try? FileManager.default.url(
+            for: .documentDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: false
+        ) else { return nil }
+        return docs
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("argmaxinc", isDirectory: true)
+            .appendingPathComponent("whisperkit-coreml", isDirectory: true)
+    }
+
+    /// Recursive directory size in bytes. Walks the enumerator
+    /// once; cheaper than `du`-shelling out for sub-1GB trees.
+    nonisolated private static func directorySize(at url: URL) -> Int64 {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            if values?.isRegularFile == true, let size = values?.fileSize {
+                total += Int64(size)
+            }
+        }
+        return total
+    }
+
     /// Off-main CoreML init — heavy CPU/Neural Engine work. Stays off
     /// MainActor so it doesn't freeze the UI.
     nonisolated private static func loadKit(folder: URL) async throws -> WhisperKit {

@@ -31,12 +31,19 @@ struct SessionFolder: Identifiable, Hashable, Codable, Sendable {
 
 extension SessionFolder {
     static let inbox   = SessionFolder(name: "Inbox")
+    static let notes   = SessionFolder(name: "Notes")
     static let private_ = SessionFolder(name: "Private")
     static let work    = SessionFolder(name: "Work")
     static let calls   = SessionFolder(name: "Calls")
 
     /// Built-in folders, in display order. Always present.
-    static let builtIn: [SessionFolder] = [.inbox, .private_, .work, .calls]
+    /// `Notes` was added 2026-05-18 — Daisy works just as well as a
+    /// voice-memo recorder, and a built-in folder makes the use case
+    /// surface in the History sidebar without any UX changes
+    /// elsewhere. Solo recordings can be moved there via the kebab's
+    /// "Move to folder…" action; from there they filter alongside
+    /// regular meetings.
+    static let builtIn: [SessionFolder] = [.inbox, .notes, .private_, .work, .calls]
 }
 
 // MARK: - Store

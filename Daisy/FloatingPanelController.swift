@@ -203,7 +203,14 @@ final class FloatingPanelController {
                 self?.session.silenceMonitor.snooze()
             }
         )
-        let hosting = NSHostingController(rootView: bubble)
+        // Wrap in a transparent shadow-padding ring. Without this the
+        // hosting view's fitting size equals the bubble's content
+        // rect, the panel sizes to match, and SwiftUI's drop-shadow
+        // gets clipped at the panel edge — visible as a corner cut
+        // on the top/left of the bubble. 16pt of breathing room each
+        // side comfortably contains the (radius: 6, y: 3) shadow.
+        let padded = bubble.padding(16)
+        let hosting = NSHostingController(rootView: padded)
         hosting.view.wantsLayer = true
         hosting.view.layer?.backgroundColor = CGColor.clear
 
@@ -285,19 +292,37 @@ final class FloatingPanelController {
         }
 
         let gutter: CGFloat = 8
-        let gap: CGFloat = 10
+        // Both panels (widget and bubble) have transparent
+        // shadow-padding rings inside their content rects, so the
+        // raw `anchor.maxY` / `panel.minY` numbers don't correspond
+        // to the visible circle / bubble edges. Subtract those
+        // insets back out when turning a *visible* gap into the
+        // panel frame origin.
+        let visibleGap: CGFloat = 6                 // gap user sees
+        let bubbleShadowInset: CGFloat = 16         // bubble panel padding ring (see buildBubblePanel)
+        let widgetShadowInsetTop: CGFloat = 10      // widget panel size 80 vs visible circle ~60 → 10pt headroom above the circle
 
         // Horizontal: center on widget, clamp into [minX, maxX].
         let preferredX = anchor.midX - bubbleSize.width / 2
-        let minX = visible.minX + gutter
-        let maxX = visible.maxX - bubbleSize.width - gutter
+        let minX = visible.minX + gutter - bubbleShadowInset
+        let maxX = visible.maxX - bubbleSize.width - gutter + bubbleShadowInset
         let x = min(max(preferredX, minX), maxX)
 
         // Vertical: prefer above. macOS coordinate space has Y going up,
-        // so "above the widget" = bigger Y.
-        let preferredY = anchor.maxY + gap
-        let yIfAbove = preferredY
-        let yIfBelow = anchor.minY - bubbleSize.height - gap
+        // so "above the widget" = bigger Y. The widget's visible
+        // circle top sits at `anchor.maxY - widgetShadowInsetTop`,
+        // not at `anchor.maxY` itself; the bubble's visible bottom
+        // sits at `panel.minY + bubbleShadowInset`, not at
+        // `panel.minY`. We want the gap *between visible edges*
+        // to equal `visibleGap`, so:
+        //
+        //   visibleGap = (panel.minY + bubbleShadowInset)
+        //              - (anchor.maxY - widgetShadowInsetTop)
+        //
+        // Solving for panel.minY:
+        let yIfAbove = anchor.maxY + visibleGap - bubbleShadowInset - widgetShadowInsetTop
+        // And symmetrically when we flip below:
+        let yIfBelow = anchor.minY - bubbleSize.height - visibleGap + bubbleShadowInset + widgetShadowInsetTop
 
         let topClamp = visible.maxY - bubbleSize.height - gutter
         let bottomClamp = visible.minY + gutter

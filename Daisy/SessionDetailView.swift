@@ -58,17 +58,20 @@ struct SessionDetailView: View {
 
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
-        ToolbarItem(placement: .primaryAction) {
+        // macOS 26: ToolbarItemGroup renders the contained items inside
+        // ONE shared Liquid Glass capsule. Symmetry on the leading and
+        // trailing edges comes from (a) uniform horizontal padding per
+        // icon in `toolbarIcon(_:)` and (b) `.fixedSize()` on the
+        // ellipsis Menu to collapse the hidden chevron's phantom width.
+        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 attemptReSummarize()
             } label: {
-                toolbarIcon("sparkles", outerEdge: .leading)
+                toolbarIcon("sparkles")
             }
             .buttonStyle(.borderless)
             .help("Re-summarize via current provider")
-        }
 
-        ToolbarItem(placement: .primaryAction) {
             Button {
                 attemptCopyMarkdown()
             } label: {
@@ -76,9 +79,7 @@ struct SessionDetailView: View {
             }
             .buttonStyle(.borderless)
             .help("Copy markdown to clipboard")
-        }
 
-        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Menu {
                     ForEach(FolderStore.shared.allFolders) { f in
@@ -120,10 +121,21 @@ struct SessionDetailView: View {
                     Label("Delete", systemImage: "trash")
                 }
             } label: {
-                toolbarIcon("ellipsis", outerEdge: .trailing)
+                toolbarIcon("ellipsis")
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .fixedSize()
+            // Padding INSIDE the Menu label is eaten by Menu's
+            // own size measurement (the previous attempt put it
+            // on `toolbarIcon` directly and didn't survive).
+            // Applying it OUTSIDE the Menu, after `.fixedSize()`,
+            // pushes the entire Menu view inward from its
+            // ToolbarItemGroup slot — which is the gap we actually
+            // see on screen. 16pt overshoots the phantom chevron
+            // (~12pt) by a few points so the visible gap matches
+            // the 12pt sparkles has on the leading side.
+            .padding(.trailing, 16)
             // Menu in macOS 26 toolbar inherits `.tint` colour for
             // its label glyph — bypasses Image.foregroundStyle. Pin
             // the tint locally so the ellipsis matches the other
@@ -187,32 +199,25 @@ struct SessionDetailView: View {
         }
     }
 
-    /// One toolbar glyph. Base 10pt horizontal padding gives all
-    /// icons inner breathing room. `outerEdge` adds an extra 8pt on
-    /// the specified side — used for the first (`.leading`) and
-    /// last (`.trailing`) items so they're not kissing the pill
-    /// border while the middle items keep their tighter spacing.
-    ///
-    /// Trailing padding has to be done with a real `Color.clear`
-    /// spacer view rather than `.padding(.trailing, …)`: a `Menu`'s
-    /// label in macOS 26's toolbar reserves layout for the hidden
-    /// menu indicator and clips trailing modifiers, but it can't
-    /// clip an actual sibling view. Same trick on the leading side
-    /// for symmetry / future-proofing.
-    private func toolbarIcon(_ name: String, outerEdge: Edge.Set = []) -> some View {
-        HStack(spacing: 0) {
-            if outerEdge.contains(.leading) {
-                Color.clear.frame(width: 8)
-            }
-            Image(systemName: name)
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(Color.daisyTextPrimary)
-                .font(.body.weight(.medium))
-                .padding(.horizontal, 10)
-            if outerEdge.contains(.trailing) {
-                Color.clear.frame(width: 8)
-            }
-        }
+    /// One toolbar glyph. Uniform 6pt horizontal padding on every
+    /// icon, full stop — the shared Liquid Glass capsule supplies its
+    /// own inner inset on top of this, so each icon ends up with the
+    /// same gap to the pill edge whether it's leading, middle, or
+    /// trailing. Earlier `outerEdge` asymmetric padding only existed
+    /// to compensate for the `Menu` chevron's phantom reservation;
+    /// that's now handled at the call-site via `.fixedSize()`.
+    private func toolbarIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(Color.daisyTextPrimary)
+            .font(.body.weight(.medium))
+            // 12pt mirrors the brand pill in `MainView.swift:118`
+            // (its comment: "bumped from 6 → 12 so the mark +
+            // wordmark have room from the pill's left and right
+            // edges instead of hugging them"). 6pt was producing
+            // the exact same "icons hug the capsule edge" symptom
+            // the brand pill fix was originally written to solve.
+            .padding(.horizontal, 12)
     }
 
     // MARK: - Header (title + metadata; actions live in toolbar)

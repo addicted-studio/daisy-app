@@ -46,6 +46,23 @@ struct SettingsView: View {
     /// to subscribe to CoreAudio hot-plug notifications (added in
     /// post-launch hardening).
     @State private var micDevices: [AudioInputDevice] = []
+    /// On-disk Whisper cache stats — populated by an off-thread
+    /// scan in `transcriptionTab.task`. `cacheRefreshTick` is the
+    /// nudge the task watches; we bump it after Remove unused so
+    /// the UI re-reads the freshly-shrunk cache.
+    @State private var cachedModelsCount: Int = 0
+    @State private var cachedModelsBytes: Int64 = 0
+    @State private var cacheRefreshTick: Int = 0
+
+    /// Cached `ByteCountFormatter` for the cache-size row. Building
+    /// one per body recompute is wasteful; this one stays alive for
+    /// the view lifetime.
+    private let byteFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useMB, .useGB]
+        f.countStyle = .file
+        return f
+    }()
 
     var body: some View {
         TabView {
@@ -69,9 +86,9 @@ struct SettingsView: View {
                 .tabItem { Label("Sharing", systemImage: "antenna.radiowaves.left.and.right") }
                 .scrollContentBackground(.hidden)
 
-            aboutTab
-                .tabItem { Label("About", systemImage: "info.circle") }
-                .scrollContentBackground(.hidden)
+            // About tab promoted to a top-level sidebar destination
+            // — see `MainSection.about` + `AboutView`. Buried inside
+            // Settings → About it wasn't discoverable.
         }
         // macOS Settings convention: ~700pt fixed-width per tab. Without
         // a minimum the form collapses and Hotkey rows cramp horizontally.
@@ -220,28 +237,42 @@ struct SettingsView: View {
             ?? SessionsFolder.defaultContainerLabel
     }
 
-    /// Stacked field row used by the Notion section (and reusable
-    /// anywhere we need label-above-field-above-caption). Wraps
-    /// content in `HStack { ... Spacer() }` so Form doesn't try to
-    /// pull the leading Text out as a row label.
+    /// Row-style field used by the Notion section: label sits on
+    /// the left, input on the right, both vertically centered;
+    /// caption tucks underneath, indented to start at the input's
+    /// leading edge.
+    ///
+    /// Why a hand-rolled HStack instead of Form's auto-labelling:
+    /// macOS Form aggressively right-aligns text inside the input
+    /// when it's in the trailing column, which makes placeholder
+    /// values like `secret_…` and `a1b2c3d4…` render flush-right.
+    /// A custom row lets us keep the visual rhythm of label/field
+    /// while pinning the text inside the field to leading.
     @ViewBuilder
     private func notionField<Field: View>(
         label: String,
         caption: String,
         @ViewBuilder field: () -> Field
     ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(label).font(.callout.weight(.medium))
-                Spacer()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 12) {
+                Text(label)
+                    .font(.callout.weight(.medium))
+                    // Fixed-width label column gives us consistent
+                    // input alignment across rows; 140pt is wide
+                    // enough for "Integration secret" without
+                    // overflow on either dark or light system fonts.
+                    .frame(width: 140, alignment: .leading)
+                field()
             }
-            field()
-            HStack {
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Indent the caption to start at the input's
+                // leading edge — reads as belonging to the field,
+                // not as a free-floating note.
+                .padding(.leading, 140 + 12)
         }
     }
 
@@ -300,6 +331,7 @@ struct SettingsView: View {
                         Task { await testNotion() }
                     }
                     .buttonStyle(.bordered)
+                    .tint(Color.daisyTextPrimary)
                     .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
                     Spacer()
                     testStatusView
@@ -858,8 +890,63 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+
+            Section {
+                modelsCacheRow
+            } header: {
+                Text("Cache")
+            } footer: {
+                Text("Switching to a different model downloads it alongside the previous one — old files aren't deleted automatically so a downgrade is instant. Use Remove unused to free disk space.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .formStyle(.grouped)
+        .task(id: cacheRefreshTick) {
+            // Refresh on tab open + after any cleanup. Detached so
+            // a slow FileManager scan never blocks the form's
+            // first paint.
+            cachedModelsCount = await Task.detached { WhisperEngine.cachedModels().count }.value
+            cachedModelsBytes = await Task.detached { WhisperEngine.totalCacheSizeBytes() }.value
+        }
+    }
+
+    /// Models-on-disk summary row + Remove-unused action. Disabled
+    /// when there's only one cached variant (current one), so the
+    /// button never appears actionable when there's nothing it
+    /// could do.
+    @ViewBuilder
+    private var modelsCacheRow: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Models on disk")
+                Text("\(cachedModelsCount) \(cachedModelsCount == 1 ? "model" : "models") · \(formattedCacheSize)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Spacer()
+            Button("Remove unused") {
+                Task {
+                    let freed = await whisper.removeUnusedModels()
+                    cacheRefreshTick &+= 1
+                    if freed > 0 {
+                        ToastCenter.shared.show(
+                            "Freed \(byteFormatter.string(fromByteCount: freed)) of model cache.",
+                            style: .success
+                        )
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(Color.daisyTextPrimary)
+            .disabled(cachedModelsCount <= 1 || isWhisperLoading)
+        }
+    }
+
+    private var formattedCacheSize: String {
+        byteFormatter.string(fromByteCount: cachedModelsBytes)
     }
 
     private var whisperBadgeState: StatusBadge.State {
@@ -1292,18 +1379,23 @@ struct SettingsView: View {
     private func testSummaryProvider() async {
         summaryTestResult = .testing
         summaryTestPreview = nil
-        await summarizer.summarize(
-            transcript: Self.fixtureTranscript,
-            title: Self.fixtureTitle,
-            localeHint: "en"
-        )
-        if let err = summarizer.lastError {
-            summaryTestResult = .failure(err)
-        } else if let summary = summarizer.lastSummary {
+        // Use the isolated `runProbe` path — calling the regular
+        // `summarize` would write into the shared singleton's
+        // `lastSummary` / `lastError`, which the active recording
+        // session reads back as if it were the real summary for
+        // that meeting. Bug reproduced when the user pressed Test
+        // summary mid-recording and the fixture transcript ended
+        // up attached to the live session.
+        do {
+            let summary = try await summarizer.runProbe(
+                transcript: Self.fixtureTranscript,
+                title: Self.fixtureTitle,
+                localeHint: "en"
+            )
             summaryTestResult = .success("Summary came through.")
             summaryTestPreview = summary
-        } else {
-            summaryTestResult = .failure("No response — provider didn't return anything.")
+        } catch {
+            summaryTestResult = .failure(error.localizedDescription)
         }
     }
 
@@ -1364,114 +1456,8 @@ struct SettingsView: View {
 
     // MARK: - About
 
-    private var aboutTab: some View {
-        Form {
-            // Brand row — mark + name + tagline + version
-            Section {
-                HStack(spacing: 14) {
-                    DaisyMark(size: 44, tint: .primary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Daisy")
-                            .font(.title2.weight(.semibold))
-                        Text("Local meeting capture for Mac.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Text(versionLine)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .monospacedDigit()
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 4)
-            }
-
-            Section {
-                aboutRow(
-                    icon: "globe",
-                    title: "Website",
-                    detail: "mydaisy.io",
-                    url: URL(string: "https://mydaisy.io")
-                )
-                aboutRow(
-                    icon: "chevron.left.forwardslash.chevron.right",
-                    title: "Source code",
-                    detail: "github.com/d5zn/daisy-app",
-                    url: URL(string: "https://github.com/d5zn/daisy-app")
-                )
-                aboutRow(
-                    icon: "doc.text",
-                    title: "License",
-                    detail: "BUSL-1.1 — source-available",
-                    url: URL(string: "https://github.com/d5zn/daisy-app/blob/main/LICENSE")
-                )
-                aboutRow(
-                    icon: "envelope",
-                    title: "Contact",
-                    detail: "hi@mydaisy.io",
-                    url: URL(string: "mailto:hi@mydaisy.io")
-                )
-            } header: {
-                Text("Links")
-            }
-
-            Section {
-                aboutRow(
-                    icon: "building.2",
-                    title: "Made by",
-                    detail: "Addicted Studio",
-                    url: URL(string: "https://addicted.sh")
-                )
-                Text("Daisy is built so your meetings stay on your Mac — audio, transcript, and summary, all on-device by default. Cloud LLMs (Anthropic, OpenAI) and MCP integrations are strictly opt-in.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } header: {
-                Text("Studio")
-            }
-        }
-        .formStyle(.grouped)
-    }
-
-    /// Single row in the About tab: leading icon + label + trailing
-    /// link-styled detail that opens the URL on click.
-    @ViewBuilder
-    private func aboutRow(
-        icon: String,
-        title: String,
-        detail: String,
-        url: URL?
-    ) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .frame(width: 18)
-                .foregroundStyle(.secondary)
-            Text(title)
-            Spacer()
-            if let url {
-                Button {
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(detail)
-                        Image(systemName: "arrow.up.right.square")
-                            .font(.caption)
-                    }
-                    .foregroundStyle(Color.daisyAccent)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(title): \(detail)")
-            } else {
-                Text(detail).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private var versionLine: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
-        return "Version \(version) (\(build))"
-    }
+    // About content lives in `AboutView.swift` — promoted out of
+    // Settings tabs into a top-level sidebar section.
 }
 
 #Preview {

@@ -7,14 +7,18 @@
 //  Two answers: Stop & save (final transcribe + summary) or Not yet
 //  (snooze the prompt for another silence window).
 //
-//  Styling deliberately mirrors the rest of Daisy's widget surface
-//  (warm cream sidebar fill, hairline divider, ~12pt radius) rather
-//  than the system .floating panel default — the visual link to the
-//  daisy widget is the whole point. Drop-shadow values match the
-//  widget's so the two read as one element.
+//  Styling matches the floating widget's palette — near-black puck
+//  fill, white text, orange action accent. The bubble reads as a
+//  speech callout coming out of the same surface as the daisy mark
+//  itself, not as a generic system tooltip.
 //
 
 import SwiftUI
+
+/// Background colour for the bubble — identical to the dark puck the
+/// daisy widget sits on (`DaisyWidget.swift` line ~64). Pulled out so
+/// any future tweak to the widget body picks the bubble up too.
+private let bubbleBackground = Color(red: 0.07, green: 0.07, blue: 0.085)
 
 struct SilenceBubble: View {
     let onConfirm: () -> Void
@@ -22,28 +26,25 @@ struct SilenceBubble: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Stripped to a single line — the original two-line layout
-            // (ear icon + title + secondary subtitle) read as a system
-            // notification, and the subtitle ("It's been quiet for a
-            // while.") just restated the trigger. The question is
-            // the prompt; the buttons are the answer.
             Text("Are we done?")
                 .font(.callout.weight(.semibold))
-                .foregroundStyle(Color.daisyTextPrimary)
+                .foregroundStyle(.white)
 
             HStack(spacing: 6) {
                 Button {
                     onConfirm()
                 } label: {
-                    // No leading icon — pairs visually with "Not yet"
-                    // as plain text in pill chrome.
                     Text("Stop & save")
                         .font(.caption.weight(.semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .foregroundStyle(.white)
                         .background(
-                            Capsule(style: .continuous).fill(Color.daisyAccent)
+                            // Recording-orange accent matches the
+                            // widget's centre while the session is
+                            // hot — same colour the user is already
+                            // associating with "live record" state.
+                            Capsule(style: .continuous).fill(Color.daisyRecording)
                         )
                 }
                 .buttonStyle(.plain)
@@ -56,37 +57,38 @@ struct SilenceBubble: View {
                         .font(.caption.weight(.medium))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .foregroundStyle(Color.daisyTextPrimary)
+                        .foregroundStyle(.white)
                         .background(
                             Capsule(style: .continuous)
-                                .fill(Color.daisyBgPrimary)
+                                .fill(Color.white.opacity(0.08))
                         )
                         .overlay(
                             Capsule(style: .continuous)
-                                .strokeBorder(Color.daisyDivider, lineWidth: 0.7)
+                                .strokeBorder(Color.white.opacity(0.20), lineWidth: 0.7)
                         )
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
             }
         }
-        .padding(.horizontal, 14)
+        // Vertical padding only — the bubble sizes itself to the
+        // intrinsic width of its widest child (the HStack of two
+        // pill buttons), so horizontal padding plus a fixed
+        // `.frame(width:)` is double-counting and produces a
+        // ghost gap. Letting the content drive width means
+        // "Are we done?" and the buttons sit flush with the
+        // bubble edges, with the buttons' own pill padding doing
+        // all the breathing-room work.
         .padding(.vertical, 12)
-        .frame(width: 220)
         .background(
-            // daisyBgSidebar is the same warm cream the main window
-            // sidebar uses — visually ties the bubble to Daisy's
-            // surface palette rather than reading as a generic
-            // system tooltip.
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.daisyBgSidebar)
+                .fill(bubbleBackground)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.daisyDivider, lineWidth: 0.7)
-        )
-        // Match the widget's drop-shadow so the two pieces read as
-        // one floating surface, not as two unrelated overlays.
+        // Match the widget's drop-shadow values exactly so the
+        // bubble and the daisy puck read as one floating surface.
+        // Shadow padding (see panel size in FloatingPanelController)
+        // gives this room to render without being clipped against
+        // the panel's content rect.
         .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 3)
     }
 }

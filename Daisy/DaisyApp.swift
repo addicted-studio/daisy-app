@@ -64,6 +64,28 @@ struct DaisyApp: App {
         // on macOS already lets the sidebar's frosted material
         // extend up to the title bar (Mail / Notes / Finder pattern),
         // and toolbar items live in the detail-pane portion only.
+        .commands {
+            // Re-target the system "Daisy Help" menu item at our
+            // hosted support page instead of the default (which
+            // would look for a bundled .help file we don't ship).
+            CommandGroup(replacing: .help) {
+                Button("Daisy Help") {
+                    if let url = URL(string: "https://mydaisy.io/support") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .keyboardShortcut("?", modifiers: [.command])
+            }
+            // Replace the default About panel with one that names the
+            // studio and links to contact + website. The system's
+            // default shows just the bundle version, which reads as
+            // "we forgot to fill this in".
+            CommandGroup(replacing: .appInfo) {
+                Button("About Daisy") {
+                    AboutPanel.show()
+                }
+            }
+        }
 
         MenuBarExtra {
             ContentView(session: session, settings: settings)

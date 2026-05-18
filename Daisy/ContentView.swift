@@ -587,25 +587,40 @@ struct ContentView: View {
 
             ellipsisMenu
         }
-        // Symmetric padding-12 was leaving the kebab visually flush
-        // with the right edge — the bordered chrome on the menu draws
-        // a fraction past its hit-rect at the rounded corners, eating
-        // perceived breathing room. Bumping trailing to 16 restores
-        // the same optical gutter Copy has on the left.
-        .padding(.leading, 12)
-        .padding(.trailing, 16)
-        .padding(.vertical, 12)
+        .padding(12)
     }
 
     private var sendMenu: some View {
         Menu {
-            Button {
-                Task { await sendToNotion() }
-            } label: {
-                Label("Send to Notion", systemImage: "doc.text")
+            // Notion item is shown only when the user has actually
+            // wired up token + parent ID — otherwise the click would
+            // 401, which the user can't recover from inside the menu.
+            // Keeping a dead option in the dropdown is worse than
+            // an "absent" option they can enable from Settings.
+            if settings.hasNotionCredentials {
+                Button {
+                    Task { await sendToNotion() }
+                } label: {
+                    Label("Send to Notion", systemImage: "doc.text")
+                }
+                .disabled(notionSending)
+            } else {
+                // Affordance to fix the missing config without
+                // hunting through Settings yourself.
+                Button {
+                    AppNavigation.shared.section = .settings
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    Label("Connect Notion in Settings…", systemImage: "doc.text")
+                }
             }
-            .disabled(notionSending)
 
+            // Send to Claude is always available — it doesn't hit an
+            // API, it opens Claude.app (or claude.ai as fallback) and
+            // pastes the markdown into a fresh chat. No credentials,
+            // no failure mode beyond "user doesn't have Claude
+            // installed", which the fallback covers.
             Button {
                 let opened = ClaudeExporter.sendToClaude(data: session.exportData())
                 if !opened {
@@ -682,14 +697,13 @@ struct ContentView: View {
             }
             .keyboardShortcut("q", modifiers: [.command])
         } label: {
-            // `Label(..).iconOnly` (vs a bare `Image`) keeps the
-            // text-line slot reserved in layout, so the bordered
-            // chrome inherits the same intrinsic height as Copy /
-            // Send to. The explicit `.frame(width:height:)` below
-            // then forces that height onto the *width* as well, so
-            // the capsule renders as a square — matching the visual
-            // weight of the two sibling pill buttons instead of
-            // floating as a wider ellipsis chip.
+            // `Label(..).iconOnly` keeps the text-line slot
+            // reserved in layout — without it, an icon-only
+            // bordered control collapses to glyph height and
+            // ends up visibly shorter than its text-bearing
+            // siblings. Reserving the text slot guarantees the
+            // chrome takes the same intrinsic height the system
+            // gives Copy / Send to under `controlSize(.regular)`.
             Label("More", systemImage: "ellipsis")
                 .labelStyle(.iconOnly)
         }
@@ -697,9 +711,16 @@ struct ContentView: View {
         .buttonStyle(.bordered)
         .controlSize(.regular)
         .menuIndicator(.hidden)
-        // 22pt is the standard height of `.controlSize(.regular)`
-        // bordered buttons on macOS 14+. Equal width = square.
-        .frame(width: 22, height: 22)
+        // No `.frame(width:height:)` — earlier attempts to pin a
+        // square via `PreferenceKey`-measured sibling height kept
+        // coming up short because GeometryReader sees the bordered
+        // chrome's logical bounds, not the visual outer envelope
+        // (chrome adds ~2pt top/bottom invisible padding on top of
+        // the logical size). Letting the system size the menu via
+        // its intrinsic content gives a pill that's natively the
+        // same height as Copy / Send to. `.fixedSize()` keeps it
+        // from expanding sideways into the Spacer.
+        .fixedSize()
     }
 
     private var hasSegments: Bool {
@@ -801,9 +822,13 @@ private struct SegmentRow: View {
     }
 
     private var sourceColor: Color {
+        // Daisy-palette tones rather than generic system blue/green —
+        // those felt like stock SwiftUI chrome. Microphone = cinnamon
+        // accent ("the user, on the mic side"); system audio = the
+        // recording-orange we use everywhere else for incoming-active.
         switch segment.source {
-        case .microphone: return .blue
-        case .systemAudio: return .green
+        case .microphone:  return .daisyAccent
+        case .systemAudio: return .daisyRecording
         }
     }
 
