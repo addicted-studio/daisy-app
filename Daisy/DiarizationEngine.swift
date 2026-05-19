@@ -47,6 +47,16 @@ struct DiarizedSpan: Sendable, Equatable {
     let endSec: Double
 }
 
+/// Full output of a diarization run — spans + per-cluster centroid
+/// embeddings keyed by the same A/B/C labels used in `DiarizedSpan`.
+/// Centroids are the average 256-d embedding across all utterances
+/// of one speaker, L2-normalized. Used by `SpeakerProfileStore`
+/// for cross-session voice fingerprinting.
+struct DiarizationOutput: Sendable {
+    let spans: [DiarizedSpan]
+    let centroids: [String: [Float]]
+}
+
 @MainActor
 final class DiarizationEngine {
     static let shared = DiarizationEngine()
@@ -103,37 +113,103 @@ final class DiarizationEngine {
     /// Run diarization on a buffer. Returns one span per detected
     /// speaker turn. Empty array if the package isn't linked, the
     /// model failed to load, or the audio is too short.
+    ///
+    /// Convenience wrapper around `diarizeFull` that discards the
+    /// centroids — the live in-session diarization path doesn't need
+    /// them, only the post-stop voice-fingerprint pass does.
     func diarize(samples: [Float]) async -> [DiarizedSpan] {
-        // Skip very short clips — diarization needs at least a few
-        // seconds to cluster meaningfully.
-        guard samples.count > 16_000 * 3 else { return [] }
+        await diarizeFull(samples: samples).spans
+    }
+
+    /// Full diarization with cluster centroids returned alongside
+    /// the spans. Called from `Transcriber.runFinalTranscribe()` so
+    /// the post-stop pass can match centroids against the
+    /// `SpeakerProfileStore` for cross-session "this is Alex"
+    /// auto-labelling.
+    ///
+    /// `centroids` is the AVERAGE of all segment embeddings per
+    /// speaker. FluidAudio's `DiarizationResult.speakerDatabase`
+    /// sometimes provides this directly; when it doesn't we compute
+    /// it ourselves from `segments[i].embedding`.
+    func diarizeFull(samples: [Float]) async -> DiarizationOutput {
+        guard samples.count > 16_000 * 3 else {
+            return DiarizationOutput(spans: [], centroids: [:])
+        }
 
         #if canImport(FluidAudio)
         if manager == nil { await ensureLoaded() }
-        guard let manager else { return [] }
+        guard let manager else {
+            return DiarizationOutput(spans: [], centroids: [:])
+        }
 
         do {
-            // First arg is UNLABELED in FluidAudio. The call is
-            // synchronous-throws, not async.
             let result = try manager.performCompleteDiarization(samples)
-            // FluidAudio gives us `speakerId` like "Speaker_1",
-            // "Speaker_3" with gaps after clustering. We relabel to
-            // A/B/C in first-appearance order so the user sees clean
-            // labels.
-            let relabelled = Self.relabel(result.segments)
-            return relabelled.map { seg in
-                DiarizedSpan(
-                    speakerId: seg.label,
-                    startSec: Double(seg.start),
-                    endSec: Double(seg.end)
+            // 1. Relabel Speaker_1 / Speaker_3 / ... → A / B / C
+            //    using first-appearance order. Keep a parallel
+            //    mapping from raw → relabelled so we can apply the
+            //    same relabel to centroids.
+            let labelMap = Self.buildLabelMap(result.segments)
+
+            let spans: [DiarizedSpan] = result.segments
+                .sorted { $0.startTimeSeconds < $1.startTimeSeconds }
+                .compactMap { seg in
+                    guard let label = labelMap[seg.speakerId] else { return nil }
+                    return DiarizedSpan(
+                        speakerId: label,
+                        startSec: Double(seg.startTimeSeconds),
+                        endSec: Double(seg.endTimeSeconds)
+                    )
+                }
+
+            // 2. Compute per-cluster centroids. Average all segment
+            //    embeddings sharing the same raw speakerId, then
+            //    L2-normalize (so cosine similarity stays well-
+            //    defined). FluidAudio's `speakerDatabase` may also
+            //    have this — when present we use it directly,
+            //    otherwise we compute from per-segment embeddings.
+            var centroids: [String: [Float]] = [:]
+            if let db = result.speakerDatabase {
+                for (rawID, embedding) in db {
+                    if let label = labelMap[rawID] {
+                        centroids[label] = embedding
+                    }
+                }
+            }
+            if centroids.isEmpty {
+                centroids = Self.computeCentroids(
+                    from: result.segments,
+                    labelMap: labelMap
                 )
             }
+
+            return DiarizationOutput(spans: spans, centroids: centroids)
         } catch {
             log.error("Diarize failed: \(error.localizedDescription, privacy: .public)")
-            return []
+            return DiarizationOutput(spans: [], centroids: [:])
         }
         #else
-        return []
+        return DiarizationOutput(spans: [], centroids: [:])
+        #endif
+    }
+
+    /// Extract a single 256-d L2-normalized embedding from an audio
+    /// buffer. Used as an escape hatch — currently `diarizeFull`
+    /// covers the full session path, but if a future feature needs
+    /// to embed a known-speaker clip (e.g. user records 5s of
+    /// themselves to enroll a profile manually), this is the
+    /// one-shot entrypoint.
+    func extractEmbedding(samples: [Float]) async -> [Float]? {
+        #if canImport(FluidAudio)
+        if manager == nil { await ensureLoaded() }
+        guard let manager else { return nil }
+        do {
+            return try manager.extractSpeakerEmbedding(from: samples)
+        } catch {
+            log.error("Extract embedding failed: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+        #else
+        return nil
         #endif
     }
 
@@ -178,25 +254,64 @@ final class DiarizationEngine {
 
     // MARK: - Relabel speakers to A/B/C
 
-    /// FluidAudio's raw speaker ids look like "Speaker_1", "Speaker_3"
-    /// (with gaps after clustering). We relabel in first-appearance
-    /// order so the user sees "A", "B", "C" — matches how a human
-    /// would call them.
+    /// Build a raw-speakerId → "A" / "B" / "C" map in first-
+    /// appearance order. Single source of truth — spans + centroids
+    /// both reference the same map so their labels stay in sync.
     #if canImport(FluidAudio)
-    private static func relabel(_ raw: [TimedSpeakerSegment]) -> [(label: String, start: Float, end: Float)] {
+    private static func buildLabelMap(_ raw: [TimedSpeakerSegment]) -> [String: String] {
         let sorted = raw.sorted { $0.startTimeSeconds < $1.startTimeSeconds }
         var map: [String: String] = [:]
         var next = 0
         let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        var result: [(String, Float, Float)] = []
         for seg in sorted {
             if map[seg.speakerId] == nil {
                 let idx = alphabet.index(alphabet.startIndex, offsetBy: min(next, 25))
                 map[seg.speakerId] = String(alphabet[idx])
                 next += 1
             }
-            let label = map[seg.speakerId] ?? "?"
-            result.append((label, seg.startTimeSeconds, seg.endTimeSeconds))
+        }
+        return map
+    }
+
+    /// Compute per-cluster centroids by averaging the per-segment
+    /// `embedding` field, then L2-normalizing the result so cosine
+    /// similarity stays valid. Used when FluidAudio's
+    /// `speakerDatabase` isn't populated (some pipeline configs).
+    private static func computeCentroids(
+        from segments: [TimedSpeakerSegment],
+        labelMap: [String: String]
+    ) -> [String: [Float]] {
+        var sums: [String: [Float]] = [:]
+        var counts: [String: Int] = [:]
+        for seg in segments {
+            guard let label = labelMap[seg.speakerId] else { continue }
+            let embedding = seg.embedding
+            guard !embedding.isEmpty else { continue }
+            if var running = sums[label] {
+                for i in 0..<min(running.count, embedding.count) {
+                    running[i] += embedding[i]
+                }
+                sums[label] = running
+            } else {
+                sums[label] = embedding
+            }
+            counts[label, default: 0] += 1
+        }
+        var result: [String: [Float]] = [:]
+        for (label, sum) in sums {
+            let count = Float(counts[label] ?? 1)
+            var avg = sum.map { $0 / count }
+            // L2 normalize so cosine sim against profile embeddings
+            // (which are themselves L2 normalized) reduces to a
+            // dot product — matches what `speakerCosineSimilarity`
+            // expects.
+            var magnitude: Float = 0
+            for v in avg { magnitude += v * v }
+            magnitude = sqrtf(magnitude)
+            if magnitude > 0 {
+                avg = avg.map { $0 / magnitude }
+            }
+            result[label] = avg
         }
         return result
     }

@@ -37,6 +37,7 @@ import AppKit
 import EventKit
 import Foundation
 import Observation
+import os
 
 // MARK: - DTO
 
@@ -136,6 +137,7 @@ final class CalendarService {
         }
     }
 
+
     // MARK: - Fetch + observe
 
     /// Begin maintaining the `upcomingMeetings` / `upcomingEvents`
@@ -191,38 +193,118 @@ final class CalendarService {
         firedEventIDs = []
     }
 
-    /// Force a re-fetch of the events window. Cheap (EventKit reads
-    /// from a local cache, not the network).
+    /// Force a re-fetch of the events window. Pulls from BOTH
+    /// EventKit (Apple Calendar / Internet Accounts-synced Google /
+    /// Outlook / iCloud) AND Google Calendar API (direct OAuth,
+    /// for users who don't have Google in macOS Internet Accounts).
+    /// Results are merged + deduped — same event appearing in both
+    /// sources is counted once.
+    ///
+    /// EventKit is sync (local cache). Google is an async HTTPS
+    /// round-trip — we kick it off in a Task and update
+    /// `upcomingEvents` again when it completes, so the UI doesn't
+    /// block on network for the EventKit portion.
     func refresh() {
         let status = EKEventStore.authorizationStatus(for: .event)
         authorizationStatus = status
-        guard status == .fullAccess else {
-            upcomingMeetings = []
-            upcomingEvents = []
-            return
+
+        // 1. EventKit synchronous fetch (always — even when
+        //    permission denied we want to clear the cache + still
+        //    try Google).
+        var projected: [DaisyMeeting] = []
+        if status == .fullAccess {
+            let now = Date()
+            let end = now.addingTimeInterval(TimeInterval(lookaheadHours * 3600))
+            let calendars = store.calendars(for: .event)
+            let predicate = store.predicateForEvents(
+                withStart: now,
+                end: end,
+                calendars: calendars
+            )
+            let events = store.events(matching: predicate)
+                .sorted { $0.startDate < $1.startDate }
+            projected = events.compactMap(DaisyMeeting.init(ekEvent:))
         }
 
-        let now = Date()
-        let end = now.addingTimeInterval(TimeInterval(lookaheadHours * 3600))
-        let calendars = store.calendars(for: .event)
-        let predicate = store.predicateForEvents(
-            withStart: now,
-            end: end,
-            calendars: calendars
-        )
-
-        let events = store.events(matching: predicate)
-            .sorted { $0.startDate < $1.startDate }
-
-        let projected = events.compactMap(DaisyMeeting.init(ekEvent:))
+        // Publish EventKit portion immediately so UI updates while
+        // Google fetch is in flight.
         upcomingEvents = projected
         upcomingMeetings = projected.filter(\.isMeeting)
-
-        // Prune the fired-set — drop ids that have rotated out of
-        // the visible window so a repeated daily standup re-triggers
-        // tomorrow.
         let visibleIDs = Set(projected.map(\.localID))
         firedEventIDs = firedEventIDs.intersection(visibleIDs)
+
+        // 2. Google async fetch — merge when complete.
+        if GoogleAccountStore.shared.isConnected {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    let googleEvents = try await GoogleCalendarService.shared
+                        .fetchUpcomingEvents(lookaheadHours: self.lookaheadHours)
+                    self.mergeGoogleEvents(googleEvents, into: projected)
+                } catch {
+                    // Log but don't surface — EventKit results are
+                    // already visible, Google failure is silent
+                    // degradation. UI can read GoogleAccountStore
+                    // state directly for a connected-but-failing badge.
+                    self.googleFetchLog.warning("Google fetch failed: \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
+    }
+
+    /// Folder pattern: keep a logger reference for the Google
+    /// branch so error messages get the right category in Console.
+    private let googleFetchLog = Logger(subsystem: "app.essazanov.Daisy", category: "Calendar/Google")
+
+    /// Merge Google events into the published `upcomingEvents`
+    /// array, deduping against the EventKit baseline. Two-pass
+    /// dedup:
+    ///   - first by `externalID` (Google's iCalUID often matches
+    ///     EventKit's calendarItemExternalIdentifier for the same
+    ///     event synced via both paths)
+    ///   - then by (startDate ± 30s + title-prefix match) — best
+    ///     effort fuzzy match for events that don't share an ID
+    ///     across providers
+    private func mergeGoogleEvents(_ google: [DaisyMeeting], into eventKit: [DaisyMeeting]) {
+        // Build dedup sets from the EventKit baseline.
+        let knownExternalIDs = Set(eventKit.compactMap(\.externalID))
+
+        // Coarse-grained time bucket: "same event" if start time
+        // within 30s AND title prefix matches (first 12 chars).
+        // Sufficient for the common case where Google account
+        // is in BOTH Internet Accounts (EventKit sees) and
+        // connected via OAuth (we see directly).
+        struct FuzzyKey: Hashable {
+            let bucketStart: Int  // floor(startDate / 30s)
+            let titlePrefix: String
+        }
+        let knownFuzzy = Set(eventKit.map { ek -> FuzzyKey in
+            FuzzyKey(
+                bucketStart: Int(ek.startDate.timeIntervalSince1970 / 30),
+                titlePrefix: String(ek.title.prefix(12)).lowercased()
+            )
+        })
+
+        let unique = google.filter { gevent in
+            // First-pass dedup: explicit external ID match.
+            if let ext = gevent.externalID, knownExternalIDs.contains(ext) {
+                return false
+            }
+            // Second-pass dedup: time + title fuzzy match.
+            let key = FuzzyKey(
+                bucketStart: Int(gevent.startDate.timeIntervalSince1970 / 30),
+                titlePrefix: String(gevent.title.prefix(12)).lowercased()
+            )
+            if knownFuzzy.contains(key) {
+                return false
+            }
+            return true
+        }
+
+        // Combine + re-sort.
+        let combined = (eventKit + unique).sorted { $0.startDate < $1.startDate }
+        upcomingEvents = combined
+        upcomingMeetings = combined.filter(\.isMeeting)
     }
 
     // MARK: - "Meeting starting now" tick
@@ -249,6 +331,42 @@ final class CalendarService {
     // MARK: - Hot-reconfigure (no need to stop/start)
 
     func setAutoStart(_ enabled: Bool) { autoStartEnabled = enabled }
+
+    // MARK: - Menu-bar label for next event
+
+    /// Short rendering of the next upcoming event suitable for
+    /// embedding in the macOS menu bar next to Daisy's icon
+    /// (Granola-style "14:30 · Q3 Review"). Returns nil when:
+    ///   • No events in the next 8 hours.
+    ///   • No calendar source connected (EventKit denied AND no
+    ///     Google OAuth) — the cache would be stale.
+    /// Title truncated to 18 chars so the menu bar item stays
+    /// compact even on a packed system menu bar.
+    ///
+    /// Source-agnostic: reads from `upcomingEvents` which the
+    /// multiplexed `refresh()` populates from BOTH EventKit and
+    /// direct Google API. A user with only Google connected (and
+    /// Apple Calendar revoked) still sees their next meeting here.
+    var nextMeetingShortLabel: String? {
+        // Either Apple Calendar permission OR Google OAuth must be
+        // live; otherwise `upcomingEvents` is empty/stale.
+        let hasEventKit = (authorizationStatus == .fullAccess)
+        let hasGoogle = GoogleAccountStore.shared.isConnected
+        guard hasEventKit || hasGoogle else { return nil }
+
+        let now = Date()
+        let cutoff = now.addingTimeInterval(8 * 3600)
+        guard let next = upcomingEvents.first(where: {
+            $0.startDate > now && $0.startDate <= cutoff
+        }) else { return nil }
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        let timeStr = formatter.string(from: next.startDate)
+        let title = next.title.trimmingCharacters(in: .whitespaces)
+        let trimmed = title.count > 18 ? title.prefix(18) + "…" : title[...]
+        return "\(timeStr) · \(trimmed)"
+    }
 }
 
 // MARK: - EKEvent → DaisyMeeting projection

@@ -110,6 +110,31 @@ final class Transcriber {
     private var consumerTask: Task<Void, Never>?
     private var liveTimer: Timer?
     private var transcribeTask: Task<Void, Never>?
+
+    /// Live diarization task. Only spawned for `.systemAudio`
+    /// transcribers — mic is always "Me", no clustering needed.
+    /// Runs on a coarser cadence than `transcribeTask` (every
+    /// ~15s of new audio) so we don't burn the Neural Engine
+    /// re-clustering the same speakers every 2 seconds.
+    private var diarizeTask: Task<Void, Never>?
+    /// Audio-clock seconds at which the last live diarization run
+    /// kicked off. `kickLiveDiarize` skips if we're inside the
+    /// minimum interval. Reset on `reset()`.
+    private var lastDiarizeSec: Double = 0
+    /// How much new audio must accumulate between live
+    /// diarization runs. 15s balances label freshness against
+    /// the cost of re-clustering on a growing buffer; final
+    /// pass on stop is still authoritative.
+    private let liveDiarizeIntervalSec: Double = 15.0
+
+    /// Per-cluster centroid embeddings from the most recent
+    /// diarization pass — keyed by the same A/B/C labels used in
+    /// `TranscriptSegment.speakerId`. Set by `runFinalTranscribe`,
+    /// consumed by `RecordingSession.stop()` to write the
+    /// `speakers.json` sidecar + match against `SpeakerProfileStore`.
+    /// Empty for `.microphone` transcribers (no diarization runs).
+    private(set) var speakerCentroids: [String: [Float]] = [:]
+
     private var sessionStartedAt: Date?
     private var bucketIDs: [Int: UUID] = [:]
 
@@ -214,6 +239,12 @@ final class Transcriber {
         await transcribeTask?.value
         transcribeTask = nil
 
+        // Wait for any in-flight live diarization pass — without
+        // this it would race with `runFinalTranscribe()` and could
+        // overwrite final speaker labels with stale live ones.
+        await diarizeTask?.value
+        diarizeTask = nil
+
         await runFinalTranscribe()
         isRunning = false
     }
@@ -225,11 +256,15 @@ final class Transcriber {
         consumerTask = nil
         transcribeTask?.cancel()
         transcribeTask = nil
+        diarizeTask?.cancel()
+        diarizeTask = nil
+        lastDiarizeSec = 0
         committedSegments.removeAll()
         pendingSegments.removeAll()
         committedThroughSec = 0
         allSamples.removeAll()
         bucketIDs.removeAll()
+        speakerCentroids.removeAll()
         converter = nil
         isRunning = false
         lastError = nil
@@ -347,6 +382,75 @@ final class Transcriber {
             updateLockedLanguageIfPossible()
         }
         pendingSegments = newPending
+
+        // Live diarization tick — only for system-audio transcribers,
+        // and only every ~15s of accumulated audio. Mic source skips
+        // entirely (single speaker "Me", no clustering needed).
+        kickLiveDiarizeIfDue(currentAudioSec: windowEndSec)
+    }
+
+    // MARK: - Live diarization
+    //
+    // Periodic in-session pass that gives users mid-meeting visibility
+    // into who's speaking. Tradeoffs:
+    //
+    //   • Cadence: every 15s, not per-Whisper-pass. Per-pass would
+    //     run diarization every 2s on an ever-growing buffer — O(n²)
+    //     on long meetings, no perceptible UX gain over 15s.
+    //   • Scope: only `.systemAudio`. Mic side is always "Me".
+    //   • Label stability: once a committed segment receives a
+    //     speakerId, we DON'T override it on later runs even if the
+    //     clustering shifts. Prevents the "Alex turned into Bob" jolt
+    //     when FluidAudio re-clusters on a fresh audio length.
+    //   • Final pass on stop is unchanged — full re-merge with fresh
+    //     IDs, authoritative output for transcript.md.
+
+    private func kickLiveDiarizeIfDue(currentAudioSec: Double) {
+        guard source == .systemAudio else { return }
+        guard diarizeTask == nil else { return }
+        // First pass needs ~10s of audio to cluster anything useful;
+        // skip earlier ticks so we don't waste a run on 2 seconds
+        // of "hello".
+        guard currentAudioSec >= 10 else { return }
+        guard currentAudioSec - lastDiarizeSec >= liveDiarizeIntervalSec else { return }
+
+        lastDiarizeSec = currentAudioSec
+        let snapshotSamples = allSamples
+
+        diarizeTask = Task { @MainActor [weak self] in
+            let spans = await DiarizationEngine.shared.diarize(samples: snapshotSamples)
+            guard let strong = self else { return }
+            strong.applyLiveDiarization(spans: spans)
+            strong.diarizeTask = nil
+        }
+    }
+
+    /// Apply diarized spans to committed segments. Skips any
+    /// segment that already has a `speakerId` — label stability >
+    /// label freshness.
+    private func applyLiveDiarization(spans: [DiarizedSpan]) {
+        guard !spans.isEmpty else { return }
+        committedSegments = committedSegments.map { seg in
+            guard seg.speakerId == nil else { return seg }
+            var copy = seg
+            let segLen = seg.endSec - seg.startSec
+            guard segLen > 0 else { return copy }
+
+            var best: (id: String, ratio: Double)?
+            for span in spans {
+                let overlapStart = max(seg.startSec, span.startSec)
+                let overlapEnd = min(seg.endSec, span.endSec)
+                guard overlapEnd > overlapStart else { continue }
+                let ratio = (overlapEnd - overlapStart) / segLen
+                if best == nil || ratio > best!.ratio {
+                    best = (span.speakerId, ratio)
+                }
+            }
+            if let best, best.ratio >= 0.30 {
+                copy.speakerId = best.id
+            }
+            return copy
+        }
     }
 
     // MARK: - Final transcribe on stop
@@ -365,15 +469,18 @@ final class Transcriber {
             language: lang
         )
         // Mic-side diarization is overkill — assume one speaker.
-        // System-side has the actual remote participants.
-        async let diarizationResult: [DiarizedSpan] =
+        // System-side has the actual remote participants. Use the
+        // FULL diarization output (spans + centroids) so
+        // RecordingSession can fingerprint-match this session's
+        // speakers against the SpeakerProfileStore.
+        async let diarizationOutput: DiarizationOutput =
             source == .systemAudio
-                ? DiarizationEngine.shared.diarize(samples: samples)
-                : []
+                ? DiarizationEngine.shared.diarizeFull(samples: samples)
+                : DiarizationOutput(spans: [], centroids: [:])
 
         do {
             let result = try await whisperResult
-            let spans = await diarizationResult
+            let output = await diarizationOutput
 
             // Final result supersedes everything — wipe + repopulate.
             committedSegments.removeAll()
@@ -400,14 +507,17 @@ final class Transcriber {
                     startSec: ws.start
                 ))
             }
-            log.info("Final pass: \(fresh.count) segments from Whisper, \(spans.count) speaker spans from FluidAudio")
+            log.info("Final pass: \(fresh.count) segments from Whisper, \(output.spans.count) speaker spans from FluidAudio (\(output.centroids.count) centroids)")
 
             // Attach speaker labels via max-IoU overlap.
             committedSegments = DiarizationEngine.mergeBySpeaker(
                 segments: fresh,
-                diarization: spans
+                diarization: output.spans
             )
             committedThroughSec = committedSegments.map(\.endSec).max() ?? 0
+            // Stash centroids so RecordingSession.stop() can write
+            // the speakers.json sidecar + match against profiles.
+            speakerCentroids = output.centroids
         } catch {
             log.error("Final transcribe failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription

@@ -13,12 +13,22 @@
 
 import AppKit
 import SwiftUI
+import UserNotifications
 
 @MainActor
-final class DaisyAppDelegate: NSObject, NSApplicationDelegate {
+final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+
+        // Silence-prompt notification category needs to be on file
+        // before the first time `SilenceMonitor` decides to fire
+        // one. We also take over as the UN delegate so action taps
+        // (Stop & save / Not yet) route through us into the
+        // Foundation NotificationCenter bus — which the active
+        // SilenceMonitor subscribes to.
+        UNUserNotificationCenter.current().delegate = self
+        SilencePromptNotification.register()
 
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
@@ -71,6 +81,51 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate {
     // have a menu-bar item and possibly the floating widget.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Show the banner even when Daisy is the frontmost app — by
+    /// default macOS suppresses banners for the active app, but the
+    /// silence prompt is most useful exactly when the user is in
+    /// some other window and hasn't noticed they're still recording.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    /// Route the user's tap on Stop & save / Not yet into the
+    /// Foundation NotificationCenter bus. SilenceMonitor on the
+    /// active session listens there and runs the matching action.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let actionID = response.actionIdentifier
+        Task { @MainActor in
+            switch actionID {
+            case SilencePromptNotification.actionStop:
+                NotificationCenter.default.post(
+                    name: SilencePromptNotification.stopRequested, object: nil
+                )
+            case SilencePromptNotification.actionSnooze:
+                NotificationCenter.default.post(
+                    name: SilencePromptNotification.snoozeRequested, object: nil
+                )
+            default:
+                // Tap on the banner body (no action) — treat as
+                // "Not yet" so the silence clock resets without
+                // interrupting the session.
+                NotificationCenter.default.post(
+                    name: SilencePromptNotification.snoozeRequested, object: nil
+                )
+            }
+            completionHandler()
+        }
     }
 
     // When the user clicks the Dock icon and no windows are visible,

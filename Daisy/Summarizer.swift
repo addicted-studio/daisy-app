@@ -10,7 +10,6 @@
 //
 
 import Foundation
-import FoundationModels
 import Observation
 import os
 
@@ -25,21 +24,51 @@ import os
 /// decoder. The custom `init(from:)` also defaults `clientFollowUp`
 /// to an empty string for legacy files that don't carry it yet —
 /// the UI hides that section when empty.
-@Generable
+///
+/// Plain Codable struct on purpose — the FoundationModels-backed
+/// AppleIntelligenceSummarizer wraps its OWN `@Generable` mirror
+/// of these fields (which only compiles on macOS 26+) and converts
+/// into this canonical type. Keeps the shared model
+/// macOS-14-compatible.
 nonisolated struct MeetingSummary: Codable, Sendable, Equatable {
-    @Guide(description: "Concise 2-4 sentence overview of what the meeting was about and what was discussed. Do not invent details not present in the transcript.")
+    /// One-sentence elevator pitch — "what was this meeting about?".
+    /// Rendered above the topical sections as the lede. For legacy
+    /// summaries (written before sections shipped) this carries the
+    /// full 2-4 sentence overview and `sections` is empty; UI falls
+    /// back to rendering this as a plain paragraph.
     let summary: String
 
-    @Guide(description: "Block of next actions agreed on during the meeting — what the participants will do after the call ends. Each item in imperative form, e.g. 'Send invoice to client' or 'Review the proposal'. Include the responsible person if explicitly mentioned. Empty array if no clear actions were discussed.")
+    /// Granola-style topical outline — 3-5 sections, each with a
+    /// title and bulleted content (with optional sub-bullets, up to
+    /// ~3 levels deep). Empty `[]` for legacy summaries written
+    /// before this feature shipped; UI then falls back to rendering
+    /// `summary` as a paragraph.
+    let sections: [SummarySection]
+
+    /// Imperative next steps with optional owner prefix
+    /// (e.g. "Maria: send the contract by Thursday"). Kept as a
+    /// flat array even after sections shipped — owners + dates are
+    /// the actionable scan-target, sub-grouping under a section
+    /// hides them.
     let actionItems: [String]
 
-    @Guide(description: "Ready-to-send follow-up message that a client or partner from this meeting could receive. Write in the second person, polite-professional tone, no greeting boilerplate beyond a single short opener. Cover what was discussed and what the next steps are from their perspective. If the meeting was internal-only with no external counterpart, return an empty string. 80-180 words.")
+    /// Ready-to-send follow-up message a client / vendor / partner
+    /// could receive. Empty string for purely internal team syncs.
+    /// Kept as a Daisy-specific field on top of the Granola-style
+    /// outline; useful for SMB workflows where the host hands the
+    /// summary to a counterpart right after the call.
     let clientFollowUp: String
 
     // MARK: - Init
 
-    init(summary: String, actionItems: [String], clientFollowUp: String) {
+    init(
+        summary: String,
+        sections: [SummarySection] = [],
+        actionItems: [String],
+        clientFollowUp: String
+    ) {
         self.summary = summary
+        self.sections = sections
         self.actionItems = actionItems
         self.clientFollowUp = clientFollowUp
     }
@@ -49,6 +78,12 @@ nonisolated struct MeetingSummary: Codable, Sendable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.summary = try c.decode(String.self, forKey: .summary)
+        // `sections` is new in 1.0.2 — older summary.json files on
+        // disk don't carry it. Decode as optional, default to empty
+        // array. UI's fallback path renders such legacy summaries as
+        // a paragraph (the old behaviour) so users never see "no
+        // content" on previously-saved sessions.
+        self.sections = try c.decodeIfPresent([SummarySection].self, forKey: .sections) ?? []
         self.actionItems = try c.decodeIfPresent([String].self, forKey: .actionItems) ?? []
         self.clientFollowUp = try c.decodeIfPresent(String.self, forKey: .clientFollowUp) ?? ""
     }
@@ -56,12 +91,149 @@ nonisolated struct MeetingSummary: Codable, Sendable, Equatable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(summary, forKey: .summary)
+        try c.encode(sections, forKey: .sections)
         try c.encode(actionItems, forKey: .actionItems)
         try c.encode(clientFollowUp, forKey: .clientFollowUp)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case summary, actionItems, clientFollowUp
+        case summary, sections, actionItems, clientFollowUp
+    }
+}
+
+/// One topical chunk of the Granola-style outline — a header plus a
+/// list of bullets. Bullets can themselves carry sub-bullets, so the
+/// section renders as an indented tree like the user's xAID.ai
+/// reference. Section count + bullet count per section are not
+/// enforced in the type — the prompt tells the model "3-5 sections,
+/// 2-6 bullets each" and that's where the constraint lives.
+nonisolated struct SummarySection: Codable, Sendable, Equatable {
+    let title: String
+    let bullets: [SummaryBullet]
+}
+
+/// Localised header strings for the summary UI (the Settings →
+/// Test summary preview and the SessionDetailView outline). The
+/// section CONTENT is localised by the LLM via the language
+/// directive in the system prompt; the UI's own structural
+/// headers ("Meeting" / "Next actions" / "Follow-up for client /
+/// partner") need to match — otherwise a Russian summary lands
+/// inside English structural labels, which reads inconsistently.
+///
+/// `for(language:)` accepts an ISO 639-1 two-letter code OR the
+/// "auto" sentinel; unknown codes fall through to English (same
+/// default that drives the prompt fallback). Add a case here
+/// when adding a new `SummaryLanguage` enum case.
+nonisolated struct SummaryLabels: Sendable {
+    let meeting: String
+    let nextActions: String
+    let followUp: String
+
+    static func `for`(language: String?) -> SummaryLabels {
+        switch (language ?? "").lowercased() {
+        case "ru":
+            return SummaryLabels(
+                meeting: "Встреча",
+                nextActions: "Следующие шаги",
+                followUp: "Ответ клиенту / партнёру"
+            )
+        case "uk":
+            return SummaryLabels(
+                meeting: "Зустріч",
+                nextActions: "Наступні кроки",
+                followUp: "Відповідь клієнту / партнеру"
+            )
+        case "pl":
+            return SummaryLabels(
+                meeting: "Spotkanie",
+                nextActions: "Następne kroki",
+                followUp: "Wiadomość do klienta / partnera"
+            )
+        case "es":
+            return SummaryLabels(
+                meeting: "Reunión",
+                nextActions: "Próximas acciones",
+                followUp: "Mensaje al cliente / socio"
+            )
+        case "fr":
+            return SummaryLabels(
+                meeting: "Réunion",
+                nextActions: "Prochaines actions",
+                followUp: "Message au client / partenaire"
+            )
+        case "de":
+            return SummaryLabels(
+                meeting: "Meeting",
+                nextActions: "Nächste Schritte",
+                followUp: "Nachricht an Kunden / Partner"
+            )
+        case "it":
+            return SummaryLabels(
+                meeting: "Riunione",
+                nextActions: "Prossimi passi",
+                followUp: "Messaggio al cliente / partner"
+            )
+        case "pt":
+            return SummaryLabels(
+                meeting: "Reunião",
+                nextActions: "Próximas ações",
+                followUp: "Mensagem para o cliente / parceiro"
+            )
+        case "ja":
+            return SummaryLabels(
+                meeting: "ミーティング",
+                nextActions: "次のアクション",
+                followUp: "クライアント／パートナー向けフォローアップ"
+            )
+        case "ko":
+            return SummaryLabels(
+                meeting: "회의",
+                nextActions: "다음 단계",
+                followUp: "클라이언트 / 파트너 후속 메시지"
+            )
+        case "zh":
+            return SummaryLabels(
+                meeting: "会议",
+                nextActions: "后续行动",
+                followUp: "给客户／合作伙伴的跟进"
+            )
+        default:
+            return SummaryLabels(
+                meeting: "Meeting",
+                nextActions: "Next actions",
+                followUp: "Follow-up for client / partner"
+            )
+        }
+    }
+}
+
+/// Single bullet in the outline. Recursive: `children` are deeper
+/// sub-bullets. Empty `[]` is the leaf case. Codable is automatic
+/// via the synthesised init/encode; recursion works because Swift
+/// supports indirect Codable for value types.
+nonisolated struct SummaryBullet: Codable, Sendable, Equatable {
+    let text: String
+    let children: [SummaryBullet]
+
+    init(text: String, children: [SummaryBullet] = []) {
+        self.text = text
+        self.children = children
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.text = try c.decode(String.self, forKey: .text)
+        self.children = try c.decodeIfPresent([SummaryBullet].self, forKey: .children) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(text, forKey: .text)
+        try c.encode(children, forKey: .children)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text, children
     }
 }
 
@@ -116,9 +288,18 @@ final class Summarizer {
     private static let kOpenAIModel = "daisy.openaiModel"
 
     private init() {
+        // Default to Apple Intelligence on macOS 26+ (where
+        // FoundationModels is available). On macOS 14/15 fall back
+        // to Anthropic as the default — it's the lowest-friction
+        // path that doesn't require the user to discover the
+        // unavailable Apple Intelligence option first.
+        let defaultKind: SummaryProviderKind = {
+            if #available(macOS 26.0, *) { return .appleIntelligence }
+            return .anthropic
+        }()
         let storedProvider = UserDefaults.standard.string(forKey: Self.kProvider)
-            ?? SummaryProviderKind.appleIntelligence.rawValue
-        self.providerKind = SummaryProviderKind(rawValue: storedProvider) ?? .appleIntelligence
+            ?? defaultKind.rawValue
+        self.providerKind = SummaryProviderKind(rawValue: storedProvider) ?? defaultKind
 
         self.anthropicModel = UserDefaults.standard.string(forKey: Self.kAnthropicModel)
             ?? AnthropicAPISummarizer.defaultModelID
@@ -155,8 +336,15 @@ final class Summarizer {
 
     // MARK: - Summarize
 
-    func summarize(transcript: String, title: String, localeHint: String?) async {
-        guard !transcript.isEmpty else { return }
+    /// Returns the produced summary on success, `nil` on failure.
+    /// Side-effects (writing `lastSummary` / flipping `isSummarizing`) are
+    /// preserved for legacy callers that observe the shared singleton —
+    /// new code paths (e.g. RecordingSession's detached post-Stop task)
+    /// prefer the return value to avoid a race when a second recording
+    /// starts before the first summary lands.
+    @discardableResult
+    func summarize(transcript: String, title: String, localeHint: String?) async -> MeetingSummary? {
+        guard !transcript.isEmpty else { return nil }
         isSummarizing = true
         lastError = nil
 
@@ -169,11 +357,14 @@ final class Summarizer {
             )
             lastSummary = summary
             log.info("Summarized via \(self.providerKind.shortName, privacy: .public)")
+            isSummarizing = false
+            return summary
         } catch {
             log.error("Summarize failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
+            isSummarizing = false
+            return nil
         }
-        isSummarizing = false
     }
 
     func clear() {
@@ -213,7 +404,16 @@ final class Summarizer {
     private func makeProvider() -> SummaryProvider {
         switch providerKind {
         case .appleIntelligence:
-            return AppleIntelligenceSummarizer()
+            // FoundationModels (Apple Intelligence's local LLM) is
+            // macOS 26+ only. On Sonoma / Sequoia we surface a stub
+            // that always reports unready, with a friendly error
+            // message — same surface contract as the other
+            // unavailable-config providers, so the UI doesn't need
+            // version-conditional rendering paths.
+            if #available(macOS 26.0, *) {
+                return AppleIntelligenceSummarizer()
+            }
+            return UnavailableAppleIntelligenceProvider()
         case .anthropic:
             return AnthropicAPISummarizer(model: anthropicModel)
         case .openai:
@@ -252,5 +452,22 @@ private nonisolated struct UnavailableMCPProvider: SummaryProvider {
 
     func summarize(transcript: String, title: String, localeHint: String?) async throws -> MeetingSummary {
         throw SummaryProviderError.modelUnavailable(provider: "MCP", reason: reason)
+    }
+}
+
+/// Stub provider used when the user has Apple Intelligence selected
+/// but they're running macOS 14/15 (FoundationModels framework
+/// doesn't exist). Tells them what to do next — pick another
+/// provider — without crashing or pretending it works.
+private nonisolated struct UnavailableAppleIntelligenceProvider: SummaryProvider {
+    let kind: SummaryProviderKind = .appleIntelligence
+
+    func isReady() async -> Bool { false }
+
+    func summarize(transcript: String, title: String, localeHint: String?) async throws -> MeetingSummary {
+        throw SummaryProviderError.modelUnavailable(
+            provider: "Apple Intelligence",
+            reason: "Apple Intelligence summaries require macOS 26 (Tahoe) or newer. Open Settings → Summary and pick Anthropic, OpenAI, or your local MCP server instead."
+        )
     }
 }

@@ -31,7 +31,16 @@ enum LanguageDetector {
     /// for the dominant language in `text`, or nil if the input is
     /// too short, confidence is too low, or the detected language
     /// isn't one `SummaryPrompt` knows how to localize for.
-    static func detect(_ text: String) -> String? {
+    ///
+    /// `nonisolated` because callers include
+    /// `RecordingSession.resolveSummaryLocaleHint` (itself nonisolated
+    /// — fed by a background summary path). The body only touches
+    /// NLLanguageRecognizer + a String literal set, no shared mutable
+    /// state, so there's nothing for MainActor isolation to protect.
+    /// Without this the Swift 6 default-MainActor module setting
+    /// would propagate to `detect` and emit a synchronous-cross-actor
+    /// warning at every call site.
+    nonisolated static func detect(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // Below ~16 chars NLLanguageRecognizer guesses based on a
         // couple of glyphs and is unreliable. Voice memos under that
@@ -65,7 +74,11 @@ enum LanguageDetector {
     /// chain in `localeHintForSummary` instead of falling through to
     /// another lookup (the prompt's default branch already produces
     /// English-or-mixed output for nil and "en" alike).
-    private static let supportedSummaryCodes: Set<String> = [
+    ///
+    /// `nonisolated` because `detect` (above) reads this set and is
+    /// itself nonisolated. Plain String literal Set, no shared
+    /// mutation — safe to read from any actor.
+    nonisolated private static let supportedSummaryCodes: Set<String> = [
         "en", "ru", "uk", "pl", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"
     ]
 }

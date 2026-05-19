@@ -50,8 +50,16 @@ enum MarkdownExporter {
                 let quoted = meeting.attendees.map(yamlQuote).joined(separator: ", ")
                 lines.append("daisy_event_attendees: [\(quoted)]")
             }
-            // Empty placeholder — user fills via Detail view; we
-            // upsert this same key when they pick a mapping.
+        }
+        // daisy_speaker_map — always written when there's diarization
+        // available (regardless of calendar binding). Pre-populated
+        // with auto-matched profile names ("Alex" / "Mom") when the
+        // SpeakerProfileStore recognized this session's clusters
+        // from prior recordings; empty {} otherwise so the
+        // SessionDetailView edit path still has somewhere to write.
+        if !session.initialSpeakerMap.isEmpty {
+            lines.append("daisy_speaker_map: \(yamlInlineDict(session.initialSpeakerMap))")
+        } else {
             lines.append("daisy_speaker_map: {}")
         }
         lines.append("tags: [meeting, transcript, daisy]")
@@ -65,18 +73,57 @@ enum MarkdownExporter {
             lines.append("")
         }
 
-        // AI summary, if available. Three sections: meeting overview,
-        // next actions, and a ready-to-send follow-up for client /
-        // partner.
+        // AI summary, if available. Lede + Granola-style topical
+        // outline + flat next-actions checklist + optional follow-up
+        // draft for the client / partner. Legacy summaries (pre-
+        // 1.0.2) have `sections == []`, in which case the lede
+        // carries the full paragraph and the outline block is
+        // skipped — preserves the old layout exactly for sessions
+        // saved on the previous schema.
         if let summary = session.summarizer.lastSummary {
-            lines.append("## Summary")
+            // Detect summary language from its content for the
+            // structural H3 headers, so a Russian summary saved as
+            // transcript.md uses "## Сводка / ### Встреча / ###
+            // Следующие шаги" rather than English headers stamped
+            // on top of Russian content. The "## Summary" wrapper
+            // also follows.
+            var sample = summary.summary
+            if sample.count < 60, let firstBullet = summary.sections.first?.bullets.first?.text {
+                sample += " " + firstBullet
+            }
+            let labels = SummaryLabels.for(language: LanguageDetector.detect(sample))
+            let summaryHeader: String = {
+                switch (LanguageDetector.detect(sample) ?? "").lowercased() {
+                case "ru": return "Сводка"
+                case "uk": return "Зведення"
+                case "pl": return "Podsumowanie"
+                case "es": return "Resumen"
+                case "fr": return "Résumé"
+                case "de": return "Zusammenfassung"
+                case "it": return "Riepilogo"
+                case "pt": return "Resumo"
+                case "ja": return "サマリー"
+                case "ko": return "요약"
+                case "zh": return "摘要"
+                default:   return "Summary"
+                }
+            }()
+            lines.append("## \(summaryHeader)")
             lines.append("")
-            lines.append("### Meeting")
-            lines.append("")
-            lines.append(summary.summary)
-            lines.append("")
+            if !summary.summary.isEmpty {
+                lines.append("### \(labels.meeting)")
+                lines.append("")
+                lines.append(summary.summary)
+                lines.append("")
+            }
+            for section in summary.sections {
+                lines.append("### \(section.title)")
+                lines.append("")
+                appendBullets(section.bullets, level: 0, into: &lines)
+                lines.append("")
+            }
             if !summary.actionItems.isEmpty {
-                lines.append("### Next actions")
+                lines.append("### \(labels.nextActions)")
                 lines.append("")
                 for item in summary.actionItems {
                     lines.append("- [ ] \(item)")
@@ -84,7 +131,7 @@ enum MarkdownExporter {
                 lines.append("")
             }
             if !summary.clientFollowUp.isEmpty {
-                lines.append("### Follow-up for client / partner")
+                lines.append("### \(labels.followUp)")
                 lines.append("")
                 lines.append(summary.clientFollowUp)
                 lines.append("")
@@ -207,6 +254,26 @@ enum MarkdownExporter {
         return f.string(from: date)
     }
 
+    /// Append a Granola-style hierarchical bullet list to the
+    /// markdown output. Indentation uses two spaces per level — the
+    /// standard CommonMark contract for nested lists, which
+    /// Obsidian, Notion, GitHub, and most other renderers respect.
+    /// Recursion depth is whatever the prompt produces; in practice
+    /// it caps at ~3 levels.
+    nonisolated private static func appendBullets(
+        _ bullets: [SummaryBullet],
+        level: Int,
+        into lines: inout [String]
+    ) {
+        let indent = String(repeating: "  ", count: level)
+        for bullet in bullets {
+            lines.append("\(indent)- \(bullet.text)")
+            if !bullet.children.isEmpty {
+                appendBullets(bullet.children, level: level + 1, into: &lines)
+            }
+        }
+    }
+
     nonisolated private static func humanDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.dateStyle = .medium
@@ -228,6 +295,20 @@ enum MarkdownExporter {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         return "\"\(escaped)\""
+    }
+
+    /// Render a `[String: String]` as a YAML inline map:
+    /// `{"A": "Alex", "B": "Bob"}`. Keys sorted alphabetically so
+    /// diffs across runs stay stable (otherwise Codable / dict
+    /// iteration order drifts). Format matches what
+    /// `SessionStore.parseYAMLDict` already parses on the read
+    /// side, so writes round-trip cleanly.
+    nonisolated private static func yamlInlineDict(_ dict: [String: String]) -> String {
+        if dict.isEmpty { return "{}" }
+        let pairs = dict.keys.sorted().map { key in
+            "\(yamlQuote(key)): \(yamlQuote(dict[key] ?? ""))"
+        }
+        return "{\(pairs.joined(separator: ", "))}"
     }
 }
 

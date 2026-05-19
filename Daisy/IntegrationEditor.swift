@@ -90,21 +90,55 @@ struct IntegrationEditor: View {
             )
 
             field(
-                title: "Server URL",
-                hint: "HTTP+SSE base URL of your MCP server. Daisy appends `/sse` to open the stream.",
-                control: TextField("http://127.0.0.1:11436", text: $draft.baseURL)
-                    .textFieldStyle(.roundedBorder)
+                title: "Kind",
+                hint: draft.kind == .mcp
+                    ? "MCP — full JSON-RPC client, tool-name and arguments template required."
+                    : "Webhook — Daisy POSTs the rendered template directly to the URL as JSON. No tool name needed.",
+                control: Picker("", selection: $draft.kind) {
+                    ForEach(DestinationKind.allCases, id: \.self) { kind in
+                        Text(kind == .mcp ? "MCP server" : "Webhook").tag(kind)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
             )
 
             field(
-                title: "Tool name",
-                hint: "Exact name of the tool to call. Check your server's `tools/list` output.",
-                control: TextField("create_page", text: $draft.toolName)
+                title: draft.kind == .mcp ? "Server URL" : "Webhook URL",
+                hint: draft.kind == .mcp
+                    ? "HTTP+SSE base URL of your MCP server. Daisy appends `/sse` to open the stream."
+                    : "Daisy POSTs the rendered template body to this URL (Slack-style incoming webhook works out of the box).",
+                control: TextField(
+                    draft.kind == .mcp
+                        ? "http://127.0.0.1:11436"
+                        : "https://hooks.slack.com/services/…",
+                    text: $draft.baseURL
+                )
                     .textFieldStyle(.roundedBorder)
             )
 
+            if draft.kind == .mcp {
+                field(
+                    title: "Tool name",
+                    hint: "Exact name of the tool to call. Check your server's `tools/list` output.",
+                    control: TextField("create_page", text: $draft.toolName)
+                        .textFieldStyle(.roundedBorder)
+                )
+            } else {
+                // Webhook-only: Bearer token for APIs that need it
+                // (Attio, Linear REST, most SaaS). Leave empty for
+                // Slack / Discord / Mattermost incoming webhooks —
+                // they treat the URL itself as the credential.
+                field(
+                    title: "Bearer token (optional)",
+                    hint: "If your endpoint needs Authorization. Leave blank for Slack-style webhooks where the URL is the secret.",
+                    control: SecureField("", text: $draft.bearerToken, prompt: Text("token…"))
+                        .textFieldStyle(.roundedBorder)
+                )
+            }
+
             VStack(alignment: .leading, spacing: 6) {
-                Text("Arguments template")
+                Text(draft.kind == .mcp ? "Arguments template" : "Body template")
                     .font(.callout.weight(.medium))
                 TextEditor(text: $draft.argumentsTemplate)
                     .font(.system(.callout, design: .monospaced))
@@ -129,7 +163,87 @@ struct IntegrationEditor: View {
                     .toggleStyle(.switch)
                 Spacer()
             }
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle("Auto-send when session finishes", isOn: $draft.autoOnSave)
+                        .toggleStyle(.switch)
+                        .disabled(!draft.enabled)
+                    Text("Every finished session fires this destination automatically — no kebab click required. Still appears in the manual Send-to menu either way.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+            }
+
+            if draft.autoOnSave {
+                // Folder allow-list — empty = every folder (simple
+                // default). Non-empty restricts auto-send to just
+                // those folders, so a "Notes"-folder voice memo
+                // doesn't get pushed to a "Work" destination.
+                folderAllowListPicker(
+                    title: "Only auto-send for folders",
+                    selection: $draft.allowedFolders
+                )
+            }
         }
+    }
+
+    @ViewBuilder
+    private func folderAllowListPicker(
+        title: String,
+        selection: Binding<Set<String>>
+    ) -> some View {
+        let folders = FolderStore.shared.allFolders
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.callout.weight(.medium))
+            Menu {
+                Button {
+                    selection.wrappedValue = []
+                } label: {
+                    if selection.wrappedValue.isEmpty {
+                        Label("All folders", systemImage: "checkmark")
+                    } else {
+                        Text("All folders")
+                    }
+                }
+                Divider()
+                ForEach(folders) { folder in
+                    Button {
+                        var current = selection.wrappedValue
+                        if current.contains(folder.slug) {
+                            current.remove(folder.slug)
+                        } else {
+                            current.insert(folder.slug)
+                        }
+                        selection.wrappedValue = current
+                    } label: {
+                        if selection.wrappedValue.contains(folder.slug) {
+                            Label(folder.name, systemImage: "checkmark")
+                        } else {
+                            Text(folder.name)
+                        }
+                    }
+                }
+            } label: {
+                Text(folderSummary(selection.wrappedValue, allFolders: folders))
+            }
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+            .fixedSize()
+            Text("Empty = fire for every folder. Pick specific ones to limit auto-send to those contexts (e.g. only \"Work\" sessions go to Linear).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func folderSummary(_ slugs: Set<String>, allFolders: [SessionFolder]) -> String {
+        if slugs.isEmpty { return "All folders" }
+        let names = allFolders.filter { slugs.contains($0.slug) }.map(\.name)
+        if names.count <= 3 { return names.joined(separator: ", ") }
+        return "\(names.count) folders"
     }
 
     private func field<Control: View>(
@@ -167,10 +281,16 @@ struct IntegrationEditor: View {
     // MARK: - Validation
 
     private var isValid: Bool {
-        !draft.name.trimmingCharacters(in: .whitespaces).isEmpty
-            && URL(string: draft.baseURL)?.scheme != nil
-            && !draft.toolName.trimmingCharacters(in: .whitespaces).isEmpty
-            && templateError == nil
+        guard !draft.name.trimmingCharacters(in: .whitespaces).isEmpty,
+              URL(string: draft.baseURL)?.scheme != nil,
+              templateError == nil
+        else { return false }
+        // Tool name is required only for MCP transport — webhooks
+        // have no tool concept, the body goes straight to the URL.
+        if draft.kind == .mcp {
+            return !draft.toolName.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        return true
     }
 
     /// Validate the template by running a placeholder substitution

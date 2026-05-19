@@ -27,14 +27,78 @@ final class RecordingSession {
         /// (full finalize, summary, etc.).
         case paused
         case stopping
+        /// **Deprecated as of 2026-05-19** — `stop()` now jumps from
+        /// `.stopping` straight to `.finished` and runs summarize +
+        /// autoSend in a detached background task, so the widget /
+        /// panel no longer blocks for the 15-30 seconds an LLM call
+        /// takes. See `summaryGenerationState` for the new lifecycle.
+        /// The case is kept so existing exhaustive switches still
+        /// compile; it is never assigned by normal flow.
         case summarizing
         case finished
         case failed(String)
     }
 
+    /// Independent lifecycle for the post-Stop summary + auto-send
+    /// pipeline. Decoupled from `Status` so the widget can go idle
+    /// the instant `transcript.md` is on disk, while the LLM call
+    /// keeps running in the background and a placeholder skeleton
+    /// shows in SessionDetailView until the summary lands.
+    enum SummaryGenerationState: Equatable {
+        /// No active post-Stop summary task. Either none was needed
+        /// (auto-summarize off, no provider, zero segments) or the
+        /// previous one finished/was cancelled.
+        case idle
+        /// Detached task is running: summarize() in flight, then
+        /// summary.json write, then autoSend.
+        case generating
+        /// summary.json is on disk and autoSend has completed.
+        case ready
+        /// Summarizer threw, autoSend failed, or the task was
+        /// cancelled by a fresh `start()`. Carries a short reason
+        /// for surfacing in toasts/logs.
+        case failed(String)
+    }
+
     // MARK: - Observable
 
+    /// User-facing summary of the system-audio capture pipeline.
+    /// Exposed so UI surfaces (HomeView, sidebar capsule, widget)
+    /// can show whether the "other side" of the meeting is being
+    /// captured — a permission denial or silent failure shouldn't
+    /// leave the user discovering it after a 60-minute meeting.
+    enum SystemAudioStatus: Equatable {
+        case disabled               // user toggled it off in Settings
+        case pending                // recording hasn't started yet
+        case capturing              // SCStream is live and feeding the transcriber
+        case denied                 // Screen Recording permission missing — skipped at start()
+        case failed(String)         // SCStream.startCapture() threw or stopped unexpectedly
+    }
+
     private(set) var status: Status = .idle
+
+    /// Post-Stop summary lifecycle. Set to `.generating` the moment
+    /// `stop()` spins up the detached finalize task; flips to
+    /// `.ready` when summary.json is written + autoSend ran; flips
+    /// to `.failed` if summarizer threw or task was cancelled by a
+    /// fresh recording. Drives the SessionDetailView skeleton + the
+    /// widget's amber-pulse "summary cooking" indicator.
+    private(set) var summaryGenerationState: SummaryGenerationState = .idle
+
+    /// Detached task spun up by `stop()` that handles summarize →
+    /// summary.json write → autoSend, in that order. Held so a fresh
+    /// `start()` / `reset()` can cancel it. Kept @ObservationIgnored
+    /// because the Task reference itself isn't UI-relevant — only
+    /// `summaryGenerationState` is.
+    @ObservationIgnored
+    private var summaryTask: Task<Void, Never>?
+
+    /// True when the most recent `start()` skipped system audio
+    /// because `CGPreflightScreenCaptureAccess()` returned false.
+    /// Cleared on the next start() that successfully bootstraps the
+    /// stream — so toggling Screen Recording on and starting a new
+    /// recording produces the right `systemAudioStatus`.
+    private var systemAudioDeniedThisSession: Bool = false
     var title: String = ""
     var localeIdentifier: String {
         didSet {
@@ -46,6 +110,15 @@ final class RecordingSession {
     private(set) var micArchiveURL: URL?
     private(set) var systemArchiveURL: URL?
     private(set) var startedAt: Date?
+
+    /// Auto-matched speaker map produced after the final diarization
+    /// pass — Daisy looks up each detected speaker's centroid
+    /// embedding in `SpeakerProfileStore` and pre-fills "A" → "Alex"
+    /// when a stored profile cosine-matches. Read by `MarkdownExporter`
+    /// when writing transcript.md so the user opens the session and
+    /// sees real names already in place; empty map for first-time
+    /// recordings (no profiles yet) or mic-only sessions.
+    private(set) var initialSpeakerMap: [String: String] = [:]
 
     /// When the recording was triggered by a calendar event, this
     /// holds the meeting metadata so the transcript markdown
@@ -85,9 +158,34 @@ final class RecordingSession {
             .sorted(by: { $0.startedAt < $1.startedAt })
     }
 
+    /// Derived from `SystemAudioCapture.state` + the once-per-session
+    /// denial flag set when preflight rejected us at start. UI binds
+    /// to this for a "Other side: capturing / off" pill so users see
+    /// mid-recording whether the remote party is actually being
+    /// captured.
+    var systemAudioStatus: SystemAudioStatus {
+        if !settings.captureSystemAudio { return .disabled }
+        // Only meaningful once we're recording — before that
+        // SystemAudioCapture sits in .idle which doesn't yet say
+        // anything about runtime state.
+        guard status == .recording || status == .paused else {
+            return .pending
+        }
+        if systemAudioDeniedThisSession { return .denied }
+        switch systemAudio.state {
+        case .capturing, .starting, .paused:
+            return .capturing
+        case .idle, .stopped:
+            return .failed(systemAudio.lastError ?? "Capture stopped unexpectedly")
+        }
+    }
+
     // MARK: - Children
 
-    private let settings: AppSettings
+    // Module-internal so `SilenceMonitor` can read
+    // `silencePromptsEnabled` without us threading an extra
+    // reference through its constructor.
+    let settings: AppSettings
     private let recorder: AudioRecorder
     private let systemAudio: SystemAudioCapture
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Session")
@@ -111,13 +209,39 @@ final class RecordingSession {
     /// session (no point pestering them every 30s).
     private var autoStopSuppressed: Bool = false
 
-    init(settings: AppSettings, localeIdentifier: String = "auto") {
+    /// Calendar-driven meeting binding that should be applied to the
+    /// session AFTER `start()` runs its internal `reset()` (which
+    /// otherwise nukes the binding). Set by `startFromMeeting(_:)`
+    /// just before it calls `start()`; consumed inside `start()` and
+    /// cleared. This is the channel that makes calendar auto-stop
+    /// actually work — without it, reset() blew away `boundMeeting`
+    /// between the caller setting it and `scheduleAutoStopIfNeeded()`
+    /// reading it, so the auto-stop timer was never armed.
+    @ObservationIgnored
+    private var pendingBoundMeeting: DaisyMeeting?
+
+    /// Folder hint applied in the same after-reset() phase as
+    /// `pendingBoundMeeting`. Used by calendar starts to default
+    /// the new session into Work (instead of Inbox) without leaking
+    /// state through `reset()`.
+    @ObservationIgnored
+    private var pendingFolderHint: SessionFolder?
+
+    init(settings: AppSettings, localeIdentifier: String? = nil) {
         self.settings = settings
-        self.localeIdentifier = localeIdentifier
+        // Caller can override (used by tests), otherwise pull the
+        // user's chosen default from Settings → Transcription.
+        // Empty / missing falls back to "auto" — the legacy
+        // behaviour. Per-session override still works via the
+        // popover locale picker, which writes through
+        // `session.localeIdentifier`.
+        let resolved = localeIdentifier ?? settings.defaultTranscriptionLocale
+        let effective = resolved.isEmpty ? "auto" : resolved
+        self.localeIdentifier = effective
         self.recorder = AudioRecorder()
         self.systemAudio = SystemAudioCapture()
-        self.micTranscriber = Transcriber(localeIdentifier: localeIdentifier, source: .microphone)
-        self.systemTranscriber = Transcriber(localeIdentifier: localeIdentifier, source: .systemAudio)
+        self.micTranscriber = Transcriber(localeIdentifier: effective, source: .microphone)
+        self.systemTranscriber = Transcriber(localeIdentifier: effective, source: .systemAudio)
         self.summarizer = Summarizer.shared
         self.screenshots = ScreenshotCapture()
         self.silenceMonitor = nil  // assigned below once `self` is usable
@@ -154,22 +278,112 @@ final class RecordingSession {
     }
 
     /// Start a recording that is bound to a specific calendar event.
-    /// The event's title pre-fills the session title, and the
-    /// transcript markdown will carry the event id in frontmatter so
-    /// we can match transcripts ↔ events later. Defaults the folder
-    /// to "Work" for calendar-driven recordings since most calendar
-    /// meetings are work-context.
+    /// The event's title pre-fills the session title, the transcript
+    /// markdown carries the event id in frontmatter so we can match
+    /// transcripts ↔ events later, and (if `settings.autoStopFromCalendar`
+    /// is on) an auto-stop timer is armed for `meeting.endDate +
+    /// autoStopGraceSec`. Defaults the folder to "Work" since most
+    /// calendar meetings are work-context.
+    ///
+    /// Handles three cases:
+    ///   1. **Idle/finished/failed** — fresh start, the simple path.
+    ///   2. **Already recording the SAME event** — calendar tick polls
+    ///      the +30/-120 s fire window every 15 s, so re-fires happen
+    ///      naturally. No-op so we don't churn title/binding.
+    ///   3. **Already recording a DIFFERENT event** — the back-to-back
+    ///      meeting case that produced the tester's "M2 recorded into
+    ///      M1's session" bug. Stop & save M1, cancel any in-flight
+    ///      summary, then start M2 fresh. Surfaces a toast so the user
+    ///      knows the rotation happened.
+    ///
+    /// The `pendingBoundMeeting` / `pendingFolderHint` channel matters
+    /// here: a naive `boundMeeting = meeting` before `await start()`
+    /// silently fails, because `start()` calls `reset()` internally
+    /// which sets `boundMeeting = nil` (and the field never gets
+    /// repopulated before `scheduleAutoStopIfNeeded()` reads it). The
+    /// pending properties are picked up AFTER reset() and applied to
+    /// the fresh session, which is what actually wires up auto-stop.
     func startFromMeeting(_ meeting: DaisyMeeting) async {
-        guard status == .idle || status == .finished || isFailed else { return }
-        boundMeeting = meeting
+        // Same event re-fired — no-op rather than stamping title/
+        // binding on top of an already-running session.
+        if (status == .recording || status == .paused),
+           boundMeeting?.localID == meeting.localID {
+            return
+        }
+
+        // Different event fired while we're still recording — auto-
+        // rotate sessions. Without this branch, calendar trigger for
+        // Meeting #2 silently returns and M1's session keeps running
+        // with M1's bindings.
+        if status == .recording || status == .paused {
+            let oldTitle = self.boundMeeting?.title ?? self.title
+            log.warning("Calendar fired \(meeting.title, privacy: .public) while still recording \(oldTitle, privacy: .public). Auto-rotating sessions.")
+            ToastCenter.shared.show(
+                "Previous meeting saved — starting new session for \(meeting.title).",
+                style: .info
+            )
+            await stop()
+        }
+
+        // After stop() the post-Stop summary task may still be in
+        // flight (status == .summarizing). Cancel it so the new
+        // session's writes don't race against the old session's
+        // summary.json write — transcript.md for the previous
+        // meeting is already on disk; the user can re-summarize
+        // from History if they need that summary.
+        summaryTask?.cancel()
+        summaryTask = nil
+
+        // Bridge .summarizing → .finished so start()'s guard accepts
+        // immediately rather than letting the rotation drop on the
+        // floor.
+        if status == .summarizing { status = .finished }
+
+        guard status == .idle || status == .finished || isFailed else {
+            log.warning("startFromMeeting aborted — unexpected state \(String(describing: self.status), privacy: .public)")
+            return
+        }
+
+        // Stash for after-reset() pickup inside start(). Setting these
+        // directly here would be erased by reset().
+        pendingBoundMeeting = meeting
+        pendingFolderHint = .work
+        // Title CAN be set directly — reset() does not clear `title`,
+        // and start()'s "if title.isEmpty" fallback only fires when
+        // the user didn't explicitly set one.
         title = meeting.title
-        if folder == .inbox { folder = .work }
+
         await start()
     }
 
     func start() async {
+        // If a previous Stop's summary task is still in flight, the
+        // user has explicitly asked for a NEW recording — drop the
+        // old finalize. transcript.md is already on disk (synchronous
+        // path in stop()), so the worst case is that summary.json
+        // and any auto-send to Notion/MCP haven't landed yet for the
+        // previous session; the user can fix that from History →
+        // Re-summarize. Fire-and-forget cancel: we don't await the
+        // task value, the new recording shouldn't wait on the LLM.
+        summaryTask?.cancel()
+        summaryTask = nil
+
         guard status == .idle || status == .finished || isFailed else { return }
         reset()
+
+        // Apply meeting/folder bindings stashed by `startFromMeeting`.
+        // These need to land AFTER reset() (which nukes boundMeeting /
+        // folder back to defaults) so they actually stick for the
+        // duration of the recording — otherwise `scheduleAutoStopIfNeeded`
+        // sees `boundMeeting == nil` and never arms the auto-stop timer.
+        if let m = pendingBoundMeeting {
+            boundMeeting = m
+            pendingBoundMeeting = nil
+        }
+        if let hint = pendingFolderHint {
+            if folder == .inbox { folder = hint }
+            pendingFolderHint = nil
+        }
 
         if title.isEmpty {
             let f = DateFormatter()
@@ -221,22 +435,58 @@ final class RecordingSession {
         micArchiveURL = recorder.archivedFileURL
 
         // Wire system audio (optional).
+        //
+        // Two failure modes used to be silent:
+        //   1. Screen Recording permission is denied — `SCStream.
+        //      startCapture()` throws, we logged it, the user kept
+        //      talking, only their voice ended up in the transcript.
+        //   2. Permission is granted but the stream errored out
+        //      mid-start (display gone, etc.) — same silent fall-
+        //      through.
+        // Both now produce a visible toast (the deny case includes
+        // an "Open Privacy Settings" deeplink) so the user finds out
+        // BEFORE the meeting, not after.
+        systemAudioDeniedThisSession = false
         if settings.captureSystemAudio {
-            let systemAudioStream = systemAudio.buffers
-            systemTranscriber.start(consuming: systemAudioStream, startedAt: nowStarted)
-            do {
-                try await systemAudio.start()
-                systemArchiveURL = systemArchive
-            } catch {
-                log.error("System audio start failed: \(error.localizedDescription, privacy: .public)")
-                // Soft-fail: keep mic-only session.
-                systemTranscriber.reset()
-                systemArchiveURL = nil
+            // Preflight TCC. `CGPreflightScreenCaptureAccess()`
+            // doesn't itself prompt — calling SCK without checking
+            // would prompt mid-startCapture, but if the user
+            // already denied once we'd skip straight to "throw".
+            if !ScreenRecordingPermission.isGranted {
+                systemAudioDeniedThisSession = true
+                log.warning("Screen Recording permission denied — recording mic only")
+                ToastCenter.shared.showAction(
+                    "Couldn't capture the other side — Screen Recording permission is off. Recording your voice only.",
+                    actionLabel: "Open Privacy Settings",
+                    style: .warning,
+                    duration: .seconds(20),
+                    perform: { ScreenRecordingPermission.openSystemSettings() }
+                )
+            } else {
+                let systemAudioStream = systemAudio.buffers
+                systemTranscriber.start(consuming: systemAudioStream, startedAt: nowStarted)
+                do {
+                    try await systemAudio.start(archiveURL: systemArchive)
+                    systemArchiveURL = systemArchive
+                } catch {
+                    log.error("System audio start failed: \(error.localizedDescription, privacy: .public)")
+                    systemTranscriber.reset()
+                    systemArchiveURL = nil
+                    // Loud fail — previously swallowed in os_log.
+                    // The user is about to start a meeting; they
+                    // need to know the remote side won't be
+                    // captured.
+                    ToastCenter.shared.show(
+                        "Couldn't capture the other side — recording your voice only.",
+                        style: .warning
+                    )
+                }
             }
         }
 
         startedAt = nowStarted
         status = .recording
+        if settings.recordingSoundsEnabled { SoundEffects.playStart() }
 
         // Optional screenshots.
         if settings.screenshotsEnabled, let dir {
@@ -343,6 +593,7 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.pause()
         status = .paused
+        if settings.recordingSoundsEnabled { SoundEffects.playPause() }
         log.info("Session paused after \(self.elapsed, privacy: .public)s")
     }
 
@@ -374,6 +625,7 @@ final class RecordingSession {
         }
         silenceMonitor.resume()
         status = .recording
+        if settings.recordingSoundsEnabled { SoundEffects.playResume() }
         log.info("Session resumed")
     }
 
@@ -383,6 +635,11 @@ final class RecordingSession {
         // first, change their mind, then commit). Anything else is a
         // no-op so transient states aren't interrupted.
         guard status == .recording || status == .paused else { return }
+        // Stop cue fires up front — by the time the final
+        // transcribe + summary finish (seconds later), the user has
+        // moved on to other tasks. The audio cue confirms the
+        // click "took" even if the heavy work is still running.
+        if settings.recordingSoundsEnabled { SoundEffects.playStop() }
         if status == .paused {
             // Make sure any half-open paused pipelines are fully
             // torn down before the final transcribe.
@@ -422,6 +679,16 @@ final class RecordingSession {
         await micTranscriber.stop()
         await systemTranscriber.stop()
 
+        // Voice fingerprint pass — match this session's speaker
+        // clusters against the persistent SpeakerProfileStore so
+        // returning speakers get auto-named ("Alex" not "Remote A")
+        // before the user even opens the transcript. Also writes
+        // a `speakers.json` sidecar with raw centroids so when the
+        // user MANUALLY renames a Remote in SessionDetailView, we
+        // know which embedding to associate with the new name and
+        // can persist a fresh profile.
+        applySpeakerProfileMatches()
+
         // Save markdown next to the audio archive. A failure here means
         // the user just lost their transcript on disk — surface it
         // loudly rather than swallowing.
@@ -439,33 +706,299 @@ final class RecordingSession {
             }
         }
 
-        // Auto-summarize via the user's chosen provider (separate from STT).
-        if settings.autoSummarize, case .available = summarizer.availability, !segments.isEmpty {
-            status = .summarizing
-            await summarizer.summarize(
-                transcript: fullTranscriptText,
-                title: title,
-                localeHint: localeHintForSummary
-            )
-            if let dir = sessionDirectory, let summary = summarizer.lastSummary {
-                let url = dir.appendingPathComponent("summary.json")
-                do {
-                    let data = try JSONEncoder().encode(summary)
-                    try data.write(to: url)
-                } catch {
-                    log.error("Failed to write summary.json: \(error.localizedDescription)")
-                    ToastCenter.shared.show(
-                        "Couldn’t save summary file. Check Console for details.",
-                        style: .error
-                    )
-                }
+        // ── Granola-style: status → .finished BEFORE summary ──────────
+        //
+        // Everything user-visible the recording lifecycle needs is on
+        // disk now: audio, transcript.md, speakers.json. The widget /
+        // panel can go idle, the user can start a new recording. The
+        // LLM call (15-30 s) and downstream auto-send happen in a
+        // detached task below and report progress through
+        // `summaryGenerationState`, not through `status`.
+        let willSummarize = settings.autoSummarize
+            && summarizer.availability == .available
+            && !segments.isEmpty
+
+        guard let dir = sessionDirectory else {
+            // No session dir — shouldn't happen post-capture, but
+            // bail cleanly. transcript.md never landed, no summary
+            // can run, no auto-send needed.
+            releaseSessionsFolderTicket()
+            status = .finished
+            return
+        }
+        let sessionID = dir.lastPathComponent
+
+        // Mark the session as "summary in flight" BEFORE flipping
+        // status — SessionDetailView observers may snap into the
+        // skeleton state the moment .finished arrives and look at
+        // the SessionStore set for the loading flag.
+        if willSummarize {
+            SessionStore.shared.beginGenerating(sessionID)
+            summaryGenerationState = .generating
+        } else {
+            summaryGenerationState = .idle
+        }
+
+        // Refresh the History list synchronously so the row is in
+        // place before the auto-open onChange handler (driven by
+        // .finished) fires. Without this, MainView's deep-link
+        // would land on Library with `pendingLibrarySelection`
+        // pointing at an ID that hasn't been parsed yet.
+        await SessionStore.shared.refresh()
+        status = .finished
+
+        if willSummarize {
+            let transcriptText = fullTranscriptText
+            let titleSnapshot = title
+            let localeHint = localeHintForSummary
+            summaryTask = Task { [weak self] in
+                await self?.finalizePostStop(
+                    sessionID: sessionID,
+                    directory: dir,
+                    transcript: transcriptText,
+                    title: titleSnapshot,
+                    localeHint: localeHint
+                )
+            }
+        } else {
+            // No summary needed; release ticket + run autoSend (it
+            // may still want to ship the transcript-only payload to
+            // Notion / MCP). Sync here is fine — short, no LLM.
+            releaseSessionsFolderTicket()
+            await runAutoSendDestinations()
+        }
+    }
+
+    /// Detached post-Stop pipeline: summarize → write summary.json →
+    /// release the user-folder ticket → fan out to auto-send
+    /// destinations → tell SessionStore the session is up-to-date.
+    /// Each step checks `Task.isCancelled` and that
+    /// `sessionDirectory` still matches the captured session ID —
+    /// either guard fires if `start()` already kicked off a new
+    /// recording on top of this one, in which case we bail without
+    /// touching the new session's state.
+    private func finalizePostStop(
+        sessionID: String,
+        directory: URL,
+        transcript: String,
+        title: String,
+        localeHint: String?
+    ) async {
+        let summary = await summarizer.summarize(
+            transcript: transcript,
+            title: title,
+            localeHint: localeHint
+        )
+        if Task.isCancelled {
+            summaryGenerationState = .failed("cancelled")
+            releaseSessionsFolderTicket()
+            await SessionStore.shared.finishGenerating(sessionID)
+            summaryTask = nil
+            return
+        }
+
+        if let summary {
+            let url = directory.appendingPathComponent("summary.json")
+            do {
+                let data = try JSONEncoder().encode(summary)
+                try data.write(to: url)
+            } catch {
+                log.error("Failed to write summary.json: \(error.localizedDescription, privacy: .public)")
+                ToastCenter.shared.show(
+                    "Couldn't save summary file. Check Console for details.",
+                    style: .error
+                )
             }
         }
 
-        // All writers (audio, transcript.md, summary.json) have
-        // flushed by now — safe to release the security scope.
+        // All writers have flushed — release the security scope
+        // before the longer-running autoSend so we don't hold the
+        // user-folder ticket across network calls.
         releaseSessionsFolderTicket()
-        status = .finished
+
+        // If a fresh recording has begun in the meantime (reset()
+        // ran), instance state has rotated and autoSend would push
+        // the WRONG session to Notion/MCP. Skip — user can resend
+        // manually from History.
+        if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
+            summaryGenerationState = .failed("cancelled")
+            await SessionStore.shared.finishGenerating(sessionID)
+            summaryTask = nil
+            return
+        }
+
+        await runAutoSendDestinations()
+
+        summaryGenerationState = (summary != nil) ? .ready : .failed("no summary")
+        summaryTask = nil
+        await SessionStore.shared.finishGenerating(sessionID)
+    }
+
+    /// Fan the just-finished session out to any destination the
+    /// user marked as auto-on-save: Notion (per
+    /// `settings.autoSendNotion`) and every enabled MCP integration
+    // MARK: - Voice fingerprint matching
+
+    /// Walk the system-side diarization centroids, match each one
+    /// against the persistent `SpeakerProfileStore`, and write a
+    /// `speakers.json` sidecar with the raw centroids so a later
+    /// manual rename in SessionDetailView can create/update profiles.
+    /// Auto-matched names land in `initialSpeakerMap` for the
+    /// MarkdownExporter to embed in the transcript frontmatter.
+    private func applySpeakerProfileMatches() {
+        let centroids = systemTranscriber.speakerCentroids
+        guard !centroids.isEmpty else { return }
+
+        let store = SpeakerProfileStore.shared
+        var matched: [String: String] = [:]
+        for (speakerID, embedding) in centroids {
+            if let profile = store.findMatch(for: embedding) {
+                matched[speakerID] = profile.name
+                store.recordMatch(profileID: profile.id)
+                // profile.name is PII — speakers the user has named
+                // by hand ("John", "Maria"). Speaker ID (Remote A, B,
+                // …) stays public, the name does not.
+                log.info("Auto-matched \(speakerID, privacy: .public) → \(profile.name, privacy: .private)")
+            }
+        }
+        initialSpeakerMap = matched
+
+        // Persist sidecar regardless of whether matches happened —
+        // even an unmatched session needs centroids on disk so the
+        // user can name them later and we'll know which embedding
+        // to associate with the new profile.
+        guard let dir = sessionDirectory else { return }
+        let url = dir.appendingPathComponent("speakers.json")
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(SpeakerCentroidsFile(centroids: centroids))
+            try data.write(to: url, options: [.atomic])
+        } catch {
+            log.error("Failed to write speakers.json: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// whose `autoOnSave` flag is on.
+    ///
+    /// Errors are swallowed at the toast layer — a failed Notion
+    /// 401 shouldn't tear down a finished session. The user can
+    /// retry from History → kebab → Send to manually.
+    private func runAutoSendDestinations() async {
+        // Notion uses the in-memory `MeetingExportData` shape we
+        // already hand to the manual Send-to flow — no need to
+        // round-trip through StoredSession.
+        let sessionFolderSlug = folder.slug
+        // Notion auto-send respects its own folder filter
+        // (`settings.autoSendNotionFolders`). Empty set = all
+        // folders. Skip silently if the current session's folder
+        // isn't in the allow-list.
+        if settings.autoSendNotion, settings.hasNotionCredentials, !segments.isEmpty,
+           Self.folderAllowed(sessionFolderSlug, allowed: settings.autoSendNotionFolders) {
+            let export = exportData()
+            do {
+                let url = try await NotionExporter.shared.createMeetingPage(export)
+                ToastCenter.shared.show("Sent to Notion · \(title)", style: .success)
+                // Notion URL stays .private — same reasoning as in
+                // NotionExporter: page ID is a capability identifier
+                // for the user's workspace.
+                log.info("Auto-sent to Notion: \(url.absoluteString, privacy: .private)")
+            } catch {
+                log.error("Auto-send to Notion failed: \(error.localizedDescription, privacy: .public)")
+                ToastCenter.shared.show("Auto-send to Notion failed — retry from History", style: .warning)
+            }
+        }
+
+        // MCP integrations need a `StoredSession`; build one from
+        // the in-memory state (the matching `SessionStore.refresh`
+        // pass that would normally produce it hasn't happened yet).
+        let autoIntegrations = MCPIntegrationStore.shared.autoOnSaveIntegrations
+            .filter { Self.folderAllowed(sessionFolderSlug, allowed: $0.allowedFolders) }
+        guard !autoIntegrations.isEmpty,
+              let directory = sessionDirectory else { return }
+        let stored = Self.makeStoredSession(
+            id: directory.lastPathComponent,
+            directory: directory,
+            title: title,
+            startedAt: startedAt ?? Date(),
+            elapsedSec: Int(elapsed.rounded()),
+            locale: localeIdentifier,
+            segments: segments,
+            summary: summarizer.lastSummary,
+            folderSlug: sessionFolderSlug
+        )
+        for integration in autoIntegrations {
+            _ = await MCPDispatcher.send(integration, for: stored)
+        }
+    }
+
+    /// Folder allow-list check used by both Notion and MCP auto-
+    /// send paths. Empty allow-list means "every folder" — the
+    /// simple default. Non-empty restricts to exactly those slugs.
+    nonisolated static func folderAllowed(_ slug: String, allowed: Set<String>) -> Bool {
+        allowed.isEmpty || allowed.contains(slug)
+    }
+
+    /// Public companion to `assembleStoredSession` — call sites
+    /// (the Send-to popover, the toolbar) need a StoredSession to
+    /// hand to MCPDispatcher when the session is still active and
+    /// hasn't yet been picked up by SessionStore. Returns a
+    /// best-effort snapshot built from current in-memory state.
+    func snapshotStoredSession() -> StoredSession {
+        let directory = sessionDirectory ?? URL(fileURLWithPath: "/tmp")
+        return Self.makeStoredSession(
+            id: directory.lastPathComponent,
+            directory: directory,
+            title: title,
+            startedAt: startedAt ?? Date(),
+            elapsedSec: Int(elapsed.rounded()),
+            locale: localeIdentifier,
+            segments: segments,
+            summary: summarizer.lastSummary,
+            folderSlug: folder.slug
+        )
+    }
+
+    /// Stitch the just-finished session's in-memory state into a
+    /// `StoredSession` value. Synchronous so it can serve both the
+    /// post-`stop` auto-send path (called in async context) and the
+    /// snapshot path used by manual Send-to.
+    nonisolated static func makeStoredSession(
+        id: String,
+        directory: URL,
+        title: String,
+        startedAt: Date,
+        elapsedSec: Int,
+        locale: String,
+        segments: [TranscriptSegment],
+        summary: MeetingSummary?,
+        folderSlug: String
+    ) -> StoredSession {
+        let transcriptText = segments
+            .map { "\($0.text)" }
+            .joined(separator: " ")
+        let preview = String(transcriptText.prefix(220))
+        let transcriptURL = directory.appendingPathComponent("transcript.md")
+        let micURL = directory.appendingPathComponent("microphone.caf")
+        let systemURL = directory.appendingPathComponent("system_audio.caf")
+        return StoredSession(
+            id: id,
+            directoryURL: directory,
+            title: title,
+            startedAt: startedAt,
+            durationSec: elapsedSec,
+            locale: locale,
+            transcriptPreview: preview,
+            transcriptText: transcriptText,
+            hasMicAudio: FileManager.default.fileExists(atPath: micURL.path),
+            hasSystemAudio: FileManager.default.fileExists(atPath: systemURL.path),
+            screenshotURLs: [],
+            summary: summary,
+            transcriptURL: FileManager.default.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
+            folderSlug: folderSlug,
+            meetingAttendees: [],
+            speakerMap: [:]
+        )
     }
 
     /// Helper: file exists AND has non-zero size. Empty .caf files
@@ -478,6 +1011,13 @@ final class RecordingSession {
     }
 
     func reset() {
+        // Best-effort cancel of any post-Stop finalize task. start()
+        // already cancels first (so this is usually a no-op), but
+        // direct reset() callers — e.g. an early-return after a Stop
+        // that captured no audio — need it too.
+        summaryTask?.cancel()
+        summaryTask = nil
+        summaryGenerationState = .idle
         recorder.reset()
         micTranscriber.reset()
         systemTranscriber.reset()
@@ -555,31 +1095,69 @@ final class RecordingSession {
         status = priorStatus
     }
 
-    /// Two-letter ISO code that pins the *summary* language.
-    /// Precedence:
-    ///   1. `settings.summaryLanguage` — explicit user override.
-    ///   2. `localeIdentifier` — if it's a concrete language
-    ///      (not "auto").
-    ///   3. `LanguageDetector.detect(fullTranscriptText)` — sniff
-    ///      the actual transcript content. Necessary because in
-    ///      auto+auto we'd otherwise hand the prompt a nil hint and
-    ///      Claude/GPT default to English even on a clearly-Russian
-    ///      transcript.
-    ///   4. `nil` — couldn't detect, let model decide.
+    /// Two-letter ISO code that pins the *summary* language. Reads
+    /// from the canonical resolver so the post-Stop auto-summary and
+    /// the manual Re-summarize button in SessionDetailView can never
+    /// drift apart and produce different languages for the same
+    /// transcript.
     private var localeHintForSummary: String? {
-        let override = settings.summaryLanguage
-        if !override.isEmpty, override != SummaryLanguage.auto.id {
-            return override
+        Self.resolveSummaryLocaleHint(
+            transcript: fullTranscriptText,
+            transcriptLocale: localeIdentifier,
+            summaryLanguageOverride: settings.summaryLanguage
+        )
+    }
+
+    /// **Single source of truth** for "what language should this
+    /// summary be in?". Used by both the post-Stop detached pipeline
+    /// (via `localeHintForSummary`) and SessionDetailView's manual
+    /// Re-summarize button. Inconsistency between those two paths
+    /// is what produced the QA-reported "first summary was Russian,
+    /// pressing Re-summarize gave English" bug — the manual path
+    /// used to bypass language detection entirely and naively trust
+    /// the frontmatter locale tag.
+    ///
+    /// **Contract — ориентир язык транскрипта.** Content-driven
+    /// detection (`LanguageDetector.detect`) wins over the user's
+    /// Settings → Summary language pick. The Settings value is a
+    /// default-for-new-recordings; it should NOT silently retranslate
+    /// a Russian meeting into English because the user once set the
+    /// dropdown to "English" for a different session. Detection is
+    /// gated on `NLLanguageRecognizer` confidence ≥ 0.55 + ≥ 16 chars
+    /// of text, so very short or mixed inputs fall through to the
+    /// settings override instead of being mis-classified.
+    ///
+    /// Precedence:
+    ///   1. **`LanguageDetector.detect(transcript)`** — what was
+    ///      actually said. The bedrock. If this returns a code, use
+    ///      it and ignore everything below.
+    ///   2. `summaryLanguageOverride` (when not "auto") — explicit
+    ///      settings pick, honoured only when detection had nothing
+    ///      conclusive.
+    ///   3. `transcriptLocale` prefix (when not "auto" / empty) —
+    ///      user-pinned recording locale from the frontmatter.
+    ///   4. `nil` — truly unknown, let the model decide.
+    nonisolated static func resolveSummaryLocaleHint(
+        transcript: String,
+        transcriptLocale: String,
+        summaryLanguageOverride: String
+    ) -> String? {
+        if let detected = LanguageDetector.detect(transcript) {
+            return detected
         }
-        let prefix = localeIdentifier
+        if !summaryLanguageOverride.isEmpty,
+           summaryLanguageOverride != SummaryLanguage.auto.id {
+            return summaryLanguageOverride
+        }
+        let prefix = transcriptLocale
             .split(separator: "-")
             .first
             .map(String.init)?
             .lowercased()
-        if let prefix, prefix != "auto" {
+        if let prefix, prefix != "auto", !prefix.isEmpty {
             return prefix
         }
-        return LanguageDetector.detect(fullTranscriptText)
+        return nil
     }
 
     // MARK: - Internals

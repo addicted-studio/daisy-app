@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B9895A7E2FBC19FC0028BF24 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = B9895A7D2FBC19FC0028BF24 /* Sparkle */; };
 		B9BBC7332FB863E90016C22C /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = B9BBC7322FB863E90016C22C /* FluidAudio */; };
 		B9F5F19B2FB75DA300E26A7A /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = B9F5F19A2FB75DA300E26A7A /* WhisperKit */; };
 /* End PBXBuildFile section */
@@ -34,9 +35,22 @@
 		B9F5F1332FB74DA000E26A7A /* DaisyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DaisyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		B9F5F1AA2FB74D9F00E26A7A /* Exceptions for "Daisy" folder in "Daisy" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B9F5F11B2FB74D9F00E26A7A /* Daisy */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		B9F5F11E2FB74D9F00E26A7A /* Daisy */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B9F5F1AA2FB74D9F00E26A7A /* Exceptions for "Daisy" folder in "Daisy" target */,
+			);
 			path = Daisy;
 			sourceTree = "<group>";
 		};
@@ -57,6 +71,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B9895A7E2FBC19FC0028BF24 /* Sparkle in Frameworks */,
 				B9BBC7332FB863E90016C22C /* FluidAudio in Frameworks */,
 				B9F5F19B2FB75DA300E26A7A /* WhisperKit in Frameworks */,
 			);
@@ -121,6 +136,7 @@
 			packageProductDependencies = (
 				B9F5F19A2FB75DA300E26A7A /* WhisperKit */,
 				B9BBC7322FB863E90016C22C /* FluidAudio */,
+				B9895A7D2FBC19FC0028BF24 /* Sparkle */,
 			);
 			productName = Daisy;
 			productReference = B9F5F11C2FB74D9F00E26A7A /* Daisy.app */;
@@ -207,6 +223,7 @@
 			packageReferences = (
 				B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */,
 				B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */,
+				B9895A7C2FBC19FC0028BF24 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = B9F5F11D2FB74D9F00E26A7A /* Products */;
@@ -337,7 +354,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -397,7 +414,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
@@ -415,24 +432,20 @@
 				CODE_SIGN_ENTITLEMENTS = Daisy/Daisy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = LW64FQXZCU;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleIconName = AppIcon;
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac.";
-				INFOPLIST_KEY_NSCalendarsUsageDescription = "Daisy reads your calendar to detect upcoming meetings.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Daisy/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.Daisy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -454,24 +467,20 @@
 				CODE_SIGN_ENTITLEMENTS = Daisy/Daisy.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 5;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = LW64FQXZCU;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleIconName = AppIcon;
-				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac.";
-				INFOPLIST_KEY_NSCalendarsUsageDescription = "Daisy reads your calendar to detect upcoming meetings.";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Daisy/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.Daisy;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -493,7 +502,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = LW64FQXZCU;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.DaisyTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -515,7 +524,7 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = LW64FQXZCU;
 				GENERATE_INFOPLIST_FILE = YES;
-				MACOSX_DEPLOYMENT_TARGET = 26.2;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.essazanov.DaisyTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -610,25 +619,38 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		B9895A7C2FBC19FC0028BF24 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.2;
+			};
+		};
 		B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/FluidInference/FluidAudio";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = revision;
+				revision = 9782d877bc24b23bd99c66ad70fd8d2669377fa7;
 			};
 		};
 		B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = revision;
+				revision = 984ab42f6d6824f17630109537829af26ca47fd6;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		B9895A7D2FBC19FC0028BF24 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B9895A7C2FBC19FC0028BF24 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
 		B9BBC7322FB863E90016C22C /* FluidAudio */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */;

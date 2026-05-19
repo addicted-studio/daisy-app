@@ -88,4 +88,12 @@ nonisolated enum SecretKey {
     static let notionParentID = "notion.parent_id"
     static let anthropicAPIKey = "anthropic.api_key"
     static let openaiAPIKey = "openai.api_key"
+    /// Google OAuth refresh token — long-lived, used to mint new
+    /// access tokens. Cleared on Disconnect (after a revoke roundtrip
+    /// to Google so the consent grant is gone server-side too).
+    static let googleRefreshToken = "google.refresh_token"
+    /// Email address of the Google account Daisy is connected to.
+    /// Display-only — shows in Settings as "Connected as <email>".
+    /// Stored alongside the token so they can't drift apart.
+    static let googleEmail = "google.email"
 }

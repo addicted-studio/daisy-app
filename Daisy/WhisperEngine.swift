@@ -265,17 +265,20 @@ final class WhisperEngine {
             includingPropertiesForKeys: [.isDirectoryKey]
         ) else { return [] }
 
+        // WhisperKit prepends "openai_whisper-" to every variant
+        // folder. HuggingFace's downloader also stashes sibling
+        // bookkeeping directories at the same level — `.locks`,
+        // `.cache`, occasional tokenizer bundles — which previously
+        // got counted as "models on disk" (user saw `2 models` after
+        // downloading one). Require the prefix so only real model
+        // folders make it into the cache report.
+        let prefix = "openai_whisper-"
         return entries.compactMap { url in
             let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             guard isDir else { return nil }
-            // WhisperKit prepends "openai_whisper-" to the variant
-            // when resolving the HF folder. Strip it back so callers
-            // can compare against `availableModels[*].id`.
             let folderName = url.lastPathComponent
-            let prefix = "openai_whisper-"
-            let variant = folderName.hasPrefix(prefix)
-                ? String(folderName.dropFirst(prefix.count))
-                : folderName
+            guard folderName.hasPrefix(prefix) else { return nil }
+            let variant = String(folderName.dropFirst(prefix.count))
             return CachedModel(
                 variant: variant,
                 url: url,

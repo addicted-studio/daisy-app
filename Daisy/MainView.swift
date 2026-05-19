@@ -10,7 +10,7 @@
 //  Section selection is held in `AppNavigation.shared` so that other
 //  surfaces (menu bar popover, floating widget) can route to a section
 //  via:
-//      AppNavigation.shared.section = .history
+//      AppNavigation.shared.section = .library
 //      openWindow(id: "main")
 //
 
@@ -20,30 +20,75 @@ import SwiftUI
 // MARK: - Section enum
 
 enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
-    case home, history, settings, about
+    case home, library, connections, settings, about
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .home:     "Home"
-        case .history:  "History"
-        case .settings: "Settings"
-        case .about:    "About"
+        case .home:        "Home"
+        case .library:     "Library"
+        case .connections: "Connections"
+        case .settings:    "Settings"
+        case .about:       "About"
         }
     }
 
     var systemImage: String {
         switch self {
-        case .home:     "house"
-        case .history:  "list.bullet.rectangle"
-        case .settings: "gearshape"
-        case .about:    "info.circle"
+        case .home:        "house"
+        // books.vertical reads as "your shelf of past meetings" —
+        // matches Apple Books / Music's Library iconography. Was
+        // `list.bullet.rectangle` while the section was called
+        // History, which framed it as a chronological log; Library
+        // reframes it as a curated collection, and the icon follows.
+        case .library:     "books.vertical"
+        // arrow.triangle.branch reads as "things diverging from a
+        // central point" — same shape Notion / Linear / Raycast use
+        // for their Integrations / Connections nav entries. Closest
+        // SF Symbol to that visual without falling back to the
+        // generic link icon (which we already use elsewhere).
+        case .connections: "arrow.triangle.branch"
+        case .settings:    "gearshape"
+        case .about:       "info.circle"
         }
     }
 }
 
 // MARK: - Shared navigation state
+
+/// SwiftUI TabView in SettingsView has no public selection by
+/// default. Exposing the tab enum here lets external surfaces
+/// (FirstRun CTAs, Home-screen hints) deep-link to a specific
+/// settings sub-tab, not just "Settings" in the sidebar.
+///
+/// `.integrations` and `.mcpServer` were moved out of Settings into
+/// the top-level `Connections` sidebar destination (see
+/// `ConnectionSection`). Settings now holds only the "how the
+/// recorder works" tabs — Capture / Transcription / Summary.
+enum SettingsTab: String, Hashable, Sendable {
+    /// General is the catch-all tab — audio I/O devices, sounds,
+    /// hotkey, calendar gating, screenshot toggles, the floating
+    /// widget, storage location. Was named `.capture` while it sat
+    /// alongside Notion / MCP / Integrations tabs, but those moved
+    /// to the top-level Connections destination and what remained
+    /// drifted toward "general app preferences" — hence the rename.
+    case general
+    case transcription
+    case summary
+}
+
+/// Sub-section inside the Connections page. Lets external CTAs
+/// (FirstRun, Home destination prompts) deep-link to a specific
+/// card on the page — Calendar / Notion / MCP server / Auto-routing.
+/// The page itself uses an anchored ScrollView, so each section has
+/// a stable id that we scroll to.
+enum ConnectionSection: String, Hashable, Sendable {
+    case calendar
+    case notion
+    case mcpServer
+    case autoRouting
+}
 
 @Observable
 @MainActor
@@ -52,18 +97,47 @@ final class AppNavigation {
     var section: MainSection = .home
     /// One-shot session selection request. HomeView (and any other
     /// surface that needs to deep-link into a transcript) sets this
-    /// together with `section = .history`; HistoryView consumes and
+    /// together with `section = .library`; LibraryView consumes and
     /// clears it on appear / when it observes the change. nil means
     /// "let the view pick its own default" — usually the first row.
-    var pendingHistorySelection: StoredSession.ID?
+    var pendingLibrarySelection: StoredSession.ID?
+    /// One-shot Settings tab request. FirstRunView and any external
+    /// CTA that wants to land the user on a specific sub-tab inside
+    /// SettingsView (Summary for API key, Capture for Calendar,
+    /// etc.) sets this together with `section = .settings`. The
+    /// SettingsView reads + clears it on appear. nil means "use the
+    /// default tab".
+    var pendingSettingsTab: SettingsTab?
+    /// One-shot Connections deep-link. Same pattern as
+    /// `pendingSettingsTab` but for the new Connections sidebar
+    /// destination. ConnectionsView reads + clears on appear; the
+    /// section scrolls to the matching anchor.
+    var pendingConnectionsSection: ConnectionSection?
     private init() {}
 
-    /// Convenience for `Open this session in History`. Sets both
-    /// section and the pending selection so the History view jumps
+    /// Convenience for `Open this session in Library`. Sets both
+    /// section and the pending selection so the Library view jumps
     /// straight to the correct row.
-    func openInHistory(_ id: StoredSession.ID) {
-        pendingHistorySelection = id
-        section = .history
+    func openInLibrary(_ id: StoredSession.ID) {
+        pendingLibrarySelection = id
+        section = .library
+    }
+
+    /// Convenience for `Open Settings → <tab>`. FirstRun + onboarding
+    /// CTAs use this so the user lands exactly where the action they
+    /// just read about is configured, not on the default General tab.
+    func openInSettings(_ tab: SettingsTab) {
+        pendingSettingsTab = tab
+        section = .settings
+    }
+
+    /// Convenience for `Open Connections → <card>`. Used by FirstRun
+    /// onboarding CTAs ("Connect Notion", "Set up MCP server"), the
+    /// Home destination-discovery banner, and the Calendar refresh
+    /// toast Reconnect button.
+    func openInConnections(_ card: ConnectionSection) {
+        pendingConnectionsSection = card
+        section = .connections
     }
 }
 
@@ -75,6 +149,12 @@ struct MainView: View {
     @Bindable var nav = AppNavigation.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sidebarSelection: MainSection? = .home
+    /// Mirrors `settings.hasShownFirstRun` for the sheet binding.
+    /// We can't bind `.sheet(isPresented:)` directly to the
+    /// settings boolean because we want "show when false" — easier
+    /// to derive a local flipped state and write through on
+    /// dismiss inside `FirstRunView`.
+    @State private var showFirstRun: Bool = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -126,7 +206,7 @@ struct MainView: View {
         // items + in the fullscreen aux-toolbar window. Window's
         // own `backgroundColor` (cream, set in DaisyAppDelegate)
         // then shows through cleanly.
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .daisyWindowToolbarHidden()
         .frame(minWidth: 860, minHeight: 560)
         // Warm ivory window background — matches mydaisy.io and
         // defeats macOS's default cool-gray windowBackgroundColor.
@@ -135,7 +215,7 @@ struct MainView: View {
         // composes on top of this, which gives a coherent warm tone
         // throughout. Recording orange + cinnamon accents land much
         // better on this base than on system gray.
-        .containerBackground(Color.daisyBgPrimary, for: .window)
+        .daisyWindowBackground(Color.daisyBgPrimary)
         // Apply soft-cinnamon tint at the NavigationSplitView root.
         // Putting it deeper (on the inner List) didn't propagate to
         // macOS's native sidebar selection chip — that uses the
@@ -143,6 +223,18 @@ struct MainView: View {
         // selection style.
         .tint(Color.daisyAccentSoft)
         .modifier(ToastOverlay())
+        // First-run sheet — fired once via .onAppear (not on every
+        // view re-render). After dismiss, `FirstRunView` flips
+        // `settings.hasShownFirstRun = true` so the sheet doesn't
+        // reappear on next launch.
+        .sheet(isPresented: $showFirstRun) {
+            FirstRunView(settings: settings)
+        }
+        .onAppear {
+            if !settings.hasShownFirstRun {
+                showFirstRun = true
+            }
+        }
         // Keep the local sidebar selection mirrored with the shared
         // AppNavigation state so external surfaces (menu bar / widget)
         // can switch sections by mutating `AppNavigation.shared`.
@@ -160,6 +252,20 @@ struct MainView: View {
         .onChange(of: settings.recordHotkey) { _, new in
             ServiceWiring.applyHotkey(choice: new, session: session)
         }
+        // Granola-style auto-open: when a session finishes and the
+        // user opted in via `settings.showSessionAfterStop`, jump
+        // to History and deep-link to the just-recorded row.
+        // RecordingSession.stop() does a synchronous
+        // SessionStore.refresh() before flipping to .finished, so
+        // by the time this handler fires the row is in the list
+        // and LibraryView's pending-selection handler can land on it.
+        .onChange(of: session.status) { _, new in
+            if case .finished = new,
+               settings.showSessionAfterStop,
+               let id = session.sessionDirectory?.lastPathComponent {
+                AppNavigation.shared.openInLibrary(id)
+            }
+        }
         .onChange(of: settings.autoStartOnMeeting) { _, enabled in
             ServiceWiring.applyMeetingAutoStart(enabled: enabled, session: session)
         }
@@ -175,6 +281,14 @@ struct MainView: View {
             if settings.calendarAccessGranted != granted {
                 settings.calendarAccessGranted = granted
             }
+            ServiceWiring.applyCalendar(settings: settings, session: session)
+        }
+        // Mirror Google Calendar OAuth connect/disconnect — when
+        // user signs in/out via Settings, re-run CalendarService
+        // wiring so its poll timer + meeting-start handler reflect
+        // the new source state (start when newly available, stop
+        // when both EventKit and Google are gone).
+        .onChange(of: GoogleAccountStore.shared.isConnected) { _, _ in
             ServiceWiring.applyCalendar(settings: settings, session: session)
         }
         .onChange(of: settings.mcpServerEnabled) { _, _ in
@@ -214,6 +328,19 @@ struct MainView: View {
                     // render in macOS sidebar.
                     .listRowInsets(EdgeInsets(top: 14, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
+
+                // System-audio status row — visible during active
+                // recording so the user can see at a glance whether
+                // the OTHER side of the meeting is being captured.
+                // Tap the deny-state pill to jump to Privacy
+                // Settings. Hidden in normal capturing-OK state on
+                // .capturing? No — we want a positive confirmation
+                // pill too, so the user trusts what they're seeing.
+                if session.status == .recording || session.status == .paused {
+                    SystemAudioStatusPill(session: session)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
+                        .listRowBackground(Color.clear)
+                }
 
                 // Stop & save lives next to the toggle capsule so a
                 // user mid-session can finalise without hunting in
@@ -280,12 +407,111 @@ struct MainView: View {
         switch nav.section {
         case .home:
             HomeView(session: session)
-        case .history:
-            HistoryView()
+        case .library:
+            LibraryView()
+        case .connections:
+            ConnectionsView(settings: settings)
         case .settings:
             SettingsView(settings: settings)
         case .about:
             AboutView()
         }
+    }
+}
+
+// MARK: - System audio status pill
+
+/// Tiny status row that appears in the sidebar during active
+/// recording, showing whether the OTHER side of the meeting is
+/// being captured. The three states a user actually cares about:
+///
+///   • capturing — green dot, "Other side: capturing"
+///   • denied    — orange warning + "Open Settings" deeplink
+///   • failed    — orange warning with the underlying error
+///
+/// The `.disabled` and `.pending` states render nothing — the
+/// user either turned it off on purpose, or recording hasn't
+/// started yet (in which case the pill row is hidden upstream).
+private struct SystemAudioStatusPill: View {
+    @Bindable var session: RecordingSession
+
+    var body: some View {
+        switch session.systemAudioStatus {
+        case .capturing:
+            capturingPill
+        case .denied:
+            deniedPill
+        case .failed(let message):
+            failedPill(message)
+        case .disabled, .pending:
+            EmptyView()
+        }
+    }
+
+    private var capturingPill: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.daisySuccess)
+                .frame(width: 6, height: 6)
+            Text("Other side: capturing")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private var deniedPill: some View {
+        Button {
+            ScreenRecordingPermission.openSystemSettings()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(Color.daisyWarning)
+                Text("Other side: off")
+                    .font(.caption)
+                    .foregroundStyle(Color.daisyTextPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("Fix")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.daisyAccent)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous).fill(Color.daisyWarning.opacity(0.10))
+            )
+            .overlay(
+                Capsule(style: .continuous).strokeBorder(Color.daisyWarning.opacity(0.25), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Screen Recording permission is required to capture the other side of meetings. Click to open System Settings.")
+    }
+
+    private func failedPill(_ message: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(Color.daisyWarning)
+            Text("Other side: off")
+                .font(.caption)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous).fill(Color.daisyWarning.opacity(0.10))
+        )
+        .overlay(
+            Capsule(style: .continuous).strokeBorder(Color.daisyWarning.opacity(0.25), lineWidth: 0.5)
+        )
+        .help(message)
     }
 }

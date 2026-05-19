@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daisy Info.plist.
+
+  Switched from GENERATE_INFOPLIST_FILE = YES to a hand-written file
+  because Xcode's INFOPLIST_KEY_* propagation only supports Apple's
+  schema keys — arbitrary third-party keys (Sparkle's SUFeedURL,
+  SUPublicEDKey, …) are silently dropped, leaving Sparkle to report
+  "You must specify the URL of the appcast" at runtime.
+
+  Apple-schema keys remain $(VAR) substitutions so the build settings
+  (MARKETING_VERSION, CURRENT_PROJECT_VERSION, PRODUCT_BUNDLE_IDENTIFIER)
+  stay the single source of truth.
+
+  Xcode's processInfoPlistFile phase still injects the DT* keys
+  (DTPlatformBuild, DTSDKBuild, DTXcode, BuildMachineOSBuild, …) at
+  build time, so they don't appear here.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Bundle metadata -->
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+    <key>CFBundleShortVersionString</key>
+    <string>$(MARKETING_VERSION)</string>
+    <key>CFBundleVersion</key>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+
+    <!-- App category + minimum macOS -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.productivity</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+
+    <!-- Copyright -->
+    <key>NSHumanReadableCopyright</key>
+    <string></string>
+
+    <!-- Permission prompts. Texts are user-facing and surface in the
+         system's privacy-grant dialog the first time Daisy requests
+         each capability. Keep them factual and short. -->
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Daisy reads your calendar to detect upcoming meetings.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Daisy captures the system audio of your meetings via Screen Recording so it can transcribe what other participants say. No video frames are saved or sent anywhere.</string>
+
+    <!-- Sparkle 2.x — auto-update configuration. The public EdDSA
+         key is the verifier for every signed DMG Sparkle downloads;
+         the matching private key lives in the build-machine login
+         keychain. SUEnableInstallerLauncherService routes the
+         install through Sparkle's bundled XPC services, which is the
+         only path that works under the App Sandbox (see the
+         com.apple.security.temporary-exception.mach-lookup.global-name
+         entitlement in Daisy.entitlements). -->
+    <key>SUFeedURL</key>
+    <string>https://mydaisy.io/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>drZN6wJxqeB0iagvo4hk1ZQhO3wceIPWoazYjMK9VFk=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUEnableInstallerLauncherService</key>
+    <true/>
+</dict>
+</plist>

@@ -123,37 +123,107 @@ enum SummaryProviderError: LocalizedError {
 
 enum SummaryPrompt {
     static func systemInstructions(localeHint: String?) -> String {
+        // `lang` is the language NAME used inside the prompt body.
+        // `langExplicit` is true only when the user picked a specific
+        // language in Settings → Summary, in which case we prepend a
+        // very loud opening directive. Empirically Sonnet 4.6 quietly
+        // falls back to the transcript's language for summary/sections
+        // and only honours the language pick for the clientFollowUp
+        // unless this is hammered home both at the top AND the bottom
+        // of the system message.
         let lang: String
+        let langExplicit: Bool
         switch localeHint {
-        case "ru": lang = "Russian"
-        case "uk": lang = "Ukrainian"
-        case "pl": lang = "Polish"
-        case "es": lang = "Spanish"
-        case "fr": lang = "French"
-        case "de": lang = "German"
-        case "it": lang = "Italian"
-        case "pt": lang = "Portuguese"
-        case "ja": lang = "Japanese"
-        case "ko": lang = "Korean"
-        case "zh": lang = "Chinese"
-        default:   lang = "the transcript's language (English if mixed)"
+        case "ru": lang = "Russian";    langExplicit = true
+        case "uk": lang = "Ukrainian";  langExplicit = true
+        case "pl": lang = "Polish";     langExplicit = true
+        case "es": lang = "Spanish";    langExplicit = true
+        case "fr": lang = "French";     langExplicit = true
+        case "de": lang = "German";     langExplicit = true
+        case "it": lang = "Italian";    langExplicit = true
+        case "pt": lang = "Portuguese"; langExplicit = true
+        case "ja": lang = "Japanese";   langExplicit = true
+        case "ko": lang = "Korean";     langExplicit = true
+        case "zh": lang = "Chinese";    langExplicit = true
+        case "en": lang = "English";    langExplicit = true
+        default:   lang = "the transcript's language (English if mixed)"; langExplicit = false
         }
-        return """
-        You summarize meeting transcripts for a busy founder. The
-        transcript may contain partial sentences, repetitions, and
-        disfluencies — clean them up. Be concise and concrete. Never
-        invent details that aren't in the transcript.
+
+        let topDirective: String
+        if langExplicit {
+            topDirective = """
+            ━━━ OUTPUT LANGUAGE: \(lang.uppercased()) ━━━
+            Write EVERY word of the response in \(lang) — the one-line
+            summary, every section title, every bullet (top-level and
+            sub-bullets), every action item, and the clientFollowUp
+            draft. The transcript may be in English or another
+            language; the OUTPUT language is \(lang) regardless. Do
+            not mix languages. Translate concepts naturally; keep
+            brand names and product names as-is.
+
+
+            """
+        } else {
+            topDirective = ""
+        }
+
+        return topDirective + """
+        You write structured notes from meeting transcripts for a busy
+        founder. The transcript may contain partial sentences,
+        repetitions, and disfluencies — clean them up. Be concise and
+        concrete. Never invent details that aren't in the transcript.
+
+        Output a topical OUTLINE, not a paragraph. Short bullets —
+        fragments are fine, full sentences are not. Sub-bullets only
+        when a top bullet has 2+ concrete supporting facts.
 
         Respond ONLY with valid JSON, no Markdown fences, no prose
         before or after. The JSON must match this exact schema:
 
         {
-          "summary": "2-4 sentence overview of what the meeting was about and what was discussed",
-          "actionItems": ["Imperative next step the participants will take after the call, e.g. 'Send invoice to client'", "..."],
-          "clientFollowUp": "Ready-to-send follow-up message a client or partner could receive. Second person, polite-professional, 80-180 words, no greeting boilerplate beyond one short opener. Empty string if the meeting had no external counterpart."
+          "summary": "ONE sentence (max 20 words) — what the meeting was about. Topic + the parties involved. Reads as a lede over the sections below.",
+          "sections": [
+            {
+              "title": "Concise section header in sentence case, 2-6 words. Groups related facts.",
+              "bullets": [
+                {
+                  "text": "Short fact / decision / number / commitment from the meeting. 5-18 words. No filler.",
+                  "children": [
+                    { "text": "Optional supporting detail — a specific number, name, date, or sub-fact that elaborates the parent bullet. 4-15 words.", "children": [] }
+                  ]
+                }
+              ]
+            }
+          ],
+          "actionItems": [
+            "Imperative next step. If the transcript identifies the owner (someone said 'I'll send the X' or another participant assigned it to them), prefix with the owner's name or role and a colon: 'Maria: send the contract by Thursday'. Otherwise just the imperative."
+          ],
+          "clientFollowUp": "Ready-to-send follow-up message a client / vendor / partner could receive. Second person, polite-professional, 80-180 words, no greeting boilerplate beyond one short opener. Recap what was agreed, confirm next concrete step(s), and the timeline. Only return an empty string if the meeting was a purely internal team sync with NO external party — a customer call, vendor pitch, partner alignment, contractor onboarding, or any conversation where one side represents a different organization counts as external and you MUST draft the follow-up."
         }
 
-        Empty arrays and empty strings are acceptable. Write all text in \(lang).
+        Constraints:
+          - 3-5 sections total, ordered by importance (most decision-
+            heavy first).
+          - 2-6 top-level bullets per section. Prefer rich bullets to
+            many shallow ones.
+          - 0-3 sub-bullets per top bullet. Most bullets are leaves.
+          - DO NOT include a "Next steps" / "Следующие шаги" /
+            "Action items" / equivalent section in `sections`. Those
+            commitments belong ONLY in the `actionItems` array — the
+            UI renders it as a separate checklist directly under the
+            outline. Putting them in BOTH places creates a visible
+            duplicate. Sections should describe what was DISCUSSED;
+            actionItems captures what comes NEXT.
+          - Empty sections array is acceptable ONLY if the transcript
+            is so short (<30 seconds of substantive content) that an
+            outline would be padding; in that case put the gist in
+            `summary` and leave `sections: []`.
+          - Empty clientFollowUp only for purely internal team
+            meetings — when in doubt, draft one.
+
+        \(langExplicit
+          ? "FINAL REMINDER — output language is \(lang). Every field in the JSON above must be in \(lang), no exceptions. If the transcript is in another language, you are translating to \(lang) as you summarize."
+          : "Write all text in \(lang).")
         """
     }
 
@@ -177,14 +247,47 @@ enum SummaryPrompt {
 /// so cross-actor use is safe.
 nonisolated struct CloudSummaryDTO: Codable {
     let summary: String
+    let sections: [DTOSection]?
     let actionItems: [String]?
     let clientFollowUp: String?
 
     func toMeetingSummary() -> MeetingSummary {
         MeetingSummary(
             summary: summary,
+            sections: (sections ?? []).map { $0.toSummarySection() },
             actionItems: actionItems ?? [],
             clientFollowUp: clientFollowUp ?? ""
+        )
+    }
+}
+
+/// JSON shape of a section as emitted by the cloud providers — same
+/// shape as `SummarySection`, but kept as a separate DTO so the
+/// canonical type stays free of provider-specific concerns (tolerant
+/// decode defaults, future provider-specific extensions, etc).
+nonisolated struct DTOSection: Codable {
+    let title: String
+    let bullets: [DTOBullet]?
+
+    func toSummarySection() -> SummarySection {
+        SummarySection(
+            title: title,
+            bullets: (bullets ?? []).map { $0.toSummaryBullet() }
+        )
+    }
+}
+
+/// JSON shape of a bullet. `children` is optional; missing/null in
+/// the LLM output is treated as "no sub-bullets", which is the
+/// common case for shallow facts.
+nonisolated struct DTOBullet: Codable {
+    let text: String
+    let children: [DTOBullet]?
+
+    func toSummaryBullet() -> SummaryBullet {
+        SummaryBullet(
+            text: text,
+            children: (children ?? []).map { $0.toSummaryBullet() }
         )
     }
 }

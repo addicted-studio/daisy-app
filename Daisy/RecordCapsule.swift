@@ -47,7 +47,7 @@ struct RecordCapsule: View {
                 Capsule(style: .continuous)
                     .strokeBorder(stroke, lineWidth: 0.5)
             )
-            .glassEffect(in: Capsule(style: .continuous))
+            .daisyGlass(in: Capsule(style: .continuous))
             .animation(.easeInOut(duration: 0.18), value: session.status)
         }
         .buttonStyle(.plain)

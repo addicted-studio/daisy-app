@@ -12,7 +12,28 @@ import SwiftUI
 import AppKit
 
 struct SessionDetailView: View {
-    let session: StoredSession
+    /// Initial snapshot — passed in by the caller (the History list).
+    /// We don't render from this directly: instead we look the
+    /// current value up in SessionStore by ID so the view reacts
+    /// when the post-Stop detached task writes summary.json and
+    /// SessionStore.reloadSession() replaces the row in-place.
+    let initialSession: StoredSession
+
+    /// Always-current session row. Falls back to the initial
+    /// snapshot if the store hasn't loaded yet (cold launch into
+    /// History view) or the session was deleted out from under us.
+    private var session: StoredSession {
+        SessionStore.shared.sessions
+            .first(where: { $0.id == initialSession.id }) ?? initialSession
+    }
+
+    /// True while the post-Stop detached task is still running for
+    /// this session — drives the skeleton placeholder in the
+    /// summary slot until summary.json lands and SessionStore swaps
+    /// in a fresh `StoredSession` with `summary != nil`.
+    private var isSummaryGenerating: Bool {
+        SessionStore.shared.sessionsGenerating.contains(initialSession.id)
+    }
 
     @State private var isRunningAction = false
     @State private var actionStatus: ActionStatus = .idle
@@ -29,7 +50,11 @@ struct SessionDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 header
                 if !actionStatusText.isEmpty { actionBanner }
-                if let summary = session.summary { summarySection(summary) }
+                if let summary = session.summary {
+                    summarySection(summary)
+                } else if isSummaryGenerating {
+                    summarySkeletonSection
+                }
                 if session.hasScreenshots { screenshotsSection }
                 transcriptSection
             }
@@ -250,41 +275,70 @@ struct SessionDetailView: View {
 
     // MARK: - Summary
 
+    /// Placeholder shown above the transcript while the post-Stop
+    /// detached summarize task is still running. Replaced in-place
+    /// by `summarySection(...)` once `summary.json` lands and
+    /// `SessionStore.reloadSession(id:)` flips the row to carry a
+    /// non-nil `MeetingSummary`. Three rows mirror the real
+    /// document layout (Meeting / Next actions / Follow-up) so the
+    /// transition reads as "content arriving" rather than "layout
+    /// shift".
+    @ViewBuilder
+    private var summarySkeletonSection: some View {
+        mdSection(title: "Meeting") {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Generating summary… transcript is ready below.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        mdSection(title: "Next actions") {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(0..<2, id: \.self) { _ in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Image(systemName: "square")
+                            .font(.body)
+                            .foregroundStyle(.tertiary)
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.daisyDivider)
+                            .frame(height: 12)
+                            .frame(maxWidth: .infinity)
+                            .opacity(0.6)
+                    }
+                }
+            }
+        }
+    }
+
     // Summary sections rendered as a plain MD-style document — no
     // coloured AI card, no sparkles header, no border. The user reads
     // this like a normal write-up: H2 heading, body text, bullets.
     // Each section is independent so the gestalt is "one document"
     // rather than "a feature card".
+    //
+    // 1.0.2: switched to a Granola-style outline. `summary.sections`
+    // carries 3-5 topical chunks with hierarchical bullets, rendered
+    // here as indented bullet trees. `summary.summary` is a one-line
+    // lede above them. Legacy summaries written before the schema
+    // change have `sections == []`; we fall back to rendering
+    // `summary` as a paragraph plus a "Next actions" block, which
+    // matches the old layout exactly so previously-saved sessions
+    // don't suddenly look broken.
     @ViewBuilder
     private func summarySection(_ summary: MeetingSummary) -> some View {
-        mdSection(title: "Meeting") {
-            Text(summary.summary)
-                .font(.body)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-
-        if !summary.actionItems.isEmpty {
-            mdSection(title: "Next actions") {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(summary.actionItems.enumerated()), id: \.offset) { _, item in
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Image(systemName: "square")
-                                .font(.body)
-                                .foregroundStyle(.tertiary)
-                            Text(item)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
+        if summary.sections.isEmpty {
+            // Legacy summary (pre-1.0.2): paragraph + flat actions.
+            legacySummarySection(summary)
+        } else {
+            // Granola-style outline.
+            granolaStyleSummary(summary)
         }
 
         if !summary.clientFollowUp.isEmpty {
-            mdSection(title: "Follow-up for client / partner") {
+            mdSection(title: summaryLabels(for: summary).followUp) {
                 HStack(alignment: .top, spacing: 8) {
                     Text(summary.clientFollowUp)
                         .font(.body)
@@ -304,6 +358,130 @@ struct SessionDetailView: View {
                 }
             }
         }
+    }
+
+    /// Detect the summary's output language from its own content so
+    /// our structural headers ("Meeting" / "Next actions" / "Follow-
+    /// up") match. We sample `summary.summary + first 200 chars of
+    /// first section bullet` rather than picking up from a frontmatter
+    /// field because pre-1.0.2 sessions don't carry the language
+    /// anywhere. LanguageDetector returns nil on too-short / low-
+    /// confidence input → falls through to English defaults, which
+    /// is the same behaviour as a legacy English session.
+    private func summaryLabels(for summary: MeetingSummary) -> SummaryLabels {
+        var sample = summary.summary
+        if sample.count < 60, let firstBullet = summary.sections.first?.bullets.first?.text {
+            sample += " " + firstBullet
+        }
+        return SummaryLabels.for(language: LanguageDetector.detect(sample))
+    }
+
+    /// Granola-style: 1-line lede + topical outline + standalone
+    /// "Next actions" with owner-prefixed items. The outline section
+    /// titles come straight from the model — they're already
+    /// localised (RU summaries get RU titles like "Следующие шаги"
+    /// without us mapping anything). The STRUCTURAL headers (Meeting
+    /// / Next actions / Follow-up) we localise ourselves via
+    /// `summaryLabels(for:)`.
+    @ViewBuilder
+    private func granolaStyleSummary(_ summary: MeetingSummary) -> some View {
+        let labels = summaryLabels(for: summary)
+        if !summary.summary.isEmpty {
+            mdSection(title: labels.meeting) {
+                Text(summary.summary)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        ForEach(Array(summary.sections.enumerated()), id: \.offset) { _, section in
+            mdSection(title: section.title) {
+                bulletTree(section.bullets, level: 0)
+            }
+        }
+        if !summary.actionItems.isEmpty {
+            mdSection(title: labels.nextActions) {
+                actionItemList(summary.actionItems)
+            }
+        }
+    }
+
+    /// Legacy pre-1.0.2 layout — paragraph + flat actions.
+    /// Preserved verbatim so sessions saved on an older build keep
+    /// rendering correctly. Localised headers via content detection
+    /// — old summaries don't carry a language field but the lede
+    /// itself is in the user's language, so `LanguageDetector` on
+    /// `summary.summary` is reliable enough.
+    @ViewBuilder
+    private func legacySummarySection(_ summary: MeetingSummary) -> some View {
+        let labels = summaryLabels(for: summary)
+        mdSection(title: labels.meeting) {
+            Text(summary.summary)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if !summary.actionItems.isEmpty {
+            mdSection(title: labels.nextActions) {
+                actionItemList(summary.actionItems)
+            }
+        }
+    }
+
+    /// Shared renderer for the flat actionItems block. Each row is
+    /// the checkbox-square icon + text; the owner prefix (if any) is
+    /// part of the text itself so no special styling is needed.
+    @ViewBuilder
+    private func actionItemList(_ items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Image(systemName: "square")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                    Text(item)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Hierarchical bullet renderer. Up to 3 levels of nesting in
+    /// practice (prompt caps depth, but the view handles arbitrary
+    /// depth recursively). Top level uses a darker mid-dot, deeper
+    /// levels use lighter tertiary dots so the eye reads the
+    /// indentation as semantic depth rather than just spacing.
+    ///
+    /// Returns `AnyView` rather than `some View` because the function
+    /// is recursive: Swift 6 / Xcode 26 refuses to infer an opaque
+    /// return type that references itself. Type-erasing breaks the
+    /// self-reference. Cost is negligible at the typical depth/breadth.
+    private func bulletTree(_ bullets: [SummaryBullet], level: Int) -> AnyView {
+        AnyView(
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text("•")
+                                .font(.body.weight(level == 0 ? .semibold : .regular))
+                                .foregroundStyle(level == 0 ? .secondary : .tertiary)
+                            Text(bullet.text)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !bullet.children.isEmpty {
+                            bulletTree(bullet.children, level: level + 1)
+                                .padding(.leading, 22)
+                        }
+                    }
+                }
+            }
+        )
     }
 
     /// Document-style section: H2-weight heading, hairline rule under
@@ -377,19 +555,21 @@ struct SessionDetailView: View {
         }
     }
 
-    /// Show "Map speakers" card only when the session was recorded
-    /// from a calendar event WITH attendees AND the transcript has
-    /// diarized speakers ("Remote A", "Remote B", ...). Without
-    /// these conditions, mapping makes no sense.
+    /// Show "Name speakers" card whenever the transcript has
+    /// detected speakers ("Remote A", "Remote B", ...). Previously
+    /// gated on `meetingAttendees.isEmpty` — that made the feature
+    /// invisible for manual recordings (no calendar event). Now
+    /// every diarized session can be renamed; calendar attendees,
+    /// when present, become quick-pick suggestions next to the
+    /// free-text field.
     @ViewBuilder
     private var speakerMappingSection: some View {
-        if !session.meetingAttendees.isEmpty,
-           !detectedSpeakerIDs.isEmpty {
+        if !detectedSpeakerIDs.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.fill")
                         .foregroundStyle(Color.daisyAccent)
-                    Text("Map speakers to attendees")
+                    Text("Name the speakers")
                         .font(.subheadline.weight(.semibold))
                     Spacer()
                     if !session.speakerMap.isEmpty {
@@ -401,26 +581,19 @@ struct SessionDetailView: View {
                         .foregroundStyle(Color.daisyTextSecondary)
                     }
                 }
+                Text("Replace the auto-generated labels with real names. Names propagate to the transcript, the summary's follow-up, and any sent destination.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 ForEach(detectedSpeakerIDs, id: \.self) { speakerID in
-                    HStack(spacing: 10) {
-                        Text("Remote \(speakerID)")
-                            .font(.callout.weight(.medium))
-                            .frame(width: 96, alignment: .leading)
-                            .foregroundStyle(Color.daisyTextSecondary)
-                        Menu(session.speakerMap[speakerID] ?? "Pick attendee…") {
-                            Button("Unmapped") {
-                                Task { await applyMapping(speakerID: speakerID, name: nil) }
-                            }
-                            Divider()
-                            ForEach(session.meetingAttendees, id: \.self) { name in
-                                Button(name) {
-                                    Task { await applyMapping(speakerID: speakerID, name: name) }
-                                }
-                            }
+                    SpeakerNameRow(
+                        speakerID: speakerID,
+                        currentName: session.speakerMap[speakerID] ?? "",
+                        attendeeSuggestions: session.meetingAttendees,
+                        onCommit: { name in
+                            Task { await applyMapping(speakerID: speakerID, name: name) }
                         }
-                        .menuStyle(.borderlessButton)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    )
                 }
             }
             .padding(12)
@@ -470,6 +643,36 @@ struct SessionDetailView: View {
             updated.removeValue(forKey: speakerID)
         }
         await SessionStore.shared.updateSpeakerMap(updated, for: session)
+
+        // Voice fingerprint persistence — when the user assigns a
+        // real name to a speaker, look up that speaker's centroid
+        // embedding from the session's `speakers.json` sidecar and
+        // either create a new SpeakerProfile or update an existing
+        // one. Next time the same person joins a recording, Daisy
+        // will auto-label them ("Alex" instead of "Remote A").
+        //
+        // Skipped on "unmap" (name == nil) — we don't delete
+        // profiles on clear, only on the explicit "Forget" action
+        // in Settings → Speakers.
+        guard let name, !name.isEmpty else { return }
+        guard let centroids = loadSpeakerCentroids() else { return }
+        guard let embedding = centroids[speakerID], !embedding.isEmpty else { return }
+        SpeakerProfileStore.shared.upsert(name: name, embedding: embedding)
+    }
+
+    /// Read `speakers.json` from the session's directory. Returns
+    /// nil if the sidecar is missing (older sessions recorded before
+    /// the voice-fingerprint flow landed) or unreadable. Caller
+    /// degrades gracefully — manual rename still works, it just
+    /// won't seed a new profile.
+    private func loadSpeakerCentroids() -> [String: [Float]]? {
+        let url = session.directoryURL.appendingPathComponent("speakers.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let parsed = try? JSONDecoder().decode(SpeakerCentroidsFile.self, from: data) else {
+            return nil
+        }
+        return parsed.centroids
     }
 
     // MARK: - Status banner
@@ -525,17 +728,29 @@ struct SessionDetailView: View {
         isRunningAction = true
         actionStatus = .message("Summarizing via \(Summarizer.shared.providerKind.shortName)…")
 
-        await Summarizer.shared.summarize(
+        // Use the canonical locale resolver — same code path as the
+        // post-Stop auto-summary, so re-summarize can never produce a
+        // different language than the original run on the same
+        // transcript. The resolver puts content-driven detection
+        // first, so a Russian transcript whose frontmatter is
+        // "auto" still gets a Russian re-summary.
+        let localeHint = RecordingSession.resolveSummaryLocaleHint(
             transcript: session.transcriptText,
-            title: session.title,
-            localeHint: session.locale == "auto" ? nil : session.locale
+            transcriptLocale: session.locale,
+            summaryLanguageOverride: AppSettings.currentSummaryLanguage
         )
 
-        if let err = Summarizer.shared.lastError {
-            actionStatus = .error(err)
-        } else if let summary = Summarizer.shared.lastSummary {
+        let result = await Summarizer.shared.summarize(
+            transcript: session.transcriptText,
+            title: session.title,
+            localeHint: localeHint
+        )
+
+        if let summary = result {
             await SessionStore.shared.updateSummary(summary, for: session)
             actionStatus = .message("Summary updated.")
+        } else if let err = Summarizer.shared.lastError {
+            actionStatus = .error(err)
         } else {
             actionStatus = .error("No summary returned.")
         }
@@ -642,5 +857,88 @@ struct SessionDetailView: View {
         let s = total % 60
         if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Speaker name row
+//
+// One row inside the "Name the speakers" card. Shows the
+// auto-detected "Remote A / B / C" label as the row anchor,
+// a free-text TextField for the human name, and an optional
+// suggestions Menu when calendar attendees are present.
+//
+// Save-on-blur semantics: typing → local @State; commits to the
+// store on `.onSubmit` (Return) and on focus loss. No explicit
+// Save button keeps the UX inline + intent-driven.
+
+private struct SpeakerNameRow: View {
+    let speakerID: String
+    let currentName: String
+    let attendeeSuggestions: [String]
+    let onCommit: (String?) -> Void
+
+    @State private var draft: String
+    @FocusState private var focused: Bool
+
+    init(speakerID: String, currentName: String, attendeeSuggestions: [String], onCommit: @escaping (String?) -> Void) {
+        self.speakerID = speakerID
+        self.currentName = currentName
+        self.attendeeSuggestions = attendeeSuggestions
+        self.onCommit = onCommit
+        self._draft = State(initialValue: currentName)
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("Remote \(speakerID)")
+                .font(.callout.weight(.medium))
+                .frame(width: 96, alignment: .leading)
+                .foregroundStyle(Color.daisyTextSecondary)
+            TextField("Name…", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .focused($focused)
+                .onSubmit { commit() }
+                .onChange(of: focused) { _, isFocused in
+                    // Commit on blur so users who click away
+                    // (rather than press Return) still persist.
+                    if !isFocused { commit() }
+                }
+            // Suggestions menu — present only when the session has
+            // calendar attendees. Quick-fill from the bound event,
+            // still allows free-text in the field next to it.
+            if !attendeeSuggestions.isEmpty {
+                Menu {
+                    ForEach(attendeeSuggestions, id: \.self) { name in
+                        Button(name) {
+                            draft = name
+                            commit()
+                        }
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Pick from event attendees")
+            }
+        }
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespaces)
+        // Empty input clears the mapping — same as pre-fix `Unmapped`
+        // button. Caller distinguishes nil vs string.
+        if trimmed.isEmpty {
+            // Only call onCommit if there was previously a value
+            // (avoids spamming writes on focus loss of an unset row).
+            if !currentName.isEmpty {
+                onCommit(nil)
+            }
+        } else if trimmed != currentName {
+            onCommit(trimmed)
+        }
     }
 }

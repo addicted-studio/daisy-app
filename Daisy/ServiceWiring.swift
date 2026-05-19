@@ -29,13 +29,37 @@ enum ServiceWiring {
         }
     }
 
-    /// Enable or disable foreground-app meeting auto-detection.
-    /// Auto-start only *starts* a session — if one is already in
-    /// progress, `RecordingSession.start()` itself is the guard.
+    /// Enable or disable foreground-app meeting auto-detection
+    /// (NSWorkspace-based — fires when Zoom / Teams / Meet etc. is
+    /// launched).
+    ///
+    /// We deliberately do NOT call `session.start()` when a session
+    /// is already recording or paused. Previously the call slipped
+    /// through to `start()` and silently returned via its guard,
+    /// leaving the user confused why a brand-new meeting app launch
+    /// did nothing visible. Now we surface a toast so the user can
+    /// stop the previous session intentionally if they want a fresh
+    /// recording for the newly-launched app.
+    ///
+    /// Unlike the calendar path (`startFromMeeting`) we cannot auto-
+    /// rotate here — NSWorkspace's notification gives us the app
+    /// bundle ID, not a `DaisyMeeting`, so we have no idea if it's
+    /// a "different" meeting from what's already being recorded.
+    /// Surfacing rather than acting is the right move.
     static func applyMeetingAutoStart(enabled: Bool, session: RecordingSession) {
         if enabled {
-            MeetingDetector.shared.start { [weak session] _ in
-                Task { await session?.start() }
+            MeetingDetector.shared.start { [weak session] appName in
+                Task { @MainActor in
+                    guard let session else { return }
+                    if session.status == .recording || session.status == .paused {
+                        ToastCenter.shared.show(
+                            "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one.",
+                            style: .info
+                        )
+                        return
+                    }
+                    await session.start()
+                }
             }
         } else {
             MeetingDetector.shared.stop()
@@ -54,7 +78,13 @@ enum ServiceWiring {
     ///     for the Home view even when auto-start is off — the user
     ///     still wants to see what's coming.
     static func applyCalendar(settings: AppSettings, session: RecordingSession) {
-        guard settings.calendarAccessGranted else {
+        // CalendarService now multiplexes EventKit + Google OAuth.
+        // Start the service if EITHER source is available — a
+        // user might only have Google connected (no Internet
+        // Accounts integration) and still want auto-start.
+        let hasEventKit = settings.calendarAccessGranted
+        let hasGoogle = GoogleAccountStore.shared.isConnected
+        guard hasEventKit || hasGoogle else {
             CalendarService.shared.stop()
             return
         }

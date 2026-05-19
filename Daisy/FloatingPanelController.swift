@@ -17,10 +17,6 @@ final class FloatingPanelController {
     private let session: RecordingSession
     private let settings: AppSettings
     private var panel: NSPanel?
-    /// Secondary panel anchored above the daisy that hosts the
-    /// "Are we done?" bubble. Built lazily; lives only while
-    /// `session.silenceMonitor.questionVisible == true`.
-    private var bubblePanel: NSPanel?
     private var hasPositionedOnce = false
     /// When set, the panel stays hidden until this date — regardless of
     /// session status. Set by the right-click "Hide for…" menu.
@@ -31,8 +27,11 @@ final class FloatingPanelController {
         self.settings = settings
         startObserving()
         startObservingSettings()
-        startObservingSilence()
-        // Re-anchor if the user changes display layout.
+        // Silence-prompt UI used to live here as a custom NSPanel
+        // anchored above the daisy widget. Retired 2026-05-18 in
+        // favour of a native `UNUserNotification` banner — see
+        // `SilencePromptNotification` and `SilenceMonitor`. AppKit
+        // handles all positioning / dismissal for free.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -144,220 +143,6 @@ final class FloatingPanelController {
     /// toggle changes without needing a status change to retrigger.
     func reevaluateVisibility() {
         applyVisibility(for: session.status)
-    }
-
-    // MARK: - Silence bubble
-
-    /// Watches `session.silenceMonitor.questionVisible` and shows /
-    /// hides the bubble panel accordingly. Self-rearming, same shape
-    /// as `startObserving()`.
-    private func startObservingSilence() {
-        applyBubbleVisibility()
-        withObservationTracking {
-            _ = session.silenceMonitor.questionVisible
-        } onChange: {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.applyBubbleVisibility()
-                self.startObservingSilence()
-            }
-        }
-    }
-
-    private func applyBubbleVisibility() {
-        // Allow the bubble during .paused too — the long-pause case
-        // is exactly when the user has most likely forgotten about
-        // a session quietly draining battery. Filtering on
-        // `.recording` alone (the v1.0 condition) hid the prompt
-        // for the more common failure mode.
-        let isActiveSession = session.status == .recording
-            || session.status == .paused
-        let shouldShow = settings.floatingWidgetEnabled
-            && session.silenceMonitor.questionVisible
-            && isActiveSession
-        if shouldShow {
-            showBubble()
-        } else {
-            hideBubble()
-        }
-    }
-
-    private func showBubble() {
-        if bubblePanel == nil { buildBubblePanel() }
-        positionBubble()
-        bubblePanel?.orderFrontRegardless()
-    }
-
-    private func hideBubble() {
-        bubblePanel?.orderOut(nil)
-    }
-
-    private func buildBubblePanel() {
-        let bubble = SilenceBubble(
-            onConfirm: { [weak self] in
-                guard let self else { return }
-                self.session.silenceMonitor.acknowledge()
-                Task { await self.session.stop() }
-            },
-            onDismiss: { [weak self] in
-                self?.session.silenceMonitor.snooze()
-            }
-        )
-        // Wrap in a transparent shadow-padding ring. Without this the
-        // hosting view's fitting size equals the bubble's content
-        // rect, the panel sizes to match, and SwiftUI's drop-shadow
-        // gets clipped at the panel edge — visible as a corner cut
-        // on the top/left of the bubble. 16pt of breathing room each
-        // side comfortably contains the (radius: 6, y: 3) shadow.
-        let padded = bubble.padding(16)
-        let hosting = NSHostingController(rootView: padded)
-        hosting.view.wantsLayer = true
-        hosting.view.layer?.backgroundColor = CGColor.clear
-
-        // Initial size is a sensible default; the bubble's SwiftUI
-        // body actually sets `.frame(width: 220)` and lets vertical
-        // be intrinsic, so `setContentSize` after host layout will
-        // reshape this to the real measurement. Starting at 220×90
-        // means the first paint isn't grossly oversized.
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 220, height: 90),
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        // Let SwiftUI's shadow do the work — AppKit's window shadow
-        // adds a rectangular halo that doesn't follow the rounded
-        // corners (same reason the daisy widget panel turns it off).
-        panel.hasShadow = false
-        panel.level = .floating
-        panel.collectionBehavior = [
-            .canJoinAllSpaces,
-            .stationary,
-            .fullScreenAuxiliary,
-            .ignoresCycle
-        ]
-        panel.isMovableByWindowBackground = false
-        panel.isReleasedWhenClosed = false
-        panel.hidesOnDeactivate = false
-        panel.contentViewController = hosting
-        panel.contentView?.wantsLayer = true
-        panel.contentView?.layer?.backgroundColor = CGColor.clear
-        // Make the bubble accept clicks without stealing focus from
-        // whatever the user was just doing.
-        panel.becomesKeyOnlyIfNeeded = true
-        // Ask the hosting controller for its preferred size and resize
-        // the panel to match — otherwise the panel keeps the 240×100
-        // bootstrap rect and our positioning maths uses the wrong
-        // height when computing the "above the widget" Y.
-        hosting.view.layoutSubtreeIfNeeded()
-        let fitted = hosting.view.fittingSize
-        if fitted.width > 0, fitted.height > 0 {
-            panel.setContentSize(fitted)
-        }
-        self.bubblePanel = panel
-    }
-
-    /// Park the bubble against the daisy panel, preferring above-
-    /// centered, with auto-flip below and clamping to the active
-    /// screen's visible frame. The naive "centered on widget" placement
-    /// pushed the right edge of the bubble off-screen when the widget
-    /// was anchored at bottom-right (the default) — bubble half-width
-    /// (130 pt) exceeded the widget's margin from the right edge.
-    ///
-    /// Layout algorithm:
-    ///   1. Pick the screen the daisy panel actually sits on (not
-    ///      `NSScreen.main` — that can return a different display on
-    ///      multi-monitor setups where the user moved the panel).
-    ///   2. Prefer placing the bubble ABOVE the widget, horizontally
-    ///      centered on it.
-    ///   3. Clamp the X so the bubble is fully inside the visible
-    ///      frame with an 8 pt inner gutter.
-    ///   4. If the bubble would clip the top of the screen, flip
-    ///      below the widget instead.
-    ///   5. If it would clip the bottom too (tiny screen), pin to
-    ///      the top of the visible frame.
-    private func positionBubble() {
-        guard let bubblePanel else { return }
-        let bubbleSize = bubblePanel.frame.size
-        let anchor: NSRect = panel?.frame ?? defaultBubbleAnchor()
-        let screen = screenContaining(rect: anchor) ?? bestScreen() ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else {
-            // Last-ditch: drop it where the old code would have, but
-            // at least keep the right edge off-screen.
-            bubblePanel.setFrameOrigin(NSPoint(x: anchor.midX - bubbleSize.width / 2,
-                                               y: anchor.maxY + 8))
-            return
-        }
-
-        let gutter: CGFloat = 8
-        // Both panels (widget and bubble) have transparent
-        // shadow-padding rings inside their content rects, so the
-        // raw `anchor.maxY` / `panel.minY` numbers don't correspond
-        // to the visible circle / bubble edges. Subtract those
-        // insets back out when turning a *visible* gap into the
-        // panel frame origin.
-        let visibleGap: CGFloat = 6                 // gap user sees
-        let bubbleShadowInset: CGFloat = 16         // bubble panel padding ring (see buildBubblePanel)
-        let widgetShadowInsetTop: CGFloat = 10      // widget panel size 80 vs visible circle ~60 → 10pt headroom above the circle
-
-        // Horizontal: center on widget, clamp into [minX, maxX].
-        let preferredX = anchor.midX - bubbleSize.width / 2
-        let minX = visible.minX + gutter - bubbleShadowInset
-        let maxX = visible.maxX - bubbleSize.width - gutter + bubbleShadowInset
-        let x = min(max(preferredX, minX), maxX)
-
-        // Vertical: prefer above. macOS coordinate space has Y going up,
-        // so "above the widget" = bigger Y. The widget's visible
-        // circle top sits at `anchor.maxY - widgetShadowInsetTop`,
-        // not at `anchor.maxY` itself; the bubble's visible bottom
-        // sits at `panel.minY + bubbleShadowInset`, not at
-        // `panel.minY`. We want the gap *between visible edges*
-        // to equal `visibleGap`, so:
-        //
-        //   visibleGap = (panel.minY + bubbleShadowInset)
-        //              - (anchor.maxY - widgetShadowInsetTop)
-        //
-        // Solving for panel.minY:
-        let yIfAbove = anchor.maxY + visibleGap - bubbleShadowInset - widgetShadowInsetTop
-        // And symmetrically when we flip below:
-        let yIfBelow = anchor.minY - bubbleSize.height - visibleGap + bubbleShadowInset + widgetShadowInsetTop
-
-        let topClamp = visible.maxY - bubbleSize.height - gutter
-        let bottomClamp = visible.minY + gutter
-
-        let y: CGFloat
-        if yIfAbove <= topClamp {
-            // Fits above — use it.
-            y = yIfAbove
-        } else if yIfBelow >= bottomClamp {
-            // Doesn't fit above; flip below.
-            y = yIfBelow
-        } else {
-            // Doesn't fit either way (very tiny screen / unusual
-            // dock layout). Pin to the top of the visible frame.
-            y = topClamp
-        }
-
-        bubblePanel.setFrameOrigin(NSPoint(x: x, y: y))
-    }
-
-    /// Find the screen whose `frame` contains the centre of `rect`.
-    /// Used to position the bubble on the same display as the daisy
-    /// panel — on multi-monitor setups `NSScreen.main` and the panel's
-    /// actual screen routinely diverge for borderless non-key panels.
-    private func screenContaining(rect: NSRect) -> NSScreen? {
-        let centre = NSPoint(x: rect.midX, y: rect.midY)
-        return NSScreen.screens.first(where: { $0.frame.contains(centre) })
-    }
-
-    private func defaultBubbleAnchor() -> NSRect {
-        guard let screen = NSScreen.main else {
-            return NSRect(x: 100, y: 100, width: 80, height: 80)
-        }
-        let visible = screen.visibleFrame
-        return NSRect(x: visible.maxX - 120, y: visible.maxY - 160, width: 80, height: 80)
     }
 
     // MARK: - Panel construction

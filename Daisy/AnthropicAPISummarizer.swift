@@ -72,7 +72,11 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
         }
         if !(200..<300).contains(http.statusCode) {
             let bodyString = String(data: data, encoding: .utf8) ?? "<empty>"
-            log.error("Anthropic HTTP \(http.statusCode): \(bodyString, privacy: .public)")
+            // bodyString stays .private — Anthropic 4xx responses can
+            // echo prompt fragments back, which would leak transcript
+            // snippets into the unified system log. Status code is
+            // safe to expose; the body itself is not.
+            log.error("Anthropic HTTP \(http.statusCode): \(bodyString, privacy: .private)")
             throw SummaryProviderError.httpError(
                 provider: "Anthropic",
                 status: http.statusCode,

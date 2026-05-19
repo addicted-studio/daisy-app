@@ -177,6 +177,36 @@ final class MCPServer {
     }
 
     private func route(request: HTTPRequest, body: Data, connection: NWConnection) async {
+        // Defence against CORS + DNS rebinding. The MCP server binds
+        // to 127.0.0.1 but TCP "binds to loopback only" doesn't stop
+        // a browser from issuing requests to 127.0.0.1 — the kernel
+        // routes those locally. So a webpage the user visits can
+        // `fetch("http://127.0.0.1:<port>/sse")` and (without these
+        // checks) walk away with every transcript.
+        //
+        // Two guards:
+        //   1. Host header MUST be loopback (127.0.0.1 / localhost,
+        //      with optional :port). Defeats DNS rebinding — the
+        //      attacker's DNS may resolve their domain to 127.0.0.1,
+        //      but their `fetch` sends `Host: attacker.example.com`
+        //      and we reject.
+        //   2. Origin header, if present, MUST be a loopback URL.
+        //      Native MCP clients (Claude Desktop, Cursor) don't
+        //      send Origin — only browsers do. So presence of any
+        //      non-loopback Origin = browser cross-origin attempt.
+        //
+        // SSE response no longer carries `Access-Control-Allow-Origin:
+        // *`. Native clients don't need it; the wildcard was the
+        // exact opening that made CORS-via-fetch viable.
+        if !Self.isLoopbackHost(request.headers["host"]) {
+            Self.write(status: 403, body: "Forbidden", on: connection, closeAfter: true)
+            return
+        }
+        if let origin = request.headers["origin"], !Self.isLoopbackOrigin(origin) {
+            Self.write(status: 403, body: "Forbidden", on: connection, closeAfter: true)
+            return
+        }
+
         switch (request.method.uppercased(), request.path) {
         case ("GET", "/sse"):
             await openSSEStream(on: connection)
@@ -197,6 +227,27 @@ final class MCPServer {
         }
     }
 
+    /// Allow exactly `127.0.0.1[:port]` or `localhost[:port]` — case-
+    /// insensitive, port optional. A missing/nil/empty Host header
+    /// is also rejected; HTTP/1.1 requires Host on every request, and
+    /// the absence is itself a red flag.
+    private static func isLoopbackHost(_ host: String?) -> Bool {
+        guard let host = host?.lowercased() else { return false }
+        let hostname = host.split(separator: ":", maxSplits: 1).first.map(String.init) ?? host
+        return hostname == "127.0.0.1" || hostname == "localhost" || hostname == "[::1]"
+    }
+
+    /// Same loopback rule for Origin, but parses a full URL form
+    /// like `http://127.0.0.1:54321` (or the special `null` token
+    /// that browsers send for sandboxed pages — that one we reject
+    /// since we have no reason to accept sandboxed iframe origins).
+    private static func isLoopbackOrigin(_ origin: String) -> Bool {
+        guard let url = URL(string: origin), let host = url.host?.lowercased() else {
+            return false
+        }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
     // MARK: - SSE stream (server → client)
 
     private func openSSEStream(on connection: NWConnection) async {
@@ -204,12 +255,16 @@ final class MCPServer {
         sseConnection?.cancel()
         sseConnection = connection
 
+        // No `Access-Control-Allow-Origin: *` — see the long note in
+        // `route(...)`. Native MCP clients (Claude Desktop, Cursor)
+        // don't honour CORS anyway, and emitting the wildcard would
+        // re-enable the very browser-cross-origin attack the Host /
+        // Origin guards exist to block.
         let headers = [
             "HTTP/1.1 200 OK",
             "Content-Type: text/event-stream",
             "Cache-Control: no-cache, no-store, no-transform",
             "Connection: keep-alive",
-            "Access-Control-Allow-Origin: *",
             "\r\n",
         ].joined(separator: "\r\n")
 

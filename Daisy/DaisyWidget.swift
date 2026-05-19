@@ -56,8 +56,10 @@ struct DaisyWidget: View {
         // fall apart" flicker we used to get on stop.
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
             let status = session.status
+            let summaryGen = session.summaryGenerationState
             let bands = session.spectrumBands
             let sweep = Self.computeSweep(from: context.date)
+            let center = centerColor(for: status, summaryGen: summaryGen, sweep: sweep)
 
             ZStack {
                 Circle()
@@ -78,9 +80,9 @@ struct DaisyWidget: View {
                 }
 
                 Circle()
-                    .fill(centerColor(for: status))
+                    .fill(center)
                     .frame(width: centerSize, height: centerSize)
-                    .shadow(color: centerColor(for: status).opacity(0.55), radius: 2.5, x: 0, y: 0)
+                    .shadow(color: center.opacity(0.55), radius: 2.5, x: 0, y: 0)
             }
         }
         .frame(width: canvasSize, height: canvasSize)
@@ -174,11 +176,11 @@ struct DaisyWidget: View {
         .disabled(!hasContent)
 
         Button {
-            AppNavigation.shared.section = .history
+            AppNavigation.shared.section = .library
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         } label: {
-            Label("Transcript history…", systemImage: "list.bullet.rectangle")
+            Label("Open Library…", systemImage: "books.vertical")
         }
         .keyboardShortcut("h", modifiers: [.command, .shift])
 
@@ -315,7 +317,27 @@ struct DaisyWidget: View {
         return baseline
     }
 
-    private func centerColor(for status: RecordingSession.Status) -> Color {
+    private func centerColor(
+        for status: RecordingSession.Status,
+        summaryGen: RecordingSession.SummaryGenerationState,
+        sweep: Double
+    ) -> Color {
+        // "Summary cooking" indicator — when status is .finished but
+        // the post-Stop detached task is still running summarize +
+        // autoSend, fade the centre to amber and pulse the opacity
+        // so the widget reads as "working in the background" without
+        // taking over the orange recording signal. Deliberately in
+        // the warm-amber family (matches the landing's
+        // `--color-petal-center` and the in-app `daisyCenterIdle`)
+        // so it's a calmer cousin of recording orange — never
+        // confused with "still capturing".
+        if case .finished = status, summaryGen == .generating {
+            // 0.55 → 0.95 → 0.55 over a ~3 s cycle (sweep is the
+            // 0…1 sweep already used for petal shimmer; doubling
+            // here gives a slightly slower beat).
+            let pulse = 0.55 + 0.40 * (0.5 + 0.5 * sin(sweep * .pi))
+            return Color.daisyCenterIdle.opacity(pulse)
+        }
         switch status {
         // Recording = macOS systemOrange (inherits the OS mic-active dot).
         case .recording: return .daisyRecording
@@ -336,6 +358,13 @@ struct DaisyWidget: View {
     // MARK: - Strings
 
     private var tooltip: String {
+        // Surface the post-Stop summary phase even though status is
+        // already `.finished` — the user just hit Stop and is
+        // wondering "is anything still happening?".
+        if case .finished = session.status,
+           session.summaryGenerationState == .generating {
+            return "Generating summary…"
+        }
         switch session.status {
         case .idle: return "Click to record"
         case .recording: return "Click to pause"
@@ -343,12 +372,16 @@ struct DaisyWidget: View {
         case .preparing: return "Preparing…"
         case .stopping: return "Stopping…"
         case .summarizing: return "Summarizing…"
-        case .finished: return "Done"
+        case .finished: return "Done · click to record again"
         case .failed(let msg): return msg
         }
     }
 
     private var accessibilityLabel: String {
+        if case .finished = session.status,
+           session.summaryGenerationState == .generating {
+            return "Daisy. Recording finished. Summary still generating in the background."
+        }
         switch session.status {
         case .idle: return "Daisy. Start recording."
         case .recording: return "Daisy. Recording. Tap to pause."

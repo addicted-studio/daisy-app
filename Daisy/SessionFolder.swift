@@ -6,7 +6,7 @@
 //   • RecordingSession holds the active folder, which becomes the
 //     `daisy_folder:` value in the transcript markdown frontmatter
 //     when the session is saved.
-//   • HistoryView filters the sidebar session list by selected folder.
+//   • LibraryView filters the sidebar session list by selected folder.
 //
 //  The taxonomy is open — built-in defaults (Inbox / Private / Work
 //  / Calls) plus user-defined folders persisted in UserDefaults.

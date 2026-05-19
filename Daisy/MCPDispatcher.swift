@@ -33,6 +33,21 @@ enum MCPDispatcher {
 
         ToastCenter.shared.show("Sending to \(integration.name)…", style: .info)
 
+        switch integration.kind {
+        case .mcp:
+            return await sendMCP(integration, to: url, session: session)
+        case .webhook:
+            return await sendWebhook(integration, to: url, session: session)
+        }
+    }
+
+    /// MCP transport: open a JSON-RPC client, call the configured
+    /// tool with substituted arguments.
+    private static func sendMCP(
+        _ integration: MCPIntegration,
+        to url: URL,
+        session: StoredSession
+    ) async -> Bool {
         let placeholders = makePlaceholders(for: session)
         let arguments: AnyJSON
         do {
@@ -56,6 +71,74 @@ enum MCPDispatcher {
         } catch {
             client.disconnect()
             log.error("MCP send to \(integration.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
+            return false
+        }
+    }
+
+    /// Webhook transport: substitute placeholders into the template,
+    /// validate it parses as JSON, POST to the URL with
+    /// `Content-Type: application/json`. Success = any 2xx response.
+    private static func sendWebhook(
+        _ integration: MCPIntegration,
+        to url: URL,
+        session: StoredSession
+    ) async -> Bool {
+        let placeholders = makePlaceholders(for: session)
+        // Reuse the same template substitution + JSON validation as
+        // the MCP path so a malformed template fails the same way
+        // regardless of transport (better error messages).
+        let bodyData: Data
+        do {
+            // Substitute manually here — we want the raw bytes back
+            // for the POST body, not an AnyJSON wrapper.
+            var rendered = integration.argumentsTemplate
+            for (key, value) in placeholders {
+                rendered = rendered.replacingOccurrences(of: key, with: escapeForJSONString(value))
+            }
+            guard let data = rendered.data(using: .utf8) else {
+                throw DispatcherError.encodingFailed
+            }
+            // Validate it parses as JSON — surface template errors
+            // before we hand garbage to the receiver.
+            _ = try JSONSerialization.jsonObject(with: data)
+            bodyData = data
+        } catch {
+            log.error("Webhook template error: \(error.localizedDescription, privacy: .public)")
+            ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
+            return false
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Bearer auth is opt-in per integration — set the header
+        // only when the user actually provided a token. Slack
+        // incoming webhooks etc. don't want one; Attio / Linear
+        // REST / most SaaS APIs require it.
+        let token = integration.bearerToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = bodyData
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                ToastCenter.shared.show("\(integration.name): no response", style: .error)
+                return false
+            }
+            if (200..<300).contains(http.statusCode) {
+                ToastCenter.shared.show("Sent to \(integration.name)", style: .success)
+                log.info("Webhook send to \(integration.name, privacy: .public): \(http.statusCode)")
+                return true
+            } else {
+                ToastCenter.shared.show("\(integration.name): HTTP \(http.statusCode)", style: .error)
+                log.error("Webhook send to \(integration.name, privacy: .public) failed: HTTP \(http.statusCode)")
+                return false
+            }
+        } catch {
+            log.error("Webhook send to \(integration.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
             return false
         }

@@ -11,6 +11,81 @@ import Foundation
 import FoundationModels
 import os
 
+// FoundationModels framework + its `@Generable` / `@Guide` macros
+// only exist from macOS 26.0 onward (Tahoe — when Apple
+// Intelligence's on-device LLM shipped with a public Swift API).
+// Gate the whole file so the rest of Daisy can target macOS 14+
+// while still lighting up Apple Intelligence on Tahoe.
+
+/// Generable shadow of a single bullet inside an outline section.
+/// Apple Intelligence's `@Generable` macro can't introspect a
+/// recursive shape (the canonical `SummaryBullet` carries
+/// `children: [SummaryBullet]`), so the Apple Intelligence path
+/// produces a FLAT bullet list per section — no sub-bullets.
+/// Cloud providers (Anthropic/OpenAI/MCP) still emit the full
+/// 2-level nested tree via JSON because `CloudSummaryDTO` is plain
+/// Codable.
+///
+/// In practice the loss is small: most meetings group cleanly into
+/// 3-5 sections × 2-6 flat bullets each. The xAID.ai example uses
+/// sub-bullets for elaborations ("Через 1.5 недели: крупный клиент,
+/// 5000 исследований"), which we'd render flat as "Через 1.5 недели:
+/// крупный клиент, 5000 исследований/месяц" — slightly denser but
+/// still scannable.
+@available(macOS 26.0, *)
+@Generable
+private struct GenerableSummarySection: Sendable {
+    @Guide(description: "Concise section header in sentence case, 2-6 words. Groups related facts together. Examples: 'Pricing model', 'Doctor onboarding', 'Next steps', 'Технические условия'.")
+    let title: String
+
+    @Guide(description: "2-6 short bullets — fragments are fine, no full sentences. Each bullet is a fact, decision, number, name, or commitment from the meeting. 5-18 words per bullet. If a fact has supporting details (date, amount, owner), inline them with em-dashes or commas rather than as a separate bullet.")
+    let bullets: [String]
+}
+
+/// Local Generable mirror of `MeetingSummary`. We don't put
+/// `@Generable` on the canonical `MeetingSummary` itself because
+/// that macro emits code referencing FoundationModels symbols —
+/// which would crash compilation on macOS-14 builds. Keeping the
+/// macro confined to this file means `MeetingSummary` stays a
+/// plain Codable type that every provider can produce.
+///
+/// Field-for-field identical to `MeetingSummary` with the `@Guide`
+/// descriptions the AI uses to populate each slot. Convert via
+/// `.toMeetingSummary()` before handing back to the rest of the app.
+@available(macOS 26.0, *)
+@Generable
+private struct GenerableMeetingSummary: Sendable {
+    @Guide(description: "ONE sentence (max 20 words) — what the meeting was about. Topic + the parties involved. Reads as a lede over the topical sections below.")
+    let summary: String
+
+    @Guide(description: "Granola-style topical outline of the meeting — 3-5 sections, ordered by importance (decision-heavy first, 'Next steps' last). Each section groups related facts under a short header with a flat bullet list. Empty array ONLY if the transcript is so short (<30 s substantive content) that an outline would be padding — in that case put the gist in the summary field and skip sections.")
+    let sections: [GenerableSummarySection]
+
+    @Guide(description: "Block of next actions agreed on during the meeting — what the participants will do after the call ends. Each item in imperative form, e.g. 'Send invoice to client' or 'Review the proposal'. Include the responsible person if explicitly mentioned: 'Maria: send the contract by Thursday'. Empty array if no clear actions were discussed.")
+    let actionItems: [String]
+
+    @Guide(description: "Ready-to-send follow-up message that a client or partner from this meeting could receive. Write in the second person, polite-professional tone, no greeting boilerplate beyond a single short opener. Recap what was discussed and what the next steps are. 80-180 words. Empty string ONLY for purely internal team meetings (no external counterpart). A customer call, vendor pitch, partner alignment, or contractor onboarding always counts as external and MUST get a draft.")
+    let clientFollowUp: String
+
+    func toMeetingSummary() -> MeetingSummary {
+        MeetingSummary(
+            summary: summary,
+            sections: sections.map { section in
+                SummarySection(
+                    title: section.title,
+                    // Flat bullets — Generable doesn't handle the
+                    // recursive SummaryBullet shape, so each bullet
+                    // becomes a leaf with no children.
+                    bullets: section.bullets.map { SummaryBullet(text: $0, children: []) }
+                )
+            },
+            actionItems: actionItems,
+            clientFollowUp: clientFollowUp
+        )
+    }
+}
+
+@available(macOS 26.0, *)
 @MainActor
 final class AppleIntelligenceSummarizer: SummaryProvider {
     let kind: SummaryProviderKind = .appleIntelligence
@@ -54,12 +129,36 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
         }
 
         let instructions = """
-        You summarize meeting transcripts for a busy founder. Transcripts
-        may contain partial sentences, repetitions, and disfluencies —
-        clean these up. Be concise and concrete. Never invent information
-        that isn't in the transcript. The transcript may be in English or
-        another language — write the summary in the same language as the
-        transcript.
+        You write structured notes from meeting transcripts for a busy
+        founder. The transcript may contain partial sentences,
+        repetitions, and disfluencies — clean them up. Be concise and
+        concrete. Never invent details that aren't in the transcript.
+
+        Output a topical OUTLINE, not a paragraph. Short bullets —
+        fragments are fine, full sentences are not.
+
+        Constraints:
+          - One-sentence summary (≤ 20 words) — the lede.
+          - 3-5 sections in the outline, ordered by importance.
+            Decision-heavy material first.
+          - 2-6 flat bullets per section. If a fact has a supporting
+            detail (date / amount / owner), inline it with em-dashes
+            or commas instead of a separate bullet.
+          - DO NOT include a "Next steps" / "Следующие шаги" /
+            equivalent section in the outline. Those commitments
+            belong ONLY in actionItems. Outline describes what was
+            DISCUSSED; actionItems captures what comes NEXT.
+          - actionItems is a flat checklist of imperative next steps.
+            If the transcript identifies an owner ("I'll send the X",
+            "Margarita принимает решение"), prefix with the name and
+            a colon: "Margarita: send the contract by Thursday".
+          - clientFollowUp is a ready-to-send message for the external
+            counterpart. Empty string ONLY for purely internal team
+            syncs. When in doubt, draft one.
+
+        Write everything in the same language as the transcript
+        (Russian transcript → Russian summary). The transcript may be
+        in English or another language.
         """
 
         let session = LanguageModelSession(instructions: instructions)
@@ -73,11 +172,15 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
         """
 
         do {
+            // Generate into the local Generable shadow (carries the
+            // @Guide field descriptions) — convert to the canonical
+            // MeetingSummary on the way out so callers stay
+            // FoundationModels-agnostic.
             let response = try await session.respond(
                 to: prompt,
-                generating: MeetingSummary.self
+                generating: GenerableMeetingSummary.self
             )
-            return response.content
+            return response.content.toMeetingSummary()
         } catch {
             log.error("AppleIntelligence summarize failed: \(error.localizedDescription, privacy: .public)")
             // Surface Apple's "unsupported language" specifically so the

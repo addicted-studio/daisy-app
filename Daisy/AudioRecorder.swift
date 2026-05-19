@@ -126,6 +126,42 @@ final class AudioRecorder {
     @ObservationIgnored
     private let writeErrors = WriteErrorBox()
 
+    /// Stashed at `start()` time so the route-change recovery path can
+    /// re-pin the engine to the same device after macOS yanks it out
+    /// from under us (AirPods ↔ built-in, USB mic plug/unplug, etc.).
+    /// Empty string == "follow system default".
+    @ObservationIgnored
+    private var activePreferredDeviceUID: String = ""
+
+    /// NotificationCenter token for the engine-configuration-change
+    /// observer. Held so we can remove it on `stop()` and in `deinit`
+    /// without retain-cycling through `self`. nil between sessions.
+    @ObservationIgnored
+    private var configChangeObserver: NSObjectProtocol?
+
+    /// Format the engine's input bus is running at right now.
+    /// Captured in `start()` and refreshed in `handleConfigurationChange`
+    /// so we can detect when route-change recovery has put us on a
+    /// device with a different sample rate / channel layout. AVAudioFile
+    /// can't change format mid-write, so a real mismatch forces us to
+    /// roll the archive into a new .partN.caf file.
+    @ObservationIgnored
+    private var lastInputFormat: AVAudioFormat?
+
+    /// Every .caf file we've written for this session. First entry is
+    /// `archivedFileURL` itself (the base path). Additional entries
+    /// appear only when a mid-session route change brought a new
+    /// input format — see `handleConfigurationChange`. Surfaced as
+    /// a warning toast on `stop()` so the user knows to look for
+    /// `microphone.part2.caf` etc. alongside the primary file.
+    @ObservationIgnored
+    private(set) var archivedParts: [URL] = []
+
+    /// Monotonic part index, incremented each time we open a new
+    /// .caf for a format change. Starts at 1 for the base file.
+    @ObservationIgnored
+    private var partCounter: Int = 0
+
     // MARK: - API
 
     /// Subscribe to PCM buffers as they arrive from the microphone.
@@ -151,11 +187,41 @@ final class AudioRecorder {
         guard state != .recording else { return }
         lastError = nil
 
+        // Cache the device UID so the route-change recovery handler
+        // can re-pin AVAudioEngine to the same device after macOS
+        // tears the audio graph down. Empty string == follow system
+        // default (the v1.0 behaviour the user explicitly chose).
+        activePreferredDeviceUID = preferredDeviceUID ?? ""
+
         // Point AVAudioEngine.inputNode at the user-picked device
         // (if any) BEFORE we sample its output format — switching
         // devices after `outputFormat` is captured leaves us writing
         // to a file with the wrong sample rate / channel count.
-        applyPreferredInputDevice(uid: preferredDeviceUID ?? "")
+        applyPreferredInputDevice(uid: activePreferredDeviceUID)
+
+        // Subscribe to AVAudioEngineConfigurationChange BEFORE engine
+        // start. macOS posts this when the audio graph is forcibly
+        // torn down — AirPods disconnect, a USB mic is plugged or
+        // pulled, the user re-routes Sound output in Control Centre,
+        // or any other change that invalidates the engine's current
+        // input/output formats. Without an observer, the engine quietly
+        // stops, the tap fires no more buffers, and recording dies
+        // silently mid-session. With one, we get a chance to restart
+        // and keep going.
+        if configChangeObserver == nil {
+            configChangeObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange,
+                object: engine,
+                queue: .main
+            ) { [weak self] _ in
+                // Hop to MainActor explicitly — NotificationCenter
+                // queues an Operation, not a Task, so the closure
+                // body runs nonisolated by default.
+                Task { @MainActor [weak self] in
+                    self?.handleConfigurationChange()
+                }
+            }
+        }
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -167,53 +233,21 @@ final class AudioRecorder {
             do {
                 audioFile = try AVAudioFile(forWriting: archiveURL, settings: format.settings)
                 archivedFileURL = archiveURL
+                archivedParts = [archiveURL]
+                partCounter = 1
             } catch {
                 throw DaisyError.audioEngineFailed(error.localizedDescription)
             }
         } else {
             audioFile = nil
             archivedFileURL = nil
+            archivedParts = []
+            partCounter = 0
         }
 
-        // Capture references for the render-thread tap closure.
-        let continuationRef = bufferContinuation
-        let fileRef = audioFile
-        let analyzerRef = analyzer
-        let writeErrorsRef = writeErrors
+        lastInputFormat = format
         writeErrors.reset()
-
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
-            // Render thread — keep work minimal. Buffer-write failures
-            // are accumulated and surfaced once at stop() rather than
-            // touching MainActor state per buffer.
-            if let fileRef {
-                do {
-                    try fileRef.write(from: buffer)
-                } catch {
-                    writeErrorsRef.record(error)
-                }
-            }
-            continuationRef?.yield(AudioChunk(pcm: buffer, time: time))
-
-            let peak = Self.peakLevelDB(of: buffer)
-
-            // Compute spectrum bands for the daisy widget. FFT of 2048
-            // samples is ~0.5 ms on Apple Silicon — safe on render thread.
-            var bands: [Float]? = nil
-            if let ch = buffer.floatChannelData?[0] {
-                let frames = Int(buffer.frameLength)
-                let pcm = Array(UnsafeBufferPointer(start: ch, count: frames))
-                let sampleRate = buffer.format.sampleRate
-                bands = analyzerRef.bands(from: pcm[...], sampleRate: sampleRate)
-            }
-
-            Task { @MainActor [weak self] in
-                self?.levelDB = peak
-                if let b = bands {
-                    self?.spectrumBands = b
-                }
-            }
-        }
+        installInputTap(format: format)
 
         engine.prepare()
         do {
@@ -285,6 +319,10 @@ final class AudioRecorder {
         // Tolerate stop-from-paused too: the explicit Stop & save
         // path may come straight from a paused session.
         guard state == .recording || state == .paused else { return }
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configChangeObserver = nil
+        }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         bufferContinuation?.finish()
@@ -311,6 +349,221 @@ final class AudioRecorder {
                 )
             }
         }
+
+        // Surface multi-part archives — these only happen when a
+        // mid-session route change brought a new input format, so
+        // the user needs to know there's more than one .caf to look
+        // at in the session folder.
+        if archivedParts.count > 1 {
+            let names = archivedParts.map(\.lastPathComponent).joined(separator: ", ")
+            log.warning("Recording split across \(self.archivedParts.count, privacy: .public) parts due to format change(s): \(names, privacy: .public)")
+            ToastCenter.shared.show(
+                "Recording saved as \(archivedParts.count) parts — mic format changed mid-session.",
+                style: .info
+            )
+        }
+    }
+
+    /// Handle `AVAudioEngineConfigurationChange`. macOS posts this
+    /// when the audio graph is forcibly invalidated — AirPods
+    /// disconnect, USB mic plug/unplug, Sound output re-route via
+    /// Control Centre, sleep/wake, etc. The engine has already
+    /// stopped itself by the time we get here. Without recovery
+    /// recording dies silently; with this handler we keep going
+    /// over the new device.
+    ///
+    /// Strategy: tear down tap + audio-file path, re-pin to the
+    /// user's preferred device, read the *new* input format, then:
+    ///
+    ///   - if the new format MATCHES the old one (the common case —
+    ///     AirPods ↔ built-in, both 48 kHz stereo) we just reinstall
+    ///     the tap with the same format and the existing AVAudioFile
+    ///     keeps accepting writes;
+    ///   - if the new format DIFFERS (sample rate, channel count,
+    ///     interleave, or commonFormat) we close the current file
+    ///     (flushing it to disk), bump `partCounter` and open a
+    ///     fresh `<base>.partN.caf` with the new format. Old part
+    ///     stays on disk intact — we surface a multi-part toast at
+    ///     `stop()` so the user knows to grab both. This is the
+    ///     fix for the silent-data-loss bug where a mid-session
+    ///     route change to a different-format device caused every
+    ///     subsequent buffer write to fail format-mismatch into
+    ///     `writeErrors` while `elapsed` kept ticking — 50+ minutes
+    ///     of audio gone with no in-app indication.
+    ///
+    /// Not invoked during `.paused` (user-intentional) or `.stopped`.
+    /// `.idle` shouldn't happen — observer is only registered after
+    /// `start()` flips state to `.recording`.
+    private func handleConfigurationChange() {
+        guard state == .recording else {
+            log.info("Config change ignored (state=\(String(describing: self.state), privacy: .public))")
+            return
+        }
+
+        log.warning("Audio configuration changed mid-recording — engine stopped by macOS, attempting recovery")
+
+        // Tear down the audio graph — the tap was bound to the old
+        // input format and would otherwise either silently drop
+        // buffers or write format-mismatched frames into the file.
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+
+        // Re-pin to the user's preferred device. If the saved UID is
+        // no longer connected (e.g. AirPods just disconnected) this
+        // logs a warning and silently falls back to system default —
+        // exactly what the user wants ("keep recording on whatever
+        // mic is available now"). Must happen BEFORE we read the new
+        // format, because device choice determines the format.
+        applyPreferredInputDevice(uid: activePreferredDeviceUID)
+
+        let newFormat = input.outputFormat(forBus: 0)
+        guard newFormat.channelCount > 0 else {
+            log.error("Recovery failed — no input channels available after route change. Pausing.")
+            fallToPaused()
+            ToastCenter.shared.show(
+                "Mic disconnected — recording paused. Connect a mic and hit Resume.",
+                style: .warning
+            )
+            return
+        }
+
+        let formatChanged = !(lastInputFormat.map { Self.formatsAreEqual($0, newFormat) } ?? false)
+
+        if formatChanged, let baseURL = archivedFileURL {
+            // Close current file (flushes the header + any pending
+            // frames to disk) and roll the archive into a new part
+            // with the new format. AVAudioFile can't accept frames
+            // in a format different from the one it was opened with,
+            // so any attempt to keep writing to the same handle
+            // would land us back in the silent-data-loss scenario.
+            audioFile = nil
+            partCounter += 1
+            let newPartURL = Self.makePartURL(base: baseURL, part: partCounter)
+            do {
+                audioFile = try AVAudioFile(forWriting: newPartURL, settings: newFormat.settings)
+                archivedParts.append(newPartURL)
+                let oldRate = lastInputFormat?.sampleRate ?? 0
+                let oldChans = lastInputFormat?.channelCount ?? 0
+                log.warning("Audio format changed (\(oldRate, privacy: .public) Hz / \(oldChans, privacy: .public) ch → \(newFormat.sampleRate, privacy: .public) Hz / \(newFormat.channelCount, privacy: .public) ch). Archive rolled to \(newPartURL.lastPathComponent, privacy: .public).")
+            } catch {
+                log.error("Failed to open part \(self.partCounter, privacy: .public) for new format: \(error.localizedDescription, privacy: .public). Continuing without archive.")
+                audioFile = nil
+            }
+        }
+
+        lastInputFormat = newFormat
+        installInputTap(format: newFormat)
+
+        do {
+            try engine.start()
+            log.info("Audio engine restarted after route change — recording continues")
+            let toastBody: String
+            if formatChanged {
+                toastBody = "Mic device changed — recording continues in a new file (\(archivedParts.count) parts so far)."
+            } else {
+                toastBody = "Mic device changed — recording continues."
+            }
+            ToastCenter.shared.show(toastBody, style: .info)
+        } catch {
+            // Engine refused to come back. Don't kill the session —
+            // mark it paused so the user can hit Resume manually
+            // after their hardware settles. The existing pause/resume
+            // path is the cleanest re-entry point.
+            log.error("Engine restart after route change failed: \(error.localizedDescription, privacy: .public). Falling to paused state.")
+            fallToPaused()
+            ToastCenter.shared.show(
+                "Mic changed — recording paused. Hit Resume to continue.",
+                style: .warning
+            )
+        }
+    }
+
+    /// Centralised "drop to paused" used by the route-change recovery
+    /// when the engine refuses to come back or the new device has no
+    /// usable channels. Preserves `accumulatedActiveSec` and clears
+    /// the level/spectrum so the widget doesn't appear frozen.
+    private func fallToPaused() {
+        elapsedTimer?.invalidate()
+        elapsedTimer = nil
+        if let startedAt {
+            accumulatedActiveSec += Date().timeIntervalSince(startedAt)
+        }
+        startedAt = nil
+        levelDB = -160
+        spectrumBands = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
+        state = .paused
+    }
+
+    /// Install (or re-install) the audio render-thread tap on
+    /// `inputNode` bus 0 with the given format. Captures the current
+    /// `audioFile`, `bufferContinuation`, `analyzer` and `writeErrors`
+    /// references so the closure body has zero MainActor hops per
+    /// buffer except for the rate-limited level/spectrum UI updates.
+    /// Safe to call multiple times — the tap is removed beforehand
+    /// in `handleConfigurationChange`.
+    private func installInputTap(format: AVAudioFormat) {
+        let input = engine.inputNode
+        let continuationRef = bufferContinuation
+        let fileRef = audioFile
+        let analyzerRef = analyzer
+        let writeErrorsRef = writeErrors
+
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
+            // Render thread — keep work minimal. Buffer-write failures
+            // are accumulated and surfaced once at stop() rather than
+            // touching MainActor state per buffer.
+            if let fileRef {
+                do {
+                    try fileRef.write(from: buffer)
+                } catch {
+                    writeErrorsRef.record(error)
+                }
+            }
+            continuationRef?.yield(AudioChunk(pcm: buffer, time: time))
+
+            let peak = Self.peakLevelDB(of: buffer)
+
+            // Compute spectrum bands for the daisy widget. FFT of 2048
+            // samples is ~0.5 ms on Apple Silicon — safe on render thread.
+            var bands: [Float]? = nil
+            if let ch = buffer.floatChannelData?[0] {
+                let frames = Int(buffer.frameLength)
+                let pcm = Array(UnsafeBufferPointer(start: ch, count: frames))
+                let sampleRate = buffer.format.sampleRate
+                bands = analyzerRef.bands(from: pcm[...], sampleRate: sampleRate)
+            }
+
+            Task { @MainActor [weak self] in
+                self?.levelDB = peak
+                if let b = bands {
+                    self?.spectrumBands = b
+                }
+            }
+        }
+    }
+
+    /// Compare two AVAudioFormats on the dimensions that matter to
+    /// AVAudioFile compatibility. NSObject equality on AVAudioFormat
+    /// also checks bit-depth flags, which we don't care about — a
+    /// 48 kHz Float32 stereo mic ↔ 48 kHz Int16 stereo USB-mic
+    /// change shouldn't force a new part, but currently does. If
+    /// that becomes a real issue, narrow the comparison further.
+    nonisolated private static func formatsAreEqual(_ a: AVAudioFormat, _ b: AVAudioFormat) -> Bool {
+        return a.sampleRate == b.sampleRate
+            && a.channelCount == b.channelCount
+            && a.commonFormat == b.commonFormat
+            && a.isInterleaved == b.isInterleaved
+    }
+
+    /// Build the .partN URL for a route-change-induced new file:
+    /// `microphone.caf` → `microphone.part2.caf`. The first part
+    /// keeps the base name unchanged so existing transcript/session
+    /// wiring doesn't need to know about parts in the common case.
+    nonisolated private static func makePartURL(base: URL, part: Int) -> URL {
+        let ext = base.pathExtension
+        let stem = base.deletingPathExtension().lastPathComponent
+        let dir = base.deletingLastPathComponent()
+        return dir.appendingPathComponent("\(stem).part\(part).\(ext)")
     }
 
     /// Point `engine.inputNode`'s underlying HAL audio unit at a

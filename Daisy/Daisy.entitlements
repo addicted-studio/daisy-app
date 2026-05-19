@@ -20,5 +20,16 @@
 	<true/>
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
+	<!-- Sparkle 2.x XPC services for sandboxed auto-updates.
+	     The Installer Launcher (-spks) elevates privileges to swap
+	     Daisy.app in place; the Installer (-spki) does the actual
+	     copy. Both ship bundled inside Sparkle.framework — we just
+	     allow our sandboxed app process to talk to them.
+	     See https://sparkle-project.org/documentation/sandboxing/ -->
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
+	</array>
 </dict>
 </plist>

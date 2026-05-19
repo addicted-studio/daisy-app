@@ -62,8 +62,12 @@ actor NotionExporter {
             throw NotionError.invalidParentID
         }
         let parentID = formatPageID(normalized)
+        // Read the user's "page vs database" choice from settings.
+        // Off-main reading from a MainActor singleton — keep this
+        // explicit so the async hop is visible at the call site.
+        let parentKind = await readParentKind()
 
-        let body = buildPageJSON(parentID: parentID, data: data)
+        let body = buildPageJSON(parentID: parentID, data: data, parentKind: parentKind)
         var request = URLRequest(url: URL(string: "https://api.notion.com/v1/pages")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -77,7 +81,10 @@ actor NotionExporter {
         }
         if !(200..<300).contains(http.statusCode) {
             let payload = String(data: responseData, encoding: .utf8) ?? "<empty>"
-            log.error("Notion HTTP \(http.statusCode): \(payload, privacy: .public)")
+            // payload stays .private — Notion error bodies often
+            // include the parent_id / database_id we sent, which is a
+            // workspace-internal capability identifier.
+            log.error("Notion HTTP \(http.statusCode): \(payload, privacy: .private)")
             throw NotionError.httpError(http.statusCode, payload)
         }
 
@@ -86,7 +93,11 @@ actor NotionExporter {
               let url = URL(string: urlString) else {
             throw NotionError.decodingFailed("Missing 'url' field.")
         }
-        log.info("Created Notion page at \(url.absoluteString, privacy: .public)")
+        // URL stays .private — Notion page URLs contain the page ID,
+        // which together with the integration secret in the Keychain
+        // grants read/write access to that page. Status code is fine
+        // in logs, the addressable identifier is not.
+        log.info("Created Notion page at \(url.absoluteString, privacy: .private)")
         return url
     }
 
@@ -95,6 +106,15 @@ actor NotionExporter {
     /// Keychain access is synchronous; wrap to keep this code async-friendly.
     private func readCredential(_ key: String) async -> String? {
         KeychainStore.get(account: key)
+    }
+
+    /// Notion parent kind ("page" or "database") read off the
+    /// `AppSettings` singleton on the main actor. Defaults to
+    /// "page" when the value's missing — matches the historical
+    /// behaviour before this setting existed.
+    @MainActor
+    private func readParentKind() -> String {
+        UserDefaults.standard.string(forKey: "daisy.notionParentKind") ?? "page"
     }
 
     private func formatPageID(_ raw: String) -> String {
@@ -109,7 +129,7 @@ actor NotionExporter {
         return parts.joined(separator: "-")
     }
 
-    private func buildPageJSON(parentID: String, data: MeetingExportData) -> [String: Any] {
+    private func buildPageJSON(parentID: String, data: MeetingExportData, parentKind: String) -> [String: Any] {
         var children: [[String: Any]] = []
 
         // Metadata callout-style paragraph.
@@ -120,18 +140,28 @@ actor NotionExporter {
         }
 
         if let summary = data.summary {
-            children.append(heading2("Meeting"))
+            // Localise the H2 headers to match the summary content
+            // language — so a Russian session sent to Notion shows
+            // "Встреча / Следующие шаги / Ответ клиенту" instead of
+            // English headers above Russian content.
+            var sample = summary.summary
+            if sample.count < 60, let firstBullet = summary.sections.first?.bullets.first?.text {
+                sample += " " + firstBullet
+            }
+            let labels = SummaryLabels.for(language: LanguageDetector.detect(sample))
+
+            children.append(heading2(labels.meeting))
             children.append(paragraph(summary.summary))
 
             if !summary.actionItems.isEmpty {
-                children.append(heading2("Next actions"))
+                children.append(heading2(labels.nextActions))
                 for item in summary.actionItems {
                     children.append(todo(item))
                 }
             }
 
             if !summary.clientFollowUp.isEmpty {
-                children.append(heading2("Follow-up for client / partner"))
+                children.append(heading2(labels.followUp))
                 children.append(paragraph(summary.clientFollowUp))
             }
 
@@ -143,17 +173,42 @@ actor NotionExporter {
             children.append(paragraph(chunk))
         }
 
-        return [
-            "parent": ["page_id": parentID],
-            "properties": [
-                "title": [
-                    "title": [
-                        ["type": "text", "text": ["content": data.title.notionTrimmed]]
+        // Body shape differs between page-parent and database-parent:
+        //   • Page parent — `properties` key must be exactly "title"
+        //     (the implicit title slot every Notion page has).
+        //   • Database parent — `properties` key must match the
+        //     title-type column's name in that database. Default
+        //     Notion DBs use "Name"; if the user renamed it, our
+        //     POST will fail with a clear API error pointing at it.
+        //     We don't fetch the schema to auto-discover the title
+        //     column name — that's an extra GET on every send for
+        //     a value users typically keep as "Name". Catch the
+        //     error if/when they hit it and link to docs.
+        if parentKind == "database" {
+            return [
+                "parent": ["database_id": parentID],
+                "properties": [
+                    "Name": [
+                        "title": [
+                            ["type": "text", "text": ["content": data.title.notionTrimmed]]
+                        ]
                     ]
-                ]
-            ],
-            "children": children
-        ]
+                ],
+                "children": children
+            ]
+        } else {
+            return [
+                "parent": ["page_id": parentID],
+                "properties": [
+                    "title": [
+                        "title": [
+                            ["type": "text", "text": ["content": data.title.notionTrimmed]]
+                        ]
+                    ]
+                ],
+                "children": children
+            ]
+        }
     }
 
     // MARK: - Block factories

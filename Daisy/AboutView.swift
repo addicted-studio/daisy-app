@@ -19,11 +19,18 @@ import AppKit
 import SwiftUI
 
 struct AboutView: View {
+    @Bindable private var updater = SparkleUpdater.shared
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 brandHeader
 
+                // Updates lives directly under the version line —
+                // natural pairing of "what version am I on" and "how
+                // do I get newer ones". Apple's own About panels
+                // historically had this same adjacency.
+                updatesSection
                 linksSection
                 studioSection
             }
@@ -52,6 +59,65 @@ struct AboutView: View {
             }
             Spacer()
         }
+    }
+
+    // MARK: - Updates
+
+    private var updatesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader("Updates")
+            // Single-row layout: leading icon + label/last-checked
+            // VStack, manual Check button, toggle on the right edge.
+            // Originally a two-row card with "Check now" as a separate
+            // labelled action; consolidated after the second row read
+            // as filler — the manual-check button is exactly the same
+            // action a user lands on from the App menu anyway, no
+            // need for a second presentation of it.
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.down.circle")
+                    .frame(width: 22)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Automatically check for updates")
+                        .foregroundStyle(.primary)
+                    Text(lastCheckedLine)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                }
+                Spacer()
+                Button("Check for Updates…") {
+                    updater.checkForUpdates()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
+                .disabled(!updater.canCheckForUpdates)
+                Toggle("", isOn: $updater.automaticallyChecksForUpdates)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.daisyBgSidebar)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
+        }
+    }
+
+    private var lastCheckedLine: String {
+        if let last = updater.lastUpdateCheckDate {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            return "Last checked \(formatter.localizedString(for: last, relativeTo: Date()))"
+        }
+        return "Daisy will check daily once enabled."
     }
 
     // MARK: - Links

@@ -1,0 +1,65 @@
+//
+//  View+Compat.swift
+//  Daisy
+//
+//  macOS-version compatibility shims for SwiftUI modifiers that are
+//  only available on macOS 26 (Tahoe) but for which we want a clean
+//  fallback on macOS 14/15. Lets us target macOS 14+ for the floor
+//  install base while still lighting up Liquid Glass on Tahoe.
+//
+//  Pattern: each shim wraps `#available(macOS 26.0, *)`. The fallback
+//  is intentionally a no-op or the closest pre-26 equivalent — the
+//  underlying view continues to look correct because we already paint
+//  a background + overlay stroke at the call site (so the Liquid Glass
+//  material was layered ON TOP, not the only paint).
+//
+
+import SwiftUI
+
+extension View {
+    /// Apply Liquid Glass material in the given shape on macOS 26+,
+    /// otherwise no-op. Call sites already paint a `.background(...)`
+    /// + `.overlay(...strokeBorder...)` directly under this modifier,
+    /// so the non-Tahoe rendering keeps its capsule fill and hairline
+    /// — it just loses the Liquid Glass sheen. Acceptable degradation
+    /// for the ~90% of Macs still on Sonoma/Sequoia.
+    @ViewBuilder
+    func daisyGlass<S: Shape>(in shape: S) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(in: shape)
+        } else {
+            self
+        }
+    }
+
+    /// Hide the window toolbar's frosted background. On macOS 26 this
+    /// is `.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)`
+    /// — added alongside Liquid Glass to suppress the material strip.
+    /// On macOS 14/15 the older `.toolbarBackground(.hidden, for: ...)`
+    /// does the equivalent job (suppresses the toolbar bg paint so
+    /// the window's `containerBackground` shows through unobstructed).
+    @ViewBuilder
+    func daisyWindowToolbarHidden() -> some View {
+        if #available(macOS 26.0, *) {
+            self.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            self.toolbarBackground(.hidden, for: .windowToolbar)
+        }
+    }
+
+    /// Tint the window's content background. The SwiftUI
+    /// `.containerBackground(_:for: .window)` modifier was added in
+    /// macOS 15 — even though the broader `containerBackground` API
+    /// shipped in macOS 14, the `.window` placement specifically
+    /// came in Sequoia. On macOS 14 we fall back to the AppKit-level
+    /// `NSWindow.backgroundColor` set in `DaisyAppDelegate` (warm
+    /// cream), which produces a visually identical result.
+    @ViewBuilder
+    func daisyWindowBackground(_ color: Color) -> some View {
+        if #available(macOS 15.0, *) {
+            self.containerBackground(color, for: .window)
+        } else {
+            self
+        }
+    }
+}

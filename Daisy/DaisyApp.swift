@@ -84,6 +84,18 @@ struct DaisyApp: App {
                 Button("About Daisy") {
                     AboutPanel.show()
                 }
+                // "Check for Updates…" sits in the App menu directly
+                // under About — that's the macOS convention (Slack,
+                // Bear, Tot, MailMate all put it there). The button is
+                // disabled while an in-flight check is running so a
+                // double-click can't fire two probes; the wrapper also
+                // disables it entirely when Sparkle isn't linked yet,
+                // which is the state on the first build before the
+                // SPM dep is added in Xcode.
+                Button("Check for Updates…") {
+                    SparkleUpdater.shared.checkForUpdates()
+                }
+                .disabled(!SparkleUpdater.shared.canCheckForUpdates)
             }
         }
 
@@ -91,8 +103,56 @@ struct DaisyApp: App {
             ContentView(session: session, settings: settings)
                 .frame(width: 420, height: 580)
         } label: {
-            Image(nsImage: DaisyMark.menuBarImage)
+            MenuBarLabel(session: session, settings: settings)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+// MARK: - Menu bar label
+//
+// Pulls the dynamic label content out of DaisyApp's scene builder
+// so we can `@Bindable` the session + calendar service and update
+// the label whenever either changes. Three states:
+//
+//   • Recording  → icon only (the existing menu-bar art already
+//                  communicates "active"; adding text would crowd
+//                  the system bar at the worst time)
+//   • Setting on AND has upcoming event within 8h
+//                → icon + "14:30 · Q3 Review"
+//   • Default    → icon only
+//
+
+private struct MenuBarLabel: View {
+    @Bindable var session: RecordingSession
+    @Bindable var settings: AppSettings
+    @Bindable private var calendar = CalendarService.shared
+
+    var body: some View {
+        if let next = nextMeetingLabel {
+            HStack(spacing: 4) {
+                Image(nsImage: DaisyMark.menuBarImage)
+                Text(next)
+            }
+        } else {
+            Image(nsImage: DaisyMark.menuBarImage)
+        }
+    }
+
+    /// Returns the menu-bar label text when ALL conditions hold:
+    ///   • User opted in (`menuBarShowsNextMeeting == true`)
+    ///   • Session is NOT actively recording (recording state owns
+    ///     the menu bar — surfacing "Next meeting" mid-recording is
+    ///     a distraction)
+    ///   • Calendar service has an upcoming event within 8 hours
+    /// nil → fall back to icon-only.
+    private var nextMeetingLabel: String? {
+        guard settings.menuBarShowsNextMeeting else { return nil }
+        switch session.status {
+        case .recording, .paused, .preparing, .stopping, .summarizing:
+            return nil
+        case .idle, .finished, .failed:
+            return calendar.nextMeetingShortLabel
+        }
     }
 }

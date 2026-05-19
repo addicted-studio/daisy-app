@@ -4,17 +4,18 @@
 //
 //  Detects long stretches of silence during a recording and asks
 //  whether the user just forgot to hit Stop. Owned by
-//  RecordingSession; pokes a published flag the floating widget
-//  binds to so it can pop a "Are we done?" callout next to the
-//  daisy mark.
+//  RecordingSession; surfaces the prompt as a native
+//  `UNUserNotification` (see `SilencePromptNotification`) — the
+//  custom SwiftUI bubble that used to live next to the daisy widget
+//  was retired 2026-05-18 after several rounds of positioning-maths
+//  pain that the OS-supplied banner handles for free.
 //
-//  Heuristic (revised 2026-05-18):
+//  Heuristic:
 //   • Speech signal: arrival of a new TranscriptSegment with
-//     non-empty text. We deliberately do NOT key off the raw mic
-//     levelDB because anything above -45 dB resets the clock — and
-//     keyboard typing, HVAC, water running, and street noise all
-//     clear that bar without WhisperKit producing any text. The
-//     transcriber's output is the cleanest "the user is actually
+//     non-empty text. We deliberately do NOT key off raw mic levelDB
+//     because keyboard typing, HVAC, water running, and street noise
+//     all clear the threshold without WhisperKit producing any text.
+//     The transcriber's output is the cleanest "the user is actually
 //     speaking" signal we have.
 //   • Silence window: 3 minutes since the most recent transcribed
 //     segment during `.recording` triggers the prompt. Pausing the
@@ -23,12 +24,18 @@
 //   • Snooze: if the user dismisses with "Not yet", we don't poke
 //     again for another full window. Stop / Pause / Resume also
 //     resets the snooze so a fresh recording session starts clean.
-//   • Long pause: when the session sits on .paused for more than
+//   • Long pause: when the session sits on `.paused` for more than
 //     5 minutes we also surface the prompt. Pause is intentional
 //     (the user pressed it) but "I'll be back in two minutes"
-//     turns into "I forgot I left it on" with surprising
-//     frequency, and a paused recording quietly draining battery
-//     is exactly the failure mode the bubble exists to catch.
+//     turns into "I forgot I left it on" with surprising frequency,
+//     and a paused recording quietly draining battery is exactly the
+//     failure mode the prompt exists to catch.
+//
+//  Action routing: the banner's Stop & save / Not yet buttons hit
+//  `DaisyAppDelegate.userNotificationCenter(_:didReceive:)`, which
+//  posts to `NotificationCenter.default` on a Daisy-private name.
+//  The active SilenceMonitor subscribes on `start()` and routes
+//  back into `session.stop()` or `snooze()`.
 //
 //  Numbers are intentionally not user-configurable for v1 — easier
 //  to ship a sensible default than a settings tab nobody touches.
@@ -41,12 +48,6 @@ import os
 @MainActor
 @Observable
 final class SilenceMonitor {
-    /// When true, the widget should show "Are we done?" — the
-    /// floating panel reads this and renders the bubble; the
-    /// session also exposes it via a passthrough property so other
-    /// surfaces can react.
-    private(set) var questionVisible: Bool = false
-
     @ObservationIgnored
     private weak var session: RecordingSession?
     @ObservationIgnored
@@ -57,6 +58,12 @@ final class SilenceMonitor {
     private var lastSpeechAt: Date?
     @ObservationIgnored
     private var snoozedUntil: Date?
+    @ObservationIgnored
+    private var promptOutstanding: Bool = false
+    @ObservationIgnored
+    private var stopObserver: NSObjectProtocol?
+    @ObservationIgnored
+    private var snoozeObserver: NSObjectProtocol?
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "SilenceMonitor")
 
@@ -71,40 +78,48 @@ final class SilenceMonitor {
     deinit {
         tickTask?.cancel()
         pausedPromptTask?.cancel()
+        // Capture observer tokens into a local array first so the
+        // deinit closure doesn't need to capture `self` (which is
+        // already being torn down). NotificationCenter handles
+        // removal with no actor isolation requirements.
+        let stop = stopObserver
+        let snooze = snoozeObserver
+        let center = NotificationCenter.default
+        if let stop { center.removeObserver(stop) }
+        if let snooze { center.removeObserver(snooze) }
     }
 
     // MARK: - Lifecycle hooks called from RecordingSession
 
     /// Begin monitoring. Called when the session enters `.recording`.
-    /// `start()` is idempotent — calling it again while already
-    /// running is a no-op.
+    /// Idempotent.
     func start() {
         if tickTask != nil { return }
         lastSpeechAt = Date()
-        questionVisible = false
+        promptOutstanding = false
         snoozedUntil = nil
+        subscribeToBannerActions()
         tickTask = Task { [weak self] in
             await self?.runLoop()
         }
         log.info("Silence monitor armed")
     }
 
-    /// Pause monitoring without resetting state. Called on session
-    /// pause so the silence clock doesn't accumulate through a
-    /// human-initiated quiet stretch. Replaces the speech-poll loop
-    /// with a single-shot pause-prompt timer — see `armPausedTimer`.
+    /// Pause monitoring without resetting state. Replaces the
+    /// speech-poll loop with a single-shot pause-prompt timer.
     func pause() {
         tickTask?.cancel()
         tickTask = nil
-        questionVisible = false
+        SilencePromptNotification.cancel()
+        promptOutstanding = false
         armPausedTimer()
     }
 
-    /// Resume monitoring after `pause()`. Re-arms the clock from
-    /// "now" so the user gets a fresh window after intentional silence.
+    /// Resume monitoring after `pause()`. Re-arms the clock from "now".
     func resume() {
         cancelPausedTimer()
-        questionVisible = false
+        SilencePromptNotification.cancel()
+        promptOutstanding = false
         guard tickTask == nil else { return }
         lastSpeechAt = Date()
         tickTask = Task { [weak self] in
@@ -117,20 +132,19 @@ final class SilenceMonitor {
         tickTask?.cancel()
         tickTask = nil
         cancelPausedTimer()
-        questionVisible = false
+        SilencePromptNotification.cancel()
+        promptOutstanding = false
         lastSpeechAt = nil
         snoozedUntil = nil
+        unsubscribeFromBannerActions()
     }
 
-    /// User dismissed the prompt with "Not yet" — give them a fresh
+    /// User dismissed the banner with "Not yet" — give them a fresh
     /// silence window before nagging again. Works for both the
-    /// recording-silence bubble and the long-pause bubble: the
-    /// recording branch resets `snoozedUntil` and `lastSpeechAt`;
-    /// if we surfaced the bubble from a pause timer (tickTask is
-    /// nil because pause() cancelled it), we additionally re-arm
-    /// that timer for another full window.
+    /// recording-silence prompt and the long-pause prompt.
     func snooze() {
-        questionVisible = false
+        SilencePromptNotification.cancel()
+        promptOutstanding = false
         snoozedUntil = Date().addingTimeInterval(silenceWindowSec)
         lastSpeechAt = Date()
         if tickTask == nil, session?.status == .paused {
@@ -138,36 +152,74 @@ final class SilenceMonitor {
         }
     }
 
-    /// User explicitly hit "Stop & save" via the bubble — close it
-    /// out, the session is being finalised anyway.
+    /// User explicitly hit "Stop & save" via the banner — close it
+    /// out, the session is being finalised anyway. Stop is dispatched
+    /// from the action handler; this method just clears state.
     func acknowledge() {
-        questionVisible = false
+        SilencePromptNotification.cancel()
+        promptOutstanding = false
         cancelPausedTimer()
+    }
+
+    // MARK: - Banner actions (NotificationCenter bus)
+
+    private func subscribeToBannerActions() {
+        unsubscribeFromBannerActions()
+        let center = NotificationCenter.default
+        stopObserver = center.addObserver(
+            forName: SilencePromptNotification.stopRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.acknowledge()
+                if let session = self.session {
+                    await session.stop()
+                }
+            }
+        }
+        snoozeObserver = center.addObserver(
+            forName: SilencePromptNotification.snoozeRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.snooze()
+            }
+        }
+    }
+
+    private func unsubscribeFromBannerActions() {
+        let center = NotificationCenter.default
+        if let stopObserver { center.removeObserver(stopObserver) }
+        if let snoozeObserver { center.removeObserver(snoozeObserver) }
+        stopObserver = nil
+        snoozeObserver = nil
     }
 
     // MARK: - Internals
 
-    /// Schedule a one-shot bubble for the long-pause case. Cancelled
-    /// by `resume()`, `stop()`, or re-armed by `snooze()`. Uses a
-    /// detached single-sleep Task rather than the poll loop because
-    /// nothing about the pause state changes during the wait — we
-    /// just need a fuse.
+    /// Schedule a one-shot prompt for the long-pause case. Cancelled
+    /// by `resume()`, `stop()`, or re-armed by `snooze()`.
     private func armPausedTimer() {
         cancelPausedTimer()
         let window = pausedWindowSec
         pausedPromptTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(window))
-            // `try?` swallows CancellationError silently — guard
-            // here in case the task was torn down during the sleep
-            // (resume() / stop() racing the wakeup).
             guard !Task.isCancelled, let self else { return }
             guard
                 let session = self.session,
                 session.status == .paused,
-                !self.questionVisible
+                !self.promptOutstanding
             else { return }
-            self.questionVisible = true
+            // User opted out of prompts in Settings — still mark
+            // promptOutstanding so we don't repeat-fire, but skip
+            // the banner itself.
+            guard session.settings.silencePromptsEnabled else { return }
+            self.promptOutstanding = true
             self.log.info("Silence prompt shown after \(Int(window), privacy: .public)s on pause")
+            SilencePromptNotification.post()
         }
     }
 
@@ -187,36 +239,34 @@ final class SilenceMonitor {
     private func tick() {
         guard let session, session.status == .recording else { return }
 
-        // Take the most recent transcript segment with non-empty
-        // text as the speech signal. Walking from the tail is O(1)
-        // in the common case (last segment has text) and at worst
-        // O(n) when the latest segments are still being finalised
-        // — n is at most a few hundred for hour-long recordings,
-        // and tick runs every 5 s, so the cost is negligible.
         let latestSpeechAt = session.segments
             .reversed()
             .first(where: { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty })?
             .startedAt
 
-        // Whisper produced something newer than what we last saw —
-        // user is still talking, reset the silence clock and clear
-        // any in-flight prompt.
         if let latestSpeechAt, latestSpeechAt > (lastSpeechAt ?? .distantPast) {
             lastSpeechAt = latestSpeechAt
-            if questionVisible { questionVisible = false }
+            if promptOutstanding {
+                SilencePromptNotification.cancel()
+                promptOutstanding = false
+            }
             return
         }
 
-        // Already nudged once and the user snoozed — wait it out.
         if let snoozedUntil, Date() < snoozedUntil {
             return
         }
 
         let referenceDate = lastSpeechAt ?? Date()
         let quietFor = Date().timeIntervalSince(referenceDate)
-        if quietFor >= silenceWindowSec, !questionVisible {
-            questionVisible = true
+        if quietFor >= silenceWindowSec, !promptOutstanding {
+            // Respect the user's Settings → Notifications toggle.
+            // We keep tick'ing internally either way so timing
+            // metrics stay consistent; we just don't post.
+            guard session.settings.silencePromptsEnabled else { return }
+            promptOutstanding = true
             log.info("Silence prompt shown after \(Int(quietFor), privacy: .public)s without new transcript")
+            SilencePromptNotification.post()
         }
     }
 }

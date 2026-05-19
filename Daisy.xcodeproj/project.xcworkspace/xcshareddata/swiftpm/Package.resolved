@@ -1,13 +1,21 @@
 {
-  "originHash" : "2b4f0703ddd4b31ad70c27716c62b60407edd0d2671254cc8bc69f804936b78e",
+  "originHash" : "9fea6014214adef9f251b3663863fa97ce33eacc768e2183d6fe74c1bcdd3737",
   "pins" : [
     {
       "identity" : "fluidaudio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/FluidInference/FluidAudio",
       "state" : {
-        "branch" : "main",
         "revision" : "9782d877bc24b23bd99c66ad70fd8d2669377fa7"
+      }
+    },
+    {
+      "identity" : "sparkle",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sparkle-project/Sparkle",
+      "state" : {
+        "revision" : "6276ba2b404829d139c45ff98427cf90e2efc59b",
+        "version" : "2.9.2"
       }
     },
     {
@@ -24,7 +32,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/argmaxinc/WhisperKit",
       "state" : {
-        "branch" : "main",
         "revision" : "984ab42f6d6824f17630109537829af26ca47fd6"
       }
     }

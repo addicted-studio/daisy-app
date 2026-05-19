@@ -24,20 +24,67 @@ import SwiftUI
 
 // MARK: - Model
 
+/// Underlying transport for a destination — either MCP (JSON-RPC
+/// over HTTP/SSE, talks to a real MCP server) or a plain webhook
+/// POST. Stored as a string in JSON so future kinds can be added
+/// without breaking the decoder on older saves.
+nonisolated enum DestinationKind: String, Codable, Sendable, CaseIterable {
+    case mcp
+    case webhook
+}
+
 /// One user-configured destination. Sendable + Codable so it
 /// round-trips through UserDefaults cleanly.
+///
+/// Despite the historical `MCPIntegration` name (kept for binary
+/// compatibility with stored data), the type now covers both MCP
+/// servers and plain HTTP webhooks — `kind` discriminates. A
+/// rename would invalidate every previously-saved JSON record, so
+/// the legacy spelling stays.
 nonisolated struct MCPIntegration: Identifiable, Codable, Sendable, Hashable {
     let id: UUID
     var name: String
+    /// For `.mcp` — JSON-RPC HTTP endpoint of the MCP server. For
+    /// `.webhook` — destination URL the JSON body is POSTed to.
     var baseURL: String
+    /// MCP tool name. Ignored for `.webhook` (no tool concept on a
+    /// plain HTTP endpoint).
     var toolName: String
-    /// JSON template for the tool's `arguments`. Supports the same
-    /// placeholders MCPDispatcher knows how to substitute:
-    /// {{title}}, {{date}}, {{summary}}, {{actionItems}},
-    /// {{actionItemsBullets}}, {{clientFollowUp}}, {{transcript}},
-    /// {{folder}}, {{locale}}.
+    /// For `.mcp` — JSON template for the tool's `arguments`. For
+    /// `.webhook` — JSON body POSTed verbatim to `baseURL` after
+    /// placeholder substitution. Same placeholder set in both
+    /// cases: {{title}}, {{date}}, {{summary}},
+    /// {{actionItems}}, {{actionItemsBullets}},
+    /// {{clientFollowUp}}, {{transcript}}, {{folder}}, {{locale}}.
     var argumentsTemplate: String
     var enabled: Bool
+    /// Transport. Defaults to `.mcp` for back-compat with records
+    /// saved before the field existed.
+    var kind: DestinationKind = .mcp
+    /// When true, this integration fires automatically after every
+    /// session finishes (Stop & save → summary done). Independent of
+    /// `enabled` — `enabled: false` removes the integration from
+    /// every surface (kebab + auto-send), `enabled: true / autoOnSave: false`
+    /// keeps it in the kebab as a manual destination only.
+    /// Defaults to false for back-compat with already-saved data
+    /// and to keep the "first time use is opt-in" property the
+    /// Notion auto-send setting also has.
+    var autoOnSave: Bool
+    /// Folder slugs this integration's auto-send applies to. Empty
+    /// set means "every folder" (default — most useful for users
+    /// who only ever record one kind of session). When non-empty,
+    /// auto-send fires only for sessions whose folder is in the
+    /// set. Manual Send-to from the kebab ignores this entirely —
+    /// the user explicitly picked the destination, so we trust them.
+    var allowedFolders: Set<String> = []
+    /// Optional bearer token for `.webhook` transport — sent as
+    /// `Authorization: Bearer <token>` on each POST. Required for
+    /// REST APIs that don't accept the request without auth (Attio,
+    /// Linear REST, most SaaS). Ignored for `.mcp` (MCP handles
+    /// auth differently, usually via the server config). Stored
+    /// inline in UserDefaults — same trust boundary as the rest of
+    /// `MCPIntegration`, which is fine for personal-API tokens.
+    var bearerToken: String = ""
 
     init(
         id: UUID = UUID(),
@@ -45,7 +92,11 @@ nonisolated struct MCPIntegration: Identifiable, Codable, Sendable, Hashable {
         baseURL: String,
         toolName: String,
         argumentsTemplate: String,
-        enabled: Bool = true
+        enabled: Bool = true,
+        autoOnSave: Bool = false,
+        kind: DestinationKind = .mcp,
+        allowedFolders: Set<String> = [],
+        bearerToken: String = ""
     ) {
         self.id = id
         self.name = name
@@ -53,6 +104,32 @@ nonisolated struct MCPIntegration: Identifiable, Codable, Sendable, Hashable {
         self.toolName = toolName
         self.argumentsTemplate = argumentsTemplate
         self.enabled = enabled
+        self.autoOnSave = autoOnSave
+        self.kind = kind
+        self.allowedFolders = allowedFolders
+        self.bearerToken = bearerToken
+    }
+
+    // Manual Codable conformance so existing UserDefaults entries
+    // (pre-autoOnSave / pre-kind / pre-allowedFolders / pre-bearerToken)
+    // decode cleanly with the new fields defaulting — Swift's
+    // synthesized `init(from:)` would throw on a missing key
+    // otherwise.
+    enum CodingKeys: String, CodingKey {
+        case id, name, baseURL, toolName, argumentsTemplate, enabled, autoOnSave, kind, allowedFolders, bearerToken
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.baseURL = try c.decode(String.self, forKey: .baseURL)
+        self.toolName = try c.decode(String.self, forKey: .toolName)
+        self.argumentsTemplate = try c.decode(String.self, forKey: .argumentsTemplate)
+        self.enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        self.autoOnSave = try c.decodeIfPresent(Bool.self, forKey: .autoOnSave) ?? false
+        self.kind = try c.decodeIfPresent(DestinationKind.self, forKey: .kind) ?? .mcp
+        self.allowedFolders = try c.decodeIfPresent(Set<String>.self, forKey: .allowedFolders) ?? []
+        self.bearerToken = try c.decodeIfPresent(String.self, forKey: .bearerToken) ?? ""
     }
 
     // MARK: - Starter presets
@@ -85,6 +162,54 @@ nonisolated struct MCPIntegration: Identifiable, Codable, Sendable, Hashable {
             }
             """,
             enabled: true
+        )
+    }
+
+    /// Generic webhook starter — POST a Slack-compatible incoming
+    /// webhook body. Most chat platforms (Slack, Discord, Mattermost,
+    /// Rocket.Chat) accept this shape; for a fully custom endpoint
+    /// the user just edits `argumentsTemplate`.
+    static func webhookDefault() -> MCPIntegration {
+        MCPIntegration(
+            name: "Webhook",
+            baseURL: "https://hooks.slack.com/services/<your-webhook-path>",
+            toolName: "",
+            argumentsTemplate: """
+            {
+              "text": "*{{title}}*\\n\\n{{summary}}\\n\\n*Next actions*\\n{{actionItemsBullets}}"
+            }
+            """,
+            enabled: true,
+            kind: .webhook
+        )
+    }
+
+    /// Attio shape: POST to `/v2/objects/notes/records` to create
+    /// a meeting note. Attio requires a `parent_object` +
+    /// `parent_record_id` pair so the note attaches to a person or
+    /// company in the user's workspace — the placeholders for those
+    /// fields are left as `<...>` so the user can paste their own
+    /// record id (workspaces vary; Daisy can't know which contact
+    /// the meeting was with). Token is a Personal Access Token
+    /// created at app.attio.com → Settings → API.
+    static func attioDefault() -> MCPIntegration {
+        MCPIntegration(
+            name: "Attio",
+            baseURL: "https://api.attio.com/v2/objects/notes/records",
+            toolName: "",
+            argumentsTemplate: """
+            {
+              "data": {
+                "parent_object": "<people-or-companies>",
+                "parent_record_id": "<your-attio-record-id>",
+                "title": "{{title}}",
+                "format": "markdown",
+                "content": "## Summary\\n\\n{{summary}}\\n\\n## Next actions\\n\\n{{actionItemsBullets}}\\n\\n## Follow-up\\n\\n{{clientFollowUp}}"
+              }
+            }
+            """,
+            enabled: true,
+            kind: .webhook
         )
     }
 
@@ -155,6 +280,12 @@ final class MCPIntegrationStore {
     /// menus and in the dispatcher.
     var enabledIntegrations: [MCPIntegration] {
         integrations.filter { $0.enabled }
+    }
+
+    /// Subset that should auto-fire after Stop & save. Subset of
+    /// `enabledIntegrations` — auto-on-save implies enabled.
+    var autoOnSaveIntegrations: [MCPIntegration] {
+        integrations.filter { $0.enabled && $0.autoOnSave }
     }
 
     // MARK: - Persistence

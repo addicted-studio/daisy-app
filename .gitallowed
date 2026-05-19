@@ -1,0 +1,22 @@
+# git-secrets allowlist for Daisy.
+#
+# Each line is a regex pattern. Anything matching one of these
+# patterns is NOT flagged by `git secrets --scan` even if it
+# matches a registered prohibited pattern.
+#
+# Rule of thumb: only ever allow values that are PUBLIC by design.
+# Real secrets stay in macOS Keychain via KeychainStore; user-
+# supplied API keys (Anthropic, OpenAI, MCP, Google access tokens)
+# never touch the repo.
+
+# Google OAuth client_secret used in the PKCE + loopback redirect
+# flow (GoogleOAuthClient.swift).
+#
+# Why this is safe: Google's "Desktop app" OAuth client type ships
+# its client_secret in the binary by design — anyone with a stock
+# Chrome / VS Code / Daisy install can extract it from disk in
+# seconds. Security comes from PKCE + the redirect_uri being a
+# loopback http://127.0.0.1:<random-port> path that only Daisy
+# itself can serve. Documented at length inside GoogleOAuthClient.swift
+# and the memory entry project_daisy_google_oauth.md.
+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

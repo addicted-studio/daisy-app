@@ -307,7 +307,7 @@ struct ContentView: View {
             .overlay(
                 Capsule(style: .continuous).strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
             )
-            .glassEffect(in: Capsule(style: .continuous))
+            .daisyGlass(in: Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
         .disabled(disablePrimary)
@@ -391,15 +391,36 @@ struct ContentView: View {
     @ViewBuilder
     private var summaryCard: some View {
         if let summary = session.summarizer.lastSummary {
+            // Detect summary language from its lede + first bullet
+            // so the structural headers match the content language.
+            // Same trick as SessionDetailView.summaryLabels(for:).
+            let labels: SummaryLabels = {
+                var sample = summary.summary
+                if sample.count < 60, let firstBullet = summary.sections.first?.bullets.first?.text {
+                    sample += " " + firstBullet
+                }
+                return SummaryLabels.for(language: LanguageDetector.detect(sample))
+            }()
             VStack(alignment: .leading, spacing: 16) {
-                mdSection(title: "Meeting") {
-                    Text(summary.summary)
-                        .font(.callout)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                // 1-sentence lede (or full legacy paragraph if
+                // sections are empty — pre-1.0.2 fallback).
+                if !summary.summary.isEmpty {
+                    mdSection(title: labels.meeting) {
+                        Text(summary.summary)
+                            .font(.callout)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                // Granola-style topical outline. Legacy summaries
+                // have `sections == []` and skip this loop.
+                ForEach(Array(summary.sections.enumerated()), id: \.offset) { _, section in
+                    mdSection(title: section.title) {
+                        homeBulletTree(section.bullets, level: 0)
+                    }
                 }
                 if !summary.actionItems.isEmpty {
-                    mdSection(title: "Next actions") {
+                    mdSection(title: labels.nextActions) {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(summary.actionItems.enumerated()), id: \.offset) { _, item in
                                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -416,7 +437,7 @@ struct ContentView: View {
                     }
                 }
                 if !summary.clientFollowUp.isEmpty {
-                    mdSection(title: "Follow-up for client / partner") {
+                    mdSection(title: labels.followUp) {
                         HStack(alignment: .top, spacing: 6) {
                             Text(summary.clientFollowUp)
                                 .font(.callout)
@@ -446,6 +467,43 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    /// Hierarchical bullet tree for Granola-style sections, sized for
+    /// the home panel's narrower column (`.callout` font, 4pt row
+    /// spacing). Mirrors `bulletTree(_:level:)` in SessionDetailView
+    /// but tuned for the smaller surface so dense outlines stay
+    /// scannable in the right pane.
+    ///
+    /// Returns `AnyView` rather than `some View` because the function
+    /// is recursive: Swift 6 / Xcode 26 refuses to infer an opaque
+    /// return type that references itself ("function opaque return
+    /// type was inferred as … which defines the opaque type in terms
+    /// of itself"). Type-erasing the recursive call site breaks the
+    /// self-reference. The runtime cost is negligible — bullets are
+    /// at most a few dozen rows.
+    private func homeBulletTree(_ bullets: [SummaryBullet], level: Int) -> AnyView {
+        AnyView(
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("•")
+                                .font(.callout.weight(level == 0 ? .semibold : .regular))
+                                .foregroundStyle(level == 0 ? .secondary : .tertiary)
+                            Text(bullet.text)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !bullet.children.isEmpty {
+                            homeBulletTree(bullet.children, level: level + 1)
+                                .padding(.leading, 18)
+                        }
+                    }
+                }
+            }
+        )
     }
 
     /// MD-style section header: H3 weight + hairline divider. Mirrors
@@ -590,6 +648,35 @@ struct ContentView: View {
         .padding(12)
     }
 
+    /// Returns the action to run when the user taps the Send-to
+    /// button itself (vs expanding the dropdown). nil when no
+    /// default destination is configured — the button then opens
+    /// the menu normally on tap.
+    private func defaultSendAction() -> (() -> Void)? {
+        let id = settings.defaultDestinationID
+        guard !id.isEmpty else { return nil }
+        if id == "notion" {
+            guard settings.hasNotionCredentials, hasSegments else { return nil }
+            return { Task { await sendToNotion() } }
+        }
+        // Treat anything else as an MCPIntegration UUID — silently
+        // bail if the integration's been deleted / disabled since
+        // the user picked it. (Settings would normally clear the
+        // stale ID, but the resilient fallback here keeps the
+        // button from going dead-no-op if it lags.)
+        guard
+            let integration = MCPIntegrationStore.shared.enabledIntegrations
+                .first(where: { $0.id.uuidString == id })
+        else { return nil }
+        guard hasSegments else { return nil }
+        return {
+            Task {
+                let stored = session.snapshotStoredSession()
+                _ = await MCPDispatcher.send(integration, for: stored)
+            }
+        }
+    }
+
     private var sendMenu: some View {
         Menu {
             // Notion item is shown only when the user has actually
@@ -637,6 +724,14 @@ struct ContentView: View {
                     ProgressView().controlSize(.small)
                 }
             }
+        } primaryAction: {
+            // Default-destination one-click: if the user picked a
+            // destination in Settings, clicking the Send-to button
+            // (vs the dropdown arrow) fires that directly. nil
+            // primaryAction means the click expands the menu as
+            // usual — Apple's default behaviour when the action
+            // is a no-op.
+            defaultSendAction()?()
         }
         .menuStyle(.button)
         .buttonStyle(.bordered)
@@ -663,11 +758,11 @@ struct ContentView: View {
             }
 
             Button {
-                AppNavigation.shared.section = .history
+                AppNavigation.shared.section = .library
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
-                Label("Transcript history…", systemImage: "list.bullet.rectangle")
+                Label("Open Library…", systemImage: "books.vertical")
             }
             .keyboardShortcut("h", modifiers: [.command, .shift])
 

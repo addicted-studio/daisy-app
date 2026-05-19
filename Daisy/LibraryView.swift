@@ -1,16 +1,21 @@
 //
-//  HistoryView.swift
+//  LibraryView.swift
 //  Daisy
 //
 //  Browser for past recording sessions. Top-level NavigationSplitView:
 //  left pane = list of sessions with search; right pane = full detail
 //  (transcript + summary + screenshots + actions).
 //
+//  Sidebar entry is called "Library" — `HistoryView` was the original
+//  name when it framed the section as a chronological log; renamed
+//  2026-05-19 alongside the shift to a curated-collection mental model
+//  (Granola / Cleft / Apple Books / Music pattern).
+//
 
 import SwiftUI
 import AppKit
 
-struct HistoryView: View {
+struct LibraryView: View {
     @Bindable var store = SessionStore.shared
     @Bindable var folders = FolderStore.shared
     @State private var query: String = ""
@@ -67,10 +72,10 @@ struct HistoryView: View {
             }
         }
         // Deep-link arrival: HomeView (and similar) can request a
-        // specific session via `AppNavigation.openInHistory(_:)`.
+        // specific session via `AppNavigation.openInLibrary(_:)`.
         // We react to that request both on first appear (above) and
         // any subsequent arrivals while the view is already mounted.
-        .onChange(of: AppNavigation.shared.pendingHistorySelection) { _, _ in
+        .onChange(of: AppNavigation.shared.pendingLibrarySelection) { _, _ in
             consumePendingSelection()
         }
         // Backspace / forward-Delete on the History view trigger the
@@ -129,11 +134,11 @@ struct HistoryView: View {
     /// on appear AND on changes — the latter handles deep-links
     /// while the History tab is already the active one.
     private func consumePendingSelection() {
-        guard let pending = AppNavigation.shared.pendingHistorySelection else { return }
+        guard let pending = AppNavigation.shared.pendingLibrarySelection else { return }
         if store.sessions.contains(where: { $0.id == pending }) {
             selectedIDs = [pending]
         }
-        AppNavigation.shared.pendingHistorySelection = nil
+        AppNavigation.shared.pendingLibrarySelection = nil
     }
 
     /// Resolve the current selection into a delete-confirmation
@@ -310,7 +315,7 @@ struct HistoryView: View {
     @ViewBuilder
     private var detailPane: some View {
         if let session = singleSelected {
-            SessionDetailView(session: session)
+            SessionDetailView(initialSession: session)
         } else if selectedIDs.count > 1 {
             multiSelectDetail
         } else {
@@ -523,5 +528,5 @@ private struct FolderChip: View {
 }
 
 #Preview {
-    HistoryView()
+    LibraryView()
 }

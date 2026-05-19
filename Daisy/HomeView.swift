@@ -16,7 +16,20 @@ struct HomeView: View {
     @Bindable var store = SessionStore.shared
     @Bindable var nav = AppNavigation.shared
     @Bindable var calendar = CalendarService.shared
+    /// Observe Google OAuth state so the upcoming-events section
+    /// re-renders when the user connects/disconnects Google in
+    /// Settings. Without this binding the switch below stays
+    /// on the Apple-Calendar-only path and visibly hides events
+    /// even though `calendar.upcomingEvents` was just populated
+    /// by the Google fetch.
+    @Bindable private var google = GoogleAccountStore.shared
     @Bindable var folders = FolderStore.shared
+    @Bindable var integrationStore = MCPIntegrationStore.shared
+    /// Read-through to the session's settings — the destinations
+    /// hint uses `hasNotionCredentials`. Done as a computed
+    /// passthrough rather than a separate @Bindable property so
+    /// we don't accept two settings sources of truth.
+    private var settings: AppSettings { session.settings }
 
     /// Cumulative rotation degrees for the calendar-refresh icon.
     /// Each tap adds 360°. Keeps spinning forward (never resets to
@@ -28,6 +41,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 24) {
                 upcomingSection
                 recentSessionsSection
+                if showDestinationsHint { destinationsHint }
                 Spacer(minLength: 0)
             }
             .padding(.top, 24)
@@ -37,6 +51,54 @@ struct HomeView: View {
         .task { await store.refresh() }
     }
 
+    // MARK: - Destinations discoverability
+
+    /// Show the destination-setup nudge when:
+    ///   • At least one session exists (proves user is past the
+    ///     "haven't recorded yet" stage and might want a destination)
+    ///   • AND nothing is configured: no Notion creds, no MCP
+    ///     integrations enabled.
+    /// Without this, Send-to integrations stay invisible — the
+    /// feature lives behind Settings, and users we surveyed didn't
+    /// know it existed.
+    private var showDestinationsHint: Bool {
+        guard !store.sessions.isEmpty else { return false }
+        let hasNotion = settings.hasNotionCredentials
+        let hasMCP = !integrationStore.enabledIntegrations.isEmpty
+        return !hasNotion && !hasMCP
+    }
+
+    private var destinationsHint: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "paperplane.circle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.daisyAccent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Send sessions somewhere")
+                    .font(.callout.weight(.medium))
+                Text("Daisy can push finished sessions to Notion, Linear, Slack, or any MCP server — automatically or via the kebab menu in History.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button("Set up") {
+                AppNavigation.shared.section = .settings
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.daisyAccent)
+            .controlSize(.regular)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.daisyAccent.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.daisyAccent.opacity(0.18), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 24)
+    }
+
     // MARK: - Upcoming (Calendar)
 
     @ViewBuilder
@@ -44,19 +106,34 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader
 
-            switch calendar.authorizationStatus {
-            case .fullAccess:
+            // Source-agnostic gating: show events if ANY calendar
+            // source is live (Apple EventKit OR Google OAuth). The
+            // "Connect Calendar" / "Calendar denied" CTAs only fire
+            // when BOTH sources are unavailable — a user with only
+            // Google connected should see their Google events here,
+            // not a redundant "connect Apple Calendar" prompt.
+            if hasAnyCalendarSource {
                 eventsBody
-            case .notDetermined:
-                connectCalendarCTA
-            case .denied, .restricted, .writeOnly:
-                deniedCalendarCTA
-            @unknown default:
-                connectCalendarCTA
+            } else {
+                switch calendar.authorizationStatus {
+                case .denied, .restricted, .writeOnly:
+                    deniedCalendarCTA
+                case .notDetermined, .fullAccess:
+                    connectCalendarCTA
+                @unknown default:
+                    connectCalendarCTA
+                }
             }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
+    }
+
+    /// True when at least one calendar source can deliver events
+    /// — drives the source-agnostic gate above and the event-count
+    /// pill in the section header.
+    private var hasAnyCalendarSource: Bool {
+        calendar.authorizationStatus == .fullAccess || google.isConnected
     }
 
     /// All remaining events for today — calendar-day filter, not 24h
@@ -79,15 +156,17 @@ struct HomeView: View {
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
             Spacer()
-            if calendar.authorizationStatus == .fullAccess, !todaysEvents.isEmpty {
+            if hasAnyCalendarSource, !todaysEvents.isEmpty {
                 Text(eventCountLabel)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
             // Manual refresh — EKEventStoreChanged occasionally misses
             // background updates from Google Calendar sync. One-click
-            // re-fetch is cheap (local cache, ~50ms).
-            if calendar.authorizationStatus == .fullAccess {
+            // re-fetch is cheap (local cache, ~50ms). Also the only
+            // way to pull fresh Google events on demand since we have
+            // no equivalent of EKEventStoreChanged for the OAuth path.
+            if hasAnyCalendarSource {
                 Button {
                     calendar.refresh()
                     withAnimation(.easeInOut(duration: 0.7)) {
@@ -202,8 +281,8 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                 Spacer()
-                Button("Open History") {
-                    nav.section = .history
+                Button("Open Library") {
+                    nav.section = .library
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
@@ -221,10 +300,10 @@ struct HomeView: View {
                 VStack(spacing: 4) {
                     ForEach(Array(store.sessions.prefix(5))) { session in
                         RecentSessionRow(session: session) {
-                            // Deep-link into the History view with
+                            // Deep-link into the Library view with
                             // this session pre-selected, instead of
                             // dumping the user on the default row.
-                            nav.openInHistory(session.id)
+                            nav.openInLibrary(session.id)
                         }
                     }
                 }

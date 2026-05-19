@@ -51,6 +51,19 @@ final class AppSettings {
         didSet { defaults.set(summaryLanguage, forKey: Self.k_summaryLanguage) }
     }
 
+    /// Default transcription locale applied to every new session
+    /// at creation time. Same string contract as
+    /// `Transcriber.availableLocales` — "auto" means
+    /// `NLLanguageRecognizer`-driven auto-detect on first
+    /// transcript chunks; otherwise a two-letter ISO code locks
+    /// Whisper to that language. Stored separately from the
+    /// per-session `localeIdentifier` so users with stable
+    /// recording habits (always RU, always EN) don't have to
+    /// re-pick on every session.
+    var defaultTranscriptionLocale: String {
+        didSet { defaults.set(defaultTranscriptionLocale, forKey: Self.k_defaultTranscriptionLocale) }
+    }
+
     /// Global record-toggle hotkey. `.none` disables. Stored in
     /// UserDefaults as JSON (struct, not enum any more).
     var recordHotkey: HotkeyChoice {
@@ -65,6 +78,126 @@ final class AppSettings {
     /// known meeting apps (Zoom / Teams / Telegram / etc.) launches.
     var autoStartOnMeeting: Bool {
         didSet { defaults.set(autoStartOnMeeting, forKey: Self.k_autoStartOnMeeting) }
+    }
+
+    /// When ON, finishing a session (Stop) automatically opens the
+    /// just-recorded session in History so the transcript is visible
+    /// immediately, and the summary section pops in once the LLM
+    /// returns. Default OFF — Daisy stays in the background by
+    /// default; users who want the Granola-style "session window
+    /// pops up after every meeting" flow flip this on.
+    var showSessionAfterStop: Bool {
+        didSet { defaults.set(showSessionAfterStop, forKey: Self.k_showSessionAfterStop) }
+    }
+
+    /// When ON, Daisy posts a "Are we done?" macOS banner after a
+    /// long stretch of silence during recording (3 min) or a long
+    /// pause (5 min). OFF disables the prompt entirely — the
+    /// SilenceMonitor still tracks state internally (cheap), it
+    /// just never surfaces a banner.
+    var silencePromptsEnabled: Bool {
+        didSet { defaults.set(silencePromptsEnabled, forKey: Self.k_silencePromptsEnabled) }
+    }
+
+    /// When ON, Daisy plays a short macOS system sound on recording
+    /// transitions (start / pause / resume / stop). Off for users
+    /// who record in environments where the click would be picked
+    /// up by their own mic or who just don't like audio chrome.
+    /// Default ON because the cues are quiet (~0.4 volume) and
+    /// the feedback materially helps remind a user the session is
+    /// live when the floating widget isn't visible.
+    var recordingSoundsEnabled: Bool {
+        didSet { defaults.set(recordingSoundsEnabled, forKey: Self.k_recordingSoundsEnabled) }
+    }
+
+    /// When ON, Daisy's menu-bar item shows the next upcoming
+    /// calendar event next to its icon ("14:30 · Q3 Review") so the
+    /// user can glance at it without opening Daisy. Off by default —
+    /// adds chrome to the menu bar that some users don't want.
+    /// Suppressed while recording (recording state takes priority).
+    var menuBarShowsNextMeeting: Bool {
+        didSet { defaults.set(menuBarShowsNextMeeting, forKey: Self.k_menuBarShowsNextMeeting) }
+    }
+
+    /// Whether the first-run welcome sheet has been dismissed at
+    /// least once. We show it on first launch (and on a clean
+    /// install with no other Daisy data) to anchor the user on
+    /// where the important Settings live — provider setup, Notion,
+    /// activation triggers. Default false; flipped to true the
+    /// moment the user closes the sheet.
+    var hasShownFirstRun: Bool {
+        didSet { defaults.set(hasShownFirstRun, forKey: Self.k_hasShownFirstRun) }
+    }
+
+    /// When ON, finishing a session (Stop & save → summary done)
+    /// automatically pushes it to Notion using the credentials in
+    /// the same tab. Default OFF — opt-in because the first time
+    /// a user records they probably don't want a half-tested
+    /// integration writing into their workspace. Honoured only if
+    /// `hasNotionCredentials` is true at the moment the session
+    /// completes — otherwise silently skipped.
+    var autoSendNotion: Bool {
+        didSet { defaults.set(autoSendNotion, forKey: Self.k_autoSendNotion) }
+    }
+
+    /// Timestamp of the last successful Notion Test connection
+    /// probe. Drives the UI gate that lets the user flip
+    /// `autoSendNotion` ON — without a passing test we can't be sure
+    /// the credentials work, the parent type is right, and the
+    /// title column is named "Name" (for databases). Auto-send
+    /// without a confirmed test would silently fail every session.
+    /// `nil` (or .distantPast) means never tested.
+    var lastNotionTestPassedAt: Date? {
+        didSet {
+            if let date = lastNotionTestPassedAt {
+                defaults.set(date.timeIntervalSince1970, forKey: Self.k_lastNotionTestPassedAt)
+            } else {
+                defaults.removeObject(forKey: Self.k_lastNotionTestPassedAt)
+            }
+        }
+    }
+
+    /// Identifier for the user's preferred "default" destination —
+    /// the one that fires when they click `Send to` in History
+    /// without expanding the dropdown.
+    ///
+    /// Wire format:
+    ///   • `""` — no default; Send-to always opens the menu
+    ///     (legacy behaviour for users who didn't set one).
+    ///   • `"notion"` — first-party REST connector.
+    ///   • Any other string — the `MCPIntegration.id.uuidString`
+    ///     of a configured MCP integration.
+    ///
+    /// Resolution is lazy at click time; if the saved ID points
+    /// at a deleted / disabled integration we silently fall back
+    /// to opening the menu.
+    var defaultDestinationID: String {
+        didSet { defaults.set(defaultDestinationID, forKey: Self.k_defaultDestinationID) }
+    }
+
+    /// Whether the Notion parent ID points at a page (the default,
+    /// historical behaviour — Daisy creates the session as a child
+    /// page under it) or at a database (Daisy creates the session
+    /// as a database row, with title property "Name"). Stored as a
+    /// string for forward compatibility with possible future kinds.
+    var notionParentKind: String {
+        didSet {
+            defaults.set(notionParentKind, forKey: Self.k_notionParentKind)
+            if notionParentKind != oldValue { lastNotionTestPassedAt = nil }
+        }
+    }
+
+    /// Folder slugs that Notion auto-send applies to. Empty = all
+    /// folders (the simple case). Non-empty restricts auto-send to
+    /// just those folders — useful when you record Notes-style
+    /// sessions you don't want pushed to a Notion team page.
+    /// Manual Send-to from the kebab ignores this filter.
+    var autoSendNotionFolders: Set<String> {
+        didSet {
+            if let data = try? JSONEncoder().encode(autoSendNotionFolders) {
+                defaults.set(data, forKey: Self.k_autoSendNotionFolders)
+            }
+        }
     }
 
     /// When ON, Daisy auto-starts at the moment a calendar event with
@@ -157,10 +290,19 @@ final class AppSettings {
     // key, see no error, and discover later that it never persisted.
     // Now they get a toast.
     var notionToken: String {
-        didSet { Self.persist(notionToken, account: SecretKey.notionToken, label: "Notion token") }
+        didSet {
+            Self.persist(notionToken, account: SecretKey.notionToken, label: "Notion token")
+            // New token → old test result no longer reflects this
+            // configuration. Force a re-test before auto-send can
+            // be re-enabled.
+            if notionToken != oldValue { lastNotionTestPassedAt = nil }
+        }
     }
     var notionParentID: String {
-        didSet { Self.persist(notionParentID, account: SecretKey.notionParentID, label: "Notion parent ID") }
+        didSet {
+            Self.persist(notionParentID, account: SecretKey.notionParentID, label: "Notion parent ID")
+            if notionParentID != oldValue { lastNotionTestPassedAt = nil }
+        }
     }
     var anthropicAPIKey: String {
         didSet {
@@ -199,8 +341,16 @@ final class AppSettings {
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
-        self.autoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool ?? true
+        // Default OFF — when the user hasn't picked a summarizer
+        // provider yet (no Anthropic / OpenAI key, no MCP server,
+        // Apple Intelligence not detected) auto-summarize would
+        // either silently no-op or — worse — fire a request against
+        // a half-configured cloud account. Off-by-default keeps the
+        // first-time experience honest; the user flips it on once
+        // they've set up a provider.
+        self.autoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool ?? false
         self.summaryLanguage = defaults.string(forKey: Self.k_summaryLanguage) ?? SummaryLanguage.auto.id
+        self.defaultTranscriptionLocale = defaults.string(forKey: Self.k_defaultTranscriptionLocale) ?? "auto"
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will
@@ -211,17 +361,49 @@ final class AppSettings {
         } else {
             self.recordHotkey = .ctrlOptCmdR
         }
-        // Default ON: Daisy is a meeting capture app — the
-        // "starts recording the moment Zoom/Teams/etc opens"
-        // behaviour is the headline feature, not an opt-in.
-        self.autoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? true
+        // Default OFF — auto-starting a recording the moment Zoom
+        // / Teams / Telegram opens is surprising on first install
+        // ("Daisy started recording a personal call I made
+        // immediately after installing it"). It's a powerful
+        // feature but needs opt-in. Users who want the headline
+        // "Daisy captures every meeting" workflow flip it on in
+        // Settings → Capture → Activation.
+        self.autoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? false
+        self.showSessionAfterStop = defaults.object(forKey: Self.k_showSessionAfterStop) as? Bool ?? false
+        // Default ON — the prompt is the only safeguard against a
+        // session left running for hours by accident. Users who
+        // find it noisy can flip it off here.
+        self.silencePromptsEnabled = defaults.object(forKey: Self.k_silencePromptsEnabled) as? Bool ?? true
+        self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
+        self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
+        self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
+        self.autoSendNotion = defaults.object(forKey: Self.k_autoSendNotion) as? Bool ?? false
+        let lastTs = defaults.double(forKey: Self.k_lastNotionTestPassedAt)
+        self.lastNotionTestPassedAt = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
+        self.defaultDestinationID = defaults.string(forKey: Self.k_defaultDestinationID) ?? ""
+        self.notionParentKind = defaults.string(forKey: Self.k_notionParentKind) ?? "page"
+        if let data = defaults.data(forKey: Self.k_autoSendNotionFolders),
+           let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
+            self.autoSendNotionFolders = decoded
+        } else {
+            self.autoSendNotionFolders = []
+        }
         self.autoStartFromCalendar = defaults.object(forKey: Self.k_autoStartFromCalendar) as? Bool ?? false
         self.calendarAccessGranted = defaults.bool(forKey: Self.k_calendarAccessGranted)
         // Default ON: `object(forKey:)` returns nil for unset keys, so
         // `as? Bool ?? true` picks up explicit user choices (true OR
         // false) and falls through to true only on a clean install.
         self.floatingWidgetEnabled = defaults.object(forKey: Self.k_floatingWidgetEnabled) as? Bool ?? true
-        self.autoStopFromCalendar = defaults.bool(forKey: Self.k_autoStopFromCalendar)
+        // Default ON. `defaults.bool(forKey:)` returns false for unset
+        // keys, which meant a clean-install user never had calendar
+        // auto-stop armed — combined with the "back-to-back meetings
+        // bleed into one session" bug (fixed in RecordingSession.
+        // startFromMeeting), that produced the failure mode where
+        // M1 + M2 collapsed into a single 75-min recording with one
+        // title. `object(forKey:) as? Bool ?? true` preserves an
+        // explicit user-off choice while defaulting fresh installs
+        // to the safer behaviour.
+        self.autoStopFromCalendar = defaults.object(forKey: Self.k_autoStopFromCalendar) as? Bool ?? true
         let storedGrace = defaults.integer(forKey: Self.k_autoStopGraceSec)
         self.autoStopGraceSec = storedGrace > 0 ? storedGrace : 300
         self.mcpServerEnabled = defaults.bool(forKey: Self.k_mcpServerEnabled)
@@ -253,14 +435,42 @@ final class AppSettings {
         return !token.isEmpty && !parent.isEmpty
     }
 
+    /// Read-only static accessor for the summary-language preference,
+    /// readable from `nonisolated` contexts (e.g. SessionDetailView's
+    /// `reSummarize()` which needs to feed the canonical locale
+    /// resolver in `RecordingSession.resolveSummaryLocaleHint`
+    /// without holding a live `AppSettings` instance). Returns "auto"
+    /// if never explicitly set, matching the init() default.
+    nonisolated static var currentSummaryLanguage: String {
+        UserDefaults.standard.string(forKey: k_summaryLanguage) ?? "auto"
+    }
+
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_autoSummarize = "daisy.autoSummarize"
-    private static let k_summaryLanguage = "daisy.summaryLanguage"
+    private static let k_showSessionAfterStop = "daisy.showSessionAfterStop"
+    /// `nonisolated` because `currentSummaryLanguage` (above) reads
+    /// this key from a nonisolated context (SessionDetailView's
+    /// reSummarize() path), and Swift 6's default MainActor isolation
+    /// on AppSettings would otherwise propagate to the static and
+    /// emit a "main-actor isolated static can't be referenced from
+    /// nonisolated context" error. The string is a plain `let` with
+    /// no shared mutation — safe to read from any actor.
+    nonisolated private static let k_summaryLanguage = "daisy.summaryLanguage"
+    private static let k_defaultTranscriptionLocale = "daisy.defaultTranscriptionLocale"
     private static let k_recordHotkey = "daisy.recordHotkey"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
+    private static let k_silencePromptsEnabled = "daisy.silencePromptsEnabled"
+    private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
+    private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
+    private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"
+    private static let k_autoSendNotion = "daisy.autoSendNotion"
+    private static let k_lastNotionTestPassedAt = "daisy.lastNotionTestPassedAt"
+    private static let k_defaultDestinationID = "daisy.defaultDestinationID"
+    private static let k_notionParentKind = "daisy.notionParentKind"
+    private static let k_autoSendNotionFolders = "daisy.autoSendNotionFolders"
     private static let k_autoStartFromCalendar = "daisy.autoStartFromCalendar"
     private static let k_calendarAccessGranted = "daisy.calendarAccessGranted"
     private static let k_floatingWidgetEnabled = "daisy.floatingWidgetEnabled"

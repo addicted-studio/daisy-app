@@ -72,7 +72,11 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
         }
         if !(200..<300).contains(http.statusCode) {
             let bodyString = String(data: data, encoding: .utf8) ?? "<empty>"
-            log.error("OpenAI HTTP \(http.statusCode): \(bodyString, privacy: .public)")
+            // bodyString stays .private — same reasoning as in
+            // AnthropicAPISummarizer: 4xx bodies can quote the prompt
+            // back, which would put transcript fragments in the
+            // unified log.
+            log.error("OpenAI HTTP \(http.statusCode): \(bodyString, privacy: .private)")
             throw SummaryProviderError.httpError(
                 provider: "OpenAI",
                 status: http.statusCode,

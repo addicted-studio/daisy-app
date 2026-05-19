@@ -334,7 +334,11 @@ final class MCPClient {
         case "message":
             guard let data = payload.data(using: .utf8),
                   let response = try? JSONDecoder().decode(JSONRPCResponse.self, from: data) else {
-                log.warning("MCP SSE: unparseable message payload: \(payload, privacy: .public)")
+                // Payload stays .private — a misbehaving local LLM
+                // could echo transcript content into an unparseable
+                // SSE frame, which we don't want sitting in the
+                // unified system log.
+                log.warning("MCP SSE: unparseable message payload: \(payload, privacy: .private)")
                 return
             }
             guard let id = response.id, let key = idKey(id) else {
