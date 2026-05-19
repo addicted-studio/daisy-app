@@ -90,20 +90,35 @@ final class SpectrumAnalyzer: @unchecked Sendable {
 
     /// Compute spectrum bands from the trailing window of mono samples.
     /// Returns `bandCount` floats in 0…1.
-    func bands(from samples: ArraySlice<Float>, sampleRate: Double) -> [Float] {
+    ///
+    /// **Takes `UnsafeBufferPointer<Float>` directly** so the audio
+    /// render thread doesn't allocate an intermediate Swift Array on
+    /// every tap callback (pre-1.0.3 the caller did
+    /// `Array(UnsafeBufferPointer(start: ch, count: frames))` and
+    /// re-sliced; that ~16 KB alloc per buffer at 100 Hz had a real
+    /// chance of priority-inverting against the render thread's
+    /// internal locks during malloc slow paths). The buffer's
+    /// backing memory is borrowed for the duration of this call
+    /// only — we copy what we need into our pre-allocated `pcm`
+    /// scratch space immediately.
+    func bands(from samples: UnsafeBufferPointer<Float>, sampleRate: Double) -> [Float] {
         lock.lock()
         defer { lock.unlock() }
 
         let n = Self.fftN
         let half = n / 2
 
-        // 1. Pad / truncate input into the working buffer.
+        // 1. Pad / truncate input into the working buffer. Take the
+        //    TRAILING `n` samples (suffix of the input buffer); for
+        //    shorter inputs the tail is zero-padded. Matches the
+        //    pre-1.0.3 layout exactly so the Hann window + FFT
+        //    output are unchanged.
         for i in 0..<n { pcm[i] = 0 }
-        let tail = samples.suffix(n)
-        var idx = 0
-        for v in tail {
-            pcm[idx] = v
-            idx += 1
+        let total = samples.count
+        let copyCount = min(total, n)
+        let srcStart = total - copyCount   // negative-safe via min above
+        for i in 0..<copyCount {
+            pcm[i] = samples[srcStart + i]
         }
 
         // 2. Hann window.

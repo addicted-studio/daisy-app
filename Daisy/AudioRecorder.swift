@@ -524,13 +524,20 @@ final class AudioRecorder {
             let peak = Self.peakLevelDB(of: buffer)
 
             // Compute spectrum bands for the daisy widget. FFT of 2048
-            // samples is ~0.5 ms on Apple Silicon — safe on render thread.
+            // samples is ~0.5 ms on Apple Silicon — safe on render
+            // thread. The UnsafeBufferPointer is borrowed for the
+            // duration of bands(...) only — SpectrumAnalyzer copies
+            // into its own pre-allocated scratch immediately. Pre-
+            // 1.0.3 we did `Array(UnsafeBufferPointer(...))` here
+            // which allocated ~16 KB heap per buffer at 100 Hz, with
+            // a real priority-inversion risk against the engine's
+            // internal mutexes during malloc slow paths.
             var bands: [Float]? = nil
             if let ch = buffer.floatChannelData?[0] {
                 let frames = Int(buffer.frameLength)
-                let pcm = Array(UnsafeBufferPointer(start: ch, count: frames))
                 let sampleRate = buffer.format.sampleRate
-                bands = analyzerRef.bands(from: pcm[...], sampleRate: sampleRate)
+                let bufferPtr = UnsafeBufferPointer(start: ch, count: frames)
+                bands = analyzerRef.bands(from: bufferPtr, sampleRate: sampleRate)
             }
 
             Task { @MainActor [weak self] in

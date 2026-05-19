@@ -301,9 +301,26 @@ content = re.sub(
     flags=re.DOTALL,
 )
 
-# Idempotency — if this exact version is already published, skip
-if f"<title>Daisy {version}</title>" in content:
-    print(f"  ⊘ Daisy {version} already in appcast.xml — skipping injection")
+# Idempotency — if an <item> for this shortVersion is already in the
+# appcast, REPLACE it (new build / new length / new edSignature / new
+# pubDate / new release notes). Pre-1.0.3 we silently skipped, which
+# left appcast pointing at the old build's enclosure metadata while
+# the DMG file on disk had been overwritten with the new build —
+# producing an EdDSA-signature mismatch that Sparkle silently rejects.
+#
+# Match the existing <item> block by its <title>Daisy {version}</title>
+# and replace the whole block (between `<item>` and `</item>` lines)
+# with the freshly-built item_block.
+item_re = re.compile(
+    r"[ \t]*<item>\s*\n[ \t]*<title>Daisy "
+    + re.escape(version)
+    + r"</title>.*?</item>\s*\n",
+    re.DOTALL,
+)
+if item_re.search(content):
+    new_content = item_re.sub(item_block + "\n", content, count=1)
+    appcast_path.write_text(new_content, encoding="utf-8")
+    print(f"  ↻ Replaced existing <item> for Daisy {version} (build {build})")
     sys.exit(0)
 
 sentinel = "  </channel>"

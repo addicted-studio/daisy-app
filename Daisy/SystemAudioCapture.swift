@@ -88,13 +88,20 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// installed. Drives idempotency in install/remove pairs.
     private var outputDeviceListenerInstalled: Bool = false
 
-    /// Latches `true` after the first successful restart triggered
-    /// by an output-device change. Just a debounce — back-to-back
-    /// property-listener fires within a few ms (the listener gets
-    /// called multiple times for a single user-perceived change as
-    /// macOS settles the audio graph) shouldn't each spawn their
-    /// own teardown/restart cycle.
-    nonisolated(unsafe) private var outputRestartInFlight: Bool = false
+    /// Latches `true` while a route-change-induced restart is in
+    /// progress. `handleOutputDeviceChange` is `@MainActor`-isolated
+    /// (whole class is) so this property is only ever read/written
+    /// from MainActor — pre-1.0.3 had a misleading
+    /// `nonisolated(unsafe)` annotation.
+    ///
+    /// Paired with `lastRestartAt` for a 2 s cooldown: CoreAudio
+    /// fires the property listener multiple times for a single
+    /// user-perceived change (sleep/wake re-emits hours later, mode
+    /// switches re-emit ~200ms apart). The bool alone leaks the
+    /// race window between the `defer { …InFlight = false }` and
+    /// the next listener invocation.
+    private var outputRestartInFlight: Bool = false
+    private var lastOutputRestartAt: Date?
 
     /// Rate-limit gate for SCStream → MainActor UI updates. The
     /// audio output queue can fire ~50 callbacks/sec at 48 kHz
@@ -124,8 +131,14 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// archiving — transcription path still works either way.
     ///
     /// `nonisolated(unsafe)` because the audio callback writes from
-    /// the `outputQueue`, not main. The queue is single-threaded so
-    /// no concurrent mutation; pairing matches `bufferContinuation`.
+    /// the `outputQueue`, not main. **All MainActor-side mutations**
+    /// (start/stop/pause and the output-device-change recovery)
+    /// **MUST go through `outputQueue.sync { ... }`** to fence behind
+    /// any in-flight sample-buffer callback. Pre-1.0.3 the MainActor
+    /// did `archiveWriter = nil` directly after `stopCapture()`, and
+    /// in-flight callbacks could still call `archiveWriter?.write(...)`
+    /// → race against the nil write, occasional torn ExtAudioFile
+    /// state, very-occasional truncated tail of system_audio.caf.
     nonisolated(unsafe) private var archiveURL: URL?
     nonisolated(unsafe) private var archiveWriter: AVAudioFile?
 
@@ -396,8 +409,19 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     private func handleOutputDeviceChange() async {
         guard state == .capturing else { return }
         guard !outputRestartInFlight else { return }
+        // Wall-clock cooldown — defer-only debounce leaks the gap
+        // between `outputRestartInFlight = false` and the next
+        // CoreAudio fire (sleep/wake can re-emit hours later, the
+        // bool alone isn't enough).
+        if let last = lastOutputRestartAt,
+           Date().timeIntervalSince(last) < 2.0 {
+            return
+        }
         outputRestartInFlight = true
-        defer { outputRestartInFlight = false }
+        defer {
+            outputRestartInFlight = false
+            lastOutputRestartAt = Date()
+        }
 
         log.info("Default output device changed mid-capture — restarting SCStream")
 
@@ -505,9 +529,14 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             if state != .paused { state = .stopped }
             else { state = .stopped }
             // Close archive even if no stream is active (covers the
-            // already-paused → stop transition).
-            archiveWriter = nil
-            archiveURL = nil
+            // already-paused → stop transition). Still gated through
+            // outputQueue.sync for symmetry — if an old stream's
+            // callback is somehow still pending, we serialize behind
+            // it.
+            outputQueue.sync {
+                archiveWriter = nil
+                archiveURL = nil
+            }
             return
         }
         do { try await s.stopCapture() }
@@ -515,10 +544,18 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         stream = nil
         bufferContinuation?.finish()
         bufferContinuation = nil
-        // Nil'ing the AVAudioFile flushes + closes the underlying
-        // ExtAudioFile handle (`AVAudioFile.deinit` does this).
-        archiveWriter = nil
-        archiveURL = nil
+        // Fence behind any in-flight sample-buffer callback. After
+        // `stopCapture()` returns, ScreenCaptureKit promises no NEW
+        // buffers will be delivered, but a callback currently mid-
+        // execution on outputQueue can still touch archiveWriter.
+        // `outputQueue.sync` on a serial queue blocks until that
+        // callback finishes, then runs our block (which nils out
+        // the writer, triggering ExtAudioFile dispose under the
+        // same queue — atomic w.r.t. any callback).
+        outputQueue.sync {
+            archiveWriter = nil
+            archiveURL = nil
+        }
         state = .stopped
     }
 

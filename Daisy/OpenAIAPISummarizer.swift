@@ -55,7 +55,9 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
             ],
             // JSON mode — model is guaranteed to return parseable JSON.
             "response_format": ["type": "json_object"],
-            "max_tokens": 2048,
+            // 4096 (was 2048 pre-1.0.3) — see AnthropicAPISummarizer
+            // for the long-meeting truncation rationale.
+            "max_tokens": 4096,
             "temperature": 0.4
         ]
 
@@ -66,7 +68,13 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
         request.timeoutInterval = 60
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
-        let (data, response) = try await urlSession.data(for: request)
+        // Retry on transient 429 / 5xx / network errors — shared
+        // helper lives in AnthropicAPISummarizer.fetchWithRetry.
+        let (data, response) = try await AnthropicAPISummarizer.fetchWithRetry(
+            request: request,
+            session: urlSession,
+            log: log
+        )
         guard let http = response as? HTTPURLResponse else {
             throw SummaryProviderError.invalidResponse(provider: "OpenAI")
         }

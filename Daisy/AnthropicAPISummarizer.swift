@@ -51,7 +51,12 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 2048,
+            // 4096 (was 2048 pre-1.0.3) — long Russian / German / Polish
+            // summaries hit the 2048 ceiling on hour-long meetings,
+            // truncating the clientFollowUp draft mid-sentence. 4096
+            // covers the worst realistic case at ~1.5 hour meetings;
+            // cost delta is ~0.5¢ per call at Sonnet 4.6 list.
+            "max_tokens": 4096,
             "system": systemPrompt,
             "messages": [
                 ["role": "user", "content": userPrompt]
@@ -66,7 +71,17 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
         request.timeoutInterval = 60
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
-        let (data, response) = try await urlSession.data(for: request)
+        // Retry up to 3 attempts on transient failures (429 rate
+        // limit, 5xx server errors, network timeouts). Each retry
+        // waits 1s → 2s → 4s. Pre-1.0.3 a single network blip
+        // killed a 90-second summary call and surfaced as "Anthropic:
+        // HTTP 503" with no recovery — user had to manually
+        // re-summarize from History.
+        let (data, response) = try await Self.fetchWithRetry(
+            request: request,
+            session: urlSession,
+            log: log
+        )
         guard let http = response as? HTTPURLResponse else {
             throw SummaryProviderError.invalidResponse(provider: "Anthropic")
         }
@@ -114,4 +129,86 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
     ]
 
     static let defaultModelID = "claude-sonnet-4-6"
+
+    // MARK: - Shared retry helper (used by Anthropic + OpenAI paths)
+
+    /// Run an HTTP request with exponential-backoff retries on
+    /// transient failures: 429 (rate limit), 5xx server errors, and
+    /// URLSession transient network errors (timeout / connection
+    /// dropped / DNS hiccup). Up to 3 attempts total with delays
+    /// 1s → 2s → 4s between them.
+    ///
+    /// Permanent failures (4xx other than 429, malformed responses,
+    /// any error that isn't in the transient list) are returned
+    /// immediately so the caller sees the actual error.
+    ///
+    /// `nonisolated` because both cloud providers are nonisolated
+    /// structs and call this from their `summarize(...)` async
+    /// functions. No shared mutable state — pure retry logic over
+    /// the URLSession argument.
+    nonisolated static func fetchWithRetry(
+        request: URLRequest,
+        session: URLSession,
+        log: Logger,
+        maxAttempts: Int = 3
+    ) async throws -> (Data, URLResponse) {
+        var lastError: (any Error)?
+        for attempt in 1...maxAttempts {
+            do {
+                let (data, response) = try await session.data(for: request)
+                if let http = response as? HTTPURLResponse,
+                   Self.isTransientStatus(http.statusCode),
+                   attempt < maxAttempts {
+                    let delay = Self.backoffDelay(forAttempt: attempt)
+                    log.warning("HTTP \(http.statusCode, privacy: .public) — retry in \(Int(delay), privacy: .public)s (attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public))")
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+                return (data, response)
+            } catch {
+                lastError = error
+                if Self.isTransientURLError(error), attempt < maxAttempts {
+                    let delay = Self.backoffDelay(forAttempt: attempt)
+                    log.warning("Network error — retry in \(Int(delay), privacy: .public)s (attempt \(attempt, privacy: .public)/\(maxAttempts, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    continue
+                }
+                throw error
+            }
+        }
+        // We only reach here if the final attempt produced a
+        // transient HTTP status — surface it via the caller's
+        // normal HTTP-status error path by returning the last
+        // response. But the `for` loop always either returns or
+        // throws, so this is unreachable; satisfy the compiler.
+        throw lastError ?? SummaryProviderError.invalidResponse(provider: "cloud")
+    }
+
+    nonisolated private static func isTransientStatus(_ code: Int) -> Bool {
+        return code == 429 || (500...599).contains(code)
+    }
+
+    nonisolated private static func isTransientURLError(_ error: any Error) -> Bool {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else { return false }
+        switch ns.code {
+        case NSURLErrorTimedOut,
+             NSURLErrorNetworkConnectionLost,
+             NSURLErrorNotConnectedToInternet,
+             NSURLErrorDNSLookupFailed,
+             NSURLErrorCannotConnectToHost,
+             NSURLErrorCannotFindHost:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated private static func backoffDelay(forAttempt attempt: Int) -> TimeInterval {
+        // 1s, 2s, 4s — geometric backoff. Plenty for transient
+        // gateway hiccups, short enough not to time out the
+        // summary task entirely (which has its own timeout
+        // ceiling upstream).
+        return pow(2.0, Double(attempt - 1))
+    }
 }

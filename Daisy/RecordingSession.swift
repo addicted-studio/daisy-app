@@ -394,14 +394,18 @@ final class RecordingSession {
         status = .preparing
 
         // Make sure Whisper is ready before we tap the mic — otherwise the
-        // user sees "Recording…" with nothing happening.
+        // user sees "Recording…" with nothing happening. Each early-exit
+        // path below goes through `failFast(_:)` so we don't leak the
+        // sandbox ticket from `makeSessionDirectory()` or the half-
+        // started transcribers — pre-1.0.3 these `return`s left
+        // `sessionsFolderTicket` retained until the next start/reset.
         await WhisperEngine.shared.ensureLoaded()
         if case .failed(let msg) = WhisperEngine.shared.state {
-            status = .failed("Whisper model failed to load: \(msg)")
+            failFast("Whisper model failed to load: \(msg)")
             return
         }
         guard WhisperEngine.shared.isReady else {
-            status = .failed("Whisper model isn't ready yet — try again in a moment.")
+            failFast("Whisper model isn't ready yet — try again in a moment.")
             return
         }
 
@@ -428,8 +432,7 @@ final class RecordingSession {
                 preferredDeviceUID: settings.selectedMicDeviceUID
             )
         } catch {
-            micTranscriber.reset()
-            status = .failed(error.localizedDescription)
+            failFast(error.localizedDescription)
             return
         }
         micArchiveURL = recorder.archivedFileURL
@@ -751,7 +754,19 @@ final class RecordingSession {
             let transcriptText = fullTranscriptText
             let titleSnapshot = title
             let localeHint = localeHintForSummary
+            // Transfer ticket ownership to the detached task BEFORE
+            // spawning it. If the user hits Stop & save on M1 and
+            // then immediately starts M2 (calendar auto-rotation,
+            // hotkey, whatever), `start()` will assign a NEW ticket
+            // to `self.sessionsFolderTicket` for M2 — and pre-1.0.3
+            // the M1 task would later call `releaseSessionsFolderTicket()`,
+            // releasing M2's ticket and silently breaking M2's file
+            // writes. Snapshot here, release via `defer` on the
+            // captured value only.
+            let ticketSnapshot = sessionsFolderTicket
+            sessionsFolderTicket = nil
             summaryTask = Task { [weak self] in
+                defer { ticketSnapshot?.release() }
                 await self?.finalizePostStop(
                     sessionID: sessionID,
                     directory: dir,
@@ -770,13 +785,20 @@ final class RecordingSession {
     }
 
     /// Detached post-Stop pipeline: summarize → write summary.json →
-    /// release the user-folder ticket → fan out to auto-send
-    /// destinations → tell SessionStore the session is up-to-date.
-    /// Each step checks `Task.isCancelled` and that
-    /// `sessionDirectory` still matches the captured session ID —
-    /// either guard fires if `start()` already kicked off a new
-    /// recording on top of this one, in which case we bail without
-    /// touching the new session's state.
+    /// fan out to auto-send destinations → tell SessionStore the
+    /// session is up-to-date. Each step checks `Task.isCancelled`
+    /// and that `sessionDirectory` still matches the captured
+    /// session ID — either guard fires if `start()` already kicked
+    /// off a new recording on top of this one, in which case we
+    /// bail without touching the new session's state.
+    ///
+    /// **Ticket ownership.** This function does NOT touch
+    /// `sessionsFolderTicket`. The caller transferred ownership of
+    /// the security-scoped ticket to the spawning Task via a local
+    /// snapshot + `defer { snapshot?.release() }` — see the
+    /// `Task { [ticketSnapshot] in ... }` block above. Doing it
+    /// here would race against `start()` putting M2's ticket in the
+    /// same slot (the pre-1.0.3 bug).
     private func finalizePostStop(
         sessionID: String,
         directory: URL,
@@ -791,7 +813,6 @@ final class RecordingSession {
         )
         if Task.isCancelled {
             summaryGenerationState = .failed("cancelled")
-            releaseSessionsFolderTicket()
             await SessionStore.shared.finishGenerating(sessionID)
             summaryTask = nil
             return
@@ -810,11 +831,6 @@ final class RecordingSession {
                 )
             }
         }
-
-        // All writers have flushed — release the security scope
-        // before the longer-running autoSend so we don't hold the
-        // user-folder ticket across network calls.
-        releaseSessionsFolderTicket()
 
         // If a fresh recording has begun in the meantime (reset()
         // ran), instance state has rotated and autoSend would push
@@ -937,6 +953,36 @@ final class RecordingSession {
     /// simple default. Non-empty restricts to exactly those slugs.
     nonisolated static func folderAllowed(_ slug: String, allowed: Set<String>) -> Bool {
         allowed.isEmpty || allowed.contains(slug)
+    }
+
+    /// Centralised cleanup for the early-return paths in `start()`.
+    /// Before 1.0.3 each early `return` only set `status = .failed(...)`
+    /// — but by that point we'd already acquired the sandbox ticket
+    /// (`makeSessionDirectory()` ran before the Whisper check) and
+    /// started one or both transcribers. The leftover scoped resource
+    /// held until the next `start()` or `reset()`, and any in-flight
+    /// transcribers kept consuming buffers from a recorder that never
+    /// actually started. `failFast` collapses all of that into one
+    /// idempotent cleanup: release the ticket, stop both transcribers,
+    /// stop the recorder + system-audio capture, cancel auto-stop
+    /// timers, then flip the status. Safe to call multiple times.
+    private func failFast(_ message: String) {
+        log.error("Session start failed: \(message, privacy: .public)")
+        releaseSessionsFolderTicket()
+        micTranscriber.reset()
+        systemTranscriber.reset()
+        // recorder/systemAudio may not have started yet on early
+        // paths (Whisper-failed branches) — reset is idempotent.
+        recorder.reset()
+        Task { await systemAudio.stop() }
+        screenshots.stop()
+        silenceMonitor.stop()
+        cancelAutoStop()
+        sessionDirectory = nil
+        micArchiveURL = nil
+        systemArchiveURL = nil
+        startedAt = nil
+        status = .failed(message)
     }
 
     /// Public companion to `assembleStoredSession` — call sites
@@ -1117,38 +1163,47 @@ final class RecordingSession {
     /// used to bypass language detection entirely and naively trust
     /// the frontmatter locale tag.
     ///
-    /// **Contract — ориентир язык транскрипта.** Content-driven
-    /// detection (`LanguageDetector.detect`) wins over the user's
-    /// Settings → Summary language pick. The Settings value is a
-    /// default-for-new-recordings; it should NOT silently retranslate
-    /// a Russian meeting into English because the user once set the
-    /// dropdown to "English" for a different session. Detection is
-    /// gated on `NLLanguageRecognizer` confidence ≥ 0.55 + ≥ 16 chars
-    /// of text, so very short or mixed inputs fall through to the
-    /// settings override instead of being mis-classified.
+    /// **Contract — explicit picker wins.** A user who deliberately
+    /// picks "Polish" in Settings → Summary language wants Polish
+    /// summaries regardless of what NLLanguageRecognizer thinks the
+    /// transcript was in. Previously detection beat the picker so a
+    /// Polish-pick + Russian-transcript always produced Russian
+    /// summary, which looked like a localization bug from the user's
+    /// seat. The detection path is now the FALLBACK for the "Auto"
+    /// case — that's the explicit "let Daisy figure it out" mode.
     ///
     /// Precedence:
-    ///   1. **`LanguageDetector.detect(transcript)`** — what was
-    ///      actually said. The bedrock. If this returns a code, use
-    ///      it and ignore everything below.
-    ///   2. `summaryLanguageOverride` (when not "auto") — explicit
-    ///      settings pick, honoured only when detection had nothing
-    ///      conclusive.
+    ///   1. `summaryLanguageOverride` (when not "auto" and not empty)
+    ///      — explicit user pick wins, period.
+    ///   2. **`LanguageDetector.detect(transcript)`** — only consulted
+    ///      when the picker is "Auto". Returns nil for too-short /
+    ///      low-confidence input so the next fallback runs.
     ///   3. `transcriptLocale` prefix (when not "auto" / empty) —
-    ///      user-pinned recording locale from the frontmatter.
-    ///   4. `nil` — truly unknown, let the model decide.
+    ///      user-pinned recording locale from frontmatter.
+    ///   4. `nil` — truly unknown, model decides on its own.
+    ///
+    /// Note: the Re-summarize action passes through the same path,
+    /// so an "Auto" session re-summarized produces the same answer
+    /// twice (the original concern that drove the previous inversion).
+    /// An "Auto + transcript too short for detection" session
+    /// previously produced "match transcript settings" → now produces
+    /// the same `nil` consistently. That's the right deterministic
+    /// behaviour either way.
     nonisolated static func resolveSummaryLocaleHint(
         transcript: String,
         transcriptLocale: String,
         summaryLanguageOverride: String
     ) -> String? {
-        if let detected = LanguageDetector.detect(transcript) {
-            return detected
-        }
+        // 1. Explicit picker wins. "Auto" intentionally falls through.
         if !summaryLanguageOverride.isEmpty,
            summaryLanguageOverride != SummaryLanguage.auto.id {
             return summaryLanguageOverride
         }
+        // 2. Auto mode → content-driven detection.
+        if let detected = LanguageDetector.detect(transcript) {
+            return detected
+        }
+        // 3. Transcript locale frontmatter as last resort hint.
         let prefix = transcriptLocale
             .split(separator: "-")
             .first
@@ -1157,6 +1212,7 @@ final class RecordingSession {
         if let prefix, prefix != "auto", !prefix.isEmpty {
             return prefix
         }
+        // 4. Model decides on its own.
         return nil
     }
 
