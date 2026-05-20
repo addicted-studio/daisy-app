@@ -309,7 +309,26 @@ final class MCPServer {
         }
 
         do {
-            let data = try JSONEncoder().encode(response)
+            var data = try JSONEncoder().encode(response)
+            // Defence-in-depth: cap response bodies at 10 MB. The
+            // listener is loopback-only so the attack surface is
+            // small, but a misbehaving local client (or our own
+            // `get_transcript` on a 4-hour session that returned
+            // 80 MB of raw segments) could still ship hundreds of
+            // megabytes through SSE. Cap, replace with a JSON-RPC
+            // error referencing the request id, log loudly.
+            if data.count > Self.maxResponsePayloadBytes {
+                log.warning("MCP response too large (\(data.count, privacy: .public) bytes > \(Self.maxResponsePayloadBytes, privacy: .public)) — replacing with error")
+                let oversized = JSONRPCResponse(
+                    id: response.id,
+                    error: JSONRPCError(
+                        code: -32000,
+                        message: "Result too large — \(data.count) bytes exceeds 10 MB cap. Narrow the query (e.g. fewer sessions, shorter time range) and retry.",
+                        data: nil
+                    )
+                )
+                data = try JSONEncoder().encode(oversized)
+            }
             let json = String(decoding: data, as: UTF8.self)
             sendSSEEvent(name: "message", data: json, on: sse)
         } catch {
@@ -317,12 +336,17 @@ final class MCPServer {
         }
     }
 
+    /// Per-response size ceiling. 10 MB chosen as the threshold
+    /// where "normal Daisy response" (a long session's tool result)
+    /// already feels like a misuse — fix the query, not the server.
+    nonisolated private static let maxResponsePayloadBytes: Int = 10 * 1024 * 1024
+
     // MARK: - JSON-RPC dispatch
 
     private func handleJSONRPC(_ request: JSONRPCRequest) async -> JSONRPCResponse {
         switch request.method {
         case "initialize":
-            return await handleInitialize(id: request.id)
+            return await handleInitialize(id: request.id, params: request.params)
         case "notifications/initialized",
              "notifications/cancelled":
             // Notifications carry no id and expect no response —
@@ -347,9 +371,38 @@ final class MCPServer {
         }
     }
 
-    private func handleInitialize(id: JSONRPCID?) async -> JSONRPCResponse {
+    /// MCP-version range we can speak. If the client sends a
+    /// `protocolVersion` we know — echo it back so the negotiated
+    /// version is what the client expects. If the client sends
+    /// something newer or unknown, fall through to the latest version
+    /// we implement (the highest entry below). Pre-1.0.3 we
+    /// hardcoded "2024-11-05" and any client requiring a newer
+    /// minimum would break silently.
+    private static let supportedProtocolVersions: Set<String> = [
+        "2024-11-05",
+        "2025-03-26",
+        "2025-06-18",
+    ]
+    private static let latestProtocolVersion = "2025-06-18"
+
+    private func handleInitialize(id: JSONRPCID?, params: AnyJSON?) async -> JSONRPCResponse {
+        // Extract client's requested protocolVersion if present.
+        // params is JSON-RPC-shaped: `{ "protocolVersion": "2025-03-26",
+        // "capabilities": {...}, "clientInfo": {...} }`. Tolerate
+        // missing / non-string values — we'll fall through to our
+        // latest supported version.
+        var negotiated = Self.latestProtocolVersion
+        if case let .object(dict) = params,
+           case let .string(clientVersion) = dict["protocolVersion"] {
+            if Self.supportedProtocolVersions.contains(clientVersion) {
+                negotiated = clientVersion
+            } else {
+                log.info("MCP client requested unknown protocolVersion '\(clientVersion, privacy: .public)' — using \(Self.latestProtocolVersion, privacy: .public) instead")
+            }
+        }
+
         let result = MCPInitializeResult(
-            protocolVersion: "2024-11-05",
+            protocolVersion: negotiated,
             capabilities: MCPServerCapabilities(
                 tools: .init(listChanged: false)
             ),

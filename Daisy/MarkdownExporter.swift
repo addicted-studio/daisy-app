@@ -62,6 +62,22 @@ enum MarkdownExporter {
         } else {
             lines.append("daisy_speaker_map: {}")
         }
+        // When a mic route change mid-session forced a format
+        // rollover (see AudioRecorder.handleConfigurationChange),
+        // the archive is split across `microphone.caf` plus
+        // `microphone.part2.caf` (etc) instead of one continuous
+        // file. Surface the part list here so the user (and any
+        // downstream tooling reading the frontmatter) knows where
+        // to find the full audio. Only emit the key when there's
+        // actually more than one part — the common case is one
+        // file and the frontmatter stays clean.
+        let archivedParts = session.archivedAudioParts
+        if archivedParts.count > 1 {
+            let parts = archivedParts
+                .map { yamlQuote($0.lastPathComponent) }
+                .joined(separator: ", ")
+            lines.append("daisy_audio_parts: [\(parts)]")
+        }
         lines.append("tags: [meeting, transcript, daisy]")
         lines.append("---")
         lines.append("")
@@ -190,7 +206,7 @@ enum MarkdownExporter {
         let markdown = renderMarkdown(session: session)
         do {
             try markdown.write(to: url, atomically: true, encoding: .utf8)
-            log.info("Saved transcript to \(url.path, privacy: .public)")
+            log.info("Saved transcript to \(url.path, privacy: .private)")
             return url
         } catch {
             log.error("Failed to write transcript: \(error.localizedDescription, privacy: .public)")

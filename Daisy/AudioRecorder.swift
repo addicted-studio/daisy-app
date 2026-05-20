@@ -454,6 +454,14 @@ final class AudioRecorder {
         lastInputFormat = newFormat
         installInputTap(format: newFormat)
 
+        // Re-prepare the engine graph BEFORE start() — the route
+        // change torn down internal AU state, and on some devices
+        // skipping prepare() lets engine.start() throw
+        // `kAudioUnitErr_Uninitialized`. Cheap when not needed
+        // (idempotent), saves a "Mic changed — recording paused"
+        // toast on the affected hardware.
+        engine.prepare()
+
         do {
             try engine.start()
             log.info("Audio engine restarted after route change — recording continues")

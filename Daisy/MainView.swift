@@ -76,6 +76,12 @@ enum SettingsTab: String, Hashable, Sendable {
     case general
     case transcription
     case summary
+    /// System privacy permissions Daisy interacts with — Microphone,
+    /// Calendar, Accessibility, Screen Recording. Lives in Settings
+    /// (not Connections) because it's about local OS-level access,
+    /// not about external service integrations. macOS convention —
+    /// Granola, Wispr Flow et al. put permission dashboards here too.
+    case permissions
 }
 
 /// Sub-section inside the Connections page. Lets external CTAs
@@ -249,8 +255,14 @@ struct MainView: View {
         // flips auto-start in Settings. Initial wiring is done in
         // DaisyApp.init via the same ServiceWiring helpers so the
         // two call sites can't drift apart.
-        .onChange(of: settings.recordHotkey) { _, new in
-            ServiceWiring.applyHotkey(choice: new, session: session)
+        .onChange(of: settings.recordHotkey) { _, _ in
+            ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+        }
+        .onChange(of: settings.voiceNoteHotkey) { _, _ in
+            ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+        }
+        .onChange(of: settings.dictationHotkey) { _, _ in
+            ServiceWiring.applyAllHotkeys(settings: settings, session: session)
         }
         // Granola-style auto-open: when a session finishes and the
         // user opted in via `settings.showSessionAfterStop`, jump

@@ -214,7 +214,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             if created {
                 log.info("System audio archive placeholder created: \(url.lastPathComponent, privacy: .public)")
             } else {
-                log.error("Failed to create system audio archive placeholder at \(url.path, privacy: .public)")
+                log.error("Failed to create system audio archive placeholder at \(url.path, privacy: .private)")
             }
         }
 
@@ -263,9 +263,26 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         )
         guard idStatus == noErr, deviceID != kAudioObjectUnknown else { return false }
 
-        // 2. Read its transport type.
+        // 2. Read its transport type. If the device IS a BT device,
+        //    done. If it's an aggregate (kAudioDeviceTransportTypeAggregate)
+        //    we drill into its sub-devices to see if any of them is
+        //    BT — that's the "BlackHole + AirPods" multi-output
+        //    configuration which still hits the BT loopback bug.
+        return isBluetoothTransport(deviceID: deviceID)
+    }
+
+    /// Recursively check whether `deviceID` (or any of its active
+    /// sub-devices, if it's an aggregate) reports a Bluetooth
+    /// transport. Catches the edge case where the user has set up
+    /// an aggregate device (Audio MIDI Setup → Create Aggregate
+    /// Device) that includes their AirPods as one of the members.
+    /// The aggregate itself reports
+    /// `kAudioDeviceTransportTypeAggregate`, but SCK's loopback
+    /// still fails the same way as plain BT because the audio path
+    /// goes through the BT stack at some point.
+    nonisolated private static func isBluetoothTransport(deviceID: AudioDeviceID) -> Bool {
         var transportType: UInt32 = 0
-        size = UInt32(MemoryLayout<UInt32>.size)
+        var size = UInt32(MemoryLayout<UInt32>.size)
         var transportAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyTransportType,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -276,10 +293,58 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         )
         guard tStatus == noErr else { return false }
 
-        // Both classic BT and BLE transports map to the same
-        // SCK loopback failure mode in practice. Catch both.
-        return transportType == kAudioDeviceTransportTypeBluetooth
-            || transportType == kAudioDeviceTransportTypeBluetoothLE
+        if transportType == kAudioDeviceTransportTypeBluetooth
+            || transportType == kAudioDeviceTransportTypeBluetoothLE {
+            return true
+        }
+
+        // Aggregate? Drill into sub-devices.
+        guard transportType == kAudioDeviceTransportTypeAggregate else {
+            return false
+        }
+        var subDevicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioAggregateDevicePropertyActiveSubDeviceList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var subDevicesSize: UInt32 = 0
+        let szStatus = AudioObjectGetPropertyDataSize(
+            deviceID, &subDevicesAddress, 0, nil, &subDevicesSize
+        )
+        guard szStatus == noErr, subDevicesSize > 0 else { return false }
+
+        let count = Int(subDevicesSize) / MemoryLayout<AudioObjectID>.size
+        var subDevices = [AudioObjectID](repeating: 0, count: count)
+        let listStatus = subDevices.withUnsafeMutableBufferPointer { buf -> OSStatus in
+            var sz = subDevicesSize
+            return AudioObjectGetPropertyData(
+                deviceID, &subDevicesAddress, 0, nil, &sz, buf.baseAddress!
+            )
+        }
+        guard listStatus == noErr else { return false }
+
+        for sub in subDevices where sub != kAudioObjectUnknown {
+            // Don't recurse infinitely if some absurd aggregate
+            // contains an aggregate — direct transport check on
+            // each sub is enough for the real-world configs we
+            // care about (AirPods inside a multi-output aggregate).
+            var subTransport: UInt32 = 0
+            var subSize = UInt32(MemoryLayout<UInt32>.size)
+            var subAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let s = AudioObjectGetPropertyData(
+                sub, &subAddress, 0, nil, &subSize, &subTransport
+            )
+            if s == noErr,
+               subTransport == kAudioDeviceTransportTypeBluetooth
+                || subTransport == kAudioDeviceTransportTypeBluetoothLE {
+                return true
+            }
+        }
+        return false
     }
 
     /// Build + start a fresh SCStream against the current default

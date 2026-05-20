@@ -116,7 +116,7 @@ final class SessionStore {
                     options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
                 )
             } catch {
-                log.error("Could not list \(root.url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Could not list \(root.url.path, privacy: .private): \(error.localizedDescription, privacy: .public)")
                 continue
             }
             for url in entries {
@@ -276,7 +276,7 @@ final class SessionStore {
             do {
                 try FileManager.default.removeItem(at: session.directoryURL)
             } catch {
-                log.error("Delete failed for \(session.title, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                log.error("Delete failed for \(session.title, privacy: .private): \(error.localizedDescription, privacy: .public)")
                 if firstError == nil {
                     firstError = error.localizedDescription
                 }

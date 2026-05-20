@@ -25,6 +25,7 @@ struct HomeView: View {
     @Bindable private var google = GoogleAccountStore.shared
     @Bindable var folders = FolderStore.shared
     @Bindable var integrationStore = MCPIntegrationStore.shared
+    @Bindable private var permissions = SystemPermissions.shared
     /// Read-through to the session's settings — the destinations
     /// hint uses `hasNotionCredentials`. Done as a computed
     /// passthrough rather than a separate @Bindable property so
@@ -39,6 +40,7 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                if permissions.needsAttention { permissionsAttentionBanner }
                 upcomingSection
                 recentSessionsSection
                 if showDestinationsHint { destinationsHint }
@@ -49,6 +51,61 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .task { await store.refresh() }
+    }
+
+    // MARK: - Permissions banner
+    //
+    // Sticky at the top of Home if either Microphone or Accessibility
+    // is missing — those two are required, recording / dictation will
+    // fail silently without them. Calendar / Screen Recording are
+    // optional and don't trigger this banner.
+
+    private var permissionsAttentionBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.daisyWarning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(missingPermissionsTitle)
+                    .font(.callout.weight(.medium))
+                Text("Open Settings → Permissions to grant access.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 8)
+            Button("Fix") {
+                AppNavigation.shared.openInSettings(.permissions)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .tint(Color.daisyAccent)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            Color.daisyWarning.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.daisyWarning.opacity(0.25), lineWidth: 0.5)
+        )
+        .padding(.horizontal)
+    }
+
+    /// "Microphone access needed" / "Accessibility access needed" /
+    /// "Microphone & Accessibility access needed" — concrete enough
+    /// to tell the user what'll break if they ignore the banner.
+    private var missingPermissionsTitle: String {
+        let mic = permissions.microphone != .granted
+        let acc = permissions.accessibility != .granted
+        switch (mic, acc) {
+        case (true, true):   return "Microphone & Accessibility access needed"
+        case (true, false):  return "Microphone access needed"
+        case (false, true):  return "Accessibility access needed"
+        case (false, false): return ""
+        }
     }
 
     // MARK: - Destinations discoverability

@@ -38,6 +38,7 @@ import EventKit
 import Foundation
 import Observation
 import os
+import SwiftUI
 
 // MARK: - DTO
 
@@ -116,15 +117,107 @@ final class CalendarService {
     /// state is already determined.
     @discardableResult
     func requestAccess() async -> EKAuthorizationStatus {
+        let preStatus = EKEventStore.authorizationStatus(for: .event)
+        Self.permLog.info("requestAccess: pre-call status=\(Self.describe(preStatus), privacy: .public)")
+
+        // ─── Foreground the app + ensure a key window exists ──────────
+        //
+        // macOS TCC silently refuses to show the privacy prompt when
+        // the requesting app has no key window in foreground state.
+        // Clicking "Connect Apple Calendar" from a MenuBarExtra popover
+        // — which is what Daisy's menu-bar UI is — would otherwise hit
+        // exactly that wall: requestFullAccessToEvents returns false
+        // immediately, no dialog appears, status stays .notDetermined,
+        // and the user has no way to grant access.
+        //
+        // Activating NSApp + raising a titled window promotes Daisy
+        // into a regular foreground app for the duration of the
+        // request, which is the state TCC requires.
+        Self.bringAppToForegroundForPrompt()
+
+        // IMPORTANT: use the LONG-LIVED singleton `store`, NOT a fresh
+        // instance. On macOS 14+ creating multiple EKEventStore() in
+        // the same process causes calaccessd to refuse the second
+        // connection ("Client tried to open too many connections to
+        // calaccessd. Refusing to open another.") — and that refusal
+        // surfaces as exactly the symptom we were seeing: granted=false
+        // returned synchronously, no throw, no prompt, status unchanged.
+        // See Apple Developer Forums thread 737536.
         do {
-            _ = try await store.requestFullAccessToEvents()
+            let granted = try await store.requestFullAccessToEvents()
+            Self.permLog.info("requestAccess: requestFullAccessToEvents returned granted=\(granted, privacy: .public)")
         } catch {
-            // Denied or system error — fall through to the
-            // authoritative status read below.
+            // Denied or system error — log loudly so we can tell apart
+            // "user denied" from "TCC daemon refused the request".
+            Self.permLog.error("requestAccess: requestFullAccessToEvents threw: \(error.localizedDescription, privacy: .public) [\(String(describing: error), privacy: .public)]")
         }
         let status = EKEventStore.authorizationStatus(for: .event)
+        Self.permLog.info("requestAccess: post-call status=\(Self.describe(status), privacy: .public)")
         authorizationStatus = status
         return status
+    }
+
+    /// Promote Daisy into foreground regular-app state so the TCC
+    /// prompt has a key window to anchor against. Idempotent.
+    private static func bringAppToForegroundForPrompt() {
+        NSApp.activate(ignoringOtherApps: true)
+        if NSApp.isHidden { NSApp.unhide(nil) }
+
+        // ─── Diagnostic dump ──────────────────────────────────────────
+        // Tahoe 26.2 + SwiftUI Window scenes have shown weird
+        // behaviours where the supposedly-titled main window isn't
+        // present in NSApp.windows at all. Log every window so we can
+        // see what's actually in the runloop's window list before
+        // filtering.
+        let allWindows = NSApp.windows
+        permLog.info("NSApp.windows count=\(allWindows.count, privacy: .public)")
+        for (idx, w) in allWindows.enumerated() {
+            let cls = String(describing: type(of: w))
+            let title = w.title
+            let ident = w.identifier?.rawValue ?? "nil"
+            let visible = w.isVisible
+            let canKey = w.canBecomeKey
+            let isKey = w.isKeyWindow
+            let isMain = w.isMainWindow
+            let titled = w.styleMask.contains(.titled)
+            permLog.info("  window[\(idx, privacy: .public)] class=\(cls, privacy: .public) title='\(title, privacy: .public)' ident=\(ident, privacy: .public) visible=\(visible, privacy: .public) canBecomeKey=\(canKey, privacy: .public) isKey=\(isKey, privacy: .public) isMain=\(isMain, privacy: .public) titled=\(titled, privacy: .public)")
+        }
+
+        // ─── Try to key any plausible main window ─────────────────────
+        // Relaxed filter: any visible, key-eligible NSWindow that
+        // isn't an obvious accessory (no title AND not titled = panel).
+        // The main window might come up as titled with title 'Daisy',
+        // titled with empty title (SwiftUI quirk), or just a regular
+        // NSWindow with canBecomeKey=true.
+        let candidate = allWindows.first(where: { window in
+            window.isVisible && window.canBecomeKey
+        })
+
+        if let candidate {
+            candidate.makeKeyAndOrderFront(nil)
+            permLog.info("bringAppToForegroundForPrompt: keyed window class=\(String(describing: type(of: candidate)), privacy: .public) title='\(candidate.title, privacy: .public)'")
+        } else {
+            permLog.error("bringAppToForegroundForPrompt: NO key-eligible visible window found — calendar prompt cannot anchor")
+        }
+    }
+
+    /// Dedicated logger for Calendar permission flow — separate
+    /// category so it's easy to filter in Console.app:
+    ///   `subsystem:app.essazanov.Daisy category:Calendar/Perm`
+    private static let permLog = Logger(subsystem: "app.essazanov.Daisy", category: "Calendar/Perm")
+
+    /// Pretty-printer for `EKAuthorizationStatus` — the raw integer is
+    /// useless in Console; this gives "notDetermined / denied /
+    /// restricted / writeOnly / fullAccess" instead.
+    private static func describe(_ status: EKAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "notDetermined"
+        case .restricted:    return "restricted"
+        case .denied:        return "denied"
+        case .fullAccess:    return "fullAccess"
+        case .writeOnly:     return "writeOnly"
+        @unknown default:    return "unknown(\(status.rawValue))"
+        }
     }
 
     /// Always opens System Settings → Privacy → Calendars.

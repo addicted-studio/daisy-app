@@ -2,34 +2,48 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>com.apple.security.app-sandbox</key>
-	<true/>
+	<!-- Daisy не sandboxed (см. ENABLE_APP_SANDBOX=NO в build settings):
+	     dictation нужен системный CGEvent.post(⌘V) в произвольный
+	     frontmost-процесс, что несовместимо с App Sandbox.
+	     Hardened Runtime + Notarization остаются включены, этого
+	     достаточно для Gatekeeper при distribution через DMG + Sparkle.
+
+	     Mac App Store не планируется.
+
+	     ─── Hardened Runtime gotcha ──────────────────────────────────
+	     Все entitlements ниже — НЕ только sandbox-ключи. Под Hardened
+	     Runtime macOS 14+ tccd явно требует их для показа TCC prompt'а
+	     соответствующего сервиса. Симптом отсутствия:
+	     `requestAccess` возвращает granted=false без throw, диалог не
+	     появляется, статус остаётся .notDetermined, app никогда не
+	     появляется в System Settings → Privacy → <Service>. В tccd
+	     log пишется:
+	         "Prompting policy for hardened runtime; service:
+	          kTCCService<X> requires entitlement
+	          com.apple.security.<X> but it is missing"
+
+	     Если будут добавляться новые services (Contacts / Photos /
+	     Reminders / Location / Camera) — нужно одновременно добавлять
+	     соответствующий `personal-information.*` или `device.*` key
+	     сюда И `NS<X>UsageDescription` в Info.plist. -->
+
+	<!-- Микрофон — без него AudioRecorder получает silent buffer.
+	     Требование зафиксировано в tccd log 2026-05-20:
+	     "kTCCServiceMicrophone requires com.apple.security.device.audio-input". -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
-	<key>com.apple.security.files.user-selected.read-write</key>
-	<true/>
-	<key>com.apple.security.files.bookmarks.app-scope</key>
-	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
-	<!-- Localhost MCP server (Phase 6a) — lets sandboxed Daisy.app
-	     listen on a loopback TCP port so external MCP clients
-	     (Claude Desktop, Claude Code, Cowork, etc.) can query
-	     transcripts and summaries via JSON-RPC over HTTP/SSE. -->
-	<key>com.apple.security.network.server</key>
-	<true/>
+
+	<!-- Calendar — для EKEventStore.requestFullAccessToEvents(). -->
 	<key>com.apple.security.personal-information.calendars</key>
 	<true/>
-	<!-- Sparkle 2.x XPC services for sandboxed auto-updates.
-	     The Installer Launcher (-spks) elevates privileges to swap
-	     Daisy.app in place; the Installer (-spki) does the actual
-	     copy. Both ship bundled inside Sparkle.framework — we just
-	     allow our sandboxed app process to talk to them.
-	     See https://sparkle-project.org/documentation/sandboxing/ -->
-	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
-	<array>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spks</string>
-		<string>$(PRODUCT_BUNDLE_IDENTIFIER)-spki</string>
-	</array>
+
+	<!-- Network client — для Sparkle update checks, OpenAI/Anthropic
+	     API, Google Calendar OAuth + API, любого HTTPS-запроса. Под
+	     Hardened Runtime non-sandboxed формально не обязателен (этот
+	     entitlement gating-ит только Sandbox), но включён explicitly
+	     чтобы избежать сюрпризов если когда-нибудь решим обратно
+	     включить Sandbox. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

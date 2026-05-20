@@ -52,10 +52,14 @@
     <!-- Permission prompts. Texts are user-facing and surface in the
          system's privacy-grant dialog the first time Daisy requests
          each capability. Keep them factual and short. -->
+    <!-- macOS 14+ uses granular calendar access keys. The legacy
+         NSCalendarsUsageDescription is deprecated AND, when present
+         alongside the granular key, has been observed on Sonoma/Tahoe
+         to make `requestFullAccessToEvents()` silently return false
+         without showing the user prompt. Keep ONLY the granular key
+         since Daisy's deployment target is macOS 14+. -->
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac.</string>
-    <key>NSCalendarsUsageDescription</key>
-    <string>Daisy reads your calendar to detect upcoming meetings.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.</string>
     <key>NSScreenCaptureUsageDescription</key>

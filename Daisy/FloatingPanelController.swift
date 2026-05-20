@@ -119,22 +119,20 @@ final class FloatingPanelController {
         // Master switch: the floating widget is opt-in (Settings →
         // Capture → "Show floating widget"). When OFF, the panel
         // never appears regardless of session state.
+        //
+        // When ON, the widget is visible across ALL session states
+        // including `.idle`. Pre-1.0.3 the panel hid itself at
+        // idle, which meant a freshly-launched Daisy with no
+        // active recording showed nothing — users couldn't see
+        // Daisy was running until they hit the hotkey blind.
+        // Always-visible-when-enabled is the right default; users
+        // who want it gone can flip the master switch off or
+        // pick "Hide for N minutes" from the right-click menu.
         guard settings.floatingWidgetEnabled else {
             hide()
             return
         }
-        switch status {
-        case .recording, .paused, .summarizing, .preparing, .stopping, .finished, .failed:
-            // Daisy stays on screen through the whole arc — including
-            // the brief `.stopping` transition (was causing a flicker
-            // when going stopping → summarizing) and after the session
-            // ends, until the user explicitly starts a new one or hides
-            // it via the right-click menu. `.paused` keeps the widget
-            // visible so the user can tap to resume.
-            show()
-        case .idle:
-            hide()
-        }
+        show()
     }
 
     /// Re-evaluate visibility against the current session state.

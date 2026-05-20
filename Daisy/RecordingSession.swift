@@ -11,10 +11,65 @@ import Foundation
 import AVFoundation
 import Observation
 import os
+// NSPasteboard / Accessibility-paste live behind `DictationPaste`
+// now — RecordingSession itself doesn't need AppKit.
+
+/// Shared JSON coders configured for Daisy's `.send_failures.json`
+/// sidecar (and any future per-session JSON file that wants the
+/// same ergonomics — pretty-printed, deterministic key order,
+/// ISO 8601 timestamps that a human can read in a terminal).
+///
+/// File-scope `extension` so the encoder/decoder live next to the
+/// `SendFailureRecord` consumer without polluting every other JSON
+/// path in the app.
+nonisolated extension JSONEncoder {
+    static var daisySendFailureEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+}
+
+nonisolated extension JSONDecoder {
+    static var daisySendFailureDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
 
 @Observable
 @MainActor
 final class RecordingSession {
+    /// One of three top-level modes the user can engage:
+    ///
+    ///   - `.meeting` — the classic Daisy flow. Mic + system audio,
+    ///     LLM summary, autoSend to Notion/MCP, full session saved
+    ///     to History.
+    ///
+    ///   - `.voiceNote` — quick personal capture. Mic only (no
+    ///     system audio, no remote participants), NO LLM summary
+    ///     (just the transcript), folder forced to `.notes`.
+    ///     Useful for "remember this before I forget" moments.
+    ///
+    ///   - `.dictation` — Wispr-Flow-lite. Mic only, no summary,
+    ///     transcript goes straight to the clipboard and the
+    ///     session directory is deleted on stop. A toast tells the
+    ///     user to ⌘V into their target app. No persistent
+    ///     artifacts — the user is producing typed text, not a
+    ///     transcript.
+    ///
+    /// Mode is set at start time via the corresponding hotkey or
+    /// public toggle method. It survives across `pause()`/`resume()`
+    /// (you can pause a voice note mid-record). Defaults to
+    /// `.meeting` for any code path that doesn't explicitly pick.
+    enum RecordingMode: String, Codable, Sendable {
+        case meeting
+        case voiceNote
+        case dictation
+    }
+
     enum Status: Equatable {
         case idle
         case preparing
@@ -151,6 +206,14 @@ final class RecordingSession {
     /// Live audio spectrum (8 bands, 0…1) used by the floating Daisy
     /// widget to animate its petals. Forwarded from the mic recorder.
     var spectrumBands: [Float] { recorder.spectrumBands }
+    /// Every archived audio file the mic recorder produced for this
+    /// session. Always at least `[microphone.caf]` while recording;
+    /// becomes `[microphone.caf, microphone.part2.caf, …]` when a
+    /// mid-session route change forced a format-rollover into a
+    /// new part. Exposed for `MarkdownExporter` frontmatter +
+    /// future History-pane "this session has N audio parts"
+    /// affordance.
+    var archivedAudioParts: [URL] { recorder.archivedParts }
 
     /// Merged transcript across mic + system, sorted by absolute start time.
     var segments: [TranscriptSegment] {
@@ -208,6 +271,21 @@ final class RecordingSession {
     /// toast — suppresses any further auto-stop attempts in this
     /// session (no point pestering them every 30s).
     private var autoStopSuppressed: Bool = false
+
+    /// Active recording mode. Persists across pause/resume but
+    /// resets to `.meeting` on `reset()` — fresh sessions default
+    /// to the original Daisy meeting flow unless a mode-specific
+    /// hotkey set `pendingMode` first.
+    private(set) var currentMode: RecordingMode = .meeting
+
+    /// Mode the next `start()` should adopt. Set by mode-specific
+    /// entry points (`toggleVoiceNoteByHotkey`, etc.) right before
+    /// they call `start()`, consumed inside `start()` after
+    /// `reset()`. Same pattern as `pendingBoundMeeting` —
+    /// `reset()` clears the live value, the pending channel
+    /// survives the wipe.
+    @ObservationIgnored
+    private var pendingMode: RecordingMode?
 
     /// Calendar-driven meeting binding that should be applied to the
     /// session AFTER `start()` runs its internal `reset()` (which
@@ -277,6 +355,62 @@ final class RecordingSession {
         }
     }
 
+    /// Voice-notes — TOGGLE on tap. Single press starts a
+    /// `.voiceNote` session (mic only, no system audio, no LLM
+    /// summary, Notes folder); next press of the same hotkey
+    /// stops it. Different from dictation (hold-to-talk) because
+    /// voice notes can be longer than the user wants to keep a
+    /// finger on the key — meeting yourself, dictating ideas
+    /// over 5–10 min, etc.
+    func toggleVoiceNoteByHotkey() async {
+        switch status {
+        case .idle, .finished, .failed:
+            pendingMode = .voiceNote
+            pendingFolderHint = .notes
+            await start()
+        case .recording, .paused:
+            if currentMode == .voiceNote {
+                await stop()
+            } else {
+                ToastCenter.shared.show(
+                    "Daisy is already recording. Stop the current session first.",
+                    style: .warning
+                )
+            }
+        case .preparing, .stopping, .summarizing:
+            return
+        }
+    }
+
+    /// Dictation — push-to-record. Called on hotkey-down edge.
+    /// Starts a `.dictation` session (mic only, ephemeral, no
+    /// History entry). On release, the transcript is copied to
+    /// the clipboard and a toast prompts ⌘V. Wispr-Flow-lite.
+    func startDictationHotkey() async {
+        switch status {
+        case .idle, .finished, .failed:
+            pendingMode = .dictation
+            await start()
+        case .recording, .paused:
+            ToastCenter.shared.show(
+                "Daisy is already recording. Stop the current session first.",
+                style: .warning
+            )
+        case .preparing, .stopping, .summarizing:
+            return
+        }
+    }
+
+    /// Dictation — release. Triggers the stop() path which, when
+    /// `currentMode == .dictation`, copies the final transcript
+    /// to the clipboard and deletes the session directory before
+    /// returning to idle.
+    func stopDictationHotkey() async {
+        guard currentMode == .dictation else { return }
+        guard status == .recording || status == .paused else { return }
+        await stop()
+    }
+
     /// Start a recording that is bound to a specific calendar event.
     /// The event's title pre-fills the session title, the transcript
     /// markdown carries the event id in frontmatter so we can match
@@ -317,7 +451,7 @@ final class RecordingSession {
         // with M1's bindings.
         if status == .recording || status == .paused {
             let oldTitle = self.boundMeeting?.title ?? self.title
-            log.warning("Calendar fired \(meeting.title, privacy: .public) while still recording \(oldTitle, privacy: .public). Auto-rotating sessions.")
+            log.warning("Calendar fired \(meeting.title, privacy: .private) while still recording \(oldTitle, privacy: .private). Auto-rotating sessions.")
             ToastCenter.shared.show(
                 "Previous meeting saved — starting new session for \(meeting.title).",
                 style: .info
@@ -371,11 +505,14 @@ final class RecordingSession {
         guard status == .idle || status == .finished || isFailed else { return }
         reset()
 
-        // Apply meeting/folder bindings stashed by `startFromMeeting`.
-        // These need to land AFTER reset() (which nukes boundMeeting /
-        // folder back to defaults) so they actually stick for the
-        // duration of the recording — otherwise `scheduleAutoStopIfNeeded`
-        // sees `boundMeeting == nil` and never arms the auto-stop timer.
+        // Apply meeting/folder/mode bindings stashed by entry-point
+        // helpers (`startFromMeeting`, `toggleVoiceNoteByHotkey`,
+        // `toggleDictationByHotkey`). These need to land AFTER
+        // reset() — reset clears boundMeeting/folder/currentMode
+        // back to defaults — otherwise `scheduleAutoStopIfNeeded`
+        // sees `boundMeeting == nil`, and `finalizePostStop` runs
+        // the meeting pipeline against what should have been a
+        // dictation session.
         if let m = pendingBoundMeeting {
             boundMeeting = m
             pendingBoundMeeting = nil
@@ -383,6 +520,37 @@ final class RecordingSession {
         if let hint = pendingFolderHint {
             if folder == .inbox { folder = hint }
             pendingFolderHint = nil
+        }
+        if let mode = pendingMode {
+            currentMode = mode
+            pendingMode = nil
+        } else {
+            currentMode = .meeting
+        }
+
+        // Apply mode-specific transcription locale override, falling
+        // back to the meeting default. Empty string in the override
+        // means "inherit". Pre-1.0.3 dictation/voice-note always used
+        // `defaultTranscriptionLocale`, which auto-detected English
+        // for a clearly Russian dictation if the early few seconds
+        // were ambiguous — user reported "Я диктовал на русском, а
+        // он перевёл на английский".
+        let modeLocale: String
+        switch currentMode {
+        case .meeting:
+            modeLocale = settings.defaultTranscriptionLocale
+        case .voiceNote:
+            modeLocale = settings.voiceNoteLocale.isEmpty
+                ? settings.defaultTranscriptionLocale
+                : settings.voiceNoteLocale
+        case .dictation:
+            modeLocale = settings.dictationLocale.isEmpty
+                ? settings.defaultTranscriptionLocale
+                : settings.dictationLocale
+        }
+        let effectiveLocale = modeLocale.isEmpty ? "auto" : modeLocale
+        if localeIdentifier != effectiveLocale {
+            localeIdentifier = effectiveLocale
         }
 
         if title.isEmpty {
@@ -450,7 +618,12 @@ final class RecordingSession {
         // an "Open Privacy Settings" deeplink) so the user finds out
         // BEFORE the meeting, not after.
         systemAudioDeniedThisSession = false
-        if settings.captureSystemAudio {
+        // Voice notes and dictation are personal-mic-only flows —
+        // the user is the only voice that matters. Skip the
+        // SCStream loopback entirely so we don't ask for Screen
+        // Recording permission on first dictation use and don't
+        // burn CPU on a 2×2 video stream we'll throw away.
+        if settings.captureSystemAudio && currentMode == .meeting {
             // Preflight TCC. `CGPreflightScreenCaptureAccess()`
             // doesn't itself prompt — calling SCK without checking
             // would prompt mid-startCapture, but if the user
@@ -692,6 +865,29 @@ final class RecordingSession {
         // can persist a fresh profile.
         applySpeakerProfileMatches()
 
+        // Dictation mode — fully ephemeral. By this point Whisper
+        // has produced its final transcript; hand it to the
+        // `DictationPaste` coordinator which:
+        //   1. Snapshots the current clipboard
+        //   2. Writes the transcript
+        //   3. Tries to auto-paste via Accessibility-permitted ⌘V
+        //   4. Schedules a 10 s restore so the user's previous
+        //      clipboard contents come back if they haven't
+        //      copied anything else.
+        // Then nuke the session directory + reset. No transcript.md,
+        // no summary.json, no History entry, no autoSend.
+        if currentMode == .dictation {
+            let transcriptText = fullTranscriptText
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            DictationPaste.shared.handle(transcript: transcriptText)
+            if let dir = sessionDirectory {
+                try? FileManager.default.removeItem(at: dir)
+            }
+            releaseSessionsFolderTicket()
+            reset()
+            return
+        }
+
         // Save markdown next to the audio archive. A failure here means
         // the user just lost their transcript on disk — surface it
         // loudly rather than swallowing.
@@ -717,9 +913,14 @@ final class RecordingSession {
         // LLM call (15-30 s) and downstream auto-send happen in a
         // detached task below and report progress through
         // `summaryGenerationState`, not through `status`.
+        // LLM summary only runs for full `.meeting` mode. Voice
+        // notes are bare transcript + audio (kept in History under
+        // Notes folder), dictation is ephemeral and skipped
+        // entirely below.
         let willSummarize = settings.autoSummarize
             && summarizer.availability == .available
             && !segments.isEmpty
+            && currentMode == .meeting
 
         guard let dir = sessionDirectory else {
             // No session dir — shouldn't happen post-capture, but
@@ -806,11 +1007,22 @@ final class RecordingSession {
         title: String,
         localeHint: String?
     ) async {
+        // OSSignpost ranges around the three slow phases. Lets
+        // `xctrace export --xpc Daisy --tracing-key=signposts` show
+        // a user "your 90-second summary spent 78s in the LLM call
+        // and 12s in autoSend". Ships nothing off-device — Apple
+        // System Log only. The signpost subsystem matches the
+        // logger subsystem so they coalesce in Console.app.
+        let signposter = OSSignposter(subsystem: "app.essazanov.Daisy", category: "PostStop")
+
+        let summarizeState = signposter.beginInterval("summarize", id: signposter.makeSignpostID())
         let summary = await summarizer.summarize(
             transcript: transcript,
             title: title,
             localeHint: localeHint
         )
+        signposter.endInterval("summarize", summarizeState)
+
         if Task.isCancelled {
             summaryGenerationState = .failed("cancelled")
             await SessionStore.shared.finishGenerating(sessionID)
@@ -819,6 +1031,7 @@ final class RecordingSession {
         }
 
         if let summary {
+            let writeState = signposter.beginInterval("write_summary", id: signposter.makeSignpostID())
             let url = directory.appendingPathComponent("summary.json")
             do {
                 let data = try JSONEncoder().encode(summary)
@@ -830,6 +1043,7 @@ final class RecordingSession {
                     style: .error
                 )
             }
+            signposter.endInterval("write_summary", writeState)
         }
 
         // If a fresh recording has begun in the meantime (reset()
@@ -843,7 +1057,9 @@ final class RecordingSession {
             return
         }
 
+        let autoSendState = signposter.beginInterval("auto_send", id: signposter.makeSignpostID())
         await runAutoSendDestinations()
+        signposter.endInterval("auto_send", autoSendState)
 
         summaryGenerationState = (summary != nil) ? .ready : .failed("no summary")
         summaryTask = nil
@@ -897,18 +1113,20 @@ final class RecordingSession {
 
     /// whose `autoOnSave` flag is on.
     ///
-    /// Errors are swallowed at the toast layer — a failed Notion
-    /// 401 shouldn't tear down a finished session. The user can
-    /// retry from History → kebab → Send to manually.
+    /// Errors are surfaced as toasts AND persisted into
+    /// `.send_failures.json` inside the session directory — pre-1.0.3
+    /// behaviour was toast-only, so a Notion 401 (or a Linear MCP
+    /// timeout, or a webhook 503) vanished after a few seconds with
+    /// no forensic trail. Users would email "I thought it went to
+    /// Notion" with nothing to debug. The sidecar gives support a
+    /// concrete artifact and lays groundwork for a future "Resend
+    /// failed" affordance in History.
     private func runAutoSendDestinations() async {
+        let sessionFolderSlug = folder.slug
+
         // Notion uses the in-memory `MeetingExportData` shape we
         // already hand to the manual Send-to flow — no need to
         // round-trip through StoredSession.
-        let sessionFolderSlug = folder.slug
-        // Notion auto-send respects its own folder filter
-        // (`settings.autoSendNotionFolders`). Empty set = all
-        // folders. Skip silently if the current session's folder
-        // isn't in the allow-list.
         if settings.autoSendNotion, settings.hasNotionCredentials, !segments.isEmpty,
            Self.folderAllowed(sessionFolderSlug, allowed: settings.autoSendNotionFolders) {
             let export = exportData()
@@ -920,8 +1138,14 @@ final class RecordingSession {
                 // for the user's workspace.
                 log.info("Auto-sent to Notion: \(url.absoluteString, privacy: .private)")
             } catch {
-                log.error("Auto-send to Notion failed: \(error.localizedDescription, privacy: .public)")
+                log.error("Auto-send to Notion failed: \(error.localizedDescription, privacy: .private)")
                 ToastCenter.shared.show("Auto-send to Notion failed — retry from History", style: .warning)
+                recordAutoSendFailure(
+                    integration: "Notion",
+                    kind: "notion",
+                    destination: "user's Notion workspace",
+                    error: error.localizedDescription
+                )
             }
         }
 
@@ -944,7 +1168,76 @@ final class RecordingSession {
             folderSlug: sessionFolderSlug
         )
         for integration in autoIntegrations {
-            _ = await MCPDispatcher.send(integration, for: stored)
+            let ok = await MCPDispatcher.send(integration, for: stored)
+            if !ok {
+                // MCPDispatcher already surfaced a toast and logged
+                // the detailed error via os_log. The sidecar gets a
+                // generic failure record — users grep Console.app
+                // by subsystem `app.essazanov.Daisy` category
+                // `MCPDispatcher` for the specifics. A future
+                // refactor of MCPDispatcher.send() to return
+                // (Bool, String?) would let us record the error
+                // text here too; not blocking on it for 1.0.3.
+                recordAutoSendFailure(
+                    integration: integration.name,
+                    kind: integration.kind == .mcp ? "mcp" : "webhook",
+                    destination: integration.baseURL,
+                    error: nil
+                )
+            }
+        }
+    }
+
+    /// One entry in the per-session auto-send failure log.
+    /// Stored as JSON inside `<sessionDir>/.send_failures.json`.
+    ///
+    /// Schema is part of the on-disk contract; future versions can
+    /// add OPTIONAL fields but must not rename or remove existing
+    /// ones — old Daisy versions reading sidecars written by newer
+    /// versions should still decode successfully.
+    nonisolated struct SendFailureRecord: Codable, Sendable {
+        let integration: String     // human-readable name ("Notion", "Linear", "Slack webhook")
+        let kind: String            // "notion" | "mcp" | "webhook"
+        let destination: String     // URL or workspace identifier
+        let error: String?          // localised error description, nil if not captured
+        let attemptedAt: Date
+    }
+
+    /// Append a `SendFailureRecord` to `.send_failures.json` inside
+    /// the current session directory. Atomic write — reads existing
+    /// JSON array (or starts fresh on missing/malformed), appends,
+    /// writes back. Hidden filename so it doesn't appear in History
+    /// row contents.
+    ///
+    /// Failure modes silently log but don't propagate — losing the
+    /// sidecar on a write error is fine; the toast + os_log already
+    /// surfaced the original issue.
+    private func recordAutoSendFailure(
+        integration: String,
+        kind: String,
+        destination: String,
+        error: String?
+    ) {
+        guard let directory = sessionDirectory else { return }
+        let sidecarURL = directory.appendingPathComponent(".send_failures.json")
+        var records: [SendFailureRecord] = []
+        if let existing = try? Data(contentsOf: sidecarURL),
+           let decoded = try? JSONDecoder.daisySendFailureDecoder.decode([SendFailureRecord].self, from: existing) {
+            records = decoded
+        }
+        records.append(SendFailureRecord(
+            integration: integration,
+            kind: kind,
+            destination: destination,
+            error: error,
+            attemptedAt: Date()
+        ))
+        do {
+            let data = try JSONEncoder.daisySendFailureEncoder.encode(records)
+            try data.write(to: sidecarURL, options: [.atomic])
+            log.info("Wrote .send_failures.json (\(records.count, privacy: .public) record(s))")
+        } catch {
+            log.error("Failed to write .send_failures.json: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -1078,16 +1371,35 @@ final class RecordingSession {
         startedAt = nil
         boundMeeting = nil
         folder = .inbox
+        currentMode = .meeting
         status = .idle
     }
 
     // MARK: - Computed
 
     var fullTranscriptText: String {
-        segments
+        let nonEmpty = segments
             .filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { "[\($0.speakerLabel)] \($0.text)" }
-            .joined(separator: "\n\n")
+        switch currentMode {
+        case .meeting:
+            // Multi-speaker context — labels are signal ("[Me]"
+            // vs "[Alex]" vs "[Remote A]" tell the LLM who said
+            // what for the summary pass).
+            return nonEmpty
+                .map { "[\($0.speakerLabel)] \($0.text)" }
+                .joined(separator: "\n\n")
+        case .voiceNote, .dictation:
+            // Single-speaker, no diarization, no LLM downstream.
+            // The speaker tag is noise — for dictation it'd end
+            // up pasted into the user's text field as "[Me] hi
+            // there", which is exactly what they don't want.
+            // Joined with single newlines because voice-note
+            // recordings rarely have meaningful paragraph breaks
+            // worth a double-newline gap.
+            return nonEmpty
+                .map(\.text)
+                .joined(separator: "\n")
+        }
     }
 
     var hasContent: Bool {

@@ -64,12 +64,56 @@ final class AppSettings {
         didSet { defaults.set(defaultTranscriptionLocale, forKey: Self.k_defaultTranscriptionLocale) }
     }
 
-    /// Global record-toggle hotkey. `.none` disables. Stored in
-    /// UserDefaults as JSON (struct, not enum any more).
+    /// Voice-note mode override for transcription locale. Empty
+    /// string means "use `defaultTranscriptionLocale`" (the
+    /// meeting default). Non-empty overrides per-mode — useful
+    /// when the user records meetings in English but dictates
+    /// personal notes in Russian (or vice versa).
+    var voiceNoteLocale: String {
+        didSet { defaults.set(voiceNoteLocale, forKey: Self.k_voiceNoteLocale) }
+    }
+
+    /// Dictation mode override for transcription locale. Same
+    /// contract as `voiceNoteLocale` — empty falls back to the
+    /// meeting default. Defaults to empty so behaviour is
+    /// backwards-compatible for users who haven't picked yet.
+    var dictationLocale: String {
+        didSet { defaults.set(dictationLocale, forKey: Self.k_dictationLocale) }
+    }
+
+    /// Global meeting-recorder hotkey (mode = .meeting). `.none`
+    /// disables. Stored in UserDefaults as JSON (struct, not enum
+    /// any more). This is the original Daisy hotkey from 1.0.x.
     var recordHotkey: HotkeyChoice {
         didSet {
             if let data = try? JSONEncoder().encode(recordHotkey) {
                 defaults.set(data, forKey: Self.k_recordHotkey)
+            }
+        }
+    }
+
+    /// Voice-notes hotkey (mode = .voiceNote). Starts a quick
+    /// personal recording with no LLM summary and routes the
+    /// session into the Notes folder. Toggle on/off; same UX as
+    /// `recordHotkey` but for the lighter "I want to capture this
+    /// thought before I forget" flow. `.none` disables.
+    var voiceNoteHotkey: HotkeyChoice {
+        didSet {
+            if let data = try? JSONEncoder().encode(voiceNoteHotkey) {
+                defaults.set(data, forKey: Self.k_voiceNoteHotkey)
+            }
+        }
+    }
+
+    /// Dictation hotkey (mode = .dictation). Wispr-Flow-lite: hold
+    /// to record, release to transcribe → put on the clipboard +
+    /// fire a toast prompting Cmd+V. No session is saved, no LLM
+    /// summary runs. `.none` disables. Same JSON storage as the
+    /// other two hotkeys.
+    var dictationHotkey: HotkeyChoice {
+        didSet {
+            if let data = try? JSONEncoder().encode(dictationHotkey) {
+                defaults.set(data, forKey: Self.k_dictationHotkey)
             }
         }
     }
@@ -351,6 +395,11 @@ final class AppSettings {
         self.autoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool ?? false
         self.summaryLanguage = defaults.string(forKey: Self.k_summaryLanguage) ?? SummaryLanguage.auto.id
         self.defaultTranscriptionLocale = defaults.string(forKey: Self.k_defaultTranscriptionLocale) ?? "auto"
+        // Per-mode overrides — empty string means "inherit from
+        // defaultTranscriptionLocale". Users opt into language-
+        // pinned dictation/voice-note explicitly.
+        self.voiceNoteLocale = defaults.string(forKey: Self.k_voiceNoteLocale) ?? ""
+        self.dictationLocale = defaults.string(forKey: Self.k_dictationLocale) ?? ""
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will
@@ -360,6 +409,21 @@ final class AppSettings {
             self.recordHotkey = decoded
         } else {
             self.recordHotkey = .ctrlOptCmdR
+        }
+        // Voice-note + dictation hotkeys default to `.none` so users
+        // who don't know they exist don't get unexpected behaviour.
+        // Users opt in by picking a binding in Settings → Connections.
+        if let data = defaults.data(forKey: Self.k_voiceNoteHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
+            self.voiceNoteHotkey = decoded
+        } else {
+            self.voiceNoteHotkey = .none
+        }
+        if let data = defaults.data(forKey: Self.k_dictationHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
+            self.dictationHotkey = decoded
+        } else {
+            self.dictationHotkey = .none
         }
         // Default OFF — auto-starting a recording the moment Zoom
         // / Teams / Telegram opens is surprising on first install
@@ -460,7 +524,11 @@ final class AppSettings {
     /// no shared mutation — safe to read from any actor.
     nonisolated private static let k_summaryLanguage = "daisy.summaryLanguage"
     private static let k_defaultTranscriptionLocale = "daisy.defaultTranscriptionLocale"
+    private static let k_voiceNoteLocale = "daisy.voiceNoteLocale"
+    private static let k_dictationLocale = "daisy.dictationLocale"
     private static let k_recordHotkey = "daisy.recordHotkey"
+    private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
+    private static let k_dictationHotkey = "daisy.dictationHotkey"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
     private static let k_silencePromptsEnabled = "daisy.silencePromptsEnabled"
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"

@@ -59,6 +59,48 @@ extension Color {
         dark:  Color(hex: 0xFFC266)
     )
 
+    // ─── Dictation mode (lilac) ───────────────────────────────────────
+    //
+    // Vivid lilac. Center of the petal widget when dictation is the
+    // active recording mode. Lives on the SAME volume / saturation as
+    // the recording orange — dictation IS live capture, just routed
+    // to ⌘V instead of a transcript file, so its indicator must read
+    // as "ON", not as a brand accent. Hue pulled slightly off true
+    // blue-violet (≈265°) so it doesn't snap to "screen blue" and
+    // stays in conversation with the warm-cream surfaces.
+
+    static let daisyDictation = Color(
+        light: Color(hex: 0x8A6BC9),
+        dark:  Color(hex: 0xA98EE0)
+    )
+
+    /// Halo / glow companion to `daisyDictation`.
+    static let daisyDictationPulse = Color(
+        light: Color(hex: 0xB9A4DC),
+        dark:  Color(hex: 0xC9B6E8)
+    )
+
+    // ─── Voice-note mode (coral) ──────────────────────────────────────
+    //
+    // Pink-coral. Center of the petal widget when capturing a voice
+    // note. Deliberately pushed off the orange axis (hue ≈351°)
+    // rather than the warm persimmon coral that sits adjacent to
+    // recording orange — at peripheral-vision distance the eye must
+    // read meetings vs voice-notes as two different dots, not as
+    // "bright orange" vs "dim orange". Saturation pulled down to
+    // ~55% so it stays a calm presence, not a cosmetic-pink shout.
+
+    static let daisyVoiceNote = Color(
+        light: Color(hex: 0xE86A7C),
+        dark:  Color(hex: 0xF08495)
+    )
+
+    /// Halo / glow companion to `daisyVoiceNote`.
+    static let daisyVoiceNotePulse = Color(
+        light: Color(hex: 0xF2A0AC),
+        dark:  Color(hex: 0xF5B5BE)
+    )
+
     /// Paused state. Cool neutral gray so the widget reads as
     /// "held / not live" without borrowing any of the warm
     /// recording-family hues. Deliberately distinct from idle (cool

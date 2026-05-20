@@ -66,11 +66,11 @@ enum MCPDispatcher {
             client.disconnect()
             let snippet = text.isEmpty ? "" : " — " + String(text.prefix(80))
             ToastCenter.shared.show("Sent to \(integration.name)\(snippet)", style: .success)
-            log.info("MCP send to \(integration.name, privacy: .public): ok")
+            log.info("MCP send to \(integration.name, privacy: .private): ok")
             return true
         } catch {
             client.disconnect()
-            log.error("MCP send to \(integration.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            log.error("MCP send to \(integration.name, privacy: .private) failed: \(error.localizedDescription, privacy: .public)")
             ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
             return false
         }
@@ -130,15 +130,15 @@ enum MCPDispatcher {
             }
             if (200..<300).contains(http.statusCode) {
                 ToastCenter.shared.show("Sent to \(integration.name)", style: .success)
-                log.info("Webhook send to \(integration.name, privacy: .public): \(http.statusCode)")
+                log.info("Webhook send to \(integration.name, privacy: .private): \(http.statusCode)")
                 return true
             } else {
                 ToastCenter.shared.show("\(integration.name): HTTP \(http.statusCode)", style: .error)
-                log.error("Webhook send to \(integration.name, privacy: .public) failed: HTTP \(http.statusCode)")
+                log.error("Webhook send to \(integration.name, privacy: .private) failed: HTTP \(http.statusCode)")
                 return false
             }
         } catch {
-            log.error("Webhook send to \(integration.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            log.error("Webhook send to \(integration.name, privacy: .private) failed: \(error.localizedDescription, privacy: .public)")
             ToastCenter.shared.show("\(integration.name): \(error.localizedDescription)", style: .error)
             return false
         }

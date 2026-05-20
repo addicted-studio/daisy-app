@@ -99,6 +99,11 @@ struct SettingsView: View {
                 .tabItem { Label("Summary", systemImage: "text.bubble") }
                 .scrollContentBackground(.hidden)
 
+            PermissionsView()
+                .tag(SettingsTab.permissions)
+                .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
+                .scrollContentBackground(.hidden)
+
             // Integrations + MCP server promoted out of Settings into
             // the top-level `Connections` sidebar destination — see
             // `MainSection.connections` + `ConnectionsView`. Settings
@@ -147,6 +152,46 @@ struct SettingsView: View {
             return current.label
         }
         return "Custom — \(current.label)"
+    }
+
+    /// Combined recorder + preset-menu editor for ANY hotkey
+    /// binding. Recorder handles regular keys + Fn rising edge;
+    /// the preset menu is the bullet-proof way to pick Fn, bare
+    /// F-keys, or canonical combos without arguing with macOS
+    /// event delivery. Pre-1.0.3 only the meeting hotkey had the
+    /// preset menu — voice-note and dictation rows offered only
+    /// the recorder, which was a dead end for Fn (Fn never fires
+    /// .keyDown so the recorder silently ignored it).
+    @ViewBuilder
+    private func hotkeyEditor(binding: Binding<HotkeyChoice>) -> some View {
+        HStack(spacing: 8) {
+            HotkeyRecorder(value: binding)
+            Menu {
+                ForEach(HotkeyChoice.allPresets) { preset in
+                    Button {
+                        binding.wrappedValue = preset
+                    } label: {
+                        // Fn preset gets the SF Symbol globe icon
+                        // — matches the modern Mac keyboard glyph
+                        // for the same key (kVK_Function).
+                        if preset.isFnOnly {
+                            Label(preset.label, systemImage: preset == binding.wrappedValue ? "checkmark" : "globe")
+                        } else if preset == binding.wrappedValue {
+                            Label(preset.label, systemImage: "checkmark")
+                        } else {
+                            Text(preset.label)
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "list.bullet")
+                    .font(.callout)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Pick from presets")
+        }
     }
 
     // MARK: - MCP summarizer wrapper presets
@@ -341,37 +386,26 @@ struct SettingsView: View {
                 Text("Storage")
             }
 
-            // ── Group 3a: Shortcut ────────────────────────────
-            // Global hotkey + preset picker. Standalone section so
-            // users searching "how do I rebind the shortcut" find
-            // it without scrolling past calendar config.
+            // ── Group 3a: Shortcuts ───────────────────────────
+            // Three independent hotkeys — one per recording mode.
+            // Each row offers BOTH the recorder ("Press keys…")
+            // and a preset Menu — the preset is the only way to
+            // bind Fn / 🌐 globe, F-keys without conflicts, etc.
+            // without fighting macOS event delivery quirks.
             Section {
-                LabeledContent("Global shortcut") {
-                    HotkeyRecorder(value: $settings.recordHotkey)
+                LabeledContent("Record a meeting") {
+                    hotkeyEditor(binding: $settings.recordHotkey)
                 }
-                LabeledContent("Preset") {
-                    Menu {
-                        ForEach(HotkeyChoice.allPresets) { preset in
-                            Button {
-                                settings.recordHotkey = preset
-                            } label: {
-                                if preset == settings.recordHotkey {
-                                    Label(preset.label, systemImage: "checkmark")
-                                } else {
-                                    Text(preset.label)
-                                }
-                            }
-                        }
-                    } label: {
-                        Text(presetMenuLabel)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+                LabeledContent("Voice note") {
+                    hotkeyEditor(binding: $settings.voiceNoteHotkey)
+                }
+                LabeledContent("Dictation (hold)") {
+                    hotkeyEditor(binding: $settings.dictationHotkey)
                 }
             } header: {
-                Text("Shortcut")
+                Text("Shortcuts")
             } footer: {
-                Text("Press from any app to toggle pause/resume in a session or start a new one. Combos must include ⌘, ⌃ or ⌥, or a bare function key (F1–F20).")
+                Text("Meeting — tap once to start, tap again to pause / resume.\nVoice note — tap once to start, tap again to stop. Saves into Notes (no LLM summary).\nDictation — hold the key, talk, release; Daisy types the text into the focused field (or copies it for you to ⌘V).\nDictation also needs Accessibility to type into other apps. Combos must include ⌘ / ⌃ / ⌥, a bare function key (F1–F20), or the globe Fn key.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -547,13 +581,27 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Default language", selection: $settings.defaultTranscriptionLocale) {
+                Picker("Meetings (default)", selection: $settings.defaultTranscriptionLocale) {
                     ForEach(Transcriber.availableLocales, id: \.id) { locale in
                         Text(locale.label).tag(locale.id)
                     }
                 }
                 .pickerStyle(.menu)
-                Text("Applied to every new session. Pick a language explicitly if you always record in one — it kills the kind of language drift that produces hallucinated phrases in another tongue. You can still override per session in the recorder header.")
+                Picker("Voice notes", selection: $settings.voiceNoteLocale) {
+                    Text("Same as meetings").tag("")
+                    ForEach(Transcriber.availableLocales, id: \.id) { locale in
+                        Text(locale.label).tag(locale.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                Picker("Dictation", selection: $settings.dictationLocale) {
+                    Text("Same as meetings").tag("")
+                    ForEach(Transcriber.availableLocales, id: \.id) { locale in
+                        Text(locale.label).tag(locale.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text("Pick a specific language to kill the kind of language drift that produces hallucinated phrases in another tongue. Voice notes and dictation inherit the Meetings default unless you set them explicitly — useful if you record meetings in English but dictate personal notes in Russian. Per-session override is still available in the recorder header.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {

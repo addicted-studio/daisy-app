@@ -52,7 +52,7 @@ enum ClaudeDesktopConfig {
             defer { if acquired { resolved.stopAccessingSecurityScopedResource() } }
             do {
                 try mergeAndWrite(daisyURL: daisySSEURL(port: port), at: resolved)
-                log.info("Refreshed Daisy entry in \(resolved.path, privacy: .public)")
+                log.info("Refreshed Daisy entry in \(resolved.path, privacy: .private)")
                 return .installed(resolved)
             } catch {
                 // Bookmark resolved but write failed — probably the
@@ -73,7 +73,7 @@ enum ClaudeDesktopConfig {
         do {
             try mergeAndWrite(daisyURL: daisySSEURL(port: port), at: picked)
             storeBookmark(for: picked)
-            log.info("Installed Daisy entry into \(picked.path, privacy: .public)")
+            log.info("Installed Daisy entry into \(picked.path, privacy: .private)")
             return .installed(picked)
         } catch {
             return .failed(error.localizedDescription)

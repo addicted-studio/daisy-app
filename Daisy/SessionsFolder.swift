@@ -44,7 +44,7 @@ enum SessionsFolder {
                 relativeTo: nil
             )
             UserDefaults.standard.set(data, forKey: bookmarkKey)
-            log.info("Stored sessions folder bookmark for \(url.path, privacy: .public)")
+            log.info("Stored sessions folder bookmark for \(url.path, privacy: .private)")
             return true
         } catch {
             log.error("Bookmark creation failed: \(error.localizedDescription, privacy: .public)")
@@ -78,7 +78,7 @@ enum SessionsFolder {
                 bookmarkDataIsStale: &isStale
             )
             if isStale {
-                log.info("Bookmark stale, refreshing for \(url.path, privacy: .public)")
+                log.info("Bookmark stale, refreshing for \(url.path, privacy: .private)")
                 _ = setUserFolder(url)
             }
             return url

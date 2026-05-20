@@ -20,13 +20,59 @@ import Foundation
 @MainActor
 enum ServiceWiring {
 
-    /// Register the global hotkey for start/stop. Idempotent — calling
-    /// again replaces any previous registration. Passing a hotkey with
-    /// `keyCode == nil` simply unregisters.
+    /// Backward-compat single-slot wiring of the meeting hotkey.
+    /// Kept so legacy call sites compile; new code should call
+    /// `applyAllHotkeys(settings:session:)` to wire all three slots.
     static func applyHotkey(choice: HotkeyChoice, session: RecordingSession) {
-        HotkeyManager.shared.register(choice: choice) { [weak session] in
-            Task { await session?.toggleByHotkey() }
-        }
+        HotkeyManager.shared.register(
+            slot: .record,
+            choice: choice,
+            action: .toggle { [weak session] in
+                Task { await session?.toggleByHotkey() }
+            }
+        )
+    }
+
+    /// Register meeting + voice-notes + dictation hotkeys from
+    /// settings. Idempotent — calling again rewires all three
+    /// slots from current settings.
+    ///
+    /// Modes:
+    ///   - **Meeting** + **Voice notes** use `.toggle` (press
+    ///     once to start, press again to stop). Zero permission
+    ///     for Meeting (Carbon RegisterEventHotKey); Voice notes
+    ///     needs Input Monitoring only if bound to Fn / globe.
+    ///   - **Dictation** uses `.hold` (push-to-talk). Wispr Flow
+    ///     parity: hold the key while speaking, release to drop
+    ///     the transcript on the clipboard. Requires Input
+    ///     Monitoring permission regardless of which key is bound.
+    static func applyAllHotkeys(settings: AppSettings, session: RecordingSession) {
+        HotkeyManager.shared.register(
+            slot: .record,
+            choice: settings.recordHotkey,
+            action: .toggle { [weak session] in
+                Task { await session?.toggleByHotkey() }
+            }
+        )
+        HotkeyManager.shared.register(
+            slot: .voiceNote,
+            choice: settings.voiceNoteHotkey,
+            action: .toggle { [weak session] in
+                Task { await session?.toggleVoiceNoteByHotkey() }
+            }
+        )
+        HotkeyManager.shared.register(
+            slot: .dictation,
+            choice: settings.dictationHotkey,
+            action: .hold(
+                onPress: { [weak session] in
+                    Task { await session?.startDictationHotkey() }
+                },
+                onRelease: { [weak session] in
+                    Task { await session?.stopDictationHotkey() }
+                }
+            )
+        )
     }
 
     /// Enable or disable foreground-app meeting auto-detection
@@ -108,7 +154,7 @@ enum ServiceWiring {
 
     /// Convenience for full initial wiring at launch.
     static func applyAll(settings: AppSettings, session: RecordingSession) {
-        applyHotkey(choice: settings.recordHotkey, session: session)
+        applyAllHotkeys(settings: settings, session: session)
         applyMeetingAutoStart(enabled: settings.autoStartOnMeeting, session: session)
         applyCalendar(settings: settings, session: session)
         applyMCPServer(settings: settings)

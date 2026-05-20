@@ -101,6 +101,41 @@ final class Transcriber {
     private var committedThroughSec: Double = 0
 
     // MARK: - Audio buffer
+    //
+    // `allSamples` is a rolling buffer of 16 kHz mono Float32 audio
+    // since the last `removeFirst`-trim. We keep at most
+    // `bufferedSamplesCap` samples in memory; older samples have been
+    // dropped (their absolute count tracked in `samplesDropped`).
+    //
+    // Index translation:
+    //   absoluteSampleIndex = samplesDropped + allSamples.firstIndex
+    //   bufferIndex          = absoluteSampleIndex - samplesDropped
+    //
+    // Indices into `allSamples` are LOCAL; we convert via
+    // `samplesDropped` whenever we need to compare against
+    // `committedThroughSec` (which is in absolute session-time
+    // seconds).
+    //
+    // Pre-1.0.3 the buffer grew unbounded — ~230 MB on a 2-hour
+    // session. Capped now at 30 min worth (~115 MB) which is enough
+    // window for the live Whisper kick + live diarization to do
+    // useful work. Final-transcribe on stop loses the cleanup pass
+    // over audio older than 30 min but the live `committedSegments`
+    // covering that range are kept intact, so the transcript still
+    // covers the whole session.
+
+    /// 30 minutes at 16 kHz mono = 30 * 60 * 16_000 = 28_800_000
+    /// samples = ~115 MB as Float32.
+    private static let bufferedSamplesCap: Int = 30 * 60 * 16_000
+    /// Drop the oldest 5 minutes in one batch when the cap is hit —
+    /// avoids per-buffer `removeFirst` churn (that would be O(n)
+    /// every ingest call once we hit the cap).
+    private static let trimBatchSamples: Int = 5 * 60 * 16_000
+
+    /// Absolute count of samples dropped from the head of
+    /// `allSamples` since the start of the session. Added to any
+    /// local index to recover the absolute sample position.
+    private var samplesDropped: Int = 0
 
     private var converter: AudioConverter?
     private var allSamples: [Float] = []
@@ -185,6 +220,7 @@ final class Transcriber {
         pendingSegments.removeAll()
         committedThroughSec = 0
         allSamples.removeAll()
+        samplesDropped = 0
         bucketIDs.removeAll()
         converter = nil
 
@@ -263,6 +299,7 @@ final class Transcriber {
         pendingSegments.removeAll()
         committedThroughSec = 0
         allSamples.removeAll()
+        samplesDropped = 0
         bucketIDs.removeAll()
         speakerCentroids.removeAll()
         converter = nil
@@ -282,6 +319,19 @@ final class Transcriber {
               let samples = conv.convert(chunk.pcm),
               !samples.isEmpty else { return }
         allSamples.append(contentsOf: samples)
+
+        // Cap rolling buffer at 30 min. When exceeded, drop the
+        // oldest 5 min in one O(n) batch — better than running
+        // `removeFirst(N)` per ingest call once we hit the cap.
+        // Older samples are gone from memory; their committed
+        // transcript segments stay in `committedSegments` so the
+        // user-facing transcript is unaffected.
+        if allSamples.count > Self.bufferedSamplesCap {
+            let toDrop = min(Self.trimBatchSamples, allSamples.count)
+            allSamples.removeFirst(toDrop)
+            samplesDropped += toDrop
+            log.info("Transcriber rolling buffer trimmed: dropped \(toDrop, privacy: .public) samples (total dropped: \(self.samplesDropped, privacy: .public))")
+        }
     }
 
     // MARK: - Live (chunked) transcribe
@@ -291,15 +341,23 @@ final class Transcriber {
 
         // Slice the rolling 30 s tail, but skip audio we've already
         // committed — no point re-transcribing settled text.
+        //
+        // All `committedThroughSec`-derived offsets are ABSOLUTE
+        // (session-time relative); convert to local buffer indices
+        // by subtracting `samplesDropped`.
         let windowSampleCount = Int(liveWindowSec * 16_000)
-        let committedSampleOffset = Int(committedThroughSec * 16_000)
-        let earliestUsableOffset = max(committedSampleOffset, allSamples.count - windowSampleCount)
-        let clampedOffset = max(0, min(allSamples.count, earliestUsableOffset))
+        let committedAbsolute = Int(committedThroughSec * 16_000)
+        let latestAbsolute = samplesDropped + allSamples.count
+        let earliestAbsolute = max(committedAbsolute, latestAbsolute - windowSampleCount)
+        // Clamp to current buffer bounds: anything older than the
+        // buffer head has been trimmed, so the floor is `samplesDropped`.
+        let earliestAbsoluteClamped = max(samplesDropped, earliestAbsolute)
+        let clampedOffset = max(0, min(allSamples.count, earliestAbsoluteClamped - samplesDropped))
 
         guard allSamples.count > clampedOffset else { return }
         let samples = Array(allSamples[clampedOffset..<allSamples.count])
-        let windowStartSec = Double(clampedOffset) / 16_000.0
-        let windowEndSec = Double(allSamples.count) / 16_000.0
+        let windowStartSec = Double(samplesDropped + clampedOffset) / 16_000.0
+        let windowEndSec = Double(latestAbsolute) / 16_000.0
         let lang = languageHint
 
         transcribeTask = Task { @MainActor [weak self] in
@@ -482,38 +540,71 @@ final class Transcriber {
             let result = try await whisperResult
             let output = await diarizationOutput
 
-            // Final result supersedes everything — wipe + repopulate.
-            committedSegments.removeAll()
-            pendingSegments.removeAll()
-            bucketIDs.removeAll()
-            committedThroughSec = 0
+            // The final pass covers the audio currently in
+            // `allSamples`. If the buffer was trimmed on a long
+            // session (>30 min), `samples[0]` corresponds to
+            // session-time `finalRangeStart`, NOT zero. We keep
+            // older committed segments — they were built up by
+            // live passes before trimming — and replace only the
+            // overlapping range with this final pass's output.
+            let finalRangeStart = Double(samplesDropped) / 16_000.0
 
-            // The final pass is authoritative — no need to keep IDs
-            // stable across passes anymore. Fresh UUID per segment
-            // means two utterances that round to the same bucket
-            // won't share an id and clobber each other in the UI.
+            if samplesDropped > 0 {
+                // Long session — preserve earlier text from live
+                // commits, drop only segments in the final-pass
+                // range so they can be replaced with cleaner output.
+                committedSegments = committedSegments.filter { $0.endSec <= finalRangeStart }
+                pendingSegments.removeAll()
+                bucketIDs.removeAll()
+                committedThroughSec = finalRangeStart
+                log.info("Final pass: long session (>\(Int(finalRangeStart), privacy: .public)s) — preserved \(self.committedSegments.count, privacy: .public) earlier live segments")
+            } else {
+                // Short session — final pass is authoritative for
+                // the whole transcript. Pre-1.0.3 behaviour.
+                committedSegments.removeAll()
+                pendingSegments.removeAll()
+                bucketIDs.removeAll()
+                committedThroughSec = 0
+            }
+
+            // Whisper returns segment timestamps relative to
+            // samples[0]. Offset by `finalRangeStart` to get
+            // session-absolute times.
             var fresh: [TranscriptSegment] = []
             for ws in result {
                 let trimmed = ws.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else { continue }
+                let absStart = ws.start + finalRangeStart
+                let absEnd = ws.end + finalRangeStart
                 fresh.append(TranscriptSegment(
                     id: UUID(),
-                    startedAt: started.addingTimeInterval(ws.start),
+                    startedAt: started.addingTimeInterval(absStart),
                     text: trimmed,
                     isFinal: true,
                     source: source,
                     speakerId: nil,
-                    endSec: ws.end,
-                    startSec: ws.start
+                    endSec: absEnd,
+                    startSec: absStart
                 ))
             }
             log.info("Final pass: \(fresh.count) segments from Whisper, \(output.spans.count) speaker spans from FluidAudio (\(output.centroids.count) centroids)")
 
-            // Attach speaker labels via max-IoU overlap.
-            committedSegments = DiarizationEngine.mergeBySpeaker(
+            // Attach speaker labels via max-IoU overlap. Diarization
+            // spans are also relative to samples[0]; offset them too.
+            let offsetSpans: [DiarizedSpan] = output.spans.map { span in
+                DiarizedSpan(
+                    speakerId: span.speakerId,
+                    startSec: span.startSec + finalRangeStart,
+                    endSec: span.endSec + finalRangeStart
+                )
+            }
+            let mergedFresh = DiarizationEngine.mergeBySpeaker(
                 segments: fresh,
-                diarization: output.spans
+                diarization: offsetSpans
             )
+            // Append fresh on top of any preserved earlier segments.
+            committedSegments.append(contentsOf: mergedFresh)
+            committedSegments.sort { $0.startSec < $1.startSec }
             committedThroughSec = committedSegments.map(\.endSec).max() ?? 0
             // Stash centroids so RecordingSession.stop() can write
             // the speakers.json sidecar + match against profiles.

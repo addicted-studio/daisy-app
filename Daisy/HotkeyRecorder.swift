@@ -57,6 +57,13 @@ struct HotkeyRecorder: View {
                 if isListening {
                     Image(systemName: "keyboard")
                         .font(.caption.weight(.medium))
+                } else if value.isFnOnly {
+                    // Render SF Symbol globe alongside "Fn" text so
+                    // users recognise the modern Mac globe key. Plain
+                    // string "Fn" would be ambiguous (some users
+                    // think Fn means a generic function key).
+                    Image(systemName: "globe")
+                        .font(.callout.weight(.medium))
                 }
                 Text(displayLabel)
                     .font(.callout.weight(.medium))
@@ -134,9 +141,32 @@ private final class KeyCaptureBox {
         trackedModifiers = []
 
         // 1. Track modifier press/release via flagsChanged.
+        //    Also: capture bare Fn / 🌐 press as a binding. Fn
+        //    never emits .keyDown, so the only way to record it
+        //    is to detect the rising edge of .function inside the
+        //    flagsChanged stream.
         flagsToken = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self else { return event }
-            self.trackedModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let newMods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let previouslyHadFn = self.trackedModifiers.contains(.function)
+            let nowHasFn = newMods.contains(.function)
+
+            self.trackedModifiers = newMods
+
+            // Fn rising edge (up → down) and NO other strong modifier
+            // present means "user pressed Fn alone to record it as
+            // the hotkey". Strong modifier = ⌘ / ⌃ / ⌥ — those would
+            // mean the user is recording a combo (e.g. ⌥Fn), which
+            // we don't support since Carbon can't register such a
+            // combo either; only bare Fn is a valid hotkey choice.
+            if nowHasFn && !previouslyHadFn {
+                let otherStrong: NSEvent.ModifierFlags = [.command, .control, .option]
+                if newMods.intersection(otherStrong).isEmpty {
+                    let capture = self.onCapture
+                    DispatchQueue.main.async { capture?(.fn) }
+                    return nil
+                }
+            }
             return event
         }
 

@@ -20,25 +20,27 @@ import os
 /// Generable shadow of a single bullet inside an outline section.
 /// Apple Intelligence's `@Generable` macro can't introspect a
 /// recursive shape (the canonical `SummaryBullet` carries
-/// `children: [SummaryBullet]`), so the Apple Intelligence path
-/// produces a FLAT bullet list per section — no sub-bullets.
-/// Cloud providers (Anthropic/OpenAI/MCP) still emit the full
-/// 2-level nested tree via JSON because `CloudSummaryDTO` is plain
-/// Codable.
+/// `children: [SummaryBullet]`), so we encode sub-bullets in the
+/// string itself: a top-level bullet is just text; a sub-bullet is
+/// prefixed with two spaces and a `>` so the parent/child shape
+/// survives the round-trip from `String` → `SummaryBullet` tree.
 ///
-/// In practice the loss is small: most meetings group cleanly into
-/// 3-5 sections × 2-6 flat bullets each. The xAID.ai example uses
-/// sub-bullets for elaborations ("Через 1.5 недели: крупный клиент,
-/// 5000 исследований"), which we'd render flat as "Через 1.5 недели:
-/// крупный клиент, 5000 исследований/месяц" — slightly denser but
-/// still scannable.
+/// Example output the model is asked to produce:
+///   "Через 1.5 недели: крупный клиент, 5000 исследований/месяц"
+///   "  > Сроки: первый платёж до 5 дней"
+///   "Цель: 3 клиента по 5000 исследований"
+///
+/// `toMeetingSummary()` walks the flat list, accumulates `>`
+/// children under the most recent top-level bullet. Cloud providers
+/// (Anthropic/OpenAI/MCP) still emit the full 2-level nested tree
+/// via JSON natively — the workaround is Apple-Intelligence-only.
 @available(macOS 26.0, *)
 @Generable
 private struct GenerableSummarySection: Sendable {
     @Guide(description: "Concise section header in sentence case, 2-6 words. Groups related facts together. Examples: 'Pricing model', 'Doctor onboarding', 'Next steps', 'Технические условия'.")
     let title: String
 
-    @Guide(description: "2-6 short bullets — fragments are fine, no full sentences. Each bullet is a fact, decision, number, name, or commitment from the meeting. 5-18 words per bullet. If a fact has supporting details (date, amount, owner), inline them with em-dashes or commas rather than as a separate bullet.")
+    @Guide(description: "2-6 short bullets — fragments are fine, no full sentences. Each bullet is a fact, decision, number, name, or commitment from the meeting. 5-18 words per bullet. To add a sub-bullet under the previous top-level bullet, prefix it with TWO SPACES then '>' then a space, like this: '  > supporting detail with a specific number, name, or date'. Max 3 sub-bullets per parent. Most bullets stay flat — only nest when the parent has 2+ concrete supporting facts.")
     let bullets: [String]
 }
 
@@ -73,15 +75,49 @@ private struct GenerableMeetingSummary: Sendable {
             sections: sections.map { section in
                 SummarySection(
                     title: section.title,
-                    // Flat bullets — Generable doesn't handle the
-                    // recursive SummaryBullet shape, so each bullet
-                    // becomes a leaf with no children.
-                    bullets: section.bullets.map { SummaryBullet(text: $0, children: []) }
+                    bullets: Self.parseBullets(section.bullets)
                 )
             },
             actionItems: actionItems,
             clientFollowUp: clientFollowUp
         )
+    }
+
+    /// Walk a flat `[String]` produced by the Generable model and
+    /// reassemble parent/child SummaryBullet tree by detecting the
+    /// `  > ` prefix the prompt asks the model to emit. Lines that
+    /// start with two spaces and a `>` become children of the most
+    /// recent top-level bullet; anything else is a new top-level.
+    /// Empty / whitespace-only entries are dropped.
+    ///
+    /// Robust to leading whitespace variations (3 spaces, tab, etc.)
+    /// — any line starting with `>` after stripping leading
+    /// whitespace counts as a sub-bullet. A `>` with no recent
+    /// parent gets promoted to a top-level bullet (rather than lost).
+    nonisolated static func parseBullets(_ raw: [String]) -> [SummaryBullet] {
+        var top: [SummaryBullet] = []
+        for line in raw {
+            let trimmedLeading = line.drop(while: { $0 == " " || $0 == "\t" })
+            let isChild = trimmedLeading.hasPrefix(">")
+            let text: String
+            if isChild {
+                text = String(trimmedLeading.dropFirst())
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            } else {
+                text = String(trimmedLeading).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard !text.isEmpty else { continue }
+
+            if isChild, var lastTop = top.last {
+                var children = lastTop.children
+                children.append(SummaryBullet(text: text, children: []))
+                lastTop = SummaryBullet(text: lastTop.text, children: children)
+                top[top.count - 1] = lastTop
+            } else {
+                top.append(SummaryBullet(text: text, children: []))
+            }
+        }
+        return top
     }
 }
 

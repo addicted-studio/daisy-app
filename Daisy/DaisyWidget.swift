@@ -56,10 +56,11 @@ struct DaisyWidget: View {
         // fall apart" flicker we used to get on stop.
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
             let status = session.status
+            let mode = session.currentMode
             let summaryGen = session.summaryGenerationState
             let bands = session.spectrumBands
             let sweep = Self.computeSweep(from: context.date)
-            let center = centerColor(for: status, summaryGen: summaryGen, sweep: sweep)
+            let center = centerColor(for: status, mode: mode, summaryGen: summaryGen, sweep: sweep)
 
             ZStack {
                 Circle()
@@ -319,6 +320,7 @@ struct DaisyWidget: View {
 
     private func centerColor(
         for status: RecordingSession.Status,
+        mode: RecordingSession.RecordingMode,
         summaryGen: RecordingSession.SummaryGenerationState,
         sweep: Double
     ) -> Color {
@@ -339,8 +341,21 @@ struct DaisyWidget: View {
             return Color.daisyCenterIdle.opacity(pulse)
         }
         switch status {
-        // Recording = macOS systemOrange (inherits the OS mic-active dot).
-        case .recording: return .daisyRecording
+        // Recording — center hue encodes the active mode so the
+        // user can tell at a peripheral glance which gesture they
+        // triggered:
+        //   • meetings   → macOS systemOrange (inherits the OS mic-active dot)
+        //   • dictation  → vivid lilac (creative output, ⌘V-bound)
+        //   • voiceNote  → pink-coral (intimate, personal capture)
+        // All three live on the same volume / saturation so no mode
+        // reads as "less important" than another — they're sibling
+        // states of the same recording action.
+        case .recording:
+            switch mode {
+            case .meeting:   return .daisyRecording
+            case .dictation: return .daisyDictation
+            case .voiceNote: return .daisyVoiceNote
+            }
         // Paused = cool neutral gray. Deliberately OUT of the
         // warm orange/amber family — orange means "live capture",
         // so paused has to read as "not live" at a glance. Stays
