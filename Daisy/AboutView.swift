@@ -143,15 +143,15 @@ struct AboutView: View {
                 aboutRow(
                     icon: "chevron.left.forwardslash.chevron.right",
                     title: "Source code",
-                    detail: "github.com/d5zn/daisy-app",
-                    url: URL(string: "https://github.com/d5zn/daisy-app")
+                    detail: "github.com/addicted-studio/daisy-app",
+                    url: URL(string: "https://github.com/addicted-studio/daisy-app")
                 )
                 divider
                 aboutRow(
                     icon: "doc.text",
                     title: "License",
                     detail: "BUSL-1.1 — source-available",
-                    url: URL(string: "https://github.com/d5zn/daisy-app/blob/main/LICENSE")
+                    url: URL(string: "https://github.com/addicted-studio/daisy-app/blob/main/LICENSE")
                 )
                 divider
                 aboutRow(

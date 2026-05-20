@@ -528,6 +528,16 @@ final class RecordingSession {
             currentMode = .meeting
         }
 
+        // Voice notes auto-file into the Notes folder. Only override
+        // when `folder` is still the default Inbox — if the user
+        // explicitly picked another folder via UI (or a calendar
+        // hint dropped them into Work / Calls), respect that.
+        // Dictation sessions are ephemeral (no History entry) so
+        // the folder value is irrelevant for them.
+        if currentMode == .voiceNote && folder == .inbox {
+            folder = .notes
+        }
+
         // Apply mode-specific transcription locale override, falling
         // back to the meeting default. Empty string in the override
         // means "inherit". Pre-1.0.3 dictation/voice-note always used
