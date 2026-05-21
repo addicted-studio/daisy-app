@@ -160,8 +160,29 @@ enum ClaudeDesktopConfig {
         }
 
         // Preserve every other mcpServers entry — only mutate ours.
+        //
+        // Claude Desktop's current MCP config schema requires stdio
+        // transport (`command` + `args`), not the URL-based SSE
+        // shape SDKs accept. Bridge through `mcp-remote` (npm
+        // package, auto-fetched by `npx -y`), which wraps a remote
+        // SSE/HTTP MCP server into a stdio transport Claude accepts.
+        //
+        // Two flag tweaks were needed in 1.0.5.3 after a real-world
+        // pass-through stalled mid-session:
+        //   • `--transport sse-only` — pin the bridge to SSE so it
+        //     doesn't waste cycles trying the newer Streamable HTTP
+        //     endpoint first and falling back. Daisy speaks SSE.
+        //   • `--allow-http` — `mcp-remote` defaults to HTTPS-only;
+        //     loopback HTTP (127.0.0.1) needs explicit permission.
+        //
+        // Requires Node.js on the user's machine — surfaced in the
+        // settings footer so non-devs know to install it first.
         var mcpServers = root["mcpServers"] as? [String: Any] ?? [:]
-        mcpServers["daisy"] = ["url": daisyURL]
+        mcpServers["daisy"] = [
+            "command": "npx",
+            "args": ["-y", "mcp-remote", daisyURL,
+                     "--transport", "sse-only", "--allow-http"]
+        ]
         root["mcpServers"] = mcpServers
 
         // .sortedKeys keeps diffs stable when the user has the
