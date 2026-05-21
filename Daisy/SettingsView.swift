@@ -17,6 +17,16 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     @Bindable var whisper = WhisperEngine.shared
     @Bindable var summarizer = Summarizer.shared
+    // Calendar source state — needed by the General-tab Calendar
+    // section (autoStart / autoStop / menu-bar next-meeting toggles).
+    // Bound to the SAME observable the Permissions tab reads
+    // (SystemPermissions.shared) so the two surfaces can't disagree
+    // about "is calendar granted". SystemPermissions auto-refreshes
+    // on `NSApplication.didBecomeActiveNotification`, so toggling the
+    // grant in System Settings → Privacy & Security and tabbing back
+    // to Daisy updates this view without manual refresh.
+    @Bindable private var systemPermissions = SystemPermissions.shared
+    @Bindable private var googleAccount = GoogleAccountStore.shared
 
     @State private var summaryTestResult: TestResult = .idle
 
@@ -335,14 +345,14 @@ struct SettingsView: View {
     }
 
     // Integrations (Notion + MCP destinations + default-destination
-    // picker) and the MCP server tab moved out of Settings into the
-    // top-level `Connections` sidebar destination — see
-    // ConnectionsView.swift. The helpers that supported them
-    // (testNotion, integrationRow, mcpStatusRow, calendarPermissionRow,
-    // googleCalendarRow, connectGoogle/disconnectGoogle,
-    // folderFilterPicker, autoSendNotionCaption, …) relocated with
-    // their callers. Settings is now narrowly scoped to "how a
-    // recording is processed": Capture, Transcription, Summary.
+    // picker) and the MCP server tab live in the `Connections`
+    // sidebar destination — see ConnectionsView.swift. The helpers
+    // that supported them (testNotion, integrationRow, mcpStatusRow,
+    // folderFilterPicker, autoSendNotionCaption, …) live alongside
+    // them there. Calendar behaviour toggles came back to Settings →
+    // General in 1.0.4, sitting next to the auto-start trigger they
+    // conceptually neighbour; the EventKit grant + status badge are
+    // in Settings → Permissions.
 
     // MARK: - General
 
@@ -438,12 +448,71 @@ struct SettingsView: View {
                 Text("After Stop")
             }
 
-            // ── (was Group 3c: Calendar) ──────────────────────
-            // Moved entirely to ConnectionsView in 1.0.2: connection
-            // rows + behaviour toggles + grace-period picker now live
-            // together under sidebar → Connections → Calendar. Users
-            // who land in Settings won't get confused by a half-empty
-            // Calendar section.
+            // ── Group 3c: Calendar ────────────────────────────
+            // Behaviour toggles that gate on having an EventKit grant
+            // (or a future Google OAuth connection). The permission
+            // status itself lives in Settings → Permissions — there
+            // the user grants / revokes access and sees the live
+            // state badge. Here we just expose what Daisy does once
+            // that access is in place.
+            //
+            // Note: 1.0.2 had these under Connections → Calendar
+            // alongside a permission row; 1.0.4 split them — the
+            // Connect / Open Settings… affordance graduated to
+            // Permissions, the behaviour toggles came back here next
+            // to the auto-start trigger they conceptually neighbour.
+            Section {
+                Toggle(isOn: $settings.autoStartFromCalendar) {
+                    Text("Start at the scheduled meeting time")
+                    Text("Reads your calendar, finds events with a Zoom/Meet/Teams/Webex link, starts recording when they begin. Up to 2 min late is fine.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!hasAnyCalendarSource)
+
+                Toggle(isOn: $settings.autoStopFromCalendar) {
+                    Text("Stop when the event ends")
+                    Text("Daisy hits Stop & save at the event's end time plus a grace period. A toast 30 s before lets you keep going.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!hasAnyCalendarSource)
+
+                if settings.autoStopFromCalendar {
+                    Picker("Grace period", selection: $settings.autoStopGraceSec) {
+                        Text("On the dot").tag(0)
+                        Text("1 min").tag(60)
+                        Text("2 min").tag(120)
+                        Text("5 min").tag(300)
+                        Text("10 min").tag(600)
+                        Text("15 min").tag(900)
+                        Text("30 min").tag(1800)
+                        Text("1 hour").tag(3600)
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(!hasAnyCalendarSource)
+                }
+
+                Toggle(isOn: $settings.menuBarShowsNextMeeting) {
+                    Text("Show next meeting in the menu bar")
+                    Text("Adds the next event's time + title (\"14:30 · Q3 Review\") next to Daisy's menu-bar icon. Hidden during recording so the active session stays the focus.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!hasAnyCalendarSource)
+            } header: {
+                Text("Calendar")
+            } footer: {
+                if !hasAnyCalendarSource {
+                    Text("Grant Calendar access in Settings → Permissions to enable these.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text("Uses macOS EventKit — picks up iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
 
             // ── Group 4: While recording ──────────────────────
             // What Daisy does and surfaces during a session.
@@ -559,6 +628,26 @@ struct SettingsView: View {
 
     private func refreshMicDevices() {
         micDevices = AudioInputDevices.list()
+    }
+
+    /// At least one calendar source is connected — Apple EventKit
+    /// (`.fullAccess` granted) OR Google via direct OAuth. Gates the
+    /// behaviour toggles in the Calendar section of generalTab; the
+    /// underlying grant/connect affordances live elsewhere
+    /// (EventKit in Settings → Permissions, Google in Connections
+    /// once verification clears).
+    ///
+    /// Reads the LIVE `CalendarService.authorizationStatus`, not the
+    /// persisted `settings.calendarAccessGranted` cache. Pre-1.0.4 the
+    /// gate used the cached bool, which could lag behind the real
+    /// EventKit state — a tester with Apple Calendar granted in
+    /// System Settings → Privacy & Security but a stale UserDefaults
+    /// bool saw every toggle in this section disabled even though
+    /// Permissions tab correctly said "Granted". Same observable
+    /// (`@Bindable var calendarService = CalendarService.shared`) the
+    /// Permissions tab reads, so the two surfaces can't diverge.
+    private var hasAnyCalendarSource: Bool {
+        systemPermissions.calendar == .granted || googleAccount.isConnected
     }
 
     // MARK: - Transcription (Whisper)

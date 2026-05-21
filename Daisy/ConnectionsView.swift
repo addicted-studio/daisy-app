@@ -18,40 +18,19 @@
 //     authed, what port the MCP server is on, whether Google Calendar
 //     re-needs consent. Settings-tab depth was wrong for that flow.
 //
-//  Layout: a single Form with four anchored Sections so external CTAs
-//  (FirstRun, Home destination prompts, the Calendar-scope-missing
-//  toast Reconnect) can deep-link via
+//  Layout: a single Form with three anchored Sections so external
+//  CTAs (FirstRun, Home destination prompts) can deep-link via
 //  `AppNavigation.shared.openInConnections(.notion)` etc., and we
 //  scroll to the right section.
 //
 
-import EventKit
 import SwiftUI
 
 struct ConnectionsView: View {
     @Bindable var settings: AppSettings
-    @Bindable var calendar = CalendarService.shared
-    @Bindable var google = GoogleAccountStore.shared
     @Bindable var mcpServer = MCPServer.shared
     @Bindable var integrationStore = MCPIntegrationStore.shared
     @Bindable var nav = AppNavigation.shared
-
-    // MARK: - Feature flags
-
-    /// Whether the Google Calendar OAuth row is shown in the Calendar
-    /// tab. **Hidden until Google completes OAuth verification** —
-    /// the questionnaire is submitted but logo + demo video are still
-    /// pending submission, and even after submit Google takes 2–6 weeks
-    /// to review. Until then the "App isn't verified" warning on
-    /// Google's consent screen is a bad first impression for testers,
-    /// and the 100-user cap is irrelevant for soft launch anyway.
-    ///
-    /// Flip to `true` once Google approves verification. The underlying
-    /// `GoogleOAuthClient` / `GoogleCalendarService` / `GoogleAccountStore`
-    /// code stays wired up so existing connections (e.g., on the dev
-    /// machine) keep refreshing tokens and feeding events into the
-    /// merged calendar view — we only hide the *connect* affordance.
-    private static let googleCalendarVisible = false
 
     // MARK: - View state
 
@@ -59,11 +38,12 @@ struct ConnectionsView: View {
     /// to / from the Connections sidebar entry within the same launch;
     /// deep-links (AppNavigation.openInConnections(_:)) write through
     /// to this value on .onChange.
-    @State private var selectedSection: ConnectionSection = .calendar
-    /// Disables the Connect Google button while OAuth flow is in
-    /// progress (browser open, awaiting callback, exchanging tokens).
-    /// Without this, double-click would start a second listener.
-    @State private var googleConnectInProgress: Bool = false
+    ///
+    /// 1.0.4: Calendar tab left this page entirely — EventKit grant is
+    /// in Settings → Permissions, behaviour toggles are in Settings →
+    /// General. Google Calendar OAuth UI is dormant pre-verification;
+    /// it'll come back here as its own tab once Google approves.
+    @State private var selectedSection: ConnectionSection = .notion
     @State private var notionTestResult: TestResult = .idle
     @State private var editingIntegration: MCPIntegration?
     @State private var mcpPortText: String = ""
@@ -84,12 +64,6 @@ struct ConnectionsView: View {
         case failure(String)
     }
 
-    /// At least one calendar source is connected — Apple EventKit
-    /// (with .fullAccess granted), OR Google via direct OAuth.
-    private var hasAnyCalendarSource: Bool {
-        settings.calendarAccessGranted || google.isConnected
-    }
-
     // MARK: - Body
 
     var body: some View {
@@ -104,11 +78,6 @@ struct ConnectionsView: View {
         // (Connected / Running / Needs test) so a glance at any tab
         // gives you the live state without leaving the page.
         TabView(selection: $selectedSection) {
-            calendarTab
-                .tag(ConnectionSection.calendar)
-                .tabItem { Label("Calendar", systemImage: "calendar") }
-                .scrollContentBackground(.hidden)
-
             notionTab
                 .tag(ConnectionSection.notion)
                 .tabItem { Label("Notion", systemImage: "paperplane") }
@@ -172,13 +141,8 @@ struct ConnectionsView: View {
     //
     // Each tab is a single-Section Form so it inherits the same
     // grouped-card chrome the rest of Daisy's preference surfaces use.
-    // The actual section content (calendarSection / notionSection / …)
+    // The actual section content (notionSection / mcpServerSection / …)
     // is unchanged from when it lived in the stacked scroll layout.
-
-    private var calendarTab: some View {
-        Form { calendarSection }
-            .formStyle(.grouped)
-    }
 
     private var notionTab: some View {
         Form { notionSection }
@@ -195,253 +159,17 @@ struct ConnectionsView: View {
             .formStyle(.grouped)
     }
 
-    // MARK: - Calendar section
-
-    @ViewBuilder
-    private var calendarSection: some View {
-        Section {
-            calendarPermissionRow
-            if Self.googleCalendarVisible {
-                googleCalendarRow
-            }
-
-            // Behaviour toggles — gated on having at least one
-            // connected source. Moved here from Settings → Capture in
-            // 1.0.2 so the calendar story (sources + how Daisy uses
-            // them) lives in one place. Settings used to have a
-            // "Manage in Connections…" breadcrumb pointing here;
-            // it's redundant now that the toggles ARE here.
-            Toggle(isOn: $settings.autoStartFromCalendar) {
-                Text("Start at the scheduled meeting time")
-                Text("Reads your calendar, finds events with a Zoom/Meet/Teams/Webex link, starts recording when they begin. Up to 2 min late is fine.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .disabled(!hasAnyCalendarSource)
-
-            Toggle(isOn: $settings.autoStopFromCalendar) {
-                Text("Stop when the event ends")
-                Text("Daisy hits Stop & save at the event's end time plus a grace period. A toast 30 s before lets you keep going.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .disabled(!hasAnyCalendarSource)
-
-            Toggle(isOn: $settings.menuBarShowsNextMeeting) {
-                Text("Show next meeting in the menu bar")
-                Text("Adds the next event's time + title (\"14:30 · Q3 Review\") next to Daisy's menu-bar icon. Hidden during recording so the active session stays the focus.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .disabled(!hasAnyCalendarSource)
-
-            if settings.autoStopFromCalendar {
-                Picker("Grace period", selection: $settings.autoStopGraceSec) {
-                    Text("On the dot").tag(0)
-                    Text("1 min").tag(60)
-                    Text("2 min").tag(120)
-                    Text("5 min").tag(300)
-                    Text("10 min").tag(600)
-                    Text("15 min").tag(900)
-                    Text("30 min").tag(1800)
-                    Text("1 hour").tag(3600)
-                }
-                .pickerStyle(.menu)
-                .disabled(!hasAnyCalendarSource)
-            }
-        } header: {
-            HStack(spacing: 6) {
-                Text("Calendar")
-                Spacer()
-                if hasAnyCalendarSource {
-                    Text("Connected")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.daisySuccess)
-                }
-            }
-        } footer: {
-            // Footer text swaps based on whether Google row is shown.
-            // When Google is hidden (pre-verification), we don't want
-            // to advertise a feature the user can't reach; the EventKit
-            // path already covers iCloud / Exchange / Google accounts
-            // that are wired into Calendar.app.
-            if Self.googleCalendarVisible {
-                Text("Two independent sources. Apple Calendar uses macOS EventKit and picks up iCloud, Exchange, and Google accounts you've already added to Calendar.app. Google Calendar is a direct OAuth for users who keep Google outside of Calendar.app.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            } else {
-                Text("Apple Calendar uses macOS EventKit and picks up iCloud, Exchange, and Google accounts you've already added to Calendar.app.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var calendarPermissionRow: some View {
-        HStack(spacing: 10) {
-            switch calendar.authorizationStatus {
-            case .fullAccess:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.daisySuccess)
-                // Section header already carries the "Connected"
-                // badge when at least one calendar source is wired —
-                // repeating it in the row makes the same word land
-                // twice next to each other. Row just names the
-                // provider; state lives in the section badge + the
-                // green checkmark icon to the left.
-                Text("Apple Calendar").fontWeight(.medium)
-                Spacer()
-                Button("Revoke…") {
-                    calendar.openCalendarPrivacy()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(Color.daisyTextPrimary)
-            case .notDetermined:
-                Image(systemName: "calendar.badge.plus")
-                    .foregroundStyle(.secondary)
-                Text("Apple Calendar")
-                    .font(.callout.weight(.medium))
-                Spacer()
-                Button("Connect Apple Calendar") {
-                    Task {
-                        let status = await calendar.requestAccess()
-                        settings.calendarAccessGranted = (status == .fullAccess)
-                        if settings.calendarAccessGranted {
-                            CalendarService.shared.start(
-                                lookaheadHours: 24,
-                                autoStartOnMeeting: settings.autoStartFromCalendar
-                            ) { meeting in
-                                _ = meeting
-                            }
-                        }
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-            case .denied, .restricted:
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyWarning)
-                Text("Apple Calendar — Access denied").foregroundStyle(.secondary)
-                Spacer()
-                Button("Open System Settings…") {
-                    calendar.openCalendarPrivacy()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            case .writeOnly:
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color.daisyWarning)
-                Text("Apple Calendar — Full access needed").foregroundStyle(.secondary)
-                Spacer()
-                Button("Open System Settings…") {
-                    calendar.openCalendarPrivacy()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-            @unknown default:
-                EmptyView()
-            }
-        }
-        .font(.callout)
-    }
-
-    @ViewBuilder
-    private var googleCalendarRow: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "calendar.badge.checkmark")
-                .font(.callout)
-                .foregroundStyle(google.isConnected ? Color.daisySuccess : .secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Google Calendar")
-                    .font(.callout.weight(.medium))
-                if google.isConnected, let email = google.email {
-                    Text("Connected as \(email)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if googleConnectInProgress {
-                    Text("Opening Safari… approve Daisy in Google's consent screen, then return here.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text("Sign in once — Daisy reads your events directly via the Google Calendar API. Doesn't require macOS Calendar.app.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            Spacer(minLength: 8)
-            if googleConnectInProgress {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
-                    .frame(width: 22, height: 22)
-            } else if google.isConnected {
-                Button("Disconnect") {
-                    Task { await disconnectGoogle() }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(Color.daisyTextPrimary)
-            } else {
-                Button("Connect Google Calendar") {
-                    Task { await connectGoogle() }
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .tint(Color.daisyAccent)
-            }
-        }
-    }
-
-    /// Run the OAuth connect flow. Disables the button during the
-    /// round-trip (Safari open → user consent → callback → token
-    /// exchange → userinfo). Toast on either side gives clear
-    /// feedback; cancellation is silent.
-    private func connectGoogle() async {
-        googleConnectInProgress = true
-        defer { googleConnectInProgress = false }
-        do {
-            let result = try await GoogleOAuthClient.connect()
-            google.save(connect: result)
-            calendar.refresh()
-            ToastCenter.shared.show(
-                "Connected to Google Calendar as \(result.email).",
-                style: .success
-            )
-        } catch GoogleOAuthClient.OAuthError.userCancelled {
-            // Silent — user knows what they did.
-        } catch GoogleOAuthClient.OAuthError.calendarScopeNotGranted {
-            // Specific case: OAuth succeeded but the user unticked
-            // the Calendar checkbox on Google's consent screen, so
-            // we got tokens that can't fetch a single event. Action-
-            // able toast: explain + offer Reconnect that fires a
-            // fresh consent screen so they can re-tick the box.
-            ToastCenter.shared.showAction(
-                "Calendar wasn't shared — tick \"See events on your calendar\" on the next screen.",
-                actionLabel: "Reconnect",
-                style: .warning,
-                duration: .seconds(15),
-                perform: {
-                    Task { await connectGoogle() }
-                }
-            )
-        } catch {
-            ToastCenter.shared.show(
-                "Couldn't connect Google Calendar: \(error.localizedDescription)",
-                style: .warning
-            )
-        }
-    }
-
-    /// Revoke at Google + wipe local state, then refresh
-    /// CalendarService so the Home view drops Google events on
-    /// the next tick.
-    private func disconnectGoogle() async {
-        await google.disconnect()
-        calendar.refresh()
-        ToastCenter.shared.show("Disconnected from Google Calendar.", style: .info)
-    }
+    // Calendar UI moved out of Connections in 1.0.4:
+    //   • EventKit grant + status badge — Settings → Permissions
+    //   • Behaviour toggles (autoStart/autoStop/menuBar/grace) —
+    //     Settings → General → Calendar
+    //   • Google Calendar OAuth row is dormant pre-verification; the
+    //     `GoogleOAuthClient` / `GoogleAccountStore` / `GoogleCalendarService`
+    //     backend stays alive (existing connections keep refreshing
+    //     tokens and feeding events into the merged Home view), but
+    //     there's no Connect affordance until Google approves the
+    //     verification questionnaire. When it does, a dedicated tab
+    //     comes back here next to Notion / MCP server.
 
     // MARK: - Notion section
 

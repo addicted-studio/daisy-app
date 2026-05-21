@@ -86,11 +86,13 @@ enum SettingsTab: String, Hashable, Sendable {
 
 /// Sub-section inside the Connections page. Lets external CTAs
 /// (FirstRun, Home destination prompts) deep-link to a specific
-/// card on the page — Calendar / Notion / MCP server / Auto-routing.
-/// The page itself uses an anchored ScrollView, so each section has
-/// a stable id that we scroll to.
+/// card on the page — Notion / MCP server / Auto-routing.
+///
+/// Calendar dropped off in 1.0.4 — EventKit permission moved to
+/// Settings → Permissions and behaviour toggles to Settings →
+/// General. Google Calendar OAuth UI is dormant pre-verification;
+/// when it returns it'll come back as its own case here.
 enum ConnectionSection: String, Hashable, Sendable {
-    case calendar
     case notion
     case mcpServer
     case autoRouting
@@ -138,9 +140,8 @@ final class AppNavigation {
     }
 
     /// Convenience for `Open Connections → <card>`. Used by FirstRun
-    /// onboarding CTAs ("Connect Notion", "Set up MCP server"), the
-    /// Home destination-discovery banner, and the Calendar refresh
-    /// toast Reconnect button.
+    /// onboarding CTAs ("Connect Notion", "Set up MCP server") and
+    /// the Home destination-discovery banner.
     func openInConnections(_ card: ConnectionSection) {
         pendingConnectionsSection = card
         section = .connections

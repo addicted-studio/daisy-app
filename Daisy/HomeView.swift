@@ -188,9 +188,14 @@ struct HomeView: View {
 
     /// True when at least one calendar source can deliver events
     /// — drives the source-agnostic gate above and the event-count
-    /// pill in the section header.
+    /// pill in the section header. Reads `SystemPermissions.calendar`
+    /// (the same observable PermissionsView and SettingsView's
+    /// Calendar section read) so all three surfaces agree on a
+    /// single live source-of-truth. Pre-1.0.4 HomeView used
+    /// `calendar.authorizationStatus`, which could drift from
+    /// SystemPermissions across the auto-refresh window.
     private var hasAnyCalendarSource: Bool {
-        calendar.authorizationStatus == .fullAccess || google.isConnected
+        permissions.calendar == .granted || google.isConnected
     }
 
     /// All remaining events for today — calendar-day filter, not 24h
