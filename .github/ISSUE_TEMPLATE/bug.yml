@@ -1,0 +1,94 @@
+name: Bug report
+description: Something in Daisy is broken or behaving unexpectedly.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        **Before you submit:** is this a question, a how-do-I, or a feature idea? Please use [Discussions](https://github.com/addicted-studio/daisy-app/discussions) instead — Issues is reserved for confirmed bugs with reproducible behaviour. Discussions get faster answers because they're searchable for the next person.
+
+  - type: input
+    id: daisy-version
+    attributes:
+      label: Daisy version
+      description: From Daisy → About → version line.
+      placeholder: "1.0.6.1 (build 14)"
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac.
+      placeholder: "macOS 15.4 (Sequoia) or macOS 26.x (Tahoe)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Mac chip
+      options:
+        - Apple Silicon (M1 / M2 / M3 / M4)
+        - I don't know
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the bug. What did you do, what did you expect, what did you see instead?
+      placeholder: |
+        I clicked Record. The widget went orange and started pulsing, but nothing was being transcribed.
+        Expected: live transcript appearing in the session view.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered list. The shorter and more specific, the faster I can fix it.
+      placeholder: |
+        1. Open Daisy
+        2. Click Record from the widget
+        3. Speak for ~30 seconds
+        4. Open the Library — no session appears
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console logs (optional but very helpful)
+      description: |
+        Open `Console.app`, filter by process `Daisy`, reproduce the bug, copy the last 50–100 lines. Daisy logs at `.private` for personal data, so logs should be safe to share. Paste into a code block.
+      render: text
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: How blocking is this?
+      options:
+        - Blocking — I can't use Daisy at all
+        - Painful — I can work around it but it's bad
+        - Annoying — small UX issue, no data loss
+        - Cosmetic — visual or copy bug only
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submit checklist
+      options:
+        - label: I'm on the latest Daisy version, or this happens on the latest version too
+          required: true
+        - label: I searched existing Issues and Discussions and didn't find a duplicate
+          required: true

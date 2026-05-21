@@ -1,0 +1,46 @@
+name: Feature request (only for already-discussed ideas)
+description: A specific, scoped feature request you've already validated in Discussions.
+title: "[feature] "
+labels: ["feature", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Most feature ideas should start in [Discussions → Ideas](https://github.com/addicted-studio/daisy-app/discussions/categories/ideas)**, not here.
+
+        Open an Issue only if:
+        - The idea has already been discussed and there's general agreement to ship it, **or**
+        - It's tightly scoped, has a clear UX, and you'd contribute the implementation.
+
+        Open-ended "wouldn't it be cool if…" goes to Discussions. Issues are tracked work.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The user-facing pain. Not the solution yet.
+      placeholder: |
+        When I record back-to-back meetings, I have to manually click Stop and Start again, and sometimes I forget. The transcripts then merge in confusing ways.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would it work from the user's perspective?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about and ruled out — and why.
+
+  - type: input
+    id: discussion-link
+    attributes:
+      label: Link to the discussion (if any)
+      description: Issue is more likely to be accepted if there's prior discussion thread context.
+      placeholder: "https://github.com/addicted-studio/daisy-app/discussions/42"
