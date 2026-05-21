@@ -318,6 +318,17 @@ struct DaisyWidget: View {
         return baseline
     }
 
+    /// True if Whisper is mid-download or mid-load. Used to fork
+    /// the .preparing state's visual cue from "stream startup, ~1s"
+    /// to "first-time model setup, 1-3 minutes" — the latter must
+    /// LOOK different or the user assumes the app is hung.
+    private var isWhisperWarmingUp: Bool {
+        switch WhisperEngine.shared.state {
+        case .downloading, .loading, .notLoaded: return true
+        case .ready, .failed:                    return false
+        }
+    }
+
     private func centerColor(
         for status: RecordingSession.Status,
         mode: RecordingSession.RecordingMode,
@@ -362,9 +373,21 @@ struct DaisyWidget: View {
         // visually distinct from idle (white) and finished (white)
         // by keeping the centre filled rather than ghostly.
         case .paused: return Color.daisyPaused
+        // .preparing forks by whether Whisper still needs to download
+        // or load — that path is multi-minute on first run, so we
+        // pulse the centre amber (same hue as "summary cooking") to
+        // tell the user "this is going to take a while, not stuck".
+        // Stream-startup .preparing (model already loaded) stays
+        // plain white — fast, not worth a special signal.
+        case .preparing:
+            if isWhisperWarmingUp {
+                let pulse = 0.55 + 0.40 * (0.5 + 0.5 * sin(sweep * .pi))
+                return Color.daisyCenterIdle.opacity(pulse)
+            }
+            return Color.white.opacity(0.92)
         // Finished + processing → plain white. The "done" celebration
         // is the scale-pop animation, not a colour change.
-        case .preparing, .stopping, .summarizing, .finished: return Color.white.opacity(0.92)
+        case .stopping, .summarizing, .finished: return Color.white.opacity(0.92)
         case .failed: return .daisyError
         case .idle: return Color.white.opacity(0.55)
         }
@@ -384,7 +407,21 @@ struct DaisyWidget: View {
         case .idle: return "Click to record"
         case .recording: return "Click to pause"
         case .paused: return "Click to resume · right-click for Stop & save"
-        case .preparing: return "Preparing…"
+        case .preparing:
+            // First-record path on a fresh install spends most of its
+            // wait in Whisper download/load (1-3 minutes for the 626 MB
+            // model). Surface the real progress so the user knows the
+            // app isn't hung.
+            switch WhisperEngine.shared.state {
+            case .downloading(let p):
+                return "Downloading transcription model… \(Int(p * 100))%"
+            case .loading(let status):
+                return "Loading transcription model · \(status)"
+            case .notLoaded:
+                return "Setting up transcription model…"
+            default:
+                return "Preparing…"
+            }
         case .stopping: return "Stopping…"
         case .summarizing: return "Summarizing…"
         case .finished: return "Done · click to record again"

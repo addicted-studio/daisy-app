@@ -660,6 +660,26 @@ final class RecordingSession {
 
         status = .preparing
 
+        // First-record explainer toast.
+        //
+        // If Whisper isn't yet `.ready`, the user is about to wait
+        // 1-3 minutes while the 626 MB model downloads + CoreML loads.
+        // The widget centre + tooltip surface the live progress, but
+        // a one-shot toast at the moment of click gives the user a
+        // concrete "how long" so they don't think the app is hung.
+        // Skip the toast when prewarm has already finished — most
+        // sessions land in `.ready` here, and a "model is loading"
+        // toast on a sub-second startup would be noise.
+        switch WhisperEngine.shared.state {
+        case .notLoaded, .downloading, .loading:
+            ToastCenter.shared.show(
+                "Setting up transcription model — first run only, about 1–3 minutes",
+                style: .info
+            )
+        case .ready, .failed:
+            break
+        }
+
         // Make sure Whisper is ready before we tap the mic — otherwise the
         // user sees "Recording…" with nothing happening. Each early-exit
         // path below goes through `failFast(_:)` so we don't leak the
