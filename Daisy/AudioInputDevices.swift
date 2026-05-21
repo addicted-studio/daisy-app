@@ -113,7 +113,13 @@ enum AudioInputDevices {
         return ids
     }
 
-    private static func systemDefaultInputID() -> AudioDeviceID {
+    /// System default input device ID. Exposed (not private) so
+    /// `AudioRecorder.applyPreferredInputDevice(uid:)` can fall through
+    /// to it explicitly when the user picked "System default" — pinning
+    /// the AUHAL to the *current* default rather than leaving it bound
+    /// to a stale ID after a route change. Returns 0 if CoreAudio fails;
+    /// callers treat that the same as "no pinning possible".
+    static func systemDefaultInputID() -> AudioDeviceID {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,

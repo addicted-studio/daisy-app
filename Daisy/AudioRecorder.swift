@@ -11,6 +11,7 @@
 
 import Foundation
 import AVFoundation
+import CoreAudio
 import Observation
 import os
 
@@ -139,6 +140,42 @@ final class AudioRecorder {
     @ObservationIgnored
     private var configChangeObserver: NSObjectProtocol?
 
+    /// CoreAudio property-listener block for default-input-device
+    /// changes. Catches the case `AVAudioEngineConfigurationChange`
+    /// MISSES — wired output-only headphones (3.5mm jack) on some
+    /// macOS versions reroute the input graph as a side effect but
+    /// don't post the engine notification. Without this listener,
+    /// recovery never runs for that device class and the tap goes
+    /// silent for the rest of the session.
+    @ObservationIgnored
+    private var inputDeviceListenerBlock: AudioObjectPropertyListenerBlock?
+    @ObservationIgnored
+    private var inputDeviceListenerInstalled: Bool = false
+    /// Wall-clock debounce — macOS often emits the property change
+    /// 2-3 times in rapid succession as the audio graph settles.
+    /// Mirrors the same debounce SystemAudioCapture uses.
+    @ObservationIgnored
+    private var lastInputRestartAt: Date?
+
+    /// Audio-buffer arrival watchdog. After `engine.start()` completes
+    /// in route-change recovery we arm a short timer; if no buffer has
+    /// landed by the time it fires the recovery silently failed (AUHAL
+    /// bound to a dead device, format mismatch we didn't catch, etc.)
+    /// and we fall to `.paused` with a Resume toast rather than burn
+    /// the rest of the meeting on a dead tap.
+    @ObservationIgnored
+    private var recoveryWatchdog: Timer?
+    /// Render-thread → MainActor bridge for last-buffer timestamp. The tap
+    /// closure writes through this; the MainActor watchdog reads it.
+    private final class BufferTimestampBox: @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock<Date?>(initialState: nil)
+        func mark(_ at: Date) { lock.withLock { $0 = at } }
+        func snapshot() -> Date? { lock.withLock { $0 } }
+        func reset() { lock.withLock { $0 = nil } }
+    }
+    @ObservationIgnored
+    private let bufferTimestamp = BufferTimestampBox()
+
     /// Format the engine's input bus is running at right now.
     /// Captured in `start()` and refreshed in `handleConfigurationChange`
     /// so we can detect when route-change recovery has put us on a
@@ -222,6 +259,10 @@ final class AudioRecorder {
                 }
             }
         }
+        // Belt-and-braces default-input-device listener — catches
+        // route changes that DON'T fire AVAudioEngineConfigurationChange
+        // (wired output-only headphones on some macOS versions).
+        installInputDeviceListener()
 
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -247,6 +288,7 @@ final class AudioRecorder {
 
         lastInputFormat = format
         writeErrors.reset()
+        bufferTimestamp.reset()
         installInputTap(format: format)
 
         engine.prepare()
@@ -278,6 +320,7 @@ final class AudioRecorder {
     /// jumps; wall clock doesn't, by design).
     func pause() {
         guard state == .recording else { return }
+        cancelRecoveryWatchdog()
         engine.pause()
         elapsedTimer?.invalidate()
         elapsedTimer = nil
@@ -312,6 +355,13 @@ final class AudioRecorder {
             Task { @MainActor [weak self] in self?.tick() }
         }
         state = .recording
+        // Mirror the route-change recovery watchdog — engine.start()
+        // here can also return success while AUHAL is on a stale or
+        // dead device (e.g., user picked a new mic in Settings during
+        // the pause, then unplugged it before resuming). Without this,
+        // resume-into-dead-device produces the same silent timer-only
+        // recording that route-change recovery used to.
+        armRecoveryWatchdog()
         log.info("AudioRecorder resumed")
     }
 
@@ -323,6 +373,8 @@ final class AudioRecorder {
             NotificationCenter.default.removeObserver(observer)
             configChangeObserver = nil
         }
+        removeInputDeviceListener()
+        cancelRecoveryWatchdog()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         bufferContinuation?.finish()
@@ -399,6 +451,18 @@ final class AudioRecorder {
             log.info("Config change ignored (state=\(String(describing: self.state), privacy: .public))")
             return
         }
+        // Single debounce point for BOTH the NotificationCenter
+        // observer and the CoreAudio default-input listener. A single
+        // route change (AirPods disconnect, USB plug, etc.) typically
+        // fires BOTH notifications; without this guard they run
+        // recovery concurrently on the MainActor — second run tears
+        // down a tap the first just installed.
+        if let last = lastInputRestartAt,
+           Date().timeIntervalSince(last) < 2.0 {
+            log.info("Config change debounced — last restart \(Date().timeIntervalSince(last), privacy: .public)s ago")
+            return
+        }
+        lastInputRestartAt = Date()
 
         log.warning("Audio configuration changed mid-recording — engine stopped by macOS, attempting recovery")
 
@@ -472,6 +536,10 @@ final class AudioRecorder {
                 toastBody = "Mic device changed — recording continues."
             }
             ToastCenter.shared.show(toastBody, style: .info)
+            // Engine reports started but the AUHAL can still be bound
+            // to a dead device. Watchdog falls us to .paused if no
+            // buffer arrives within 5s.
+            armRecoveryWatchdog()
         } catch {
             // Engine refused to come back. Don't kill the session —
             // mark it paused so the user can hit Resume manually
@@ -486,11 +554,129 @@ final class AudioRecorder {
         }
     }
 
+    // MARK: - Default-input-device listener (CoreAudio)
+
+    /// Subscribe to `kAudioHardwarePropertyDefaultInputDevice` so we
+    /// catch route changes that `AVAudioEngineConfigurationChange`
+    /// silently misses. Idempotent — guarded by `inputDeviceListenerInstalled`.
+    private func installInputDeviceListener() {
+        guard !inputDeviceListenerInstalled else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+            // CoreAudio dispatches on the queue we pass below — off
+            // main. Hop back to MainActor for recovery logic.
+            Task { @MainActor [weak self] in
+                self?.handleDefaultInputDeviceChange()
+            }
+        }
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.global(qos: .userInitiated),
+            block
+        )
+        if status == noErr {
+            inputDeviceListenerBlock = block
+            inputDeviceListenerInstalled = true
+            log.info("Default input device listener installed")
+        } else {
+            log.error("Failed to install default input listener: status=\(status, privacy: .public)")
+        }
+    }
+
+    private func removeInputDeviceListener() {
+        guard inputDeviceListenerInstalled, let block = inputDeviceListenerBlock else { return }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            DispatchQueue.global(qos: .userInitiated),
+            block
+        )
+        if status != noErr {
+            log.error("Failed to remove default input listener: status=\(status, privacy: .public)")
+        }
+        inputDeviceListenerBlock = nil
+        inputDeviceListenerInstalled = false
+    }
+
+    /// CoreAudio fired a default-input-device change. Debounce against
+    /// the rapid-fire 2-3-times pattern macOS uses while the audio
+    /// graph settles, then re-run the same recovery path as
+    /// `handleConfigurationChange` — the two notifications cover
+    /// overlapping-but-not-identical sets of route changes, and we
+    /// want either one to be enough to keep us alive.
+    private func handleDefaultInputDeviceChange() {
+        guard state == .recording else { return }
+        log.info("Default input device changed mid-recording — running route-change recovery")
+        // Debounce against double-fire (NC + CoreAudio for the same
+        // event) lives inside handleConfigurationChange — single
+        // chokepoint, single timestamp. Don't gate here too.
+        handleConfigurationChange()
+    }
+
+    // MARK: - Recovery watchdog
+
+    /// Arm a short timer that checks `bufferTimestamp` after a route-
+    /// change recovery. If no buffer arrived AFTER the arm time, the
+    /// recovery silently failed (AUHAL on a dead device, etc.) and we
+    /// fall to `.paused` rather than letting the user record minutes
+    /// of nothing.
+    ///
+    /// Uses `armedAt` (wall-clock at arm time), NOT a snapshot of the
+    /// last buffer's timestamp, as the comparison baseline. A flapping
+    /// route change can re-arm this watchdog mid-window; with a
+    /// snapshot-of-last-buffer baseline, a buffer that arrived BETWEEN
+    /// the two arms would falsely satisfy the second check on stale
+    /// data. armedAt requires a strictly POST-arm buffer, which is the
+    /// only signal that actually proves the new graph is alive.
+    private func armRecoveryWatchdog(deadline: TimeInterval = 5.0) {
+        cancelRecoveryWatchdog()
+        let armedAt = Date()
+        recoveryWatchdog = Timer.scheduledTimer(withTimeInterval: deadline, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.checkRecoveryProgress(armedAt: armedAt)
+            }
+        }
+    }
+
+    private func cancelRecoveryWatchdog() {
+        recoveryWatchdog?.invalidate()
+        recoveryWatchdog = nil
+    }
+
+    private func checkRecoveryProgress(armedAt: Date) {
+        recoveryWatchdog = nil
+        guard state == .recording else { return }
+        let current = bufferTimestamp.snapshot()
+        // Healthy: at least one buffer arrived strictly after arm time.
+        if let c = current, c > armedAt { return }
+        log.error("Recovery watchdog fired — no audio buffers post-arm. Falling to paused.")
+        fallToPaused()
+        ToastCenter.shared.show(
+            "Mic stopped delivering audio — recording paused. Hit Resume to retry.",
+            style: .warning
+        )
+    }
+
     /// Centralised "drop to paused" used by the route-change recovery
     /// when the engine refuses to come back or the new device has no
     /// usable channels. Preserves `accumulatedActiveSec` and clears
     /// the level/spectrum so the widget doesn't appear frozen.
     private func fallToPaused() {
+        cancelRecoveryWatchdog()
+        // Clear the debounce so a follow-up CoreAudio listener fire
+        // (user plugged a working mic right after the fall) isn't
+        // swallowed by the 2-sec window — they deserve to recover.
+        lastInputRestartAt = nil
         elapsedTimer?.invalidate()
         elapsedTimer = nil
         if let startedAt {
@@ -515,11 +701,15 @@ final class AudioRecorder {
         let fileRef = audioFile
         let analyzerRef = analyzer
         let writeErrorsRef = writeErrors
+        let timestampRef = bufferTimestamp
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
             // Render thread — keep work minimal. Buffer-write failures
             // are accumulated and surfaced once at stop() rather than
             // touching MainActor state per buffer.
+            // Atomic timestamp mark — read by the MainActor recovery
+            // watchdog to detect AUHAL-on-dead-device silent failure.
+            timestampRef.mark(Date())
             if let fileRef {
                 do {
                     try fileRef.write(from: buffer)
@@ -582,20 +772,47 @@ final class AudioRecorder {
     }
 
     /// Point `engine.inputNode`'s underlying HAL audio unit at a
-    /// specific `AudioDeviceID`. Pass an empty UID (or pass through
-    /// a UID that resolves to nil — the saved device has been
-    /// unplugged) to leave the unit on the macOS system default,
-    /// which is the v1.0 behaviour.
+    /// specific `AudioDeviceID`. Pass an empty UID to follow the macOS
+    /// system default; pass a stable device UID to pin to that piece
+    /// of hardware.
     ///
     /// Must be called BEFORE `engine.start()` and BEFORE we sample
     /// `inputNode.outputFormat`. Switching device after format
     /// capture would leave us writing the archive .caf at the wrong
     /// sample rate / channel count for the actual hardware.
+    ///
+    /// Pre-1.0.4 this short-circuited on `uid.isEmpty` ("trust the
+    /// AUHAL to track the default"). That trust was misplaced: after
+    /// `AVAudioEngineConfigurationChange` the AUHAL stays bound to
+    /// the *previous* default device's ID, which macOS has already
+    /// invalidated. The tap then fires zero buffers for the rest of
+    /// the session — silent dead recording. Now we ALWAYS resolve to
+    /// a concrete `AudioDeviceID` and call
+    /// `kAudioOutputUnitProperty_CurrentDevice` explicitly, so route
+    /// changes land us on the new default instead of a stale ghost.
     private func applyPreferredInputDevice(uid: String) {
-        guard !uid.isEmpty else { return }
-        guard var deviceID = AudioInputDevices.deviceID(forUID: uid) else {
-            log.warning("Saved mic UID \(uid, privacy: .public) not connected — falling back to system default")
-            return
+        // Resolve to a concrete device ID. Three paths:
+        //   1. User pinned a specific device → use that if connected.
+        //   2. User pinned but device is gone → fall through to default.
+        //   3. User picked "System default" → use the current default.
+        var deviceID: AudioDeviceID
+        if !uid.isEmpty, let pinned = AudioInputDevices.deviceID(forUID: uid) {
+            deviceID = pinned
+        } else {
+            if !uid.isEmpty {
+                log.warning("Saved mic UID \(uid, privacy: .public) not connected — falling back to system default")
+            }
+            deviceID = AudioInputDevices.systemDefaultInputID()
+            // CoreAudio returns 0 if no default input is wired up at all
+            // (rare — only on machines with literally zero input devices).
+            // We have nothing to pin to; let the engine fail open and
+            // surface `.noMicrophone` via the format check in start()/
+            // handleConfigurationChange() instead. Pre-existing AUHAL
+            // binding (if any) is preserved — better stale than nothing.
+            guard deviceID != 0 else {
+                log.error("No system default input device available — AUHAL left at its previous binding")
+                return
+            }
         }
         guard let audioUnit = engine.inputNode.audioUnit else {
             log.error("engine.inputNode.audioUnit is nil — can't route to preferred device")
@@ -614,7 +831,9 @@ final class AudioRecorder {
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
         if status != noErr {
-            log.error("AudioUnitSetProperty(CurrentDevice) failed (status \(status, privacy: .public))")
+            log.error("AudioUnitSetProperty(CurrentDevice) failed (status \(status, privacy: .public), deviceID \(deviceID, privacy: .public))")
+        } else {
+            log.info("Bound mic AUHAL to device ID \(deviceID, privacy: .public)")
         }
     }
 
