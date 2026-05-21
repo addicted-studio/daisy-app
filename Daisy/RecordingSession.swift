@@ -359,11 +359,19 @@ final class RecordingSession {
         Task { await WhisperEngine.shared.ensureLoaded() }
         Task { await DiarizationEngine.shared.ensureLoaded() }
 
-        // Warm the AVAudioEngine HAL graph up front so the first
-        // user-initiated record (especially dictation, where the
-        // user expects instant capture) doesn't pay the cold-start
-        // tax. Cheap, no TCC prompts, no recording-light.
-        recorder.prewarm()
+        // 1.0.5.1 hotfix: REMOVED recorder.prewarm() — calling
+        // AVAudioEngine.prepare() at app-init time crashes the
+        // process on macOS 26.2 because the engine's input graph
+        // isn't initializable until microphone permission is
+        // granted AND the user actually intends to record. The
+        // ObjC NSException AVAudioEngineGraph::Initialize threw
+        // propagates straight through Swift and aborts the process
+        // before SwiftUI even mounts. Cold-start lag is a worse
+        // problem than no lag — but a crash on launch is worse
+        // than both. Re-introduce gated on
+        // `SystemPermissions.shared.microphone == .granted` in a
+        // future release, or move prewarm to the first user-
+        // initiated record() call where the engine state is sane.
 
         // Probe the configured summary provider once so its status
         // (Available / Unavailable) is known before the user opens

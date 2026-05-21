@@ -215,20 +215,22 @@ final class AudioRecorder {
         }
     }
 
-    /// Warm up the audio graph at app launch so the first user-
-    /// initiated record click is instant. `engine.prepare()` is
-    /// idempotent and cheap — it doesn't activate the mic (no TCC
-    /// prompt, no recording-light) but does cache the HAL audio
-    /// unit setup that would otherwise happen on the first `start()`
-    /// call. Pre-1.0.5 the tester reported a visible widget lag on
-    /// the first dictation after a long idle; the lazy AUHAL load
-    /// in `engine.start()` was the bulk of it.
+    /// DO NOT CALL AT APP LAUNCH. `engine.prepare()` requires the
+    /// inputNode's audio unit to be initializable, which it ISN'T
+    /// until macOS has granted microphone access AND the audio
+    /// session is properly configured. Calling this before the
+    /// first user-initiated `start()` throws an ObjC NSException
+    /// out of `AVAudioEngineGraph::Initialize` that propagates
+    /// past Swift's catch boundary and aborts the process. We
+    /// hit this in 1.0.5 → 1.0.5.1 hotfix.
     ///
-    /// Safe to call multiple times. No-op if the engine has already
-    /// been prepared and is in idle state.
+    /// Kept as a placeholder so future work that wants a real
+    /// prewarm has a single hook to wire it through (e.g.
+    /// "prewarm once AFTER the user requests microphone access
+    /// and the engine has its first valid input format"). The
+    /// current body is a no-op so accidental callers don't crash.
     func prewarm() {
-        engine.prepare()
-        log.info("AudioRecorder prewarmed (HAL audio graph cached)")
+        log.info("AudioRecorder.prewarm() called — no-op since 1.0.5.1 (see comment)")
     }
 
     /// Begin capturing microphone audio. Pass an `archiveURL` to also write
