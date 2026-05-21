@@ -98,12 +98,50 @@ DMG_NAME="Daisy-${VERSION}.dmg"
 ARCHIVE_PATH="${DAISY_REPO}/build/Daisy-${VERSION}.xcarchive"
 EXPORT_PATH="${DAISY_REPO}/build/export-${VERSION}"
 DMG_PATH="${DAISY_REPO}/build/${DMG_NAME}"
+APPCAST_FILE="${DAISY_WEB_REPO}/public/appcast.xml"
 
 echo "▸ Daisy ${VERSION} (build ${BUILD})"
 echo "  archive : ${ARCHIVE_PATH}"
 echo "  export  : ${EXPORT_PATH}"
 echo "  dmg     : ${DMG_PATH}"
 echo
+
+# -----------------------------------------------------------------------------
+# 0. Sanity — build number must be strictly greater than the highest
+#    <sparkle:version> already published in appcast.xml. Sparkle compares
+#    items by sparkle:version (CFBundleVersion), not shortVersionString —
+#    on 2026-05-20 we shipped 1.0.3 build 6 alongside 1.0.2 build 7 and
+#    Sparkle offered our tester a "downgrade" to 1.0.2 because 7 > 6.
+#    pbxproj's CURRENT_PROJECT_VERSION is stale (release.sh doesn't bump
+#    it), so the authoritative source for "what's the next free build" is
+#    appcast.xml itself.
+#
+#    Failing here costs <1s. Failing in [6/6] would cost 15+ minutes of
+#    archive + notary work for a DMG that can't be used.
+# -----------------------------------------------------------------------------
+
+if [[ -f "${APPCAST_FILE}" ]]; then
+    # Extract every <sparkle:version>N</sparkle:version> integer and take
+    # the max. grep -oE keeps the script portable (no xmllint required).
+    MAX_PUBLISHED_BUILD=$(grep -oE '<sparkle:version>[0-9]+</sparkle:version>' "${APPCAST_FILE}" \
+        | grep -oE '[0-9]+' \
+        | sort -n \
+        | tail -1 || true)
+    if [[ -n "${MAX_PUBLISHED_BUILD}" && "${BUILD}" -le "${MAX_PUBLISHED_BUILD}" ]]; then
+        echo "  ✗ Build ${BUILD} ≤ last published build ${MAX_PUBLISHED_BUILD} in appcast.xml" >&2
+        echo "    Sparkle compares items by <sparkle:version> (CFBundleVersion), not by" >&2
+        echo "    shortVersionString — clients already on build ${MAX_PUBLISHED_BUILD} won't see" >&2
+        echo "    this release, or worse, will be offered an apparent downgrade." >&2
+        echo "" >&2
+        echo "    Next available build: $((MAX_PUBLISHED_BUILD + 1))" >&2
+        echo "    Re-run:   $0 ${VERSION} $((MAX_PUBLISHED_BUILD + 1))" >&2
+        exit 1
+    fi
+    if [[ -n "${MAX_PUBLISHED_BUILD}" ]]; then
+        echo "  ✓ Build ${BUILD} > last published ${MAX_PUBLISHED_BUILD} (appcast.xml)"
+        echo
+    fi
+fi
 
 # -----------------------------------------------------------------------------
 # 1. Archive — release-config build of the Xcode project.
@@ -266,7 +304,7 @@ mkdir -p "${DAISY_WEB_REPO}/public/downloads"
 cp "${DMG_PATH}" "${DAISY_WEB_REPO}/public/downloads/${DMG_NAME}"
 echo "  → DMG copied: public/downloads/${DMG_NAME}"
 
-APPCAST_FILE="${DAISY_WEB_REPO}/public/appcast.xml"
+# APPCAST_FILE defined at top — used here for inject step.
 PUBDATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
 
 VERSION="${VERSION}" \
