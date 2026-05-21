@@ -1082,6 +1082,26 @@ struct SettingsView: View {
                 Text("Model")
             }
 
+            // Diarization above Language in 1.0.6: it's a structural
+            // "how is the audio interpreted" choice, same family as
+            // Model — Language is downstream content-level. Sized
+            // down the description too; the long version moved to
+            // the footer.
+            Section {
+                Toggle(isOn: $settings.diarizeMicrophone) {
+                    Text("Diarize microphone too")
+                    Text("Splits voices in your mic into Speaker A / B instead of one \"Me\". Use when remote people are heard through your speakers.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Diarization")
+            } footer: {
+                Text("Adds ~15-25% to processing time. System audio is always diarized.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
             Section {
                 Picker("Meetings (default)", selection: $settings.defaultTranscriptionLocale) {
                     ForEach(Transcriber.availableLocales, id: \.id) { locale in
@@ -1113,21 +1133,6 @@ struct SettingsView: View {
             // Model status was its own Section here in 1.0.5.4 —
             // 1.0.5.5 inlined the badge + Reload into the Model
             // section above for parity with Summary's layout.
-
-            Section {
-                Toggle(isOn: $settings.diarizeMicrophone) {
-                    Text("Diarize microphone too")
-                    Text("Run speaker separation on your mic audio. Useful when remote participants are heard through your speakers (in-room playback) instead of via system-audio capture — each voice gets its own \"Speaker A / B\" label instead of all collapsing into \"Me\". Adds Pyannote CoreML inference over the mic stream, ~15-25% of Whisper runtime.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Diarization")
-            } footer: {
-                Text("System audio is always diarized (one cluster per remote participant). This toggle adds the same pass for your microphone track — leave off unless you record in-room meetings where everyone shares one mic.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
 
             Section {
                 modelsCacheRow

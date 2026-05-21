@@ -215,23 +215,11 @@ final class AudioRecorder {
         }
     }
 
-    /// DO NOT CALL AT APP LAUNCH. `engine.prepare()` requires the
-    /// inputNode's audio unit to be initializable, which it ISN'T
-    /// until macOS has granted microphone access AND the audio
-    /// session is properly configured. Calling this before the
-    /// first user-initiated `start()` throws an ObjC NSException
-    /// out of `AVAudioEngineGraph::Initialize` that propagates
-    /// past Swift's catch boundary and aborts the process. We
-    /// hit this in 1.0.5 → 1.0.5.1 hotfix.
-    ///
-    /// Kept as a placeholder so future work that wants a real
-    /// prewarm has a single hook to wire it through (e.g.
-    /// "prewarm once AFTER the user requests microphone access
-    /// and the engine has its first valid input format"). The
-    /// current body is a no-op so accidental callers don't crash.
-    func prewarm() {
-        log.info("AudioRecorder.prewarm() called — no-op since 1.0.5.1 (see comment)")
-    }
+    // prewarm() removed in 1.0.6.1 — was a no-op stub kept after
+    // the 1.0.5 crash. If a future release wants a real prewarm,
+    // gate it on `SystemPermissions.shared.microphone == .granted`
+    // AND run it AFTER the first successful `start()` (engine state
+    // is only sane post-first-record).
 
     /// Begin capturing microphone audio. Pass an `archiveURL` to also write
     /// a .caf file for later replay/re-processing. `preferredDeviceUID`

@@ -33,7 +33,9 @@ struct LibraryView: View {
     /// Pending delete confirmation. Carries the sessions about to
     /// be removed (1 for context-menu, N for multi-select).
     @State private var pendingDelete: [StoredSession] = []
-    @State private var refreshRotation: Double = 0
+    // refreshRotation removed in 1.0.6.1 along with the dormant
+    // manual-reload button. Store auto-refreshes on .task / focus /
+    // FSEvents.
 
     /// Single selected session, used as a derived view for the
     /// detail pane. `nil` when 0 or >1 selected.
@@ -252,44 +254,33 @@ struct LibraryView: View {
 
     private var sessionList: some View {
         VStack(spacing: 0) {
-            // Search + reload header
+            // Search + tag-filter header
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
                 TextField("Search transcripts…", text: $query)
                     .textFieldStyle(.plain)
                 Spacer(minLength: 0)
-                Button {
-                    Task { await store.refresh() }
-                    withAnimation(.easeInOut(duration: 0.7)) {
-                        refreshRotation += 360
-                    }
-                } label: {
-                    Image(systemName: "arrow.trianglehead.2.clockwise")
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(refreshRotation))
+                // Tag selector lives here in 1.0.6 — Egor moved it
+                // up from a separate row below folder chips so it
+                // shares the capsule region with search. Only
+                // renders when there's at least one real tag in
+                // use; keeps the bar uncluttered for users who
+                // haven't tagged anything yet.
+                if tagGroups.contains(where: { !$0.name.isEmpty }) {
+                    tagSelector
                 }
-                .buttonStyle(.plain)
-                .help("Reload sessions from disk")
             }
             .padding(.horizontal, 12)
             .padding(.top, 12)
-            .padding(.bottom, 8)
+            // Bumped from 8 → 14 in 1.0.6 because the folder chip row
+            // visually touched the search bar — the capsule of the
+            // "All" chip sat right under the text-field's baseline.
+            .padding(.bottom, 14)
 
             folderChips
                 .padding(.horizontal, 12)
-                .padding(.bottom, 4)
-
-            // Tag selector — single-selection dropdown rather than a
-            // chip row, so a long tag list doesn't push the session
-            // list down. Only renders when there's at least one tag
-            // anywhere to keep the sidebar uncluttered for users who
-            // don't tag sessions.
-            if tagGroups.contains(where: { !$0.name.isEmpty }) {
-                tagSelector
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
+                .padding(.bottom, 8)
 
             // Manual selection model so we keep brand-coloured highlight
             // instead of the system gray that `List(selection:)` paints
@@ -439,57 +430,56 @@ struct LibraryView: View {
 
     /// Single-selection dropdown listing every tag in use, with
     /// "All tags" reset at the top and "Untagged" demoted to the
-    /// bottom. Selection drives `tagFilter`. Counts shown alongside
-    /// each row so the user can tell which tag has 12 sessions vs
-    /// which has 1 — same info the chip row carried, packed into a
-    /// menu so a sidebar with 20 tags stays compact.
+    /// bottom. Lives inside the search-row header in 1.0.6 — compact
+    /// trigger (tag icon + label + chevron). Active filter colours
+    /// the icon orange so a user scanning the sidebar can tell at
+    /// a glance the list is filtered.
     private var tagSelector: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "tag")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Menu {
-                Button {
-                    tagFilter = nil
-                } label: {
-                    if tagFilter == nil {
-                        Label("All tags", systemImage: "checkmark")
-                    } else {
-                        Text("All tags")
-                    }
-                }
-                Divider()
-                ForEach(tagGroups, id: \.name) { group in
-                    let displayName = group.name.isEmpty ? "Untagged" : group.name
-                    Button {
-                        tagFilter = (tagFilter == group.name) ? nil : group.name
-                    } label: {
-                        if tagFilter == group.name {
-                            Label("\(displayName) · \(group.count)", systemImage: "checkmark")
-                        } else {
-                            Text("\(displayName) · \(group.count)")
-                        }
-                    }
-                }
+        Menu {
+            Button {
+                tagFilter = nil
             } label: {
-                HStack(spacing: 4) {
-                    Text(tagSelectorLabel)
-                        .font(.callout)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                if tagFilter == nil {
+                    Label("All tags", systemImage: "checkmark")
+                } else {
+                    Text("All tags")
                 }
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            Spacer()
+            Divider()
+            ForEach(tagGroups, id: \.name) { group in
+                let displayName = group.name.isEmpty ? "Untagged" : group.name
+                Button {
+                    tagFilter = (tagFilter == group.name) ? nil : group.name
+                } label: {
+                    if tagFilter == group.name {
+                        Label("\(displayName) · \(group.count)", systemImage: "checkmark")
+                    } else {
+                        Text("\(displayName) · \(group.count)")
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "tag")
+                    .font(.caption)
+                    .foregroundStyle(tagFilter == nil ? .secondary : Color.daisyAccent)
+                Text(tagSelectorLabel)
+                    .font(.caption)
+                    .foregroundStyle(tagFilter == nil ? .secondary : Color.daisyAccent)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Filter by tag")
     }
 
     private var tagSelectorLabel: String {
         switch tagFilter {
-        case nil:        return "All tags"
+        case nil:        return "Tags"
         case .some(""):  return "Untagged"
         case .some(let t): return t
         }

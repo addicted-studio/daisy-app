@@ -43,6 +43,12 @@ struct SessionDetailView: View {
     /// save-on-blur idiom the title editor below uses.
     @State private var tagDraft: String = ""
     @FocusState private var tagFieldFocused: Bool
+    /// Notion-style autocomplete popover visibility. Bound to
+    /// `tagFieldFocused` via .onChange so click-to-focus opens the
+    /// suggestions, blur closes them. Held as its own @State because
+    /// the popover's own dismiss-on-outside-click triggers a flip
+    /// that wouldn't have a single binding source otherwise.
+    @State private var showingTagSuggestions = false
 
     enum ActionStatus: Equatable {
         case idle
@@ -295,9 +301,11 @@ struct SessionDetailView: View {
     /// "Mediacube" / "mediacube" / "Mediacube " all becoming
     /// three different buckets).
     ///
-    /// Save-on-blur idiom: FocusState flip OR Enter triggers
-    /// `commitTag()`. Picking from the Menu also commits
-    /// immediately (no need to defocus).
+    /// Notion-style autocomplete: focus on the TextField opens a
+    /// popover below it listing every existing tag, filtered by
+    /// what the user is currently typing. Click a row → tag is
+    /// applied. Enter on a brand-new value → tag is created. No
+    /// chevron — the popover IS the affordance.
     @ViewBuilder
     private var tagField: some View {
         HStack(spacing: 4) {
@@ -309,52 +317,127 @@ struct SessionDetailView: View {
                 .font(.caption)
                 .focused($tagFieldFocused)
                 .frame(maxWidth: 140)
-                .onSubmit { commitTag() }
+                .onSubmit {
+                    commitTag()
+                    tagFieldFocused = false
+                }
                 .onChange(of: tagFieldFocused) { _, isFocused in
-                    if !isFocused { commitTag() }
-                }
-
-            // Menu chevron — shows existing tags so the user can
-            // pick instead of typing (and risking subtle
-            // spelling drift across sessions).
-            let existing = SessionStore.shared.distinctTagsByFrequency
-            if !existing.isEmpty || !session.tag.isEmpty {
-                Menu {
-                    if !session.tag.isEmpty {
-                        Button {
-                            tagDraft = ""
-                            commitTag()
-                        } label: {
-                            Label("Remove tag", systemImage: "xmark.circle")
+                    if isFocused {
+                        // Defer to next runloop so the popover
+                        // anchors after the field's frame settled.
+                        DispatchQueue.main.async {
+                            showingTagSuggestions = true
                         }
-                        Divider()
-                    }
-                    if existing.isEmpty {
-                        Text("No existing tags yet — type above to create one.")
                     } else {
-                        ForEach(existing, id: \.self) { name in
-                            Button {
-                                tagDraft = name
-                                commitTag()
-                            } label: {
-                                if session.tag == name {
-                                    Label(name, systemImage: "checkmark")
-                                } else {
-                                    Text(name)
-                                }
-                            }
-                        }
+                        commitTag()
                     }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
+                .popover(
+                    isPresented: $showingTagSuggestions,
+                    attachmentAnchor: .point(.bottom),
+                    arrowEdge: .top
+                ) {
+                    tagSuggestionsList
+                        .frame(minWidth: 180, idealWidth: 200)
+                        .padding(.vertical, 4)
+                }
+        }
+    }
+
+    /// Filtered list of existing tags shown in the popover beneath
+    /// the field. Notion / Linear / Apple Reminders all use this
+    /// shape — substring filter, click-to-pick, no per-row checkbox
+    /// because tags are single-select.
+    @ViewBuilder
+    private var tagSuggestionsList: some View {
+        let allTags = SessionStore.shared.distinctTagsByFrequency
+        let query = tagDraft.trimmingCharacters(in: .whitespaces).lowercased()
+        let filtered = query.isEmpty
+            ? allTags
+            : allTags.filter { $0.lowercased().contains(query) }
+        VStack(alignment: .leading, spacing: 0) {
+            // "Create new" row — visible when the typed text doesn't
+            // match an existing tag exactly. Lets the user commit a
+            // brand-new value via mouse instead of Enter.
+            if !query.isEmpty,
+               !allTags.contains(where: { $0.lowercased() == query }) {
+                tagSuggestionButton(
+                    label: "Create \"\(tagDraft.trimmingCharacters(in: .whitespaces))\"",
+                    systemImage: "plus.circle"
+                ) {
+                    commitTag()
+                    showingTagSuggestions = false
+                    tagFieldFocused = false
+                }
+                Divider()
+            }
+
+            // "Remove tag" row — only when this session is tagged,
+            // so it can be cleared without typing.
+            if !session.tag.isEmpty {
+                tagSuggestionButton(
+                    label: "Remove tag",
+                    systemImage: "xmark.circle"
+                ) {
+                    tagDraft = ""
+                    commitTag()
+                    showingTagSuggestions = false
+                    tagFieldFocused = false
+                }
+                Divider()
+            }
+
+            if filtered.isEmpty && query.isEmpty {
+                Text("No tags yet — type to create one.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(filtered, id: \.self) { name in
+                    tagSuggestionButton(
+                        label: name,
+                        systemImage: session.tag == name ? "checkmark" : nil
+                    ) {
+                        tagDraft = name
+                        commitTag()
+                        showingTagSuggestions = false
+                        tagFieldFocused = false
+                    }
+                }
             }
         }
+    }
+
+    /// One row in the suggestions popover — themed to match the
+    /// surrounding chrome (plain button, hover-only highlight via
+    /// `.borderless`). `systemImage` nil means no leading glyph.
+    @ViewBuilder
+    private func tagSuggestionButton(
+        label: String,
+        systemImage: String?,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14)
+                } else {
+                    Spacer().frame(width: 14)
+                }
+                Text(label)
+                    .font(.caption)
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(Color.daisyTextPrimary)
     }
 
     private func commitTag() {
