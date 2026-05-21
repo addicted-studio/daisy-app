@@ -81,7 +81,7 @@ enum GoogleOAuthClient {
     // build — that's the rotation cost we're accepting.
 
     static let clientID = "684526507676-qhj6k8ofmtca7o7913ce9vqcbvt0m5ju.apps.googleusercontent.com"
-    static let clientSecret = "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"
+    static let clientSecret = "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"
 
     static let authEndpoint = URL(string: "https://accounts.google.com/o/oauth2/v2/auth")!
     static let tokenEndpoint = URL(string: "https://oauth2.googleapis.com/token")!
