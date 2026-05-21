@@ -252,6 +252,14 @@ final class RecordingSession {
     private let recorder: AudioRecorder
     private let systemAudio: SystemAudioCapture
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Session")
+    /// Dedicated logger for auto-stop wire-up. Separate category so
+    /// support can filter Console.app to the exact flow:
+    ///   `subsystem:app.essazanov.Daisy category:AutoStop`
+    /// Pre-1.0.4 every early-return in `scheduleAutoStopIfNeeded()` was
+    /// silent, which is why a tester with the toggle ON but a manual
+    /// start (no `boundMeeting`) looked indistinguishable from a wire
+    /// bug. Now each abort logs which guard tripped.
+    private let autoStopLog = Logger(subsystem: "app.essazanov.Daisy", category: "AutoStop")
 
     /// Security-scoped access ticket for the user-picked sessions
     /// folder, if one is configured. Acquired at start, released at
@@ -680,6 +688,13 @@ final class RecordingSession {
             await screenshots.start(intervalSec: settings.screenshotIntervalSec, into: screenshotsDir)
         }
 
+        // Manual-start fallback: if the user hit the hotkey before
+        // CalendarService.tick() got to auto-start, try to match the
+        // session to a currently-running meeting so auto-stop still
+        // arms. No-op if `boundMeeting` is already set (auto-start
+        // path).
+        bindCurrentMeetingIfPossible()
+
         // Calendar-bound sessions can opt into auto-stop at end+grace.
         scheduleAutoStopIfNeeded()
         silenceMonitor.start()
@@ -694,11 +709,26 @@ final class RecordingSession {
     private func scheduleAutoStopIfNeeded() {
         cancelAutoStop()
         autoStopSuppressed = false
-        guard settings.autoStopFromCalendar,
-              let meeting = boundMeeting else { return }
+        guard settings.autoStopFromCalendar else {
+            autoStopLog.info("scheduleAutoStop: skipped — autoStopFromCalendar=false")
+            return
+        }
+        guard let meeting = boundMeeting else {
+            // Most common silent failure pre-1.0.4: user toggled the
+            // pref ON but started the recording manually (hotkey /
+            // widget) before the calendar tick auto-started it, so
+            // boundMeeting was never wired. `start()` now tries to
+            // auto-bind via `bindCurrentMeetingIfPossible()`; this
+            // log captures the case where even that fallback misses.
+            autoStopLog.info("scheduleAutoStop: skipped — no boundMeeting on this session (manual start without matching calendar event in fire window)")
+            return
+        }
         let now = Date()
         let fireDate = meeting.endDate.addingTimeInterval(TimeInterval(settings.autoStopGraceSec))
-        guard fireDate > now else { return }
+        guard fireDate > now else {
+            autoStopLog.warning("scheduleAutoStop: meeting '\(meeting.title, privacy: .private)' already past its end+grace (endDate=\(meeting.endDate.description, privacy: .public), grace=\(self.settings.autoStopGraceSec, privacy: .public)s) — no timer armed")
+            return
+        }
 
         // Warning toast fires up to 30s before the actual stop —
         // gives the user a chance to Cancel without the stop hitting
@@ -727,7 +757,60 @@ final class RecordingSession {
             guard let self else { return }
             Task { @MainActor in await self.performAutoStop() }
         }
-        log.info("Auto-stop scheduled for \(fireDate.description, privacy: .public)")
+        autoStopLog.info("Auto-stop armed for '\(meeting.title, privacy: .private)' at \(fireDate.description, privacy: .public) (in \(Int(fireDate.timeIntervalSince(now)), privacy: .public)s)")
+    }
+
+    /// Try to auto-bind a calendar meeting to the current session
+    /// when the user started recording manually (hotkey/widget) but
+    /// a calendar event is currently in or near its start window.
+    /// Mirrors the `CalendarService.tick()` fire window — `meeting.start
+    /// - 30s … meeting.end` — so any meeting we'd have auto-started is
+    /// also a meeting we'll auto-bind to. Without this, the tester's
+    /// hotkey-start-before-calendar-tick path produced an unbindable
+    /// session and silently swallowed the auto-stop preference.
+    ///
+    /// Idempotent — no-op if `boundMeeting` is already set or no
+    /// matching meeting exists. Called from `start()` after `reset()`
+    /// has applied any explicit `pendingBoundMeeting`.
+    private func bindCurrentMeetingIfPossible() {
+        guard boundMeeting == nil else { return }
+        guard currentMode == .meeting else { return }
+        let now = Date()
+        let match = CalendarService.shared.upcomingMeetings.first { meeting in
+            // Window mirrors CalendarService.tick(): -120s … +30s of
+            // start, AND not yet past end. Without the lower bound a
+            // long-running all-day "OOO" event flagged as a meeting
+            // would bind anything started in the last 8 hours — and
+            // auto-stop would fire at the event's far-future end.
+            let deltaToStart = meeting.startDate.timeIntervalSince(now)
+            let inStartWindow = deltaToStart <= 30 && deltaToStart >= -120
+            let stillRunning = meeting.endDate > now
+            return inStartWindow && stillRunning
+        }
+        guard let meeting = match else {
+            autoStopLog.info("bindCurrentMeetingIfPossible: no calendar meeting in fire window")
+            return
+        }
+        boundMeeting = meeting
+        // Only overwrite the autogenerated `"Meeting yyyy-MM-dd HH:mm"`
+        // placeholder (set at line ~577), never a user-typed title.
+        // hasPrefix("Meeting ") was too greedy — caught "Meeting with
+        // Anna prep" and clobbered intentional user titles.
+        if title.isEmpty || Self.isAutoGeneratedMeetingTitle(title) {
+            title = meeting.title
+        }
+        if folder == .inbox { folder = .work }
+        autoStopLog.info("bindCurrentMeetingIfPossible: auto-bound to '\(meeting.title, privacy: .private)' (started \(Int(now.timeIntervalSince(meeting.startDate)), privacy: .public)s ago, ends in \(Int(meeting.endDate.timeIntervalSince(now)), privacy: .public)s)")
+    }
+
+    /// True iff `s` matches the exact `"Meeting yyyy-MM-dd HH:mm"`
+    /// shape produced by `start()` when the user hasn't typed one in.
+    /// Uses a precise regex rather than `hasPrefix("Meeting ")` so
+    /// a user-typed title that happens to start with "Meeting " is
+    /// preserved through auto-bind.
+    nonisolated private static func isAutoGeneratedMeetingTitle(_ s: String) -> Bool {
+        let pattern = #"^Meeting \d{4}-\d{2}-\d{2} \d{2}:\d{2}$"#
+        return s.range(of: pattern, options: .regularExpression) != nil
     }
 
     private func cancelAutoStop() {
@@ -810,6 +893,13 @@ final class RecordingSession {
             await screenshots.start(intervalSec: settings.screenshotIntervalSec, into: screenshotsDir)
         }
         silenceMonitor.resume()
+        // Late-binding safety net: a user could have granted Calendar
+        // access AFTER starting + pausing the session, or the meeting
+        // could have appeared in the calendar mid-session via iCloud
+        // sync. Re-running the bind + schedule on resume catches those
+        // edge cases cheaply (no-op if boundMeeting is already set).
+        bindCurrentMeetingIfPossible()
+        scheduleAutoStopIfNeeded()
         status = .recording
         if settings.recordingSoundsEnabled { SoundEffects.playResume() }
         log.info("Session resumed")
