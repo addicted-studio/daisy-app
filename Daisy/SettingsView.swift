@@ -30,6 +30,12 @@ struct SettingsView: View {
 
     @State private var summaryTestResult: TestResult = .idle
     @State private var notionTestResult: TestResult = .idle
+    /// Drives the modal sheet that holds the secret / parent-id /
+    /// parent-type / Test connection fields. Pre-1.0.5.4 this lived
+    /// inside a DisclosureGroup inline in the Storage section, which
+    /// pushed the rest of the form down and left a visible empty
+    /// row when collapsed. Sheet keeps the row compact.
+    @State private var showingNotionSettings = false
 
     enum TestResult: Equatable {
         case idle
@@ -173,6 +179,31 @@ struct SettingsView: View {
     /// preset menu — voice-note and dictation rows offered only
     /// the recorder, which was a dead end for Fn (Fn never fires
     /// .keyDown so the recorder silently ignored it).
+    /// One row in the Shortcuts section: title + per-row caption +
+    /// the hotkey editor on the trailing side. Per-row caption beats
+    /// the prior one-paragraph footer because each shortcut has
+    /// different semantics — having "Voice note saves to Notes,
+    /// dictation auto-pastes" jammed into a single wall of text
+    /// made all three modes feel interchangeable.
+    @ViewBuilder
+    private func shortcutRow(
+        title: String,
+        caption: String,
+        binding: Binding<HotkeyChoice>
+    ) -> some View {
+        LabeledContent {
+            hotkeyEditor(binding: binding)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     @ViewBuilder
     private func hotkeyEditor(binding: Binding<HotkeyChoice>) -> some View {
         HStack(spacing: 8) {
@@ -195,8 +226,14 @@ struct SettingsView: View {
                     }
                 }
             } label: {
-                Image(systemName: "list.bullet")
-                    .font(.callout)
+                // Chevron-down reads as "this is a dropdown picker"
+                // — the prior `list.bullet` icon was easy to misread
+                // as a hamburger menu (i.e. "more actions") and
+                // testers tried right-clicking it. Chevron matches
+                // the rest of the macOS dropdown idiom.
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -356,11 +393,27 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
+            // Gear opens the modal with secret / parent-id / parent-
+            // type / Test connection. Pre-1.0.5.4 those lived in an
+            // inline DisclosureGroup, which pushed Storage section
+            // down and left a visible empty row when collapsed.
+            Button {
+                showingNotionSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Notion settings")
             Toggle("", isOn: $settings.autoSendNotion)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .disabled(!settings.hasNotionCredentials || settings.lastNotionTestPassedAt == nil)
                 .help(notionToggleHelp)
+        }
+        .sheet(isPresented: $showingNotionSettings) {
+            notionSettingsSheet
+                .frame(minWidth: 520, minHeight: 460)
         }
 
         // Folder filter — appears when auto-send is on, so a power
@@ -375,36 +428,56 @@ struct SettingsView: View {
                 )
             )
         }
+    }
 
-        // Advanced configuration — secret, parent ID, type, Test.
-        // DisclosureGroup keeps this collapsed by default so users
-        // who never wire Notion up don't see a wall of fields.
-        DisclosureGroup("Notion settings") {
-            VStack(alignment: .leading, spacing: 10) {
-                LabeledContent {
-                    SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
-                        .textFieldStyle(.roundedBorder)
-                        .labelsHidden()
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity)
-                } label: {
-                    labelWithCaption("Integration secret",
-                                     caption: "Paste your Notion integration secret.")
-                }
-
-                LabeledContent {
-                    TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
-                        .textFieldStyle(.roundedBorder)
-                        .labelsHidden()
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity)
-                } label: {
-                    labelWithCaption("Parent ID",
-                                     caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
-                }
-
-                LabeledContent {
+    /// Modal sheet with the full Notion configuration — secret,
+    /// parent id, parent type, Test connection. Replaced the prior
+    /// inline DisclosureGroup in 1.0.5.4. Keeps the Storage section
+    /// tight and pushes the field wall out of the main settings
+    /// scroll, which matches what users expect from a macOS sheet.
+    @ViewBuilder
+    private var notionSettingsSheet: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Notion")
+                                .font(.headline)
+                            Text("Push finished sessions into a Notion page or database.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        notionStatusBadge
+                    }
+
+                    LabeledContent {
+                        SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
+                            .textFieldStyle(.roundedBorder)
+                            .labelsHidden()
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity)
+                    } label: {
+                        labelWithCaption("Integration secret",
+                                         caption: "Paste your Notion integration secret.")
+                    }
+
+                    LabeledContent {
+                        TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
+                            .textFieldStyle(.roundedBorder)
+                            .labelsHidden()
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity)
+                    } label: {
+                        labelWithCaption("Parent ID",
+                                         caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
+                    }
+
+                    LabeledContent {
                         Picker("", selection: $settings.notionParentKind) {
                             Text("Page").tag("page")
                             Text("Database").tag("database")
@@ -412,8 +485,14 @@ struct SettingsView: View {
                         .labelsHidden()
                         .pickerStyle(.segmented)
                         .fixedSize()
-                        Spacer()
+                    } label: {
+                        labelWithCaption("Parent type",
+                                         caption: "Page — Daisy adds the session as a child page underneath. Database — adds a row (title column must be named \"Name\").")
+                    }
+
+                    HStack {
                         notionTestStatusView
+                        Spacer()
                         Button("Test connection") {
                             Task { await testNotion() }
                         }
@@ -421,19 +500,26 @@ struct SettingsView: View {
                         .tint(Color.daisyAccent)
                         .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
                     }
-                } label: {
-                    labelWithCaption("Parent type",
-                                     caption: "Page — Daisy adds the session as a child page underneath. Database — adds a row (title column must be named \"Name\").")
-                }
 
-                Text("Make an internal integration at notion.so/profile/integrations, then share the parent page or database with it. Test creates a probe page you can delete.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Text("Make an internal integration at notion.so/profile/integrations, then share the parent page or database with it. Test creates a probe page you can delete.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(20)
             }
-            .padding(.top, 6)
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") {
+                    showingNotionSettings = false
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
         }
-        .font(.callout)
+        .background(Color.daisyBgPrimary)
     }
 
     /// Right-of-title badge — same vocabulary as the old section
@@ -659,6 +745,29 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Picker(selection: $settings.audioRetentionDays) {
+                    Text("Keep forever").tag(0)
+                    Text("7 days").tag(7)
+                    Text("30 days").tag(30)
+                    Text("90 days").tag(90)
+                    Text("180 days").tag(180)
+                    Text("365 days").tag(365)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Delete audio after")
+                        Text("Removes the raw .caf audio files once a session is older than this. Transcripts, summaries, and screenshots stay forever — audio is what dominates disk space.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: settings.audioRetentionDays) { _, new in
+                    // Apply immediately so the user sees disk freed
+                    // without waiting for next launch.
+                    AudioRetentionSweep.runIfNeeded(retentionDays: new)
+                }
+
                 Divider()
 
                 notionDestinationRow
@@ -673,29 +782,39 @@ struct SettingsView: View {
             // bind Fn / 🌐 globe, F-keys without conflicts, etc.
             // without fighting macOS event delivery quirks.
             Section {
-                LabeledContent("Record a meeting") {
-                    hotkeyEditor(binding: $settings.recordHotkey)
-                }
-                LabeledContent("Voice note") {
-                    hotkeyEditor(binding: $settings.voiceNoteHotkey)
-                }
-                LabeledContent("Dictation (hold)") {
-                    hotkeyEditor(binding: $settings.dictationHotkey)
-                }
+                shortcutRow(
+                    title: "Record a meeting",
+                    caption: "Tap once to start, tap again to pause / resume.",
+                    binding: $settings.recordHotkey
+                )
+                shortcutRow(
+                    title: "Voice note",
+                    caption: "Tap once to start, tap again to stop. Saves into Notes, no LLM summary.",
+                    binding: $settings.voiceNoteHotkey
+                )
+                shortcutRow(
+                    title: "Dictation (hold)",
+                    caption: "Hold to talk, release to paste. Needs Accessibility permission.",
+                    binding: $settings.dictationHotkey
+                )
             } header: {
                 Text("Shortcuts")
             } footer: {
-                Text("Meeting — tap once to start, tap again to pause / resume.\nVoice note — tap once to start, tap again to stop. Saves into Notes (no LLM summary).\nDictation — hold the key, talk, release; Daisy types the text into the focused field (or copies it for you to ⌘V).\nDictation also needs Accessibility to type into other apps. Combos must include ⌘ / ⌃ / ⌥, a bare function key (F1–F20), or the globe Fn key.")
+                Text("Combos must include ⌘ / ⌃ / ⌥, a bare function key (F1–F20), or the globe Fn key.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
 
-            // ── Group 3b: Auto-start on meeting app ──────────
-            // Standalone — no calendar required for this trigger.
-            // Foreground-app detection sees Zoom/Teams/Meet launch
-            // and starts recording without any pre-scheduling. The
-            // ONLY way to auto-record for ad-hoc meetings that
-            // weren't on the calendar.
+            // ── Group 3b: Meetings ────────────────────────────
+            // One block for everything about how meetings start /
+            // stop / surface. Pre-1.0.5.5 this was three separate
+            // sections (Auto-start, After Stop, Calendar) — same
+            // mental model, fragmented across the form. Unified
+            // under a single "Meetings" header now.
+            //
+            // Auto-start trigger from meeting-app launch is the only
+            // path that doesn't need calendar access — kept at the
+            // top so it doesn't grey out with the calendar gate.
             Section {
                 Toggle(isOn: $settings.autoStartOnMeeting) {
                     Text("Start when a meeting app opens")
@@ -703,35 +822,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-            } header: {
-                Text("Auto-start")
-            }
 
-            Section {
-                Toggle(isOn: $settings.showSessionAfterStop) {
-                    Text("Open the session window when recording stops")
-                    Text("Switches to History and shows the just-recorded session the moment you stop. The transcript is visible immediately; the summary fades in as soon as the LLM finishes (usually 15–30 seconds).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("After Stop")
-            }
-
-            // ── Group 3c: Calendar ────────────────────────────
-            // Behaviour toggles that gate on having an EventKit grant
-            // (or a future Google OAuth connection). The permission
-            // status itself lives in Settings → Permissions — there
-            // the user grants / revokes access and sees the live
-            // state badge. Here we just expose what Daisy does once
-            // that access is in place.
-            //
-            // Note: 1.0.2 had these under Connections → Calendar
-            // alongside a permission row; 1.0.4 split them — the
-            // Connect / Open Settings… affordance graduated to
-            // Permissions, the behaviour toggles came back here next
-            // to the auto-start trigger they conceptually neighbour.
-            Section {
                 Toggle(isOn: $settings.autoStartFromCalendar) {
                     Text("Start at the scheduled meeting time")
                     Text("Reads your calendar, finds events with a Zoom/Meet/Teams/Webex link, starts recording when they begin. Up to 2 min late is fine.")
@@ -770,15 +861,22 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .disabled(!hasAnyCalendarSource)
+
+                Toggle(isOn: $settings.showSessionAfterStop) {
+                    Text("Open the session window when recording stops")
+                    Text("Switches to History and shows the just-recorded session the moment you stop. The transcript is visible immediately; the summary fades in as soon as the LLM finishes (usually 15–30 seconds).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } header: {
-                Text("Calendar")
+                Text("Meetings")
             } footer: {
                 if !hasAnyCalendarSource {
-                    Text("Grant Calendar access in Settings → Permissions to enable these.")
+                    Text("Calendar-based toggles need access in Settings → Permissions. Daisy reads via macOS EventKit, which picks up iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 } else {
-                    Text("Uses macOS EventKit — picks up iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
+                    Text("Calendar source: macOS EventKit — picks up iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -959,7 +1057,25 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                Text("Whisper runs on-device. Bigger models handle accents and multilingual meetings better, at the cost of disk and a bit of speed.")
+
+                // Status row inline with the picker — mirrors the
+                // Summary section's "Available · Refresh" layout so
+                // both transcription + summary preferences feel
+                // identical structurally. Pre-1.0.5.5 Model status
+                // lived in its own Section below Language, which
+                // visually divorced "what model" from "is it ready".
+                HStack(spacing: 8) {
+                    StatusBadge(state: whisperBadgeState, message: whisperStatusText)
+                    Spacer()
+                    Button("Reload") { Task { await whisper.reload() } }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(Color.daisyTextPrimary)
+                        .disabled(isWhisperLoading)
+                }
+                whisperStatusBody
+
+                Text("Whisper runs on-device. Bigger models handle accents and multilingual meetings better, at the cost of disk and a bit of speed. First time you pick a model, Daisy downloads it from Hugging Face.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
@@ -994,24 +1110,9 @@ struct SettingsView: View {
                 Text("Language")
             }
 
-            Section {
-                HStack(spacing: 8) {
-                    StatusBadge(state: whisperBadgeState, message: whisperStatusText)
-                    Spacer()
-                    Button("Reload") { Task { await whisper.reload() } }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(Color.daisyTextPrimary)
-                        .disabled(isWhisperLoading)
-                }
-                whisperStatusBody
-            } header: {
-                Text("Model status")
-            } footer: {
-                Text("First time you pick a model, Daisy downloads it from Hugging Face. Files live inside the app's container and get reused for every meeting after.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            // Model status was its own Section here in 1.0.5.4 —
+            // 1.0.5.5 inlined the badge + Reload into the Model
+            // section above for parity with Summary's layout.
 
             Section {
                 Toggle(isOn: $settings.diarizeMicrophone) {
@@ -1280,7 +1381,7 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("Summary")
+                Text("Provider")
             } footer: {
                 Text(summarySectionFooter)
                     .font(.caption2)

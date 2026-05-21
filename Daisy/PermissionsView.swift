@@ -73,6 +73,16 @@ struct PermissionsView: View {
                 requestAction: { permissions.requestScreenRecording() },
                 openSettings: permissions.openScreenRecordingSettings
             )
+
+            permissionRow(
+                title: "Notifications",
+                caption: "Optional. Lets Daisy post a banner when auto-start fires (so you can tap Stop if it wasn't the right meeting) and when auto-stop saves a recording.",
+                iconName: "bell",
+                isRequired: false,
+                status: permissions.notifications,
+                requestAction: { permissions.requestNotifications() },
+                openSettings: permissions.openNotificationSettings
+            )
         } header: {
             HStack {
                 Text("System access")

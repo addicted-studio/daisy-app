@@ -26,11 +26,10 @@ struct LibraryView: View {
     @State private var selectedIDs: Set<StoredSession.ID> = []
     /// Active folder filter. `nil` = show all folders.
     @State private var folderFilter: SessionFolder? = nil
-    /// Active client-tag filter. nil == "all clients", "" sentinel
-    /// not used (the chip-row has an explicit "Untagged" entry which
-    /// maps to `clientFilter = .some("")`). Persisted only across
-    /// LibraryView's lifetime.
-    @State private var clientFilter: String? = nil
+    /// Active tag filter. `nil` == "all tags" (no filter). `.some("")`
+    /// == "untagged" bucket only. `.some("Mediacube")` == that exact
+    /// tag. Driven by the selector dropdown above the session list.
+    @State private var tagFilter: String? = nil
     /// Pending delete confirmation. Carries the sessions about to
     /// be removed (1 for context-menu, N for multi-select).
     @State private var pendingDelete: [StoredSession] = []
@@ -281,12 +280,13 @@ struct LibraryView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
 
-            // Client chips appear only when at least one session has
-            // a client tag — keeps the sidebar uncluttered for users
-            // who don't tag sessions. Counts are live; "Untagged"
-            // surfaces only when there's a mix.
-            if !clientGroups.isEmpty {
-                clientChips
+            // Tag selector — single-selection dropdown rather than a
+            // chip row, so a long tag list doesn't push the session
+            // list down. Only renders when there's at least one tag
+            // anywhere to keep the sidebar uncluttered for users who
+            // don't tag sessions.
+            if tagGroups.contains(where: { !$0.name.isEmpty }) {
+                tagSelector
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
             }
@@ -404,8 +404,8 @@ struct LibraryView: View {
         if let f = folderFilter {
             pool = pool.filter { $0.folderSlug == f.slug }
         }
-        if let c = clientFilter {
-            pool = pool.filter { $0.client == c }
+        if let t = tagFilter {
+            pool = pool.filter { $0.tag == t }
         }
         if !trimmed.isEmpty {
             pool = pool.filter { $0.matches(query: trimmed) }
@@ -413,13 +413,15 @@ struct LibraryView: View {
         return pool
     }
 
-    /// All client tags present across sessions, sorted by count desc
-    /// then alphabetically. "Untagged" (empty client) is split out as
-    /// the last entry so it's visually demoted but still reachable.
-    private var clientGroups: [(name: String, count: Int)] {
+    /// All tags present across sessions, sorted by count desc then
+    /// alphabetically. "Untagged" (empty tag) is appended last so
+    /// it's visually demoted but still reachable from the selector.
+    /// Powers both the sidebar selector and the autocomplete inside
+    /// SessionDetail's tag editor.
+    var tagGroups: [(name: String, count: Int)] {
         var counts: [String: Int] = [:]
         for s in store.sessions {
-            counts[s.client, default: 0] += 1
+            counts[s.tag, default: 0] += 1
         }
         let tagged = counts
             .filter { !$0.key.isEmpty }
@@ -435,32 +437,61 @@ struct LibraryView: View {
         return tagged
     }
 
-    /// Horizontally-scrollable client chips below the folder row.
-    /// Same idiom as folderChips — "All" pseudo-chip resets the
-    /// filter, individual chips toggle the filter on/off. "Untagged"
-    /// is rendered last with a slightly secondary style so users
-    /// understand it's the catch-all bucket.
-    private var clientChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                FolderChip(
-                    label: "Any client",
-                    count: store.sessions.count,
-                    isActive: clientFilter == nil
-                ) {
-                    clientFilter = nil
-                }
-                ForEach(clientGroups, id: \.name) { group in
-                    let label = group.name.isEmpty ? "Untagged" : group.name
-                    FolderChip(
-                        label: label,
-                        count: group.count,
-                        isActive: clientFilter == group.name
-                    ) {
-                        clientFilter = (clientFilter == group.name) ? nil : group.name
+    /// Single-selection dropdown listing every tag in use, with
+    /// "All tags" reset at the top and "Untagged" demoted to the
+    /// bottom. Selection drives `tagFilter`. Counts shown alongside
+    /// each row so the user can tell which tag has 12 sessions vs
+    /// which has 1 — same info the chip row carried, packed into a
+    /// menu so a sidebar with 20 tags stays compact.
+    private var tagSelector: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tag")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Menu {
+                Button {
+                    tagFilter = nil
+                } label: {
+                    if tagFilter == nil {
+                        Label("All tags", systemImage: "checkmark")
+                    } else {
+                        Text("All tags")
                     }
                 }
+                Divider()
+                ForEach(tagGroups, id: \.name) { group in
+                    let displayName = group.name.isEmpty ? "Untagged" : group.name
+                    Button {
+                        tagFilter = (tagFilter == group.name) ? nil : group.name
+                    } label: {
+                        if tagFilter == group.name {
+                            Label("\(displayName) · \(group.count)", systemImage: "checkmark")
+                        } else {
+                            Text("\(displayName) · \(group.count)")
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(tagSelectorLabel)
+                        .font(.callout)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            Spacer()
+        }
+    }
+
+    private var tagSelectorLabel: String {
+        switch tagFilter {
+        case nil:        return "All tags"
+        case .some(""):  return "Untagged"
+        case .some(let t): return t
         }
     }
 
@@ -522,10 +553,10 @@ private struct SessionRow: View {
                 Text(formattedDuration)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if !session.client.isEmpty {
+                if !session.tag.isEmpty {
                     Text("·")
                         .foregroundStyle(.tertiary)
-                    Text(session.client)
+                    Text(session.tag)
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(Color.daisyAccent)
                         .padding(.horizontal, 5)

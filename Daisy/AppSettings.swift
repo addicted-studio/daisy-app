@@ -181,6 +181,17 @@ final class AppSettings {
         didSet { defaults.set(userDisplayName, forKey: Self.k_userDisplayName) }
     }
 
+    /// Days to keep raw audio (.caf) files for finished sessions.
+    /// 0 == keep forever (default — preserves backwards-compat for
+    /// existing users). Positive value triggers a background sweep
+    /// at app launch that deletes microphone.caf / system_audio.caf
+    /// older than the cutoff, but leaves transcript.md / summary.json
+    /// / screenshots intact. Useful for users tight on disk —
+    /// transcripts + summaries are tiny, audio dominates the footprint.
+    var audioRetentionDays: Int {
+        didSet { defaults.set(audioRetentionDays, forKey: Self.k_audioRetentionDays) }
+    }
+
     /// When ON, Daisy plays a short macOS system sound on recording
     /// transitions (start / pause / resume / stop). Off for users
     /// who record in environments where the click would be picked
@@ -480,6 +491,7 @@ final class AppSettings {
         self.notifyOnAutoStop = defaults.object(forKey: Self.k_notifyOnAutoStop) as? Bool ?? true
         self.diarizeMicrophone = defaults.object(forKey: Self.k_diarizeMicrophone) as? Bool ?? false
         self.userDisplayName = (defaults.string(forKey: Self.k_userDisplayName) ?? "")
+        self.audioRetentionDays = defaults.object(forKey: Self.k_audioRetentionDays) as? Int ?? 0
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
@@ -577,6 +589,7 @@ final class AppSettings {
     private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
     private static let k_diarizeMicrophone = "daisy.diarizeMicrophone"
     private static let k_userDisplayName = "daisy.userDisplayName"
+    private static let k_audioRetentionDays = "daisy.audioRetentionDays"
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
     private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"

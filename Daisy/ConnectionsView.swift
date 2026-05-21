@@ -47,7 +47,7 @@ struct ConnectionsView: View {
     /// General → Storage with an inline disclosure for advanced
     /// fields. Google Calendar OAuth UI stays dormant pre-
     /// verification; when Google approves it comes back here.
-    @State private var selectedSection: ConnectionSection = .mcpServer
+    @State private var selectedSection: ConnectionSection = .autoRouting
     @State private var editingIntegration: MCPIntegration?
     @State private var mcpPortText: String = ""
     /// Disables the "Add to Claude Desktop" button while the open
@@ -74,14 +74,14 @@ struct ConnectionsView: View {
         // (Connected / Running / Needs test) so a glance at any tab
         // gives you the live state without leaving the page.
         TabView(selection: $selectedSection) {
-            mcpServerTab
-                .tag(ConnectionSection.mcpServer)
-                .tabItem { Label("MCP server", systemImage: "antenna.radiowaves.left.and.right") }
-                .scrollContentBackground(.hidden)
-
             autoRoutingTab
                 .tag(ConnectionSection.autoRouting)
                 .tabItem { Label("Auto-routing", systemImage: "arrow.triangle.swap") }
+                .scrollContentBackground(.hidden)
+
+            mcpServerTab
+                .tag(ConnectionSection.mcpServer)
+                .tabItem { Label("MCP server", systemImage: "antenna.radiowaves.left.and.right") }
                 .scrollContentBackground(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -251,7 +251,7 @@ struct ConnectionsView: View {
                 }
             }
         } footer: {
-            Text("Default port 54321. Add to Claude Desktop writes the snippet into ~/Library/Application Support/Claude/claude_desktop_config.json. Copy snippet is for Cursor, Cline, Continue or anything else that speaks MCP over SSE.")
+            Text("Default port 54321. Add to Claude Desktop writes the snippet into ~/Library/Application Support/Claude/claude_desktop_config.json. Requires Node.js installed — Claude Desktop runs the snippet through `npx mcp-remote` to bridge SSE into the stdio transport Claude expects. Copy snippet works the same for Cursor / Cline / Continue.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -277,11 +277,28 @@ struct ConnectionsView: View {
 
     private var mcpConfigSnippet: String {
         let port = settings.mcpServerPort
+        // Claude Desktop config schema requires stdio transport
+        // (`command` + `args`), not raw URL. `npx -y mcp-remote`
+        // proxies a remote SSE/HTTP MCP into the stdio shape
+        // Claude expects. The two extra flags after the URL pin
+        // mcp-remote to the SSE transport Daisy speaks
+        // (`--transport sse-only`) and allow plain HTTP on loopback
+        // (`--allow-http`, otherwise mcp-remote refuses 127.0.0.1
+        // since it isn't TLS). Same args work in Cursor / Cline /
+        // Continue — they all accept stdio-style entries.
         return """
         {
           "mcpServers": {
             "daisy": {
-              "url": "http://127.0.0.1:\(port)/sse"
+              "command": "npx",
+              "args": [
+                "-y",
+                "mcp-remote",
+                "http://127.0.0.1:\(port)/sse",
+                "--transport",
+                "sse-only",
+                "--allow-http"
+              ]
             }
           }
         }
@@ -337,34 +354,25 @@ struct ConnectionsView: View {
                 }
 
                 HStack {
-                    Menu {
-                        Button("Blank integration") {
-                            editingIntegration = MCPIntegration(
-                                name: "New integration",
-                                baseURL: "http://127.0.0.1:11436",
-                                toolName: "",
-                                argumentsTemplate: "{}",
-                                enabled: true
-                            )
-                        }
-                        Divider()
-                        Text("Templates").font(.caption).foregroundStyle(.secondary)
-                        Button("Attio (note)") {
-                            editingIntegration = MCPIntegration.attioDefault()
-                        }
-                        Button("Webhook (Slack-style)") {
-                            editingIntegration = MCPIntegration.webhookDefault()
-                        }
-                        Button("Linear (create_issue)") {
-                            editingIntegration = MCPIntegration.linearDefault()
-                        }
+                    // Templates dropped in 1.0.5.4 — until we verify
+                    // each one works end-to-end against the real
+                    // upstream service, surfacing them was promising
+                    // more than the code delivers. Blank integration
+                    // is the only safe path; collapsed the menu into
+                    // a direct button.
+                    Button {
+                        editingIntegration = MCPIntegration(
+                            name: "New integration",
+                            baseURL: "http://127.0.0.1:11436",
+                            toolName: "",
+                            argumentsTemplate: "{}",
+                            enabled: true
+                        )
                     } label: {
                         Label("Add integration", systemImage: "plus")
                     }
-                    .menuStyle(.button)
                     .buttonStyle(.bordered)
                     .tint(Color.daisyTextPrimary)
-                    .menuIndicator(.hidden)
                     Spacer()
                 }
             }

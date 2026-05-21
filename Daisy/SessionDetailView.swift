@@ -38,11 +38,11 @@ struct SessionDetailView: View {
     @State private var isRunningAction = false
     @State private var actionStatus: ActionStatus = .idle
     @State private var confirmDelete = false
-    /// Local draft for the client-tag field in the header. Mirrors
-    /// `session.client` and commits to disk on blur / Enter — same
+    /// Local draft for the tag field in the header. Mirrors
+    /// `session.tag` and commits to disk on blur / Enter — same
     /// save-on-blur idiom the title editor below uses.
-    @State private var clientDraft: String = ""
-    @FocusState private var clientFieldFocused: Bool
+    @State private var tagDraft: String = ""
+    @FocusState private var tagFieldFocused: Bool
 
     enum ActionStatus: Equatable {
         case idle
@@ -272,47 +272,95 @@ struct SessionDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                clientField
+                tagField
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .onAppear { clientDraft = session.client }
-        .onChange(of: session.id) { _, _ in clientDraft = session.client }
-        .onChange(of: session.client) { _, newValue in
-            // External edit (e.g., from another window or a bulk
-            // tagging path we might add later) — reflect in the
-            // field unless the user is actively editing it.
-            if !clientFieldFocused { clientDraft = newValue }
+        .onAppear { tagDraft = session.tag }
+        .onChange(of: session.id) { _, _ in tagDraft = session.tag }
+        .onChange(of: session.tag) { _, newValue in
+            // External edit (e.g., from another window or a future
+            // bulk tagging path) — reflect in the field unless the
+            // user is actively editing it.
+            if !tagFieldFocused { tagDraft = newValue }
         }
     }
 
-    /// Inline client-tag editor in the header row. Empty placeholder
-    /// surfaces "Add client tag…" so the affordance is discoverable
-    /// without dominating the line. Saves on blur (FocusState flip)
-    /// and Enter — same save-on-blur idiom the title editor uses.
+    /// Inline tag editor in the header row. Free-text TextField
+    /// for ad-hoc tags PLUS a dropdown chevron Menu that lists
+    /// every tag already in use across the store so the user can
+    /// pick instead of re-typing (e.g., one click selects
+    /// "Mediacube" if it's been used before, instead of risking
+    /// "Mediacube" / "mediacube" / "Mediacube " all becoming
+    /// three different buckets).
+    ///
+    /// Save-on-blur idiom: FocusState flip OR Enter triggers
+    /// `commitTag()`. Picking from the Menu also commits
+    /// immediately (no need to defocus).
     @ViewBuilder
-    private var clientField: some View {
+    private var tagField: some View {
         HStack(spacing: 4) {
-            Image(systemName: "person.crop.rectangle")
+            Image(systemName: "tag")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
-            TextField("Add client tag…", text: $clientDraft)
+            TextField("Add tag…", text: $tagDraft)
                 .textFieldStyle(.plain)
                 .font(.caption)
-                .focused($clientFieldFocused)
-                .frame(maxWidth: 160)
-                .onSubmit { commitClient() }
-                .onChange(of: clientFieldFocused) { _, isFocused in
-                    if !isFocused { commitClient() }
+                .focused($tagFieldFocused)
+                .frame(maxWidth: 140)
+                .onSubmit { commitTag() }
+                .onChange(of: tagFieldFocused) { _, isFocused in
+                    if !isFocused { commitTag() }
                 }
+
+            // Menu chevron — shows existing tags so the user can
+            // pick instead of typing (and risking subtle
+            // spelling drift across sessions).
+            let existing = SessionStore.shared.distinctTagsByFrequency
+            if !existing.isEmpty || !session.tag.isEmpty {
+                Menu {
+                    if !session.tag.isEmpty {
+                        Button {
+                            tagDraft = ""
+                            commitTag()
+                        } label: {
+                            Label("Remove tag", systemImage: "xmark.circle")
+                        }
+                        Divider()
+                    }
+                    if existing.isEmpty {
+                        Text("No existing tags yet — type above to create one.")
+                    } else {
+                        ForEach(existing, id: \.self) { name in
+                            Button {
+                                tagDraft = name
+                                commitTag()
+                            } label: {
+                                if session.tag == name {
+                                    Label(name, systemImage: "checkmark")
+                                } else {
+                                    Text(name)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
         }
     }
 
-    private func commitClient() {
-        let trimmed = clientDraft.trimmingCharacters(in: .whitespaces)
-        guard trimmed != session.client else { return }
-        Task { await SessionStore.shared.setClient(trimmed, for: session) }
+    private func commitTag() {
+        let trimmed = tagDraft.trimmingCharacters(in: .whitespaces)
+        guard trimmed != session.tag else { return }
+        Task { await SessionStore.shared.setTag(trimmed, for: session) }
     }
 
 

@@ -187,13 +187,15 @@ final class RecordingSession {
     /// rewrites the transcript frontmatter on disk).
     var folder: SessionFolder = .inbox
 
-    /// Client tag for this session. Persisted to frontmatter as
-    /// `daisy_client:` and used for sidebar grouping in History.
-    /// Empty string == "untagged" (the default). Free-form text;
-    /// `ClientSuggestion.suggest(from:)` pre-fills this when the
-    /// session is bound to a calendar event with attendees from
-    /// an external organization.
-    var client: String = ""
+    /// Free-form tag for this session. Persisted to frontmatter as
+    /// `daisy_tag:` and used for grouping in History (sidebar
+    /// selector + chip in the row). Empty string == "untagged"
+    /// (the default). `TagSuggestion.suggest(from:)` pre-fills
+    /// this when the session is bound to a calendar event with
+    /// attendees from an external organization. Renamed from
+    /// `client` in 1.0.5.2 — kept the same backing field, just a
+    /// more generic user-facing name.
+    var tag: String = ""
 
     // Phase 2 modules — exposed so the UI can read state.
     let summarizer: Summarizer
@@ -379,6 +381,12 @@ final class RecordingSession {
         // first visit to that tab shows "Checking…" for ~1s before
         // resolving.
         Task { await Summarizer.shared.refreshAvailability() }
+
+        // Audio retention sweep — deletes raw .caf archives older
+        // than the user-configured cutoff. No-op when
+        // audioRetentionDays == 0 (default, preserves backwards-
+        // compat). Runs detached on a background queue.
+        AudioRetentionSweep.runIfNeeded(retentionDays: settings.audioRetentionDays)
 
         // Listen for the auto-start banner's "Stop & save" action.
         // DaisyAppDelegate routes the macOS notification action into
@@ -594,8 +602,8 @@ final class RecordingSession {
             // user can override in SessionDetailView; this just
             // pre-fills with a sensible guess so most meetings end
             // up tagged without any manual work.
-            if client.isEmpty, let suggested = ClientSuggestion.suggest(from: m.attendeeEmails) {
-                client = suggested
+            if tag.isEmpty, let suggested = TagSuggestion.suggest(from: m.attendeeEmails) {
+                tag = suggested
             }
         }
         if let hint = pendingFolderHint {
@@ -873,11 +881,11 @@ final class RecordingSession {
             title = meeting.title
         }
         if folder == .inbox { folder = .work }
-        // Pre-fill client tag from attendee domain (most-frequent
+        // Pre-fill tag from attendee domain (most-frequent
         // external org). Same call site as the auto-binding in
         // start() so manual-start sessions also get the suggestion.
-        if client.isEmpty, let suggested = ClientSuggestion.suggest(from: meeting.attendeeEmails) {
-            client = suggested
+        if tag.isEmpty, let suggested = TagSuggestion.suggest(from: meeting.attendeeEmails) {
+            tag = suggested
         }
         autoStopLog.info("bindCurrentMeetingIfPossible: auto-bound to '\(meeting.title, privacy: .private)' (started \(Int(now.timeIntervalSince(meeting.startDate)), privacy: .public)s ago, ends in \(Int(meeting.endDate.timeIntervalSince(now)), privacy: .public)s)")
     }
@@ -1377,7 +1385,7 @@ final class RecordingSession {
             segments: segments,
             summary: summarizer.lastSummary,
             folderSlug: sessionFolderSlug,
-            client: client
+            tag: tag
         )
         for integration in autoIntegrations {
             let ok = await MCPDispatcher.send(integration, for: stored)
@@ -1507,7 +1515,7 @@ final class RecordingSession {
             segments: segments,
             summary: summarizer.lastSummary,
             folderSlug: folder.slug,
-            client: client
+            tag: tag
         )
     }
 
@@ -1525,7 +1533,7 @@ final class RecordingSession {
         segments: [TranscriptSegment],
         summary: MeetingSummary?,
         folderSlug: String,
-        client: String = ""
+        tag: String = ""
     ) -> StoredSession {
         let transcriptText = segments
             .map { "\($0.text)" }
@@ -1549,7 +1557,7 @@ final class RecordingSession {
             summary: summary,
             transcriptURL: FileManager.default.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
-            client: client,
+            tag: tag,
             meetingAttendees: [],
             speakerMap: [:]
         )
@@ -1586,7 +1594,7 @@ final class RecordingSession {
         startedAt = nil
         boundMeeting = nil
         folder = .inbox
-        client = ""
+        tag = ""
         currentMode = .meeting
         status = .idle
     }

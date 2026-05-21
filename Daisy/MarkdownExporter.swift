@@ -30,12 +30,12 @@ enum MarkdownExporter {
         }
         lines.append("duration_sec: \(Int(session.elapsed))")
         lines.append("daisy_folder: \(session.folder.slug)")
-        // Client tag — empty when untagged. The History sidebar
-        // groups by this value (counts per tag); empty == "Untagged".
-        // 1.0.5+ — older sessions don't have the key, the parser
-        // defaults to "" for them.
-        if !session.client.isEmpty {
-            lines.append("daisy_client: \(yamlQuote(session.client))")
+        // Free-form tag — empty when untagged. History sidebar
+        // selector groups by this value. Renamed from `daisy_client`
+        // in 1.0.5.2; parser still reads the legacy key for older
+        // sessions and replaces with the new key on next edit.
+        if !session.tag.isEmpty {
+            lines.append("daisy_tag: \(yamlQuote(session.tag))")
         }
         if let meeting = session.boundMeeting {
             // Bind transcript ↔ calendar event so future search can

@@ -42,6 +42,7 @@ import EventKit
 import ApplicationServices
 import CoreGraphics
 import AppKit
+@preconcurrency import UserNotifications
 
 @MainActor
 @Observable
@@ -79,6 +80,11 @@ final class SystemPermissions {
     /// Screen Recording — optional, only needed for capturing the
     /// "other side" of meetings (system audio out of Zoom / Meet etc).
     private(set) var screenRecording: Status = .notDetermined
+    /// Notifications — optional. Required for the auto-start /
+    /// auto-stop banners and the long-silence prompt. Daisy keeps
+    /// recording without it; the user just doesn't get the macOS
+    /// banner nudges.
+    private(set) var notifications: Status = .notDetermined
 
     init() {
         refresh()
@@ -108,6 +114,26 @@ final class SystemPermissions {
         calendar = Self.normalise(EKEventStore.authorizationStatus(for: .event))
         accessibility = AXIsProcessTrusted() ? .granted : .notDetermined
         screenRecording = CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
+        refreshNotificationsAsync()
+    }
+
+    /// `UNUserNotificationCenter.getNotificationSettings` is async-
+    /// callback-only (no sync accessor). Fire and forget; the next
+    /// SwiftUI render will pick up the updated value via @Observable.
+    /// Called from `refresh()` plus right after `requestNotifications`.
+    private func refreshNotificationsAsync() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let status: Status
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral: status = .granted
+            case .denied: status = .denied
+            case .notDetermined: status = .notDetermined
+            @unknown default: status = .notDetermined
+            }
+            Task { @MainActor in
+                SystemPermissions.shared.notifications = status
+            }
+        }
     }
 
     // MARK: - Request
@@ -152,12 +178,31 @@ final class SystemPermissions {
         refresh()
     }
 
+    /// Show the system Notifications prompt. macOS responds async;
+    /// the new state lands in `notifications` via
+    /// `refreshNotificationsAsync()` after the user clicks through.
+    func requestNotifications() {
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound]
+        ) { _, _ in
+            Task { @MainActor in
+                SystemPermissions.shared.refreshNotificationsAsync()
+            }
+        }
+    }
+
     // MARK: - Open Settings deeplinks
 
     func openMicrophoneSettings()    { openPrivacyPane("Privacy_Microphone") }
     func openCalendarSettings()      { openPrivacyPane("Privacy_Calendars") }
     func openAccessibilitySettings() { openPrivacyPane("Privacy_Accessibility") }
     func openScreenRecordingSettings() { openPrivacyPane("Privacy_ScreenCapture") }
+    /// Notifications-specific deeplink — macOS x-apple URL targets
+    /// the per-app Notifications pane directly.
+    func openNotificationSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") else { return }
+        NSWorkspace.shared.open(url)
+    }
 
     private func openPrivacyPane(_ anchor: String) {
         guard let url = URL(

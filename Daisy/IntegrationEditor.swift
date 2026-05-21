@@ -30,8 +30,11 @@ struct IntegrationEditor: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            // Header was a paperplane icon + "New integration / Push
+            // finished sessions into an MCP-compatible service"
+            // subhead — removed in 1.0.5.4. macOS sheets already
+            // carry a visual frame and the form fields make their
+            // purpose obvious; the header just ate vertical space.
             ScrollView {
                 form
                     .padding(20)
@@ -46,24 +49,7 @@ struct IntegrationEditor: View {
         .onAppear { validateTemplate() }
     }
 
-    // MARK: - Header / Footer
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "paperplane.circle.fill")
-                .foregroundStyle(.secondary)
-                .font(.title2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(initial.name == "New integration" ? "New integration" : "Edit integration")
-                    .font(.headline)
-                Text("Push finished sessions into an MCP-compatible service.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(16)
-    }
+    // MARK: - Footer
 
     private var footer: some View {
         HStack {
