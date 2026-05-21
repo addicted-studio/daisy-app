@@ -60,7 +60,7 @@ Key services that drive the app:
 DAISY_AUTO_PUSH=1 ./scripts/release.sh <shortVersion> <buildNumber>
 ```
 
-Six steps: archive → export → notarize → DMG → publish to the [daisy-web](https://github.com/addicted-studio/daisy-web) repo → inject an `<item>` into `appcast.xml` and commit. Vercel auto-deploys the site within a couple of minutes.
+Six steps: archive → export → notarize → DMG → publish to the [daisy-web](https://github.com/addicted-studio/daisy-app-web) repo → inject an `<item>` into `appcast.xml` and commit. Vercel auto-deploys the site within a couple of minutes.
 
 Release notes for each version go in `scripts/release-notes/<shortVersion>.md` as a flat markdown bullet list (`- one line per change`). The script extracts those bullets and embeds them in the appcast `<description>` so Sparkle shows them in its update sheet.
 
