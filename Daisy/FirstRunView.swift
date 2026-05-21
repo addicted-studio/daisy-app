@@ -2,27 +2,36 @@
 //  FirstRunView.swift
 //  Daisy
 //
-//  Multi-step welcome flow shown on first launch. Replaces the
-//  earlier single-screen sheet — PM review (and the user) flagged
-//  that one wall of info plus four CTAs is too much for the first
-//  90 seconds. Now the user moves through 4 focused steps:
+//  Multi-step welcome flow shown on first launch.
 //
+//  Step flow (6 steps):
 //      1. Welcome           — what Daisy does, one sentence
-//      2. Microphone        — grant the permission inline
-//      3. Screen recording  — grant the permission inline
-//      4. You're set        — pointer to menu bar, optional CTAs
+//      2. Microphone        — required permission (no recording w/o)
+//      3. Screen Recording  — required for capturing the other side
+//                              of meetings via system audio loopback
+//      4. Accessibility     — required for the dictation hotkey's
+//                              ⌘V auto-paste into the active app
+//      5. Hotkeys           — assign global shortcuts for all three
+//                              recording modes (meeting / voice notes
+//                              / dictation) on a single screen
+//      6. You're set        — pointer to menu bar, optional CTAs
 //                              into Settings (Summary, Integrations)
 //
-//  Each step owns one decision. Permission prompts fire inline so
-//  the user doesn't have to "leave" Daisy to System Settings unless
-//  they explicitly choose to. Permissions can be skipped — they're
-//  re-requested at first recording with a clear toast (per the
-//  ScreenRecordingPermission preflight path).
+//  Each permission step owns one decision and surfaces a single
+//  primary action. Permission prompts fire inline; when the system
+//  doesn't actually show the dialog (a known macOS 14+ bug for
+//  Screen Recording — see ScreenRecordingPermission.swift), we fall
+//  back to opening System Settings directly so the user is never
+//  stuck on a dead button.
+//
+//  Permissions can be skipped (footer "Skip for now"); they re-prompt
+//  at first use via the preflight path in each feature.
 //
 
 import SwiftUI
 import AVFoundation
 import CoreGraphics
+import ApplicationServices
 
 struct FirstRunView: View {
     @Environment(\.dismiss) private var dismiss
@@ -35,6 +44,8 @@ struct FirstRunView: View {
         case welcome
         case microphone
         case screenRecording
+        case accessibility
+        case hotkeys
         case done
 
         var progressIndex: Int { rawValue }
@@ -42,11 +53,13 @@ struct FirstRunView: View {
     }
 
     @State private var step: Step = .welcome
-    /// Permission states refreshed on .appear of each step — system
-    /// can flip them out-of-band (user toggles in Settings while
-    /// onboarding is open), and the cached value would otherwise lie.
+    /// Permission states refreshed on .appear of each step + on app
+    /// foreground-activation — system can flip them out-of-band (user
+    /// toggles in Settings while onboarding is open), and the cached
+    /// value would otherwise lie.
     @State private var micGranted: Bool = false
     @State private var screenGranted: Bool = false
+    @State private var accessibilityGranted: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -65,6 +78,19 @@ struct FirstRunView: View {
             refreshPermissionStates()
         }
         .onChange(of: step) { _, _ in
+            refreshPermissionStates()
+        }
+        // Permissions can flip out-of-band while onboarding is open —
+        // the user opens System Settings, grants Screen Recording,
+        // returns to Daisy. Without a focus observer the onboarding
+        // step is frozen on "Allow Screen Recording" until they
+        // click Next, which feels like the app missed the grant.
+        // Refresh on every foreground-activation keeps the UI honest.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
             refreshPermissionStates()
         }
     }
@@ -96,6 +122,8 @@ struct FirstRunView: View {
             case .welcome: welcomeStep
             case .microphone: micStep
             case .screenRecording: screenStep
+            case .accessibility: accessibilityStep
+            case .hotkeys: hotkeysStep
             case .done: doneStep
             }
         }
@@ -121,7 +149,7 @@ struct FirstRunView: View {
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Two short permission asks coming up, then you're set.")
+            Text("Three short permission asks and one hotkey screen, then you're set.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -163,6 +191,112 @@ struct FirstRunView: View {
         )
     }
 
+    private var accessibilityStep: some View {
+        StepView(
+            icon: "keyboard",
+            title: "Accessibility",
+            description: "Required for the dictation hotkey — Daisy pastes the transcribed text into the active app via ⌘V. Without this, dictation falls back to copy-only (you have to paste yourself).",
+            statusGranted: accessibilityGranted,
+            primaryActionLabel: accessibilityGranted ? "Continue" : "Allow Accessibility",
+            onPrimary: {
+                if accessibilityGranted {
+                    advance()
+                } else {
+                    requestAccessibilityAccess()
+                }
+            }
+        )
+    }
+
+    private var hotkeysStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "keyboard.fill")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Hotkeys")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("Pick a global shortcut for each recording mode. You can change them later in Settings → Hotkeys.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 10) {
+                hotkeyRow(
+                    title: "Meeting",
+                    description: "Captures mic + system audio together.",
+                    color: .daisyRecording,
+                    binding: $settings.recordHotkey
+                )
+                hotkeyRow(
+                    title: "Voice notes",
+                    description: "Quick one-off thought, mic only.",
+                    color: .daisyVoiceNote,
+                    binding: $settings.voiceNoteHotkey
+                )
+                hotkeyRow(
+                    title: "Dictation",
+                    description: "Hold to talk, release to paste at cursor.",
+                    color: .daisyDictation,
+                    binding: $settings.dictationHotkey
+                )
+            }
+            Spacer()
+        }
+    }
+
+    /// Single row in the hotkeys step — colour dot matching the
+    /// widget centre for that mode + name + description + the shared
+    /// `HotkeyRecorder` button (so the recording UX is identical to
+    /// Settings → Hotkeys; users learn it once).
+    @ViewBuilder
+    private func hotkeyRow(
+        title: String,
+        description: String,
+        color: Color,
+        binding: Binding<HotkeyChoice>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            HotkeyRecorder(value: binding)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+        )
+    }
+
+    /// Short human label for the current Whisper load state. Nil when
+    /// the model is ready (we hide the row entirely in that case so the
+    /// Done step doesn't show stale "100%" after the load completes).
+    private var whisperProgressLine: String? {
+        switch WhisperEngine.shared.state {
+        case .notLoaded:
+            return "Setting up transcription model…"
+        case .downloading(let p):
+            return "Downloading transcription model · \(Int(p * 100))%"
+        case .loading(let status):
+            return "Loading transcription model · \(status)"
+        case .ready, .failed:
+            return nil
+        }
+    }
+
     private var doneStep: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
@@ -177,6 +311,24 @@ struct FirstRunView: View {
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // Inline progress row — only visible if WhisperEngine is
+            // still downloading or loading the model. Prewarm kicked
+            // off from `RecordingSession.init()` runs while the user
+            // walks the onboarding; on a fresh install this row is
+            // visible for the full Done step. SwiftUI re-renders on
+            // every `WhisperEngine.shared.state` change because @Observable
+            // tracks the access from within the view body.
+            if let line = whisperProgressLine {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Optional setup")
                     .font(.footnote.weight(.semibold))
@@ -237,11 +389,16 @@ struct FirstRunView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color.daisyAccent)
                     .keyboardShortcut(.defaultAction)
-            case .microphone, .screenRecording:
+            case .microphone, .screenRecording, .accessibility:
                 Button("Skip for now") { advance() }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
                     .tint(Color.daisyTextPrimary)
+            case .hotkeys:
+                Button("Continue") { advance() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.daisyAccent)
+                    .keyboardShortcut(.defaultAction)
             case .done:
                 Button("Start using Daisy") { finish() }
                     .buttonStyle(.borderedProminent)
@@ -300,25 +457,52 @@ struct FirstRunView: View {
     }
 
     /// Screen Recording uses the lower-level CoreGraphics API.
-    /// `CGRequestScreenCaptureAccess` triggers the system prompt
-    /// and returns the resulting state. On macOS 14+ approval
-    /// requires the user to open System Settings → Privacy & Security
-    /// in a separate step (Apple's choice, not ours).
+    ///
+    /// `CGRequestScreenCaptureAccess` is documented to show the
+    /// system dialog. In practice on macOS 14+ it is **unreliable**:
+    /// returns `false` without showing any prompt for most users.
+    /// Without a fallback, the onboarding button is a dead end —
+    /// click, nothing happens, click again, same.
+    ///
+    /// Two-pronged fix matching `SystemPermissions.requestScreenRecording()`:
+    ///   1. Call CGRequestScreenCaptureAccess — if the prompt does
+    ///      fire and the user grants, we advance immediately.
+    ///   2. If the call returned false (either prompt didn't fire,
+    ///      or user denied), open System Settings → Privacy → Screen
+    ///      Recording directly so the user has a path forward. The
+    ///      focus observer on the parent view refreshes status when
+    ///      they come back, and the "Granted" badge appears without
+    ///      needing another click.
     private func requestScreenAccess() {
         let granted = CGRequestScreenCaptureAccess()
         screenGranted = granted
         if granted {
             advance()
+        } else {
+            // Open System Settings as fallback — the user grants
+            // there, then we auto-detect on return-to-foreground.
+            ScreenRecordingPermission.openSystemSettings()
         }
-        // If still false after prompt, the user has to flip the
-        // toggle in System Settings. Daisy's first recording will
-        // re-prompt via the preflight path — onboarding just plants
-        // the seed.
+    }
+
+    /// Accessibility permission is requested via the canonical
+    /// `AXIsProcessTrustedWithOptions(prompt: true)` API. macOS shows
+    /// a system sheet pointing the user at System Settings → Privacy
+    /// → Accessibility; there's no auto-grant from here. The focus
+    /// observer on the parent view re-checks on return and the
+    /// "Granted" badge appears without needing another click.
+    private func requestAccessibilityAccess() {
+        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options = [promptKey: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+        // No advance — flip happens out-of-band when the user returns
+        // from System Settings, caught by the focus observer.
     }
 
     private func refreshPermissionStates() {
         micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         screenGranted = CGPreflightScreenCaptureAccess()
+        accessibilityGranted = AXIsProcessTrusted()
     }
 
     // MARK: - Flow

@@ -80,6 +80,14 @@ final class SystemPermissions {
     /// Screen Recording — optional, only needed for capturing the
     /// "other side" of meetings (system audio out of Zoom / Meet etc).
     private(set) var screenRecording: Status = .notDetermined
+
+    /// UserDefaults key used to remember that we've already asked
+    /// once for Screen Recording. macOS gives us no way to distinguish
+    /// "never asked" from "explicitly denied" via `CGPreflightScreenCaptureAccess`
+    /// — both return `false`. We track the request ourselves so the
+    /// UI can show "Open Settings…" after the first attempt instead of
+    /// re-offering a "Request" button that won't actually re-prompt.
+    private static let hasRequestedScreenRecordingKey = "daisy.permissions.hasRequestedScreenRecording"
     /// Notifications — optional. Required for the auto-start /
     /// auto-stop banners and the long-silence prompt. Daisy keeps
     /// recording without it; the user just doesn't get the macOS
@@ -113,7 +121,18 @@ final class SystemPermissions {
         microphone = Self.normalise(AVCaptureDevice.authorizationStatus(for: .audio))
         calendar = Self.normalise(EKEventStore.authorizationStatus(for: .event))
         accessibility = AXIsProcessTrusted() ? .granted : .notDetermined
-        screenRecording = CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
+        // Screen Recording: preflight gives a Bool but can't tell
+        // "never asked" from "denied". We track the request locally
+        // and surface `.denied` after the first attempt so the UI
+        // routes the user to System Settings instead of looping on
+        // a Request button that no longer triggers a prompt.
+        let preflight = CGPreflightScreenCaptureAccess()
+        if preflight {
+            screenRecording = .granted
+        } else {
+            let hasRequested = UserDefaults.standard.bool(forKey: Self.hasRequestedScreenRecordingKey)
+            screenRecording = hasRequested ? .denied : .notDetermined
+        }
         refreshNotificationsAsync()
     }
 
@@ -165,16 +184,36 @@ final class SystemPermissions {
         // flip until the user has clicked through System Settings.
     }
 
-    /// Trigger the system Screen Recording prompt. Uses
-    /// `CGRequestScreenCaptureAccess()` (macOS 11+) — unlike the
-    /// `Preflight` variant it actually shows the system dialog AND
-    /// registers the app in System Settings → Privacy → Screen
-    /// Recording. Until this is called, Daisy simply does not appear
-    /// in that list, so the "Open Settings…" path has no toggle to
-    /// flip. After the user clicks Allow / Deny the function returns
-    /// the new state, then we refresh the published status.
+    /// Trigger the system Screen Recording prompt.
+    ///
+    /// `CGRequestScreenCaptureAccess()` is documented to show the
+    /// system dialog AND register Daisy in System Settings → Privacy
+    /// → Screen Recording. In practice on macOS 14+ it has become
+    /// **unreliable** — the prompt frequently does NOT appear and the
+    /// function returns `false` immediately (multiple developer
+    /// reports, FB14529739 et al). The user clicks "Request", nothing
+    /// happens, the button stays "Request" — a dead end.
+    ///
+    /// Two-pronged fix:
+    ///   1. Persist that we've asked at least once. `refresh()` now
+    ///      maps a still-not-granted state to `.denied` instead of
+    ///      `.notDetermined`, so the UI shows "Open Settings…" next
+    ///      time instead of "Request".
+    ///   2. If the call returned `false` (either the prompt didn't
+    ///      fire, or it did and the user said No), open System
+    ///      Settings → Privacy → Screen Recording directly. The user
+    ///      always has a path forward.
+    ///
+    /// Trade-off: if the system prompt DID appear and the user
+    /// intentionally clicked "Deny", they'll be bounced to System
+    /// Settings as well. Acceptable friction — they can just close
+    /// the Settings window if they meant the Deny.
     func requestScreenRecording() {
-        _ = CGRequestScreenCaptureAccess()
+        UserDefaults.standard.set(true, forKey: Self.hasRequestedScreenRecordingKey)
+        let granted = CGRequestScreenCaptureAccess()
+        if !granted {
+            openScreenRecordingSettings()
+        }
         refresh()
     }
 
