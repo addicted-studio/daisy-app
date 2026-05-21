@@ -72,6 +72,13 @@ struct DaisyMeeting: Identifiable, Hashable, Sendable {
     /// attendees attached, or only had email addresses without
     /// display names.
     let attendees: [String]
+    /// Raw email addresses of invitees (best-effort — EventKit
+    /// returns `mailto:...` URLs and CalDAV-synced Google events
+    /// often have only emails). Used by the 1.0.5 client-tagging
+    /// auto-suggestion to identify the dominant external domain on
+    /// the call. Order matches `attendees` where possible; entries
+    /// can be empty strings if the participant URL wasn't a mailto.
+    let attendeeEmails: [String]
 
     var id: String { localID }
     var isMeeting: Bool { meetingURL != nil }
@@ -474,6 +481,7 @@ private extension DaisyMeeting {
         let cgColor = ekEvent.calendar?.cgColor
         let hex = cgColor.flatMap(Self.hexString(from:))
         let names = Self.projectAttendees(ekEvent.attendees)
+        let emails = Self.projectAttendeeEmails(ekEvent.attendees)
 
         self.init(
             externalID: ekEvent.calendarItemExternalIdentifier,
@@ -486,8 +494,38 @@ private extension DaisyMeeting {
             meetingURL: detected?.url,
             meetingPlatform: detected?.platform,
             calendarColorHex: hex,
-            attendees: names
+            attendees: names,
+            attendeeEmails: emails
         )
+    }
+
+    /// Extract raw email addresses from EKParticipant list. Best-
+    /// effort — EventKit gives us `mailto:foo@bar.com` URLs for
+    /// invited people; anything that doesn't fit that shape is
+    /// skipped. Used to detect the dominant external domain for
+    /// auto-suggested client tagging (see RecordingSession).
+    nonisolated static func projectAttendeeEmails(_ raw: [EKParticipant]?) -> [String] {
+        guard let raw else { return [] }
+        var seen = Set<String>()
+        var out: [String] = []
+        for p in raw {
+            guard let url = p.url as URL? else { continue }
+            let s = url.absoluteString
+            let email: String
+            if s.hasPrefix("mailto:") {
+                email = String(s.dropFirst("mailto:".count))
+            } else if s.contains("@") {
+                email = s
+            } else {
+                continue
+            }
+            let normalized = email.lowercased().trimmingCharacters(in: .whitespaces)
+            guard normalized.contains("@"), !normalized.isEmpty else { continue }
+            if seen.insert(normalized).inserted {
+                out.append(normalized)
+            }
+        }
+        return out
     }
 
     /// Extract human-readable display names from EKParticipant list.

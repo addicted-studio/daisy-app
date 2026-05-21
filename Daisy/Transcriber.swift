@@ -63,10 +63,26 @@ struct TranscriptSegment: Identifiable, Sendable, Equatable {
     ///   • system, no diarization   → "Remote"
     ///   • system, speaker "A"      → "Remote A"
     ///   • system, low IoU (nil)    → "Remote ?"
-    var speakerLabel: String {
+    var speakerLabel: String { speakerLabel(displayName: nil) }
+
+    /// Speaker label with an optional override for the user's own
+    /// voice. Pass the configured `AppSettings.userDisplayName` to
+    /// substitute `"Me"` with the real name (e.g. `[Egor]` instead
+    /// of `[Me]`); pass nil/empty to keep the legacy generic label.
+    /// System-source labels are unaffected — that's the remote
+    /// party's voice, not the user's.
+    func speakerLabel(displayName: String?) -> String {
         switch source {
         case .microphone:
-            return "Me"
+            // With mic-side diarization enabled (Settings →
+            // Transcription) we emit per-cluster labels here too;
+            // otherwise the historical single-speaker "Me" label
+            // applies. The user can rename "Speaker A → Alex" via
+            // the Detail-view speaker map, same path that exists for
+            // system-source speakers.
+            if let id = speakerId { return "Speaker \(id)" }
+            let trimmed = (displayName ?? "").trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? "Me" : trimmed
         case .systemAudio:
             if let id = speakerId { return "Remote \(id)" }
             return "Remote"
@@ -204,10 +220,21 @@ final class Transcriber {
 
     // MARK: - Init
 
-    init(localeIdentifier: String = "auto", source: SegmentSource = .microphone) {
+    init(localeIdentifier: String = "auto",
+         source: SegmentSource = .microphone,
+         diarize: Bool? = nil) {
         self.localeIdentifier = localeIdentifier
         self.source = source
+        // Default: diarize iff system-audio (the historical
+        // behaviour). Callers can override for mic-side diarization
+        // gated on `settings.diarizeMicrophone`.
+        self.diarizationEnabled = diarize ?? (source == .systemAudio)
     }
+
+    /// Whether this Transcriber runs Pyannote diarization passes
+    /// (live + final). True by default for system-audio source,
+    /// false for microphone unless explicitly enabled.
+    private let diarizationEnabled: Bool
 
     // MARK: - Lifecycle
 
@@ -464,7 +491,7 @@ final class Transcriber {
     //     IDs, authoritative output for transcript.md.
 
     private func kickLiveDiarizeIfDue(currentAudioSec: Double) {
-        guard source == .systemAudio else { return }
+        guard diarizationEnabled else { return }
         guard diarizeTask == nil else { return }
         // First pass needs ~10s of audio to cluster anything useful;
         // skip earlier ticks so we don't waste a run on 2 seconds
@@ -526,13 +553,13 @@ final class Transcriber {
             samples: samples,
             language: lang
         )
-        // Mic-side diarization is overkill — assume one speaker.
-        // System-side has the actual remote participants. Use the
-        // FULL diarization output (spans + centroids) so
-        // RecordingSession can fingerprint-match this session's
-        // speakers against the SpeakerProfileStore.
+        // Diarization is opt-in for the mic source (Settings →
+        // Transcription → "Diarize microphone too") and on-by-
+        // default for system audio. Use the FULL diarization output
+        // (spans + centroids) so RecordingSession can fingerprint-
+        // match this session's speakers against the SpeakerProfileStore.
         async let diarizationOutput: DiarizationOutput =
-            source == .systemAudio
+            diarizationEnabled
                 ? DiarizationEngine.shared.diarizeFull(samples: samples)
                 : DiarizationOutput(spans: [], centroids: [:])
 

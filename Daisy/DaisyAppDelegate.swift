@@ -29,6 +29,9 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // SilenceMonitor subscribes to.
         UNUserNotificationCenter.current().delegate = self
         SilencePromptNotification.register()
+        // 1.0.5: calendar-driven lifecycle banners.
+        AutoStartNotification.register()
+        AutoStopNotification.register()
 
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
@@ -116,13 +119,25 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
                 NotificationCenter.default.post(
                     name: SilencePromptNotification.snoozeRequested, object: nil
                 )
-            default:
-                // Tap on the banner body (no action) — treat as
-                // "Not yet" so the silence clock resets without
-                // interrupting the session.
+            case AutoStartNotification.actionStop:
+                // User tapped "Stop & save" on the auto-start banner.
+                // RecordingSession.subscribeToLifecycleNotifications
+                // listens and routes to stop().
                 NotificationCenter.default.post(
-                    name: SilencePromptNotification.snoozeRequested, object: nil
+                    name: AutoStartNotification.stopRequested, object: nil
                 )
+            default:
+                // Tap on the banner body of a silence-prompt category —
+                // treat as "Not yet" so the silence clock resets.
+                // For other categories (auto-start tapped body, auto-
+                // stop tapped body) we just dismiss; the broadcast
+                // only fires when an explicit action button is hit.
+                let cat = response.notification.request.content.categoryIdentifier
+                if cat == SilencePromptNotification.categoryID {
+                    NotificationCenter.default.post(
+                        name: SilencePromptNotification.snoozeRequested, object: nil
+                    )
+                }
             }
             completionHandler()
         }

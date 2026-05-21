@@ -187,6 +187,14 @@ final class RecordingSession {
     /// rewrites the transcript frontmatter on disk).
     var folder: SessionFolder = .inbox
 
+    /// Client tag for this session. Persisted to frontmatter as
+    /// `daisy_client:` and used for sidebar grouping in History.
+    /// Empty string == "untagged" (the default). Free-form text;
+    /// `ClientSuggestion.suggest(from:)` pre-fills this when the
+    /// session is bound to a calendar event with attendees from
+    /// an external organization.
+    var client: String = ""
+
     // Phase 2 modules — exposed so the UI can read state.
     let summarizer: Summarizer
     let screenshots: ScreenshotCapture
@@ -326,8 +334,19 @@ final class RecordingSession {
         self.localeIdentifier = effective
         self.recorder = AudioRecorder()
         self.systemAudio = SystemAudioCapture()
-        self.micTranscriber = Transcriber(localeIdentifier: effective, source: .microphone)
-        self.systemTranscriber = Transcriber(localeIdentifier: effective, source: .systemAudio)
+        self.micTranscriber = Transcriber(
+            localeIdentifier: effective,
+            source: .microphone,
+            // Opt-in mic-side diarization — useful when remote
+            // participants are heard through the user's speakers
+            // (in-room playback) instead of being captured separately
+            // via system-audio loopback. See AppSettings comment.
+            diarize: settings.diarizeMicrophone
+        )
+        self.systemTranscriber = Transcriber(
+            localeIdentifier: effective,
+            source: .systemAudio
+        )
         self.summarizer = Summarizer.shared
         self.screenshots = ScreenshotCapture()
         self.silenceMonitor = nil  // assigned below once `self` is usable
@@ -339,6 +358,37 @@ final class RecordingSession {
         // downloads its CoreML weights.
         Task { await WhisperEngine.shared.ensureLoaded() }
         Task { await DiarizationEngine.shared.ensureLoaded() }
+
+        // Warm the AVAudioEngine HAL graph up front so the first
+        // user-initiated record (especially dictation, where the
+        // user expects instant capture) doesn't pay the cold-start
+        // tax. Cheap, no TCC prompts, no recording-light.
+        recorder.prewarm()
+
+        // Probe the configured summary provider once so its status
+        // (Available / Unavailable) is known before the user opens
+        // Settings → Summary for the first time. Without this, the
+        // first visit to that tab shows "Checking…" for ~1s before
+        // resolving.
+        Task { await Summarizer.shared.refreshAvailability() }
+
+        // Listen for the auto-start banner's "Stop & save" action.
+        // DaisyAppDelegate routes the macOS notification action into
+        // this Foundation bus; we run the same stop() the user would
+        // get from the toolbar / widget. Observer is owned by the
+        // singleton's lifetime — no removal needed.
+        NotificationCenter.default.addObserver(
+            forName: AutoStartNotification.stopRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard self.status == .recording || self.status == .paused else { return }
+                self.log.info("Auto-start banner Stop & save tapped — stopping session")
+                await self.stop()
+            }
+        }
     }
 
     // MARK: - Lifecycle
@@ -496,6 +546,14 @@ final class RecordingSession {
         title = meeting.title
 
         await start()
+
+        // macOS banner so the user notices Daisy just auto-started
+        // their meeting (and can bail via "Stop & save" if they
+        // didn't want this one tracked). Gated on the per-class
+        // toggle in Settings → General → Notifications.
+        if settings.notifyOnAutoStart {
+            AutoStartNotification.post(meetingTitle: meeting.title)
+        }
     }
 
     func start() async {
@@ -524,6 +582,13 @@ final class RecordingSession {
         if let m = pendingBoundMeeting {
             boundMeeting = m
             pendingBoundMeeting = nil
+            // Auto-suggest client tag from attendee domains. The
+            // user can override in SessionDetailView; this just
+            // pre-fills with a sensible guess so most meetings end
+            // up tagged without any manual work.
+            if client.isEmpty, let suggested = ClientSuggestion.suggest(from: m.attendeeEmails) {
+                client = suggested
+            }
         }
         if let hint = pendingFolderHint {
             if folder == .inbox { folder = hint }
@@ -800,6 +865,12 @@ final class RecordingSession {
             title = meeting.title
         }
         if folder == .inbox { folder = .work }
+        // Pre-fill client tag from attendee domain (most-frequent
+        // external org). Same call site as the auto-binding in
+        // start() so manual-start sessions also get the suggestion.
+        if client.isEmpty, let suggested = ClientSuggestion.suggest(from: meeting.attendeeEmails) {
+            client = suggested
+        }
         autoStopLog.info("bindCurrentMeetingIfPossible: auto-bound to '\(meeting.title, privacy: .private)' (started \(Int(now.timeIntervalSince(meeting.startDate)), privacy: .public)s ago, ends in \(Int(meeting.endDate.timeIntervalSince(now)), privacy: .public)s)")
     }
 
@@ -838,7 +909,14 @@ final class RecordingSession {
     private func performAutoStop() async {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
         ToastCenter.shared.show("Meeting ended — stopping & saving.", style: .info, duration: .seconds(2))
+        let meetingTitle = boundMeeting?.title ?? title
         await stop()
+        // Banner confirms the save completed — surfaces even when
+        // Daisy is in the background, which is the common case for
+        // an auto-stopped session. Gated on the per-class toggle.
+        if settings.notifyOnAutoStop {
+            AutoStopNotification.post(meetingTitle: meetingTitle)
+        }
     }
 
     // MARK: - Pause / Resume
@@ -929,6 +1007,31 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()
+
+        // Surface the "system audio capture armed but received zero
+        // frames" condition before the user navigates away from the
+        // session. Most common root cause: the macOS default output
+        // is a Bluetooth device — Screen Capture can't loop back BT
+        // by design, so the captured stream is silent and the
+        // user's `system_audio.caf` ends up 0 bytes. The 30-second
+        // in-flight watchdog inside SystemAudioCapture warns once
+        // per session, but it can be missed (focus mode, busy
+        // meeting); this is the second-chance summary toast.
+        //
+        // Sessions shorter than 60 s skip the warning — there's not
+        // enough signal to distinguish "user stopped intentionally"
+        // from "capture broken".
+        if settings.captureSystemAudio,
+           currentMode == .meeting,
+           elapsed > 60,
+           !systemAudio.hasReceivedAudio {
+            ToastCenter.shared.show(
+                "System audio was empty for this session — usually Bluetooth output. Other participants weren't captured separately, so per-speaker labels in the transcript will be 'Me' only. Use built-in speakers or wired headphones for next time.",
+                style: .warning,
+                duration: .seconds(10)
+            )
+            log.warning("Session ended with empty system audio despite captureSystemAudio=on. Likely BT output.")
+        }
         // NOTE: do NOT release the user-folder ticket here yet —
         // we still need to write transcript.md and summary.json
         // below, both of which land inside the user-picked folder.
@@ -1265,7 +1368,8 @@ final class RecordingSession {
             locale: localeIdentifier,
             segments: segments,
             summary: summarizer.lastSummary,
-            folderSlug: sessionFolderSlug
+            folderSlug: sessionFolderSlug,
+            client: client
         )
         for integration in autoIntegrations {
             let ok = await MCPDispatcher.send(integration, for: stored)
@@ -1394,7 +1498,8 @@ final class RecordingSession {
             locale: localeIdentifier,
             segments: segments,
             summary: summarizer.lastSummary,
-            folderSlug: folder.slug
+            folderSlug: folder.slug,
+            client: client
         )
     }
 
@@ -1411,7 +1516,8 @@ final class RecordingSession {
         locale: String,
         segments: [TranscriptSegment],
         summary: MeetingSummary?,
-        folderSlug: String
+        folderSlug: String,
+        client: String = ""
     ) -> StoredSession {
         let transcriptText = segments
             .map { "\($0.text)" }
@@ -1435,6 +1541,7 @@ final class RecordingSession {
             summary: summary,
             transcriptURL: FileManager.default.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
+            client: client,
             meetingAttendees: [],
             speakerMap: [:]
         )
@@ -1471,6 +1578,7 @@ final class RecordingSession {
         startedAt = nil
         boundMeeting = nil
         folder = .inbox
+        client = ""
         currentMode = .meeting
         status = .idle
     }
@@ -1482,28 +1590,56 @@ final class RecordingSession {
             .filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         switch currentMode {
         case .meeting:
-            // Multi-speaker context — labels are signal ("[Me]"
+            // Multi-speaker context — labels are signal ("[Egor]"
             // vs "[Alex]" vs "[Remote A]" tell the LLM who said
-            // what for the summary pass).
+            // what for the summary pass). User's own voice uses
+            // the configured display name when set; otherwise
+            // falls back to the generic "Me".
+            let myName = settings.userDisplayName
             return nonEmpty
-                .map { "[\($0.speakerLabel)] \($0.text)" }
+                .map { "[\($0.speakerLabel(displayName: myName))] \($0.text)" }
                 .joined(separator: "\n\n")
         case .voiceNote, .dictation:
             // Single-speaker, no diarization, no LLM downstream.
             // The speaker tag is noise — for dictation it'd end
             // up pasted into the user's text field as "[Me] hi
             // there", which is exactly what they don't want.
-            // Joined with single newlines because voice-note
-            // recordings rarely have meaningful paragraph breaks
-            // worth a double-newline gap.
-            return nonEmpty
-                .map(\.text)
-                .joined(separator: "\n")
+            //
+            // Joined with " " (not "\n") because each entry in
+            // `segments` is one Whisper VAD chunk — a pause-bounded
+            // run of speech, NOT a paragraph. Pre-1.0.5 we joined
+            // with single newlines, which made dictated text look
+            // shredded: every breath turned into a line break.
+            // Now consecutive chunks flow into one continuous
+            // string, with each chunk's own punctuation handling
+            // sentence boundaries. The model usually emits a
+            // trailing space inside `.text`; we trim duplicates
+            // afterwards so we never produce double spaces.
+            let joined = nonEmpty
+                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .joined(separator: " ")
+            // Collapse any accidental double-spaces from per-chunk
+            // trim artefacts. Single regex sweep, cheap.
+            return joined.replacingOccurrences(
+                of: "  +",
+                with: " ",
+                options: .regularExpression
+            )
         }
     }
 
     var hasContent: Bool {
         segments.contains(where: { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty })
+    }
+
+    /// Proxy for `systemAudio.hasReceivedAudio` so MarkdownExporter
+    /// (and other read-only consumers outside this type) can persist
+    /// the system-audio capture outcome without us widening
+    /// `systemAudio`'s visibility. True == at least one PCM frame
+    /// landed during the session; false == capture was armed but
+    /// stayed silent (usually BT output) OR was never armed.
+    var hasCapturedSystemAudio: Bool {
+        systemAudio.hasReceivedAudio
     }
 
     private var isFailed: Bool {

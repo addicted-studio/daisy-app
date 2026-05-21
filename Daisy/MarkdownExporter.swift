@@ -30,6 +30,13 @@ enum MarkdownExporter {
         }
         lines.append("duration_sec: \(Int(session.elapsed))")
         lines.append("daisy_folder: \(session.folder.slug)")
+        // Client tag — empty when untagged. The History sidebar
+        // groups by this value (counts per tag); empty == "Untagged".
+        // 1.0.5+ — older sessions don't have the key, the parser
+        // defaults to "" for them.
+        if !session.client.isEmpty {
+            lines.append("daisy_client: \(yamlQuote(session.client))")
+        }
         if let meeting = session.boundMeeting {
             // Bind transcript ↔ calendar event so future search can
             // resolve "show me the transcript of that Q3 review".
@@ -78,6 +85,26 @@ enum MarkdownExporter {
                 .joined(separator: ", ")
             lines.append("daisy_audio_parts: [\(parts)]")
         }
+
+        // Persistent audit of system-audio capture outcome. Three
+        // states surface support-side debugging:
+        //   off       — user had the toggle disabled, mic-only run
+        //   captured  — SystemAudioCapture received at least one frame
+        //   empty     — toggle on, capture armed, zero frames received
+        //               (BT output, denied Screen Recording grant,
+        //               or other macOS-side block)
+        // When status == empty, the user already saw a warning toast
+        // at session end; the frontmatter line is the post-hoc proof
+        // for grepping across a folder of sessions.
+        let sysAudioLabel: String
+        if !session.settings.captureSystemAudio {
+            sysAudioLabel = "off"
+        } else if session.hasCapturedSystemAudio {
+            sysAudioLabel = "captured"
+        } else {
+            sysAudioLabel = "empty"
+        }
+        lines.append("daisy_system_audio_status: \(sysAudioLabel)")
         lines.append("tags: [meeting, transcript, daisy]")
         lines.append("---")
         lines.append("")
@@ -169,11 +196,13 @@ enum MarkdownExporter {
         lines.append("")
 
         let origin = session.startedAt ?? Date()
+        let myName = session.settings.userDisplayName
         for segment in session.segments {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             let offset = max(0, segment.startedAt.timeIntervalSince(origin))
-            let prefix = "**[\(formatDuration(offset)) · \(segment.speakerLabel)]**"
+            let label = segment.speakerLabel(displayName: myName)
+            let prefix = "**[\(formatDuration(offset)) · \(label)]**"
             lines.append("\(prefix) \(text)")
             lines.append("")
         }

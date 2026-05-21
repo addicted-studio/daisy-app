@@ -26,6 +26,11 @@ struct LibraryView: View {
     @State private var selectedIDs: Set<StoredSession.ID> = []
     /// Active folder filter. `nil` = show all folders.
     @State private var folderFilter: SessionFolder? = nil
+    /// Active client-tag filter. nil == "all clients", "" sentinel
+    /// not used (the chip-row has an explicit "Untagged" entry which
+    /// maps to `clientFilter = .some("")`). Persisted only across
+    /// LibraryView's lifetime.
+    @State private var clientFilter: String? = nil
     /// Pending delete confirmation. Carries the sessions about to
     /// be removed (1 for context-menu, N for multi-select).
     @State private var pendingDelete: [StoredSession] = []
@@ -100,6 +105,14 @@ struct LibraryView: View {
                     requestBulkDelete()
                 }
                 .keyboardShortcut(.deleteForward, modifiers: [])
+
+                // ⌘+Delete — macOS convention (Finder, Notes, Mail
+                // all bind "move to trash" to ⌘+⌫). Mirrors the bare
+                // Backspace path; same alert, same destruction.
+                Button("Delete selected (⌘⌫)") {
+                    requestBulkDelete()
+                }
+                .keyboardShortcut(.delete, modifiers: .command)
             }
             .hidden()
             .disabled(selectedIDs.isEmpty)
@@ -124,6 +137,12 @@ struct LibraryView: View {
                     pendingDelete = []
                 }
             }
+            // Enter confirms — by default macOS binds Return to the
+            // .cancel role and leaves destructive buttons un-defaulted
+            // (anti-fat-finger). User explicitly asked for keyboard-
+            // first delete flow, so we promote Delete to .defaultAction.
+            // Esc still maps to Cancel via the .cancel role.
+            .keyboardShortcut(.defaultAction)
         } message: {
             Text(deleteAlertMessage)
         }
@@ -260,7 +279,17 @@ struct LibraryView: View {
 
             folderChips
                 .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+                .padding(.bottom, 4)
+
+            // Client chips appear only when at least one session has
+            // a client tag — keeps the sidebar uncluttered for users
+            // who don't tag sessions. Counts are live; "Untagged"
+            // surfaces only when there's a mix.
+            if !clientGroups.isEmpty {
+                clientChips
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
 
             // Manual selection model so we keep brand-coloured highlight
             // instead of the system gray that `List(selection:)` paints
@@ -375,10 +404,64 @@ struct LibraryView: View {
         if let f = folderFilter {
             pool = pool.filter { $0.folderSlug == f.slug }
         }
+        if let c = clientFilter {
+            pool = pool.filter { $0.client == c }
+        }
         if !trimmed.isEmpty {
             pool = pool.filter { $0.matches(query: trimmed) }
         }
         return pool
+    }
+
+    /// All client tags present across sessions, sorted by count desc
+    /// then alphabetically. "Untagged" (empty client) is split out as
+    /// the last entry so it's visually demoted but still reachable.
+    private var clientGroups: [(name: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for s in store.sessions {
+            counts[s.client, default: 0] += 1
+        }
+        let tagged = counts
+            .filter { !$0.key.isEmpty }
+            .map { (name: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return $0.name.lowercased() < $1.name.lowercased()
+            }
+        let untaggedCount = counts[""] ?? 0
+        if untaggedCount > 0 {
+            return tagged + [(name: "", count: untaggedCount)]
+        }
+        return tagged
+    }
+
+    /// Horizontally-scrollable client chips below the folder row.
+    /// Same idiom as folderChips — "All" pseudo-chip resets the
+    /// filter, individual chips toggle the filter on/off. "Untagged"
+    /// is rendered last with a slightly secondary style so users
+    /// understand it's the catch-all bucket.
+    private var clientChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                FolderChip(
+                    label: "Any client",
+                    count: store.sessions.count,
+                    isActive: clientFilter == nil
+                ) {
+                    clientFilter = nil
+                }
+                ForEach(clientGroups, id: \.name) { group in
+                    let label = group.name.isEmpty ? "Untagged" : group.name
+                    FolderChip(
+                        label: label,
+                        count: group.count,
+                        isActive: clientFilter == group.name
+                    ) {
+                        clientFilter = (clientFilter == group.name) ? nil : group.name
+                    }
+                }
+            }
+        }
     }
 
     /// Horizontally-scrollable folder chips above the session list.
@@ -439,6 +522,16 @@ private struct SessionRow: View {
                 Text(formattedDuration)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if !session.client.isEmpty {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(session.client)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(Color.daisyAccent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.daisyAccent.opacity(0.10), in: Capsule())
+                }
                 Spacer()
             }
             if !session.transcriptPreview.isEmpty {

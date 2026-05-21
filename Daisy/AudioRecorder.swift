@@ -215,6 +215,22 @@ final class AudioRecorder {
         }
     }
 
+    /// Warm up the audio graph at app launch so the first user-
+    /// initiated record click is instant. `engine.prepare()` is
+    /// idempotent and cheap — it doesn't activate the mic (no TCC
+    /// prompt, no recording-light) but does cache the HAL audio
+    /// unit setup that would otherwise happen on the first `start()`
+    /// call. Pre-1.0.5 the tester reported a visible widget lag on
+    /// the first dictation after a long idle; the lazy AUHAL load
+    /// in `engine.start()` was the bulk of it.
+    ///
+    /// Safe to call multiple times. No-op if the engine has already
+    /// been prepared and is in idle state.
+    func prewarm() {
+        engine.prepare()
+        log.info("AudioRecorder prewarmed (HAL audio graph cached)")
+    }
+
     /// Begin capturing microphone audio. Pass an `archiveURL` to also write
     /// a .caf file for later replay/re-processing. `preferredDeviceUID`
     /// is the stable `kAudioDevicePropertyDeviceUID` of the device the

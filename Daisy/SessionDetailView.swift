@@ -38,6 +38,11 @@ struct SessionDetailView: View {
     @State private var isRunningAction = false
     @State private var actionStatus: ActionStatus = .idle
     @State private var confirmDelete = false
+    /// Local draft for the client-tag field in the header. Mirrors
+    /// `session.client` and commits to disk on blur / Enter — same
+    /// save-on-blur idiom the title editor below uses.
+    @State private var clientDraft: String = ""
+    @FocusState private var clientFieldFocused: Bool
 
     enum ActionStatus: Equatable {
         case idle
@@ -189,13 +194,13 @@ struct SessionDetailView: View {
     }
 
     private func attemptCopyMarkdown() {
-        guard !session.transcriptText.isEmpty,
-              session.transcriptURL != nil else {
-            ToastCenter.shared.show("No transcript on disk yet", style: .warning)
+        guard !session.transcriptText.isEmpty else {
+            ToastCenter.shared.show("No transcript yet", style: .warning)
             return
         }
         copyMarkdown()
-        ToastCenter.shared.show("Transcript copied to clipboard", style: .success)
+        let scope = session.summary == nil ? "Transcript" : "Summary + transcript"
+        ToastCenter.shared.show("\(scope) copied to clipboard", style: .success)
     }
 
     /// Uniform toolbar icon. `Color.daisyTextPrimary` is an explicit
@@ -266,10 +271,48 @@ struct SessionDetailView: View {
                         .labelStyle(.iconOnly)
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
+                clientField
             }
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+        .onAppear { clientDraft = session.client }
+        .onChange(of: session.id) { _, _ in clientDraft = session.client }
+        .onChange(of: session.client) { _, newValue in
+            // External edit (e.g., from another window or a bulk
+            // tagging path we might add later) — reflect in the
+            // field unless the user is actively editing it.
+            if !clientFieldFocused { clientDraft = newValue }
+        }
+    }
+
+    /// Inline client-tag editor in the header row. Empty placeholder
+    /// surfaces "Add client tag…" so the affordance is discoverable
+    /// without dominating the line. Saves on blur (FocusState flip)
+    /// and Enter — same save-on-blur idiom the title editor uses.
+    @ViewBuilder
+    private var clientField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "person.crop.rectangle")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            TextField("Add client tag…", text: $clientDraft)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .focused($clientFieldFocused)
+                .frame(maxWidth: 160)
+                .onSubmit { commitClient() }
+                .onChange(of: clientFieldFocused) { _, isFocused in
+                    if !isFocused { commitClient() }
+                }
+        }
+    }
+
+    private func commitClient() {
+        let trimmed = clientDraft.trimmingCharacters(in: .whitespaces)
+        guard trimmed != session.client else { return }
+        Task { await SessionStore.shared.setClient(trimmed, for: session) }
     }
 
 
@@ -339,12 +382,24 @@ struct SessionDetailView: View {
 
         if !summary.clientFollowUp.isEmpty {
             mdSection(title: summaryLabels(for: summary).followUp) {
-                HStack(alignment: .top, spacing: 8) {
+                // ZStack instead of HStack: HStack with a sibling Button
+                // alongside the Text was eating mouse hit-events over
+                // the text area on macOS 26 — tester couldn't select +
+                // ⌘C the follow-up despite .textSelection(.enabled).
+                // ZStack with the button anchored top-trailing leaves
+                // the Text occupying the full content width with
+                // unobstructed selection, while the copy affordance
+                // sits in the corner where it's still discoverable.
+                ZStack(alignment: .topTrailing) {
                     Text(summary.clientFollowUp)
                         .font(.body)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        // Padding-right reserves the corner for the
+                        // copy button so it doesn't sit on top of
+                        // text on long-line wraps.
+                        .padding(.trailing, 28)
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
@@ -758,15 +813,78 @@ struct SessionDetailView: View {
     }
 
     private func copyMarkdown() {
-        guard let url = session.transcriptURL,
-              let text = try? String(contentsOf: url, encoding: .utf8) else {
-            actionStatus = .error("Couldn't read transcript file.")
-            return
-        }
+        // Assemble from in-memory state (transcriptText + summary)
+        // rather than reading transcriptURL off disk. The on-disk
+        // file might lag the current view — e.g., summary just arrived
+        // from the LLM and the asynchronous summary.json + transcript.md
+        // rewrite hasn't completed yet. Re-rendering matches exactly
+        // what the user is looking at on screen.
         let pb = NSPasteboard.general
         pb.clearContents()
-        pb.setString(text, forType: .string)
+        pb.setString(assembledMarkdown(), forType: .string)
         actionStatus = .message("Markdown copied to clipboard.")
+    }
+
+    /// Build a full markdown document for clipboard / share: title
+    /// + summary (if present) + Granola-style sections + next actions
+    /// + follow-up + transcript body. Mirrors `MarkdownExporter` but
+    /// works against `StoredSession` (which `MarkdownExporter` doesn't
+    /// take — it consumes the live `RecordingSession`).
+    private func assembledMarkdown() -> String {
+        var lines: [String] = []
+        lines.append("# \(session.title)")
+        lines.append("")
+
+        if let s = session.summary {
+            let labels = summaryLabels(for: s)
+            if !s.summary.isEmpty {
+                lines.append("## \(labels.meeting)")
+                lines.append("")
+                lines.append(s.summary)
+                lines.append("")
+            }
+            for section in s.sections {
+                lines.append("### \(section.title)")
+                lines.append("")
+                appendBullets(section.bullets, level: 0, into: &lines)
+                lines.append("")
+            }
+            if !s.actionItems.isEmpty {
+                lines.append("## \(labels.nextActions)")
+                lines.append("")
+                for item in s.actionItems {
+                    lines.append("- [ ] \(item)")
+                }
+                lines.append("")
+            }
+            if !s.clientFollowUp.isEmpty {
+                lines.append("## \(labels.followUp)")
+                lines.append("")
+                // The follow-up is already paragraph-formatted by the
+                // model (2-4 paragraphs separated by blank lines).
+                // Pasting it verbatim preserves that paragraphing.
+                lines.append(s.clientFollowUp)
+                lines.append("")
+            }
+        }
+
+        lines.append("## Transcript")
+        lines.append("")
+        lines.append(session.transcriptText)
+
+        return lines.joined(separator: "\n")
+    }
+
+    /// Recursive bullet writer for `assembledMarkdown`. Two-space
+    /// indent per level, matching CommonMark / Obsidian / Notion.
+    private func appendBullets(_ bullets: [SummaryBullet], level: Int, into lines: inout [String]) {
+        let indent = String(repeating: "  ", count: level)
+        for b in bullets {
+            lines.append("\(indent)- \(b.text)")
+            if !b.children.isEmpty {
+                appendBullets(b.children, level: level + 1, into: &lines)
+            }
+        }
     }
 
     private func sendToNotion() async {

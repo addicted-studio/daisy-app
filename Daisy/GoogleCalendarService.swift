@@ -182,6 +182,19 @@ final class GoogleCalendarService {
                     return nil
                 }
 
+            // Raw emails for client-tag domain inference. Same
+            // self-skipping logic as the names list. Lowercase +
+            // deduped so the suggestion pipeline can count domains.
+            var seenEmails = Set<String>()
+            let attendeeEmails = (event.attendees ?? [])
+                .compactMap { participant -> String? in
+                    if participant.isMe ?? false { return nil }
+                    guard let raw = participant.email else { return nil }
+                    let lower = raw.lowercased().trimmingCharacters(in: .whitespaces)
+                    guard lower.contains("@") else { return nil }
+                    return seenEmails.insert(lower).inserted ? lower : nil
+                }
+
             return DaisyMeeting(
                 externalID: event.iCalUID,
                 // Google events don't have a stable local ID the
@@ -197,7 +210,8 @@ final class GoogleCalendarService {
                 meetingURL: meetingURL,
                 meetingPlatform: platform,
                 calendarColorHex: calendarColor,
-                attendees: attendees
+                attendees: attendees,
+                attendeeEmails: attendeeEmails
             )
         }
 

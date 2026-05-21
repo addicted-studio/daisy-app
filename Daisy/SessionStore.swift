@@ -331,6 +331,27 @@ final class SessionStore {
         }
     }
 
+    /// Update the `daisy_client:` tag on a session and reload the
+    /// store so the History sidebar counts refresh. Pass an empty
+    /// string to remove the tag (the line itself stays as
+    /// `daisy_client: ""` — harmless, reads back as untagged).
+    func setClient(_ client: String, for session: StoredSession) async {
+        guard let url = session.transcriptURL else { return }
+        let trimmed = client.trimmingCharacters(in: .whitespaces)
+        do {
+            var text = try String(contentsOf: url, encoding: .utf8)
+            // Quote the value so spaces / special chars survive the
+            // YAML round-trip parsing (`Acme Inc` etc.).
+            let yamlValue = "\"\(trimmed.replacingOccurrences(of: "\"", with: "\\\""))\""
+            text = Self.upsertFrontmatter(in: text, key: "daisy_client", value: yamlValue)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            await refresh()
+        } catch {
+            log.error("Set client failed: \(error.localizedDescription, privacy: .public)")
+            lastError = error.localizedDescription
+        }
+    }
+
     /// Mutate (or insert) one `key: value` line inside the YAML
     /// frontmatter at the top of `text`. If there's no frontmatter
     /// at all, a fresh `---` block is prepended.
@@ -497,15 +518,17 @@ final class SessionStore {
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
 
-        // Folder slug + speaker mapping — parsed once at load.
+        // Folder slug + client tag + speaker mapping — parsed once at load.
         var folderSlug = "inbox"
+        var client = ""
         var attendees: [String] = []
         var speakerMap: [String: String] = [:]
         if let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
-            let fm = parseFrontmatter(in: text)
-            folderSlug = fm.folder ?? "inbox"
-            attendees = fm.attendees
-            speakerMap = fm.speakerMap
+            let parsedFm = parseFrontmatter(in: text)
+            folderSlug = parsedFm.folder ?? "inbox"
+            client = parsedFm.client ?? ""
+            attendees = parsedFm.attendees
+            speakerMap = parsedFm.speakerMap
         }
 
         return StoredSession(
@@ -523,6 +546,7 @@ final class SessionStore {
             summary: summary,
             transcriptURL: fm.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
+            client: client,
             meetingAttendees: attendees,
             speakerMap: speakerMap
         )
@@ -605,6 +629,11 @@ struct StoredSession: Identifiable, Sendable {
     /// Folder slug, taken from `daisy_folder:` frontmatter. Defaults
     /// to "inbox" for transcripts that predate folder support.
     let folderSlug: String
+    /// Free-form client tag (`daisy_client:` in frontmatter).
+    /// Empty == "untagged" — sidebar groups these together. Default
+    /// for pre-1.0.5 sessions; set by auto-suggestion when binding
+    /// to a calendar event, or edited manually in detail view.
+    let client: String
     /// Attendees captured from the bound EKEvent when this session
     /// was started from the calendar. Empty otherwise.
     let meetingAttendees: [String]
@@ -616,11 +645,15 @@ struct StoredSession: Identifiable, Sendable {
     var hasSummary: Bool { summary != nil }
     var hasScreenshots: Bool { !screenshotURLs.isEmpty }
 
-    /// Cheap full-text search across title, body, and summary.
+    /// Cheap full-text search across title, body, summary, and
+    /// client tag — so "mediacube" in the search box finds every
+    /// session tagged with that client, even when the body doesn't
+    /// mention the brand name.
     func matches(query: String) -> Bool {
         guard !query.isEmpty else { return true }
         let q = query.lowercased()
         if title.lowercased().contains(q) { return true }
+        if client.lowercased().contains(q) { return true }
         if transcriptText.lowercased().contains(q) { return true }
         if let s = summary {
             if s.summary.lowercased().contains(q) { return true }
@@ -639,6 +672,7 @@ nonisolated private struct ParsedFrontmatter {
     var started: String?
     var durationSec: Int?
     var folder: String?
+    var client: String?
     var attendees: [String] = []
     var speakerMap: [String: String] = [:]
     /// Markdown body after the closing `---`. Empty if no frontmatter.
@@ -676,6 +710,7 @@ nonisolated private func parseFrontmatter(in markdown: String) -> ParsedFrontmat
         case "started":       parsed.started = valueRaw
         case "duration_sec":  parsed.durationSec = Int(valueRaw)
         case "daisy_folder":  parsed.folder = valueRaw.lowercased()
+        case "daisy_client":  parsed.client = valueRaw
         case "daisy_event_attendees":
             parsed.attendees = parseYAMLArray(valueRaw)
         case "daisy_speaker_map":

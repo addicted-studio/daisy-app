@@ -143,6 +143,44 @@ final class AppSettings {
         didSet { defaults.set(silencePromptsEnabled, forKey: Self.k_silencePromptsEnabled) }
     }
 
+    /// When ON (default), Daisy posts a macOS banner the moment the
+    /// calendar-driven auto-start fires. Includes a "Stop & save"
+    /// action so the user can bail out if Daisy picked up a meeting
+    /// they didn't want recorded.
+    var notifyOnAutoStart: Bool {
+        didSet { defaults.set(notifyOnAutoStart, forKey: Self.k_notifyOnAutoStart) }
+    }
+
+    /// When ON (default), Daisy posts a confirmation banner when the
+    /// calendar-driven auto-stop fires and the recording is saved.
+    var notifyOnAutoStop: Bool {
+        didSet { defaults.set(notifyOnAutoStop, forKey: Self.k_notifyOnAutoStop) }
+    }
+
+    /// When ON, the diarization pass also runs over the microphone
+    /// stream — useful when remote-meeting participants are heard
+    /// through the user's speakers (in-room playback) instead of
+    /// being captured separately via system-audio loopback. Mic-side
+    /// segments then get "Speaker A / B / C" labels instead of all
+    /// collapsing into "Me". OFF by default — adds Pyannote inference
+    /// over the full mic recording (CoreML, neural-engine, ~15-25%
+    /// of Whisper runtime), so for the common one-user case it's
+    /// wasted compute.
+    var diarizeMicrophone: Bool {
+        didSet { defaults.set(diarizeMicrophone, forKey: Self.k_diarizeMicrophone) }
+    }
+
+    /// Display name used for the user's own voice in transcripts.
+    /// Empty (default) → falls back to the legacy "Me" label.
+    /// When set, mic-source segments render as `[Egor]` instead of
+    /// `[Me]` in the live transcript UI, the saved transcript.md
+    /// frontmatter body, AND the LLM prompt — giving the summarizer
+    /// concrete identity for sentences like "Maria asked Egor about
+    /// pricing" instead of a generic first-person placeholder.
+    var userDisplayName: String {
+        didSet { defaults.set(userDisplayName, forKey: Self.k_userDisplayName) }
+    }
+
     /// When ON, Daisy plays a short macOS system sound on recording
     /// transitions (start / pause / resume / stop). Off for users
     /// who record in environments where the click would be picked
@@ -438,6 +476,10 @@ final class AppSettings {
         // session left running for hours by accident. Users who
         // find it noisy can flip it off here.
         self.silencePromptsEnabled = defaults.object(forKey: Self.k_silencePromptsEnabled) as? Bool ?? true
+        self.notifyOnAutoStart = defaults.object(forKey: Self.k_notifyOnAutoStart) as? Bool ?? true
+        self.notifyOnAutoStop = defaults.object(forKey: Self.k_notifyOnAutoStop) as? Bool ?? true
+        self.diarizeMicrophone = defaults.object(forKey: Self.k_diarizeMicrophone) as? Bool ?? false
+        self.userDisplayName = (defaults.string(forKey: Self.k_userDisplayName) ?? "")
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
@@ -531,6 +573,10 @@ final class AppSettings {
     private static let k_dictationHotkey = "daisy.dictationHotkey"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
     private static let k_silencePromptsEnabled = "daisy.silencePromptsEnabled"
+    private static let k_notifyOnAutoStart = "daisy.notifyOnAutoStart"
+    private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
+    private static let k_diarizeMicrophone = "daisy.diarizeMicrophone"
+    private static let k_userDisplayName = "daisy.userDisplayName"
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
     private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"

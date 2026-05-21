@@ -29,6 +29,7 @@ struct SettingsView: View {
     @Bindable private var googleAccount = GoogleAccountStore.shared
 
     @State private var summaryTestResult: TestResult = .idle
+    @State private var notionTestResult: TestResult = .idle
 
     enum TestResult: Equatable {
         case idle
@@ -327,6 +328,244 @@ struct SettingsView: View {
             ?? SessionsFolder.defaultContainerLabel
     }
 
+    // MARK: - Notion destination (under Storage)
+
+    /// Notion destination row + auto-send toggle + DisclosureGroup
+    /// containing the credentials, parent picker, and Test connection
+    /// affordances. Lives next to `storageRow` because Notion is the
+    /// same logical category — "where Daisy sends a finished meeting"
+    /// — as the local sessions folder. Pre-1.0.5 this was a separate
+    /// tab inside the Connections sidebar destination; testers found
+    /// it hard to discover because they'd think of "where sessions
+    /// go" as a single concept and end up looking in Settings first.
+    @ViewBuilder
+    private var notionDestinationRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.text")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Notion")
+                        .font(.callout.weight(.medium))
+                    notionStatusBadge
+                }
+                Text(notionRowCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Toggle("", isOn: $settings.autoSendNotion)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(!settings.hasNotionCredentials || settings.lastNotionTestPassedAt == nil)
+                .help(notionToggleHelp)
+        }
+
+        // Folder filter — appears when auto-send is on, so a power
+        // user can scope auto-push to e.g. "Work" folder and keep
+        // personal voice notes off Notion.
+        if settings.autoSendNotion {
+            folderFilterPicker(
+                title: "Only from folders",
+                selection: Binding(
+                    get: { settings.autoSendNotionFolders },
+                    set: { settings.autoSendNotionFolders = $0 }
+                )
+            )
+        }
+
+        // Advanced configuration — secret, parent ID, type, Test.
+        // DisclosureGroup keeps this collapsed by default so users
+        // who never wire Notion up don't see a wall of fields.
+        DisclosureGroup("Notion settings") {
+            VStack(alignment: .leading, spacing: 10) {
+                LabeledContent {
+                    SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                } label: {
+                    labelWithCaption("Integration secret",
+                                     caption: "Paste your Notion integration secret.")
+                }
+
+                LabeledContent {
+                    TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                } label: {
+                    labelWithCaption("Parent ID",
+                                     caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
+                }
+
+                LabeledContent {
+                    HStack(spacing: 8) {
+                        Picker("", selection: $settings.notionParentKind) {
+                            Text("Page").tag("page")
+                            Text("Database").tag("database")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                        Spacer()
+                        notionTestStatusView
+                        Button("Test connection") {
+                            Task { await testNotion() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color.daisyAccent)
+                        .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
+                    }
+                } label: {
+                    labelWithCaption("Parent type",
+                                     caption: "Page — Daisy adds the session as a child page underneath. Database — adds a row (title column must be named \"Name\").")
+                }
+
+                Text("Make an internal integration at notion.so/profile/integrations, then share the parent page or database with it. Test creates a probe page you can delete.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 6)
+        }
+        .font(.callout)
+    }
+
+    /// Right-of-title badge — same vocabulary as the old section
+    /// header in Connections so returning users recognise the state.
+    @ViewBuilder
+    private var notionStatusBadge: some View {
+        if settings.hasNotionCredentials && settings.lastNotionTestPassedAt != nil {
+            Text("Connected")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.daisySuccess)
+        } else if settings.hasNotionCredentials {
+            Text("Needs test")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.daisyWarning)
+        }
+    }
+
+    /// Caption text under the Notion title — flips depending on
+    /// config state. Three meaningful states: unconfigured (call to
+    /// action), configured-but-untested (warning to test first),
+    /// configured-and-tested (passive confirmation).
+    private var notionRowCaption: String {
+        if !settings.hasNotionCredentials {
+            return "Push finished sessions to Notion as a child page or a database row. Configure below to enable."
+        }
+        if settings.lastNotionTestPassedAt == nil {
+            return "Pass Test connection first — auto-send needs a confirmed working setup."
+        }
+        return "Pushes the session to Notion the moment you stop recording."
+    }
+
+    private var notionToggleHelp: String {
+        if !settings.hasNotionCredentials {
+            return "Configure Notion settings below first."
+        }
+        if settings.lastNotionTestPassedAt == nil {
+            return "Run Test connection before enabling auto-send."
+        }
+        return "Auto-push finished sessions to Notion."
+    }
+
+    @ViewBuilder
+    private var notionTestStatusView: some View {
+        switch notionTestResult {
+        case .idle:             StatusBadge(state: .idle)
+        case .testing:          StatusBadge(state: .busy)
+        case .success(let m):   StatusBadge(state: .ok, message: m)
+        case .failure(let m):   StatusBadge(state: .err, message: m)
+        }
+    }
+
+    private func testNotion() async {
+        notionTestResult = .testing
+        let probe = MeetingExportData(
+            title: "Daisy — Connection test",
+            summary: nil,
+            transcriptChunks: ["This page was created by Daisy as a connection test. You can safely delete it."],
+            durationSeconds: 0,
+            locale: "en",
+            startedAt: Date()
+        )
+        do {
+            let url = try await NotionExporter.shared.createMeetingPage(probe)
+            notionTestResult = .success("Test page created in Notion.")
+            // Mark proven-working — the auto-send toggle's enabled
+            // gate flips only after this timestamp exists.
+            settings.lastNotionTestPassedAt = Date()
+            NSWorkspace.shared.open(url)
+        } catch {
+            notionTestResult = .failure("Couldn't reach Notion — \(error.localizedDescription)")
+        }
+    }
+
+    /// Folder-filter picker for "Only from folders" — visible only
+    /// when auto-send is ON. Multi-select via Menu so the row stays
+    /// compact regardless of how many folders the user has.
+    @ViewBuilder
+    private func folderFilterPicker(
+        title: String,
+        selection: Binding<Set<String>>
+    ) -> some View {
+        let folders = FolderStore.shared.allFolders
+        Menu {
+            Button {
+                selection.wrappedValue = []
+            } label: {
+                if selection.wrappedValue.isEmpty {
+                    Label("All folders", systemImage: "checkmark")
+                } else {
+                    Text("All folders")
+                }
+            }
+            Divider()
+            ForEach(folders) { folder in
+                Button {
+                    var current = selection.wrappedValue
+                    if current.contains(folder.slug) {
+                        current.remove(folder.slug)
+                    } else {
+                        current.insert(folder.slug)
+                    }
+                    selection.wrappedValue = current
+                } label: {
+                    if selection.wrappedValue.contains(folder.slug) {
+                        Label(folder.name, systemImage: "checkmark")
+                    } else {
+                        Text(folder.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(folderFilterSummary(selection.wrappedValue, allFolders: folders))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func folderFilterSummary(_ slugs: Set<String>, allFolders: [SessionFolder]) -> String {
+        if slugs.isEmpty { return "All folders" }
+        let names = allFolders.filter { slugs.contains($0.slug) }.map(\.name)
+        if names.count == 1 { return names[0] }
+        if names.count <= 3 { return names.joined(separator: ", ") }
+        return "\(names.count) folders"
+    }
+
     /// Label + caption stacked vertically in the LEADING column of
     /// a `LabeledContent` row. Keeps the input alone in the
     /// trailing column — which (1) lets every trailing field share
@@ -363,6 +602,27 @@ struct SettingsView: View {
 
     private var generalTabForm: some View {
         Form {
+            // ── Group 0: You ──────────────────────────────────
+            // Identity used to label the mic-side of transcripts.
+            // Empty by default → falls back to the generic "Me".
+            // First section in General because it answers the
+            // narrative question "who am I in this app" before
+            // "what mic, where files, etc.".
+            Section {
+                LabeledContent("Your name") {
+                    TextField("", text: $settings.userDisplayName, prompt: Text("e.g. Egor"))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                }
+                Text("Shown in transcripts and in the summary prompt for your own voice. Without it, your lines are labeled \"Me\" — fine for solo notes, but the summarizer can't address you by name in multi-person meetings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("You")
+            }
+
             // ── Group 1: Audio & devices ──────────────────────
             // What's coming in and what cues the user hears.
             // Mic picker + system-audio toggle + sound cues fit
@@ -386,12 +646,22 @@ struct SettingsView: View {
             }
 
             // ── Group 2: Storage ──────────────────────────────
-            // Single concern — where files live on disk.
+            // Two destinations live side-by-side: the on-disk folder
+            // (Daisy/Sessions) and an optional Notion push. They're
+            // the same logical category ("where finished meetings
+            // go") so keeping them in one Section is the right
+            // mental model. Notion's deep config (secret + parent ID
+            // + test) hides in a DisclosureGroup so the row isn't
+            // overwhelming for users who'll never wire Notion up.
             Section {
                 storageRow
                 Text("Audio, transcripts, summaries and screenshots land in `Daisy/Sessions/` under this folder. Older recordings stay where they were.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                Divider()
+
+                notionDestinationRow
             } header: {
                 Text("Storage")
             }
@@ -515,21 +785,15 @@ struct SettingsView: View {
             }
 
             // ── Group 4: While recording ──────────────────────
-            // What Daisy does and surfaces during a session.
-            // Floating widget visibility, screenshots, the
-            // silence-prompt notification — all are "what
-            // happens once you've already started".
+            // What Daisy does and surfaces during a session beyond
+            // notifications. Floating widget visibility, screenshots.
+            // (Notifications were pulled out into their own Section
+            // in 1.0.5 so the user can per-toggle the three banner
+            // classes from one place.)
             Section {
                 Toggle(isOn: $settings.floatingWidgetEnabled) {
                     Text("Show floating recorder on top of other windows")
                     Text("Small mark above your apps while recording. Tap to pause; right-click for Stop & save.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle(isOn: $settings.silencePromptsEnabled) {
-                    Text("Notify me on long silence")
-                    Text("After 3 min of silence (or 5 min on pause) Daisy sends a macOS notification with Stop & save / Keep recording.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -553,6 +817,39 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("While recording")
+            }
+
+            // ── Group 5: Notifications ────────────────────────
+            // Per-class toggles for every macOS banner Daisy posts.
+            // Surface the user can flip individual notifications off
+            // without affecting the rest — common case is "I want
+            // auto-start confirmation but the silence prompt feels
+            // nannying", or vice versa.
+            Section {
+                Toggle(isOn: $settings.notifyOnAutoStart) {
+                    Text("Recording started")
+                    Text("Banner when a calendar event auto-starts Daisy. Includes a Stop & save action if you didn't want that meeting tracked.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Toggle(isOn: $settings.notifyOnAutoStop) {
+                    Text("Meeting ended — saved")
+                    Text("Confirmation banner when the calendar event ends and Daisy auto-stops + saves the recording.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Toggle(isOn: $settings.silencePromptsEnabled) {
+                    Text("Long silence")
+                    Text("After 3 min of silence (or 5 min on pause) Daisy asks whether to keep going. Includes Stop & save / Keep recording actions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Notifications")
+            } footer: {
+                Text("macOS-level banners. You can also tune Daisy's notification style in System Settings → Notifications → Daisy.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             // Auto-summary lives in the Summary tab — it sits next
@@ -712,6 +1009,21 @@ struct SettingsView: View {
                 Text("Model status")
             } footer: {
                 Text("First time you pick a model, Daisy downloads it from Hugging Face. Files live inside the app's container and get reused for every meeting after.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section {
+                Toggle(isOn: $settings.diarizeMicrophone) {
+                    Text("Diarize microphone too")
+                    Text("Run speaker separation on your mic audio. Useful when remote participants are heard through your speakers (in-room playback) instead of via system-audio capture — each voice gets its own \"Speaker A / B\" label instead of all collapsing into \"Me\". Adds Pyannote CoreML inference over the mic stream, ~15-25% of Whisper runtime.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Diarization")
+            } footer: {
+                Text("System audio is always diarized (one cluster per remote participant). This toggle adds the same pass for your microphone track — leave off unless you record in-room meetings where everyone shares one mic.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
