@@ -194,9 +194,13 @@ struct FirstRunView: View {
                 )
                 ctaRow(
                     title: "Wire a destination",
-                    detail: "Auto-send finished sessions to Notion, Linear, Attio, or your own webhook.",
+                    detail: "Auto-send finished sessions to Notion right after Stop. (Power users: Connections → Auto-routing for Linear, Attio, webhooks, custom MCP wrappers.)",
                     action: {
-                        nav.openInConnections(.notion)
+                        // 1.0.5: Notion is the primary destination flow and now
+                        // lives in Settings → General → Storage right under the
+                        // sessions-folder picker. Landing here drops the user
+                        // directly into the right Storage block.
+                        nav.openInSettings(.general)
                         finish()
                     }
                 )

@@ -86,14 +86,16 @@ enum SettingsTab: String, Hashable, Sendable {
 
 /// Sub-section inside the Connections page. Lets external CTAs
 /// (FirstRun, Home destination prompts) deep-link to a specific
-/// card on the page — Notion / MCP server / Auto-routing.
+/// card on the page — MCP server / Auto-routing.
 ///
-/// Calendar dropped off in 1.0.4 — EventKit permission moved to
+/// Calendar dropped in 1.0.4 — EventKit permission moved to
 /// Settings → Permissions and behaviour toggles to Settings →
-/// General. Google Calendar OAuth UI is dormant pre-verification;
-/// when it returns it'll come back as its own case here.
+/// General. Notion dropped in 1.0.5 — destination of the same
+/// class as the sessions folder, so it lives in Settings → General
+/// → Storage now (inline DisclosureGroup for advanced fields).
+/// Google Calendar OAuth UI is dormant pre-verification; when it
+/// returns it'll come back as its own case here.
 enum ConnectionSection: String, Hashable, Sendable {
-    case notion
     case mcpServer
     case autoRouting
 }

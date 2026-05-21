@@ -97,8 +97,12 @@ struct PermissionsView: View {
     // MARK: - Row
 
     /// One row in the permissions dashboard. SF Symbol + title +
-    /// caption on the left, a status pill, then an action button
-    /// tailored to the current state.
+    /// caption on the left, then the action button. The status itself
+    /// is communicated by two existing signals — icon colour (green
+    /// = granted, red/orange = needs attention, secondary = idle)
+    /// and the action button's text (Request / Open Settings… /
+    /// Revoke…) — so the explicit "Granted / Not requested" pill
+    /// in between was redundant visual noise. Removed in 1.0.5.
     @ViewBuilder
     private func permissionRow(
         title: String,
@@ -137,8 +141,6 @@ struct PermissionsView: View {
 
             Spacer(minLength: 12)
 
-            statusBadge(status: status, isRequired: isRequired)
-
             actionButton(
                 status: status,
                 requestAction: requestAction,
@@ -163,39 +165,12 @@ struct PermissionsView: View {
         }
     }
 
-    @ViewBuilder
-    private func statusBadge(
-        status: SystemPermissions.Status,
-        isRequired: Bool
-    ) -> some View {
-        switch status {
-        case .granted:
-            Label("Granted", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(Color.daisySuccess)
-        case .denied:
-            Label("Denied", systemImage: "xmark.circle.fill")
-                .font(.caption)
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(isRequired ? Color.daisyError : Color.daisyWarning)
-        case .restricted:
-            Label("Restricted", systemImage: "lock.fill")
-                .font(.caption)
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(Color.daisyWarning)
-        case .insufficient:
-            Label("Write-only", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(Color.daisyWarning)
-        case .notDetermined:
-            Label("Not requested", systemImage: "circle.dashed")
-                .font(.caption)
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(.secondary)
-        }
-    }
+    // statusBadge(...) removed in 1.0.5 — row state is communicated
+    // by `iconColor(status:isRequired:)` on the leading SF Symbol +
+    // the action button's text (Request / Open Settings… / Revoke…).
+    // Section header still surfaces "Required permission missing"
+    // when needsAttention, which is the overall warning a user
+    // glancing at Settings actually needs.
 
     @ViewBuilder
     private func actionButton(

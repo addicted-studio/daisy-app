@@ -18,10 +18,11 @@
 //     authed, what port the MCP server is on, whether Google Calendar
 //     re-needs consent. Settings-tab depth was wrong for that flow.
 //
-//  Layout: a single Form with three anchored Sections so external
-//  CTAs (FirstRun, Home destination prompts) can deep-link via
-//  `AppNavigation.shared.openInConnections(.notion)` etc., and we
-//  scroll to the right section.
+//  Layout: TabView with two tabs — MCP server (incoming) and
+//  Auto-routing (outgoing MCP integrations). External CTAs can
+//  deep-link via `AppNavigation.shared.openInConnections(.mcpServer)`
+//  etc. Notion / Calendar destinations live in Settings; this page
+//  is reserved for power-user MCP wiring.
 //
 
 import SwiftUI
@@ -39,12 +40,14 @@ struct ConnectionsView: View {
     /// deep-links (AppNavigation.openInConnections(_:)) write through
     /// to this value on .onChange.
     ///
-    /// 1.0.4: Calendar tab left this page entirely — EventKit grant is
-    /// in Settings → Permissions, behaviour toggles are in Settings →
-    /// General. Google Calendar OAuth UI is dormant pre-verification;
-    /// it'll come back here as its own tab once Google approves.
-    @State private var selectedSection: ConnectionSection = .notion
-    @State private var notionTestResult: TestResult = .idle
+    /// 1.0.4: Calendar tab left — EventKit grant in Settings →
+    /// Permissions, behaviour toggles in Settings → General.
+    /// 1.0.5: Notion tab left too — destination of the same logical
+    /// class as the local sessions folder, lives in Settings →
+    /// General → Storage with an inline disclosure for advanced
+    /// fields. Google Calendar OAuth UI stays dormant pre-
+    /// verification; when Google approves it comes back here.
+    @State private var selectedSection: ConnectionSection = .mcpServer
     @State private var editingIntegration: MCPIntegration?
     @State private var mcpPortText: String = ""
     /// Disables the "Add to Claude Desktop" button while the open
@@ -56,13 +59,6 @@ struct ConnectionsView: View {
     /// "Refresh Claude Desktop config" (after the bookmark is
     /// stored). Set on appear and after each install run.
     @State private var claudeBookmarkExists: Bool = false
-
-    enum TestResult: Equatable {
-        case idle
-        case testing
-        case success(String)
-        case failure(String)
-    }
 
     // MARK: - Body
 
@@ -78,11 +74,6 @@ struct ConnectionsView: View {
         // (Connected / Running / Needs test) so a glance at any tab
         // gives you the live state without leaving the page.
         TabView(selection: $selectedSection) {
-            notionTab
-                .tag(ConnectionSection.notion)
-                .tabItem { Label("Notion", systemImage: "paperplane") }
-                .scrollContentBackground(.hidden)
-
             mcpServerTab
                 .tag(ConnectionSection.mcpServer)
                 .tabItem { Label("MCP server", systemImage: "antenna.radiowaves.left.and.right") }
@@ -141,13 +132,8 @@ struct ConnectionsView: View {
     //
     // Each tab is a single-Section Form so it inherits the same
     // grouped-card chrome the rest of Daisy's preference surfaces use.
-    // The actual section content (notionSection / mcpServerSection / …)
+    // The actual section content (mcpServerSection / autoRoutingSection)
     // is unchanged from when it lived in the stacked scroll layout.
-
-    private var notionTab: some View {
-        Form { notionSection }
-            .formStyle(.grouped)
-    }
 
     private var mcpServerTab: some View {
         Form { mcpServerSection }
@@ -171,139 +157,12 @@ struct ConnectionsView: View {
     //     verification questionnaire. When it does, a dedicated tab
     //     comes back here next to Notion / MCP server.
 
-    // MARK: - Notion section
-
-    @ViewBuilder
-    private var notionSection: some View {
-        Section {
-            LabeledContent {
-                SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity)
-            } label: {
-                labelWithCaption("Integration secret",
-                                 caption: "Paste your Notion integration secret.")
-            }
-
-            LabeledContent {
-                TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity)
-            } label: {
-                labelWithCaption("Parent ID",
-                                 caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
-            }
-
-            LabeledContent {
-                HStack(spacing: 8) {
-                    Picker("", selection: $settings.notionParentKind) {
-                        Text("Page").tag("page")
-                        Text("Database").tag("database")
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    Spacer()
-                    testStatusView
-                    Button("Test connection") {
-                        Task { await testNotion() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
-                }
-            } label: {
-                labelWithCaption("Parent type",
-                                 caption: "Page — Daisy adds the session as a child page underneath. Database — adds a row (title column must be named \"Name\").")
-            }
-
-            Toggle(isOn: $settings.autoSendNotion) {
-                Text("Auto-send when session finishes")
-                Text(autoSendNotionCaption)
-                    .font(.caption)
-                    .foregroundStyle(autoSendNotionCaptionStyle)
-            }
-            .disabled(!settings.hasNotionCredentials || settings.lastNotionTestPassedAt == nil)
-            if settings.autoSendNotion {
-                folderFilterPicker(
-                    title: "Only from folders",
-                    selection: Binding(
-                        get: { settings.autoSendNotionFolders },
-                        set: { settings.autoSendNotionFolders = $0 }
-                    )
-                )
-            }
-            Text("Make an internal integration at notion.so/profile/integrations, then share the parent page or database with it. Test creates a probe page you can delete.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } header: {
-            HStack(spacing: 6) {
-                Text("Notion")
-                Spacer()
-                if settings.hasNotionCredentials && settings.lastNotionTestPassedAt != nil {
-                    Text("Connected")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.daisySuccess)
-                } else if settings.hasNotionCredentials {
-                    Text("Needs test")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.daisyWarning)
-                }
-            }
-        }
-    }
-
-    private var testStatusView: some View {
-        switch notionTestResult {
-        case .idle:        StatusBadge(state: .idle)
-        case .testing:     StatusBadge(state: .busy)
-        case .success(let msg): StatusBadge(state: .ok, message: msg)
-        case .failure(let msg): StatusBadge(state: .err, message: msg)
-        }
-    }
-
-    private func testNotion() async {
-        notionTestResult = .testing
-        let probe = MeetingExportData(
-            title: "Daisy — Connection test",
-            summary: nil,
-            transcriptChunks: ["This page was created by Daisy as a connection test. You can safely delete it."],
-            durationSeconds: 0,
-            locale: "en",
-            startedAt: Date()
-        )
-        do {
-            let url = try await NotionExporter.shared.createMeetingPage(probe)
-            notionTestResult = .success("Test page created in Notion.")
-            // Mark this configuration as proven-working — the UI gate
-            // on auto-send lifts only after this timestamp exists,
-            // so a user can't silently break every future session by
-            // flipping auto-send with bad credentials / a mistyped
-            // parent ID / a database missing a "Name" title column.
-            settings.lastNotionTestPassedAt = Date()
-            NSWorkspace.shared.open(url)
-        } catch {
-            notionTestResult = .failure("Couldn't reach Notion — \(error.localizedDescription)")
-        }
-    }
-
-    private var autoSendNotionCaption: String {
-        if settings.hasNotionCredentials && settings.lastNotionTestPassedAt == nil {
-            return "Pass Test connection first — auto-send needs a confirmed working setup."
-        }
-        return "Pushes the session to Notion the moment you stop recording."
-    }
-
-    private var autoSendNotionCaptionStyle: Color {
-        if settings.hasNotionCredentials && settings.lastNotionTestPassedAt == nil {
-            return Color.daisyWarning
-        }
-        return .secondary
-    }
+    // Notion configuration moved to Settings → General → Storage in
+    // 1.0.5 — destination of the same logical class as the local
+    // sessions folder. The Test connection flow, auto-send toggle,
+    // folder filter, and credentials all live there now next to the
+    // sessions folder picker, with the advanced fields collapsed in
+    // a DisclosureGroup so they don't dominate the General tab.
 
     // MARK: - MCP server section
 
@@ -598,83 +457,8 @@ struct ConnectionsView: View {
         }
     }
 
-    // MARK: - Shared helpers
-
-    /// Label + caption stacked vertically in the LEADING column of
-    /// a `LabeledContent` row. Mirrors the helper in SettingsView —
-    /// duplicated rather than shared to keep ConnectionsView a
-    /// self-contained refactor target.
-    @ViewBuilder
-    private func labelWithCaption(_ title: String, caption: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(caption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    /// Folder-filter picker used by Notion auto-send "Only from
-    /// folders" row. Same helper SettingsView used to own; moved
-    /// here together with the auto-send toggle.
-    @ViewBuilder
-    private func folderFilterPicker(
-        title: String,
-        selection: Binding<Set<String>>
-    ) -> some View {
-        let folders = FolderStore.shared.allFolders
-        VStack(alignment: .leading, spacing: 6) {
-            Menu {
-                Button {
-                    selection.wrappedValue = []
-                } label: {
-                    if selection.wrappedValue.isEmpty {
-                        Label("All folders", systemImage: "checkmark")
-                    } else {
-                        Text("All folders")
-                    }
-                }
-                Divider()
-                ForEach(folders) { folder in
-                    Button {
-                        var current = selection.wrappedValue
-                        if current.contains(folder.slug) {
-                            current.remove(folder.slug)
-                        } else {
-                            current.insert(folder.slug)
-                        }
-                        selection.wrappedValue = current
-                    } label: {
-                        if selection.wrappedValue.contains(folder.slug) {
-                            Label(folder.name, systemImage: "checkmark")
-                        } else {
-                            Text(folder.name)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(title)
-                    Text("·")
-                        .foregroundStyle(.tertiary)
-                    Text(folderFilterSummary(selection.wrappedValue, allFolders: folders))
-                        .foregroundStyle(.secondary)
-                }
-                .font(.callout)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-        }
-    }
-
-    private func folderFilterSummary(_ slugs: Set<String>, allFolders: [SessionFolder]) -> String {
-        if slugs.isEmpty { return "All folders" }
-        let names = allFolders
-            .filter { slugs.contains($0.slug) }
-            .map(\.name)
-        if names.count == 1 { return names[0] }
-        if names.count <= 3 { return names.joined(separator: ", ") }
-        return "\(names.count) folders"
-    }
+    // Shared helpers (labelWithCaption, folderFilterPicker,
+    // folderFilterSummary) left with the Notion section to
+    // Settings in 1.0.5 — they were used only by Notion config
+    // here. SettingsView owns the canonical copies now.
 }
