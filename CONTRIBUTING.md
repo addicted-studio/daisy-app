@@ -1,6 +1,6 @@
 # Contributing to Daisy
 
-Thanks for thinking about contributing. Before you spend your time on a pull request, please read this — Daisy is **source-available**, not a typical open source project, and that shapes how contributions are handled.
+Thanks for thinking about contributing. Daisy is open source under the Apache 2.0 licence, but direction is set by a single maintainer — please read this before spending your time on a pull request.
 
 ## Direction is set by the maintainer
 
@@ -68,7 +68,7 @@ Run `DaisyTests` (the regression suite, not the UI tests target which was remove
 
 ### Licence
 
-Daisy is [BUSL 1.1](LICENSE), which converts to Apache 2.0 four years after each release. Contributions are accepted under that same licence. By opening a PR, you confirm you have the right to contribute and that you understand the licence.
+Daisy is [Apache 2.0](LICENSE). Contributions are accepted under that same licence. By opening a PR, you confirm you have the right to contribute under Apache 2.0 — that's all the paperwork.
 
 ## Questions
 

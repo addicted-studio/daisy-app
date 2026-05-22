@@ -688,12 +688,16 @@ struct SettingsView: View {
 
     private var generalTabForm: some View {
         Form {
-            // ── Group 0: You ──────────────────────────────────
+            // ── Group 0: Profile ──────────────────────────────
             // Identity used to label the mic-side of transcripts.
             // Empty by default → falls back to the generic "Me".
             // First section in General because it answers the
             // narrative question "who am I in this app" before
-            // "what mic, where files, etc.".
+            // "what mic, where files, etc.". Section was originally
+            // "You" — renamed to "Profile" to match the macOS
+            // Settings convention (System Settings → Privacy & Security
+            // → "Profiles", Mail → "Profiles"), which reads as a
+            // labelled identity container rather than a pronoun.
             Section {
                 LabeledContent("Your name") {
                     TextField("", text: $settings.userDisplayName, prompt: Text("e.g. Egor"))
@@ -706,7 +710,7 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {
-                Text("You")
+                Text("Profile")
             }
 
             // ── Group 1: Audio & devices ──────────────────────

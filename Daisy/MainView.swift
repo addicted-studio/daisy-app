@@ -344,19 +344,6 @@ struct MainView: View {
                     .listRowInsets(EdgeInsets(top: 14, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
 
-                // System-audio status row — visible during active
-                // recording so the user can see at a glance whether
-                // the OTHER side of the meeting is being captured.
-                // Tap the deny-state pill to jump to Privacy
-                // Settings. Hidden in normal capturing-OK state on
-                // .capturing? No — we want a positive confirmation
-                // pill too, so the user trusts what they're seeing.
-                if session.status == .recording || session.status == .paused {
-                    SystemAudioStatusPill(session: session)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
-                        .listRowBackground(Color.clear)
-                }
-
                 // Stop & save lives next to the toggle capsule so a
                 // user mid-session can finalise without hunting in
                 // the kebab menu. Only shows during recording / paused.
@@ -383,8 +370,19 @@ struct MainView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
                     .listRowBackground(Color.clear)
+                }
+
+                // System-audio status row — UNDER the Stop button.
+                // Order: tap-target first, status second. The status
+                // is informational ("here's what's being captured");
+                // putting it above Stop made the eye land on a label
+                // before the actionable button, which felt wrong.
+                if session.status == .recording || session.status == .paused {
+                    SystemAudioStatusPill(session: session)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                        .listRowBackground(Color.clear)
                 }
             }
         }
@@ -436,17 +434,19 @@ struct MainView: View {
 
 // MARK: - System audio status pill
 
-/// Tiny status row that appears in the sidebar during active
-/// recording, showing whether the OTHER side of the meeting is
-/// being captured. The three states a user actually cares about:
+/// Tiny status row under the Stop button during active recording.
+/// Tells the user what's actually being captured right now, in
+/// plain language — no "capture", "stream", "permission" jargon
+/// that needs decoding mid-meeting.
 ///
-///   • capturing — green dot, "Other side: capturing"
-///   • denied    — orange warning + "Open Settings" deeplink
-///   • failed    — orange warning with the underlying error
+///   • capturing → "Recording both sides" — green dot, sage tint
+///   • denied    → "Only your voice — Screen Recording is off"
+///                 (clickable: opens System Settings)
+///   • failed    → "Only your voice — couldn't reach the other side"
+///                 (full error in tooltip on hover)
 ///
-/// The `.disabled` and `.pending` states render nothing — the
-/// user either turned it off on purpose, or recording hasn't
-/// started yet (in which case the pill row is hidden upstream).
+/// `.disabled` and `.pending` render nothing — the user either
+/// turned system audio off on purpose, or recording hasn't started.
 private struct SystemAudioStatusPill: View {
     @Bindable var session: RecordingSession
 
@@ -463,21 +463,35 @@ private struct SystemAudioStatusPill: View {
         }
     }
 
+    /// Sage-tinted capsule confirming both sides are being captured.
+    /// Matches the visual weight of the warning states below so the
+    /// status row stays consistent regardless of state — eye lands
+    /// on the same shape, only the colour and copy change.
     private var capturingPill: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(Color.daisySuccess)
                 .frame(width: 6, height: 6)
-            Text("Other side: capturing")
+            Text("Recording both sides")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.daisyTextPrimary)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous).fill(Color.daisySuccess.opacity(0.10))
+        )
+        .overlay(
+            Capsule(style: .continuous).strokeBorder(Color.daisySuccess.opacity(0.25), lineWidth: 0.5)
+        )
     }
 
+    /// Screen Recording permission denied — recording continues with
+    /// mic only. Tap opens System Settings → Privacy → Screen
+    /// Recording so the user can flip the toggle without leaving
+    /// the recording flow.
     private var deniedPill: some View {
         Button {
             ScreenRecordingPermission.openSystemSettings()
@@ -486,7 +500,7 @@ private struct SystemAudioStatusPill: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(Color.daisyWarning)
-                Text("Other side: off")
+                Text("Only your voice — Screen Recording is off")
                     .font(.caption)
                     .foregroundStyle(Color.daisyTextPrimary)
                     .lineLimit(1)
@@ -505,15 +519,19 @@ private struct SystemAudioStatusPill: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Screen Recording permission is required to capture the other side of meetings. Click to open System Settings.")
+        .help("Daisy needs Screen Recording permission to capture the other side of meetings. Click to open System Settings.")
     }
 
+    /// System audio capture started but errored out mid-stream
+    /// (display gone, ScreenCaptureKit threw, etc). The recording
+    /// keeps going with mic only — full error in the help tooltip
+    /// for the curious; the user-facing label stays simple.
     private func failedPill(_ message: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption2)
                 .foregroundStyle(Color.daisyWarning)
-            Text("Other side: off")
+            Text("Only your voice — couldn't reach the other side")
                 .font(.caption)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .lineLimit(1)

@@ -74,15 +74,27 @@ struct TranscriptSegment: Identifiable, Sendable, Equatable {
     func speakerLabel(displayName: String?) -> String {
         switch source {
         case .microphone:
-            // With mic-side diarization enabled (Settings →
-            // Transcription) we emit per-cluster labels here too;
-            // otherwise the historical single-speaker "Me" label
-            // applies. The user can rename "Speaker A → Alex" via
-            // the Detail-view speaker map, same path that exists for
-            // system-source speakers.
-            if let id = speakerId { return "Speaker \(id)" }
+            // Display name wins for the mic stream — always.
+            //
+            // Pre-1.0.6.2: when mic-side diarization assigned a
+            // cluster id (e.g. Pyannote tags a solo recording's
+            // segments as "A"), the label became "Speaker A" and
+            // display-name override was silently skipped. Users who
+            // set their name in Settings → General → You saw
+            // "Speaker A" in transcripts instead of their actual
+            // name — surfaced by tester report 2026-05-22.
+            //
+            // Mic stream = the user's microphone. Even when Pyannote
+            // segments it into multiple clusters (rare — would need
+            // multiple people sharing one mic in the same room),
+            // display name is still the right "this is you" label
+            // for the majority case. The Detail-view speaker-map UI
+            // still exists for users who want per-cluster
+            // disambiguation on the rare multi-speaker mic stream.
             let trimmed = (displayName ?? "").trimmingCharacters(in: .whitespaces)
-            return trimmed.isEmpty ? "Me" : trimmed
+            if !trimmed.isEmpty { return trimmed }
+            if let id = speakerId { return "Speaker \(id)" }
+            return "Me"
         case .systemAudio:
             if let id = speakerId { return "Remote \(id)" }
             return "Remote"

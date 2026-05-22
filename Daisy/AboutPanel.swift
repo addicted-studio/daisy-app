@@ -34,7 +34,7 @@ enum AboutPanel {
             // but we override here so it stays consistent with the
             // string the in-app About view shows.
             NSApplication.AboutPanelOptionKey(rawValue: "Copyright"):
-                "Made by Addicted Studio. Source-available under BUSL-1.1."
+                "Made by Addicted Studio. Open source under Apache 2.0."
         ])
     }
 

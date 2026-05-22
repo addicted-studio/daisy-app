@@ -268,15 +268,18 @@ struct SessionDetailView: View {
                 Text(formattedDate)
                 Text("·")
                 Text(formattedDuration)
-                Text("·")
-                Text(session.locale.uppercased())
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
-                if session.hasSystemAudio {
-                    Label("System audio", systemImage: "speaker.wave.2")
-                        .labelStyle(.iconOnly)
-                        .foregroundStyle(.secondary)
-                }
+                // Header used to surface two more chips here:
+                //   • transcription locale ("AUTO" / "EN" / "RU"),
+                //     already controlled in Settings → Transcription
+                //     and doesn't change anything the user sees in
+                //     the transcript itself;
+                //   • a `speaker.wave.2` icon flagging that system
+                //     audio was captured — read as cryptic visual
+                //     debt, since the user already knows they
+                //     recorded a meeting (the title literally says
+                //     "Meeting 2026-…").
+                // Removed in 1.0.6.4 — header now stays date · duration
+                // · tag, which is what users actually scan for.
                 Spacer()
                 tagField
             }

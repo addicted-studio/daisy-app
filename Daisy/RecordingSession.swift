@@ -237,6 +237,16 @@ final class RecordingSession {
     /// mid-recording whether the remote party is actually being
     /// captured.
     var systemAudioStatus: SystemAudioStatus {
+        // System audio is only meaningful in meeting mode. Voice
+        // notes and dictation are personal-mic-only flows by design
+        // — the user is the only voice that matters. start() skips
+        // the SCStream wiring entirely for those modes, so
+        // `systemAudio.state` stays at `.idle`, which would otherwise
+        // fall through to the `.failed("Capture stopped unexpectedly")`
+        // case below and surface a bogus warning for a recording
+        // that is working exactly as intended. Map non-meeting modes
+        // to `.disabled` so the status pill hides itself.
+        guard currentMode == .meeting else { return .disabled }
         if !settings.captureSystemAudio { return .disabled }
         // Only meaningful once we're recording — before that
         // SystemAudioCapture sits in .idle which doesn't yet say
@@ -653,9 +663,23 @@ final class RecordingSession {
         }
 
         if title.isEmpty {
+            // Mode-aware default title. Pre-1.0.6.3 every session
+            // (meeting, voice note, dictation) got the "Meeting …"
+            // prefix regardless of `currentMode`, which made voice
+            // notes look like miscategorised meetings in the
+            // History sidebar. Now the title reflects what the
+            // session actually is — the user's expectation when
+            // they tap the voice-notes hotkey is a Library entry
+            // that reads "Voice note", not "Meeting".
             let f = DateFormatter()
             f.dateFormat = "yyyy-MM-dd HH:mm"
-            title = "Meeting \(f.string(from: Date()))"
+            let prefix: String
+            switch currentMode {
+            case .meeting:   prefix = "Meeting"
+            case .voiceNote: prefix = "Voice note"
+            case .dictation: prefix = "Dictation"
+            }
+            title = "\(prefix) \(f.string(from: Date()))"
         }
 
         status = .preparing

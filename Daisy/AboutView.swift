@@ -150,7 +150,7 @@ struct AboutView: View {
                 aboutRow(
                     icon: "doc.text",
                     title: "License",
-                    detail: "BUSL-1.1 — source-available",
+                    detail: "Apache 2.0 — open source",
                     url: URL(string: "https://github.com/addicted-studio/daisy-app/blob/main/LICENSE")
                 )
                 divider
