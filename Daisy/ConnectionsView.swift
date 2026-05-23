@@ -60,6 +60,18 @@ struct ConnectionsView: View {
     /// stored). Set on appear and after each install run.
     @State private var claudeBookmarkExists: Bool = false
 
+    /// Observable Google account state — drives the Connect /
+    /// Disconnect button labels and the connected-as email row.
+    @Bindable private var googleAccount = GoogleAccountStore.shared
+    /// True while the OAuth flow is in flight (Safari hands off
+    /// to our loopback listener and back). Disables Connect to
+    /// stop double-clicks from spawning two browser windows.
+    @State private var googleConnecting: Bool = false
+    /// Most-recent OAuth error message, surfaced inline in the
+    /// Calendar tab so the maintainer (and reviewer watching the
+    /// video) can see exactly why the flow failed.
+    @State private var googleConnectError: String?
+
     // MARK: - Body
 
     var body: some View {
@@ -82,6 +94,18 @@ struct ConnectionsView: View {
             mcpServerTab
                 .tag(ConnectionSection.mcpServer)
                 .tabItem { Label("MCP server", systemImage: "antenna.radiowaves.left.and.right") }
+                .scrollContentBackground(.hidden)
+
+            // Google Calendar OAuth tab — visible to everyone with
+            // a `Beta` badge while Google's verification request is
+            // in flight. The flow works end-to-end; users will see
+            // Google's "App isn't verified" interstitial on the
+            // consent screen until verification clears (typically
+            // 2–6 weeks). Once approved we drop the badge and the
+            // in-tab "Pre-verification" notice.
+            googleCalendarTab
+                .tag(ConnectionSection.googleCalendar)
+                .tabItem { Label("Calendar · Beta", systemImage: "calendar") }
                 .scrollContentBackground(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -143,6 +167,134 @@ struct ConnectionsView: View {
     private var autoRoutingTab: some View {
         Form { autoRoutingSection }
             .formStyle(.grouped)
+    }
+
+    /// Google Calendar OAuth tab body. Shipped with a `Beta`
+    /// badge while verification is in flight — see the
+    /// `.googleCalendar` case docstring in `ConnectionSection`
+    /// for the lifecycle. Provides Connect / Disconnect, the
+    /// connected-as email row, and an honest inline notice so
+    /// users aren't surprised by Google's "App isn't verified"
+    /// interstitial on the consent screen.
+    private var googleCalendarTab: some View {
+        Form { googleCalendarSection }
+            .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private var googleCalendarSection: some View {
+        Section {
+            if googleAccount.isConnected {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connected as")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(googleAccount.email ?? "—")
+                            .font(.body)
+                    }
+                    Spacer()
+                    Button(role: .destructive) {
+                        Task {
+                            await googleAccount.disconnect()
+                            googleConnectError = nil
+                        }
+                    } label: {
+                        Text("Disconnect")
+                    }
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "calendar.badge.plus")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Connect Google Calendar")
+                        Text("Read-only access to your events — used to name sessions, prefill attendees, and optionally auto-start / auto-stop the recording around meetings. Scope: calendar.readonly.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button {
+                        Task { await runOAuthConnect() }
+                    } label: {
+                        if googleConnecting {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Connect")
+                        }
+                    }
+                    .disabled(googleConnecting)
+                }
+            }
+
+            if let err = googleConnectError {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Honest pre-verification notice — Google's "App isn't
+            // verified" interstitial scares people who weren't
+            // warned to expect it. Telling them up front turns a
+            // scary moment into an expected one. Removed once
+            // Google approves and the Beta badge comes off.
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Pre-verification — heads up on the Google consent screen")
+                        .font(.caption.weight(.medium))
+                    Text("Google is still reviewing Daisy's OAuth verification. Until they approve it, the consent screen will show an \u{201C}App isn\u{2019}t verified\u{201D} warning. Click \u{201C}Advanced\u{201D} → \u{201C}Go to mydaisy.io (unsafe)\u{201D} to proceed — the scope is still calendar.readonly and nothing leaves your Mac. We\u{2019}ll drop this notice the moment Google approves.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Text("Apple Calendar via EventKit covers the same use cases without involving Google — see Settings → Permissions → Calendar.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } header: {
+            HStack(spacing: 8) {
+                Text("Google Calendar")
+                Text("Beta")
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(Color.orange.opacity(0.18))
+                    )
+                    .foregroundStyle(.orange)
+                Spacer()
+                if googleAccount.isConnected {
+                    Text("Connected")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+        }
+    }
+
+    /// Run the PKCE-loopback OAuth flow + persist the result via
+    /// GoogleAccountStore. Surfaces any thrown error inline so the
+    /// maintainer can see exactly what Google returned during the
+    /// verification recording attempt.
+    private func runOAuthConnect() async {
+        googleConnecting = true
+        googleConnectError = nil
+        defer { googleConnecting = false }
+        do {
+            let result = try await GoogleOAuthClient.connect()
+            googleAccount.save(connect: result)
+        } catch {
+            googleConnectError = error.localizedDescription
+        }
     }
 
     // Calendar UI moved out of Connections in 1.0.4:

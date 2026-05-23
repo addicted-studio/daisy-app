@@ -568,12 +568,11 @@ private struct SessionRow: View {
     @ViewBuilder
     private var badges: some View {
         HStack(spacing: 4) {
-            if session.hasSystemAudio {
-                Image(systemName: "speaker.wave.2")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .help("Has system audio")
-            }
+            // `speaker.wave.2` (hasSystemAudio) removed in 1.0.6.4 —
+            // it was repeating what the session title already says
+            // ("Meeting …" implies system audio was on). Removed
+            // here for parity with SessionDetailView header where it
+            // was dropped for the same reason.
             if session.hasScreenshots {
                 Image(systemName: "photo")
                     .font(.caption2)

@@ -148,12 +148,43 @@ final class WhisperEngine {
         return false
     }
 
+    /// Conservative lower bound for the disk space we need before
+    /// kicking off a fresh model download. The largest variant
+    /// users typically pick (`large-v3-v20240930_626MB`) lands as
+    /// ~1.5 GB of CoreML artefacts on disk after unpack; smaller
+    /// variants are well under this. 2 GB free leaves headroom
+    /// for HuggingFace's temp files, swap pressure, and a
+    /// margin for a recording or two right after the download
+    /// completes. Better to refuse early with a clear message
+    /// than to wedge at "100% downloaded" because the temp file
+    /// couldn't be moved into place.
+    private static let minRequiredDiskBytes: Int64 = 2 * 1024 * 1024 * 1024
+
     /// Two-phase load: first explicit download (with progress) then
     /// CoreML init. Splitting lets the UI show a real progress bar
     /// during the 70 MB – 1.5 GB download.
     private func performLoad() async {
         let variant = modelID
         let repo = "argmaxinc/whisperkit-coreml"
+
+        // Phase 0 — disk space preflight. Spinning on
+        // `.downloading(progress: 1.0)` because the destination
+        // volume is full is the worst possible failure mode: no
+        // error, no recovery, the user thinks the model is
+        // "loading forever". Refuse early with a concrete number
+        // the user can act on.
+        if let available = Self.availableDiskBytes(),
+           available < Self.minRequiredDiskBytes {
+            let neededGB = Double(Self.minRequiredDiskBytes) / 1_073_741_824.0
+            let haveGB = Double(available) / 1_073_741_824.0
+            let msg = String(
+                format: "Not enough disk space to download the transcription model — need %.1f GB free, only %.2f GB available. Free some space and try again.",
+                neededGB, haveGB
+            )
+            log.error("Whisper download aborted — disk too full (\(available, privacy: .public) bytes free)")
+            state = .failed(msg)
+            return
+        }
 
         // Phase 1 — download
         state = .downloading(progress: 0)
@@ -220,6 +251,20 @@ final class WhisperEngine {
     #else
     private func ensureVADLoadStarted() {}
     #endif
+
+    /// Available bytes on the volume that backs the user's home
+    /// directory — same volume HuggingFace stages downloads into
+    /// (~/Library/Caches). `volumeAvailableCapacityForImportantUsage`
+    /// is Apple's recommended key for "can I write a big file
+    /// here?"; it respects purgeable-space accounting (TimeMachine
+    /// snapshots, iCloud caches) better than the raw free-bytes
+    /// number. Returns nil if the lookup fails — caller treats
+    /// that as "no preflight" rather than aborting.
+    nonisolated private static func availableDiskBytes() -> Int64? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let values = try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
 
     /// Off-main download — returns the folder containing the unpacked
     /// CoreML files. Progress is reported via the callback on the main

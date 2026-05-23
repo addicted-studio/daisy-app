@@ -805,7 +805,7 @@ final class RecordingSession {
 
         startedAt = nowStarted
         status = .recording
-        if settings.recordingSoundsEnabled { SoundEffects.playStart() }
+        if settings.recordingSoundsEnabled { SoundEffects.playStart(for: currentMode) }
 
         // Optional screenshots.
         if settings.screenshotsEnabled, let dir {
