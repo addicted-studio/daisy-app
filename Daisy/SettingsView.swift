@@ -73,6 +73,20 @@ struct SettingsView: View {
     @State private var cachedModelsBytes: Int64 = 0
     @State private var cacheRefreshTick: Int = 0
 
+    /// On-disk size of all known `.caf` audio archives across
+    /// every session. Drives the "Clear audio cache" row caption
+    /// in Storage. Populated by an off-thread scan, bumped by
+    /// `audioCacheRefreshTick` after the manual purge so the
+    /// freshly-zeroed size shows up immediately.
+    @State private var audioCacheFiles: Int = 0
+    @State private var audioCacheBytes: Int64 = 0
+    @State private var audioCacheRefreshTick: Int = 0
+    /// Drives the destructive-confirm alert before `runNow()`.
+    @State private var showingClearAudioConfirm = false
+    /// Set while the sweep is running so the button shows
+    /// progress + can't be double-clicked.
+    @State private var clearingAudioCache = false
+
     /// Cached `ByteCountFormatter` for the cache-size row. Building
     /// one per body recompute is wasteful; this one stays alive for
     /// the view lifetime.
@@ -128,6 +142,14 @@ struct SettingsView: View {
             // session", Connections is "where Daisy talks to other
             // systems". About also moved to its own sidebar entry.
         }
+        // 2026-05-22 — there was a brief workaround that replaced
+        // this TabView with a custom HStack of tab buttons on
+        // macOS 26, after a tester crash that pointed at the
+        // `SystemSegmentedControl → DesignLibrary` path. Reverted
+        // when the crash turned out to correlate with low disk +
+        // a partly-downloaded Whisper model on the tester's
+        // machine, not the segmented control itself. Native
+        // chrome restored; root cause tracked separately.
         // Consume any one-shot deep-link from AppNavigation. Set on
         // appear (initial entry into Settings) AND on change (user
         // jumps from FirstRun while Settings sheet is already
@@ -375,6 +397,77 @@ struct SettingsView: View {
     /// tab inside the Connections sidebar destination; testers found
     /// it hard to discover because they'd think of "where sessions
     /// go" as a single concept and end up looking in Settings first.
+    /// "Clear audio cache" affordance — manual flush of all `.caf`
+    /// audio archives across every session, regardless of the
+    /// retention picker setting. Lives below the retention row so
+    /// the user gets both the auto-trim and the one-shot
+    /// "everything off the disk now" controls in the same place.
+    /// Existing users who installed before audio retention shipped
+    /// might have multi-GB caches; the row caption shows the
+    /// current size so they can decide before clicking. Confirm
+    /// alert prevents accidental purges — transcripts and
+    /// summaries are NOT touched, but raw audio is unrecoverable
+    /// once removed.
+    @ViewBuilder
+    private var clearAudioCacheRow: some View {
+        let mb = Double(audioCacheBytes) / 1_048_576.0
+        let sizeText: String = {
+            if audioCacheFiles == 0 { return "Nothing to clear" }
+            if mb < 1024 { return String(format: "%.0f MB across %d file(s)", mb, audioCacheFiles) }
+            return String(format: "%.2f GB across %d file(s)", mb / 1024.0, audioCacheFiles)
+        }()
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "trash")
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Clear audio cache now")
+                Text(sizeText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(role: .destructive) {
+                showingClearAudioConfirm = true
+            } label: {
+                if clearingAudioCache {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("Clear…")
+                }
+            }
+            .disabled(clearingAudioCache || audioCacheFiles == 0)
+        }
+        .task(id: audioCacheRefreshTick) {
+            let result = await AudioRetentionSweep.currentCacheSize()
+            audioCacheFiles = result.files
+            audioCacheBytes = result.bytes
+        }
+        .alert("Clear all audio archives?", isPresented: $showingClearAudioConfirm) {
+            Button("Clear", role: .destructive) {
+                clearingAudioCache = true
+                AudioRetentionSweep.runNow { _, freedBytes in
+                    let mb = Double(freedBytes) / 1_048_576.0
+                    let freedText: String = {
+                        if mb < 1024 { return String(format: "%.0f MB", mb) }
+                        return String(format: "%.2f GB", mb / 1024.0)
+                    }()
+                    ToastCenter.shared.show(
+                        freedBytes > 0
+                            ? "Cleared \(freedText) of audio"
+                            : "Audio cache was already empty",
+                        style: .success
+                    )
+                    clearingAudioCache = false
+                    audioCacheRefreshTick += 1
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removes every microphone.caf and system_audio.caf across all sessions. Transcripts, summaries and screenshots are kept. This can't be undone.")
+        }
+    }
+
     @ViewBuilder
     private var notionDestinationRow: some View {
         HStack(spacing: 10) {
@@ -750,12 +843,10 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
 
                 Picker(selection: $settings.audioRetentionDays) {
-                    Text("Keep forever").tag(0)
+                    Text("24 hours").tag(1)
                     Text("7 days").tag(7)
                     Text("30 days").tag(30)
-                    Text("90 days").tag(90)
-                    Text("180 days").tag(180)
-                    Text("365 days").tag(365)
+                    Text("Keep forever").tag(0)
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Delete audio after")
@@ -771,6 +862,8 @@ struct SettingsView: View {
                     // without waiting for next launch.
                     AudioRetentionSweep.runIfNeeded(retentionDays: new)
                 }
+
+                clearAudioCacheRow
 
                 Divider()
 

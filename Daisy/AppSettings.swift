@@ -491,7 +491,24 @@ final class AppSettings {
         self.notifyOnAutoStop = defaults.object(forKey: Self.k_notifyOnAutoStop) as? Bool ?? true
         self.diarizeMicrophone = defaults.object(forKey: Self.k_diarizeMicrophone) as? Bool ?? false
         self.userDisplayName = (defaults.string(forKey: Self.k_userDisplayName) ?? "")
-        self.audioRetentionDays = defaults.object(forKey: Self.k_audioRetentionDays) as? Int ?? 0
+        // 24-hour retention is the new default for fresh installs
+        // (1.0.6.9+). Raw audio dominates Daisy's disk footprint
+        // (~50-150 MB / hour) and an unbounded default bit a
+        // tester whose Mac was already close to full.
+        //
+        // CRITICAL: existing users who never opened Settings →
+        // Storage and never changed the retention picker must NOT
+        // suddenly lose yesterday's audio because we flipped the
+        // default — they didn't opt in. So we gate the new default
+        // on `hasShownFirstRun`: false means a fresh install (no
+        // first-run sheet shown yet), true means an existing
+        // install that's been launched before. Anyone with an
+        // explicit value in UserDefaults keeps it regardless;
+        // `defaults.object(...) as? Int` returns nil only for keys
+        // that were never written.
+        let storedRetention = defaults.object(forKey: Self.k_audioRetentionDays) as? Int
+        let isFreshInstall = !defaults.bool(forKey: Self.k_hasShownFirstRun)
+        self.audioRetentionDays = storedRetention ?? (isFreshInstall ? 1 : 0)
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)

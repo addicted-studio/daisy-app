@@ -15,9 +15,12 @@
 //      non-zero value to a smaller one (catch-up sweep so the user
 //      sees space reclaimed without waiting for next launch)
 //
-//  Safe-by-default: `audioRetentionDays == 0` ⇒ no-op. Pre-1.0.5.4
-//  installs have no key set, so the migration value is 0; nothing
-//  unexpected gets deleted for existing users until they opt in.
+//  Safe-by-default: `audioRetentionDays == 0` ⇒ no-op. Default
+//  changed from 0 to 1 (24-hour retention) in 1.0.6.9; users
+//  who explicitly picked a value keep it. `runNow()` ignores
+//  the cutoff entirely and purges all audio archives (for the
+//  Settings → Clear audio cache button — manual flush after the
+//  user accepts a destructive confirm alert).
 //
 
 import Foundation
@@ -56,11 +59,81 @@ enum AudioRetentionSweep {
         }
     }
 
-    private static func sweep(cutoff: Date) async {
+    /// Immediate manual purge — deletes all known audio archives in
+    /// every session directory, ignoring the user's retention
+    /// setting. Backs the Settings → "Clear audio cache" button.
+    /// Returns the freed-bytes count via the optional callback so
+    /// the UI can display "Freed X MB". Best-effort: per-file
+    /// failures are logged and skipped.
+    static func runNow(completion: (@MainActor @Sendable (Int, Int64) -> Void)? = nil) {
+        // `Date.distantFuture` cutoff matches every session.
+        let cutoff = Date.distantFuture
+        Task.detached(priority: .userInitiated) {
+            let result = await sweep(cutoff: cutoff)
+            if let completion {
+                await MainActor.run { completion(result.purgedFiles, result.freedBytes) }
+            }
+        }
+    }
+
+    /// Compute current on-disk size of all known audio archives,
+    /// across every session. For the Settings row caption — lets
+    /// the user see how much they'd reclaim before clicking
+    /// "Clear audio cache". Returns (file count, total bytes).
+    /// Best-effort: unreadable directories are skipped silently.
+    static func currentCacheSize() async -> (files: Int, bytes: Int64) {
+        let fm = FileManager.default
+        guard let ticket = await MainActor.run(body: { SessionsFolder.acquireBase() }) else {
+            return (0, 0)
+        }
+        defer { Task { @MainActor in ticket.release() } }
+        let sessionsDir = ticket.url.appendingPathComponent("Sessions", isDirectory: true)
+        guard let entries = try? fm.contentsOfDirectory(
+            at: sessionsDir,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return (0, 0)
+        }
+
+        var fileCount = 0
+        var totalBytes: Int64 = 0
+        for sessionDir in entries {
+            let isDir = (try? sessionDir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            guard isDir else { continue }
+            guard let inner = try? fm.contentsOfDirectory(
+                at: sessionDir,
+                includingPropertiesForKeys: [.fileSizeKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+            for fileURL in inner {
+                let name = fileURL.lastPathComponent
+                let isAudio =
+                    purgeableNames.contains(name) ||
+                    purgeablePrefixes.contains(where: { name.hasPrefix($0) })
+                guard isAudio else { continue }
+                let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                fileCount += 1
+                totalBytes += Int64(size)
+            }
+        }
+        return (fileCount, totalBytes)
+    }
+
+    /// Result of one sweep pass — surfaced to callers (the manual
+    /// "Clear audio cache" button uses these for the toast). The
+    /// scheduled `runIfNeeded` path ignores them and just logs.
+    private struct SweepResult: Sendable {
+        var purgedFiles: Int
+        var freedBytes: Int64
+    }
+
+    @discardableResult
+    private static func sweep(cutoff: Date) async -> SweepResult {
         let fm = FileManager.default
         guard let ticket = await MainActor.run(body: { SessionsFolder.acquireBase() }) else {
             log.info("retention sweep: no sessions root acquired")
-            return
+            return SweepResult(purgedFiles: 0, freedBytes: 0)
         }
         defer { Task { @MainActor in ticket.release() } }
         let sessionsDir = ticket.url.appendingPathComponent("Sessions", isDirectory: true)
@@ -69,7 +142,7 @@ enum AudioRetentionSweep {
             includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return
+            return SweepResult(purgedFiles: 0, freedBytes: 0)
         }
 
         var purgedFiles = 0
@@ -115,5 +188,6 @@ enum AudioRetentionSweep {
             let mb = Double(freedBytes) / 1_048_576.0
             log.info("retention sweep purged \(purgedFiles, privacy: .public) audio files, freed \(mb, privacy: .public) MB")
         }
+        return SweepResult(purgedFiles: purgedFiles, freedBytes: freedBytes)
     }
 }

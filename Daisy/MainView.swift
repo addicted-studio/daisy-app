@@ -98,6 +98,14 @@ enum SettingsTab: String, Hashable, Sendable {
 enum ConnectionSection: String, Hashable, Sendable {
     case mcpServer
     case autoRouting
+    /// Google Calendar OAuth tab. Shipped with a `Beta` badge
+    /// while Google's OAuth verification is in flight — the flow
+    /// fully works, but users will see an "App isn't verified"
+    /// interstitial from Google's consent screen until the
+    /// verification request clears review (typically 2–6 weeks
+    /// after submission). Once approved we drop the badge and
+    /// the in-tab notice.
+    case googleCalendar
 }
 
 @Observable
