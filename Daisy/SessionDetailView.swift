@@ -36,38 +36,122 @@ struct SessionDetailView: View {
     }
 
     @State private var isRunningAction = false
-    @State private var actionStatus: ActionStatus = .idle
     @State private var confirmDelete = false
     /// Local draft for the tag field in the header. Mirrors
     /// `session.tag` and commits to disk on blur / Enter — same
     /// save-on-blur idiom the title editor below uses.
     @State private var tagDraft: String = ""
     @FocusState private var tagFieldFocused: Bool
-    /// Notion-style autocomplete popover visibility. Bound to
-    /// `tagFieldFocused` via .onChange so click-to-focus opens the
-    /// suggestions, blur closes them. Held as its own @State because
-    /// the popover's own dismiss-on-outside-click triggers a flip
-    /// that wouldn't have a single binding source otherwise.
-    @State private var showingTagSuggestions = false
-
-    enum ActionStatus: Equatable {
-        case idle
-        case message(String)
-        case error(String)
-    }
+    /// One-shot global flag — once the user has seen + dismissed the
+    /// acoustic-loopback explainer for any meeting session, never
+    /// show it again on subsequent empty-audio sessions. AppStorage
+    /// binds directly to UserDefaults so the change persists across
+    /// app launches and SwiftUI re-renders the view automatically
+    /// when the flag flips, without us needing to route through
+    /// AppSettings (which isn't already plumbed into this view).
+    /// The matching definition in AppSettings.swift uses the same
+    /// key string so both surfaces read / write the same value.
+    @AppStorage("daisy.hasSeenAcousticLoopbackExplainer")
+    private var hasSeenAcousticLoopbackExplainer: Bool = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header
-                if !actionStatusText.isEmpty { actionBanner }
-                if let summary = session.summary {
-                    summarySection(summary)
-                } else if isSummaryGenerating {
-                    summarySkeletonSection
+                // 2026-05-25 — actionBanner removed in favour of
+                // ToastCenter (self-dismissing, global). Egor caught a
+                // bug where the banner survived NavigationSplitView's
+                // session switch because @State actionStatus belongs
+                // to the SwiftUI view (which gets reused across
+                // selection changes), not to the session model. Move
+                // / re-summarize / copy-markdown outcomes now fire as
+                // toasts via the same channel as the inline copy
+                // buttons inside CollapsibleBlock — consistent UX and
+                // no "ghost banner from previous session" class of bug.
+                // Acoustic-loopback banner — gated on three things:
+                //   1. system audio for this session was empty (the
+                //      frontmatter writes "empty" only on meeting-mode
+                //      sessions over 60s, see RecordingSession line
+                //      ~1084 — so the meeting-mode filter is already
+                //      implicit, but keep it explicit here to be
+                //      future-proof against frontmatter writes for
+                //      voice notes / dictation in some later release);
+                //   2. the user hasn't seen the explainer yet (one-
+                //      shot global flag in AppSettings — pre-1.0.6.12
+                //      we showed this on every affected session, which
+                //      buried users with a wall of identical orange
+                //      paragraphs after the 1.0.6.11 update);
+                //   3. the user hasn't dismissed it for THIS session
+                //      (transient @State — covers the case where they
+                //      open the same session twice in one app run).
+                if shouldShowLoopbackBanner { acousticLoopbackBanner }
+
+                // 2026-05-25 — two-block collapsible layout per Egor's
+                // UX pass on 1.0.7. Pre-fix every mdSection card sat
+                // independently in the scroll view, which (a) made the
+                // scroll view dense and hard to skim and (b) gave no
+                // primary "copy the whole summary" / "copy the whole
+                // transcript" affordance — users had to walk every card
+                // with manual selection, which itself was broken for
+                // long transcripts (see SelectableTextView header).
+                // Now: outer CollapsibleBlock groups the LLM-derived
+                // content (Meeting / sections / Next actions / Follow-up
+                // / screenshots) under "Summary"; raw verbatim audio
+                // transcript stays in its own "Transcript" block. Each
+                // block remembers its expanded state in @AppStorage so
+                // a user who lives in transcripts and rarely reads the
+                // summary (or vice versa) doesn't have to re-collapse
+                // every session open.
+                let hasSummary = session.summary != nil || isSummaryGenerating
+                if hasSummary || session.hasScreenshots {
+                    CollapsibleBlock(
+                        title: summaryBlockTitle,
+                        storageKey: "daisy.session.detail.summaryExpanded",
+                        copyLabel: "Copy summary",
+                        copyText: summaryCopyText
+                    ) {
+                        VStack(alignment: .leading, spacing: 18) {
+                            // 2026-05-26 — three cases:
+                            //  (a) Fresh-generate (no prior summary):
+                            //      isSummaryGenerating == true,
+                            //      session.summary == nil → render
+                            //      skeleton, that's it.
+                            //  (b) Re-summarize over existing: both
+                            //      true → render the inline progress
+                            //      bar AND the existing (now stale)
+                            //      summary at reduced opacity. Old
+                            //      summary stays visible so the user
+                            //      has a reference, and the bar is
+                            //      the "yes, we got your click,
+                            //      something is happening" signal.
+                            //      Pre-fix the existing summary just
+                            //      sat there with no indication —
+                            //      Egor reported it as "не видно
+                            //      прогресса что что-то запустилось".
+                            //  (c) Stable: !isSummaryGenerating,
+                            //      summary != nil → plain summary.
+                            if isSummaryGenerating && session.summary != nil {
+                                resummarizingBanner
+                            }
+                            if let summary = session.summary {
+                                summarySection(summary)
+                                    .opacity(isSummaryGenerating ? 0.45 : 1.0)
+                                    .animation(.easeInOut(duration: 0.2), value: isSummaryGenerating)
+                            } else if isSummaryGenerating {
+                                summarySkeletonSection
+                            }
+                            if session.hasScreenshots { screenshotsSection }
+                        }
+                    }
                 }
-                if session.hasScreenshots { screenshotsSection }
-                transcriptSection
+                CollapsibleBlock(
+                    title: "Transcript",
+                    storageKey: "daisy.session.detail.transcriptExpanded",
+                    copyLabel: "Copy transcript",
+                    copyText: { mappedTranscriptText }
+                ) {
+                    transcriptSection
+                }
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 24)
@@ -199,6 +283,28 @@ struct SessionDetailView: View {
         Task { await reSummarize() }
     }
 
+    /// Lighter sibling of `attemptReSummarize` — runs the LLM call
+    /// but only merges the new `clientFollowUp` back into the
+    /// existing summary. Used by the Follow-up empty-state plaque
+    /// when the LLM judged the conversation as internal on the
+    /// first pass and the user wants Daisy to take another shot
+    /// at drafting just the follow-up. Preserves sections,
+    /// actionItems, lede, and any manual edits the user made to
+    /// those — Egor pushed back on the original "Re-summarize"
+    /// CTA because it re-rolled everything, which felt heavy-
+    /// handed for one missing field.
+    private func attemptDraftFollowUp() {
+        if isRunningAction {
+            ToastCenter.shared.show("Already running — wait a moment", style: .info)
+            return
+        }
+        if session.transcriptText.isEmpty {
+            ToastCenter.shared.show("No transcript to draft from yet", style: .warning)
+            return
+        }
+        Task { await draftFollowUp() }
+    }
+
     private func attemptCopyMarkdown() {
         guard !session.transcriptText.isEmpty else {
             ToastCenter.shared.show("No transcript yet", style: .warning)
@@ -296,19 +402,24 @@ struct SessionDetailView: View {
         }
     }
 
-    /// Inline tag editor in the header row. Free-text TextField
-    /// for ad-hoc tags PLUS a dropdown chevron Menu that lists
-    /// every tag already in use across the store so the user can
-    /// pick instead of re-typing (e.g., one click selects
-    /// "Mediacube" if it's been used before, instead of risking
-    /// "Mediacube" / "mediacube" / "Mediacube " all becoming
-    /// three different buckets).
+    /// Inline tag editor in the header row. Free-text TextField for
+    /// ad-hoc tags PLUS a chevron Menu that lists every tag already
+    /// in use across the store so the user can pick instead of
+    /// re-typing (avoids "Mediacube" / "mediacube" / "Mediacube "
+    /// becoming three buckets).
     ///
-    /// Notion-style autocomplete: focus on the TextField opens a
-    /// popover below it listing every existing tag, filtered by
-    /// what the user is currently typing. Click a row → tag is
-    /// applied. Enter on a brand-new value → tag is created. No
-    /// chevron — the popover IS the affordance.
+    /// 2026-05-26 — replaced the Notion-style focus-popover with a
+    /// native chevron Menu. Pre-fix the popover opened on focus
+    /// gain via a deferred dispatch_async; clicking a suggestion
+    /// took focus away from the TextField, which triggered both
+    /// the focus-out commit AND the popover outside-click dismiss
+    /// AND the row's click action — race produced flicker, dropped
+    /// commits, and sessions where the popover wouldn't close after
+    /// a pick. The Menu is a native NSMenu — no focus dance, no
+    /// dismiss race. Trade-off: lost the inline "Create '<typed
+    /// text>'" affordance (Menu can't reflect live TextField state
+    /// in its items). Acceptable — type + Enter still creates a new
+    /// tag, which is the primary path.
     @ViewBuilder
     private var tagField: some View {
         HStack(spacing: 4) {
@@ -325,122 +436,64 @@ struct SessionDetailView: View {
                     tagFieldFocused = false
                 }
                 .onChange(of: tagFieldFocused) { _, isFocused in
-                    if isFocused {
-                        // Defer to next runloop so the popover
-                        // anchors after the field's frame settled.
-                        DispatchQueue.main.async {
-                            showingTagSuggestions = true
-                        }
-                    } else {
-                        commitTag()
-                    }
+                    // Commit on blur so users who click away (rather
+                    // than press Return) still persist their edit.
+                    if !isFocused { commitTag() }
                 }
-                .popover(
-                    isPresented: $showingTagSuggestions,
-                    attachmentAnchor: .point(.bottom),
-                    arrowEdge: .top
-                ) {
-                    tagSuggestionsList
-                        .frame(minWidth: 180, idealWidth: 200)
-                        .padding(.vertical, 4)
-                }
-        }
-    }
-
-    /// Filtered list of existing tags shown in the popover beneath
-    /// the field. Notion / Linear / Apple Reminders all use this
-    /// shape — substring filter, click-to-pick, no per-row checkbox
-    /// because tags are single-select.
-    @ViewBuilder
-    private var tagSuggestionsList: some View {
-        let allTags = SessionStore.shared.distinctTagsByFrequency
-        let query = tagDraft.trimmingCharacters(in: .whitespaces).lowercased()
-        let filtered = query.isEmpty
-            ? allTags
-            : allTags.filter { $0.lowercased().contains(query) }
-        VStack(alignment: .leading, spacing: 0) {
-            // "Create new" row — visible when the typed text doesn't
-            // match an existing tag exactly. Lets the user commit a
-            // brand-new value via mouse instead of Enter.
-            if !query.isEmpty,
-               !allTags.contains(where: { $0.lowercased() == query }) {
-                tagSuggestionButton(
-                    label: "Create \"\(tagDraft.trimmingCharacters(in: .whitespaces))\"",
-                    systemImage: "plus.circle"
-                ) {
-                    commitTag()
-                    showingTagSuggestions = false
-                    tagFieldFocused = false
-                }
-                Divider()
-            }
-
-            // "Remove tag" row — only when this session is tagged,
-            // so it can be cleared without typing.
-            if !session.tag.isEmpty {
-                tagSuggestionButton(
-                    label: "Remove tag",
-                    systemImage: "xmark.circle"
-                ) {
-                    tagDraft = ""
-                    commitTag()
-                    showingTagSuggestions = false
-                    tagFieldFocused = false
-                }
-                Divider()
-            }
-
-            if filtered.isEmpty && query.isEmpty {
-                Text("No tags yet — type to create one.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-            } else {
-                ForEach(filtered, id: \.self) { name in
-                    tagSuggestionButton(
-                        label: name,
-                        systemImage: session.tag == name ? "checkmark" : nil
-                    ) {
-                        tagDraft = name
-                        commitTag()
-                        showingTagSuggestions = false
-                        tagFieldFocused = false
-                    }
-                }
-            }
-        }
-    }
-
-    /// One row in the suggestions popover — themed to match the
-    /// surrounding chrome (plain button, hover-only highlight via
-    /// `.borderless`). `systemImage` nil means no leading glyph.
-    @ViewBuilder
-    private func tagSuggestionButton(
-        label: String,
-        systemImage: String?,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let systemImage {
-                    Image(systemName: systemImage)
+            // Chevron Menu — present whenever there's anything to
+            // pick OR the session is currently tagged (so Remove
+            // is reachable). Mirrors the SpeakerNameRow attendee
+            // menu pattern for visual consistency across rows
+            // that have a free-text field + history picker.
+            let hasMenu = !SessionStore.shared.distinctTagsByFrequency.isEmpty
+                || !session.tag.isEmpty
+            if hasMenu {
+                Menu {
+                    tagMenuContent
+                } label: {
+                    Image(systemName: "chevron.down")
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 14)
-                } else {
-                    Spacer().frame(width: 14)
+                        .foregroundStyle(.tertiary)
                 }
-                Text(label)
-                    .font(.caption)
-                Spacer()
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Pick from existing tags")
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.borderless)
-        .foregroundStyle(Color.daisyTextPrimary)
+    }
+
+    /// Items for the tag chevron Menu. Built fresh each time the
+    /// Menu opens (SwiftUI re-evaluates `@ViewBuilder` content on
+    /// each presentation), so newly-created tags from other
+    /// sessions appear without manual refresh.
+    @ViewBuilder
+    private var tagMenuContent: some View {
+        let allTags = SessionStore.shared.distinctTagsByFrequency
+        // "Remove tag" — only when this session is currently tagged.
+        if !session.tag.isEmpty {
+            Button {
+                tagDraft = ""
+                commitTag()
+            } label: {
+                Label("Remove tag", systemImage: "xmark.circle")
+            }
+            if !allTags.isEmpty {
+                Divider()
+            }
+        }
+        ForEach(allTags, id: \.self) { name in
+            Button {
+                tagDraft = name
+                commitTag()
+            } label: {
+                if session.tag == name {
+                    Label(name, systemImage: "checkmark")
+                } else {
+                    Text(name)
+                }
+            }
+        }
     }
 
     private func commitTag() {
@@ -460,6 +513,38 @@ struct SessionDetailView: View {
     /// document layout (Meeting / Next actions / Follow-up) so the
     /// transition reads as "content arriving" rather than "layout
     /// shift".
+    /// Inline progress bar shown ABOVE an existing summary while
+    /// a re-summarize is in flight. Reused for the re-summarize
+    /// case where session.summary is non-nil but generation is
+    /// happening again; the existing summary stays visible at
+    /// reduced opacity so the user has a reference, and this
+    /// banner is the "yes, your click registered, something is
+    /// cooking" affordance. Without it the existing summary just
+    /// sat there with no feedback for the 5–20s of generation.
+    @ViewBuilder
+    private var resummarizingBanner: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Re-summarizing locally…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.daisyBgElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
     @ViewBuilder
     private var summarySkeletonSection: some View {
         mdSection(title: "Meeting") {
@@ -546,7 +631,79 @@ struct SessionDetailView: View {
                     .help("Copy the draft message")
                 }
             }
+        } else {
+            // 2026-05-26 — pre-fix the follow-up section vanished
+            // silently when the LLM judged the conversation as
+            // internal-only and returned an empty `clientFollowUp`.
+            // Egor flagged it on a Billions S01E05 recording where
+            // the model correctly skipped (no real external party in
+            // a TV episode), but the missing section looked like a
+            // bug. Empty-state plaque tells the user the model made
+            // a deliberate decision AND gives them a one-click way
+            // to re-roll if they think the judgment was wrong (e.g.
+            // a sales call the model misread as a team sync).
+            // English copy is consistent with the rest of Daisy's
+            // visible UI — section title stays localized via
+            // summaryLabels so it groups visually with the section
+            // even though the body copy is EN.
+            mdSection(title: summaryLabels(for: summary).followUp) {
+                followUpEmptyStatePlaque
+            }
         }
+    }
+
+    /// Renders inside the Follow-up mdSection when the LLM returned
+    /// an empty `clientFollowUp` — typically because the model judged
+    /// the conversation as a purely internal team sync with no
+    /// external party that warrants a follow-up message. The plaque
+    /// surfaces the decision (instead of silently dropping the
+    /// section) and offers a Re-summarize CTA so the user can re-roll
+    /// if they think the model misread the context.
+    @ViewBuilder
+    private var followUpEmptyStatePlaque: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "envelope.badge.shield.half.filled")
+                .font(.body)
+                .foregroundStyle(.tertiary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("No follow-up was drafted — the model treated this conversation as internal (no external party identified).")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                // 2026-05-26 — button used to call attemptReSummarize()
+                // (a full summary regenerate), which Egor flagged as
+                // too heavy for one missing field — would also blow
+                // away any manual edits the user made to the rest of
+                // the summary. attemptDraftFollowUp() runs the same
+                // LLM call but only merges the new `clientFollowUp`
+                // into the existing summary; the lede, sections, and
+                // actionItems stay untouched. Toast feedback
+                // explicitly tells the user when the model still
+                // judged the conversation as internal on the second
+                // pass, so the empty result reads as a deliberate
+                // model decision rather than a silent no-op.
+                Button("Draft follow-up") {
+                    attemptDraftFollowUp()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
+                .disabled(isSummaryGenerating)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.daisyBgElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+        )
     }
 
     /// Detect the summary's output language from its own content so
@@ -725,21 +882,29 @@ struct SessionDetailView: View {
     // MARK: - Transcript
 
     private var transcriptSection: some View {
-        mdSection(title: "Transcript") {
-            VStack(alignment: .leading, spacing: 12) {
-                speakerMappingSection
+        // 2026-05-25 — mdSection title wrapper removed; the outer
+        // CollapsibleBlock now owns the "Transcript" header + copy
+        // button. We keep the speaker-mapping card and empty-state
+        // text identical to pre-fix.
+        //
+        // Transcript body switched from SwiftUI `Text(...).textSelection`
+        // to SelectableTextView (NSTextView wrapper) to fix the bug
+        // Egor reported the same day: drag-select only covered the
+        // current viewport on long transcripts, ⌘A inside Text was
+        // similarly clipped. SelectableTextView puts the full string
+        // into the AppKit text system, which has correct full-content
+        // selection + ⌘F search. See SelectableTextView header for
+        // the why.
+        VStack(alignment: .leading, spacing: 12) {
+            speakerMappingSection
 
-                if session.transcriptText.isEmpty {
-                    Text("No transcript text on disk.")
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
-                } else {
-                    Text(mappedTranscriptText)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+            if session.transcriptText.isEmpty {
+                Text("No transcript text on disk.")
+                    .font(.body)
+                    .foregroundStyle(.tertiary)
+            } else {
+                SelectableTextView(mappedTranscriptText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -753,7 +918,7 @@ struct SessionDetailView: View {
     /// free-text field.
     @ViewBuilder
     private var speakerMappingSection: some View {
-        if !detectedSpeakerIDs.isEmpty {
+        if !detectedSpeakerInfo.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.fill")
@@ -774,39 +939,74 @@ struct SessionDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                ForEach(detectedSpeakerIDs, id: \.self) { speakerID in
+                ForEach(detectedSpeakerInfo, id: \.id) { info in
                     SpeakerNameRow(
-                        speakerID: speakerID,
-                        currentName: session.speakerMap[speakerID] ?? "",
+                        speakerID: info.id,
+                        currentName: session.speakerMap[info.id] ?? "",
                         attendeeSuggestions: session.meetingAttendees,
+                        attendeeSourceEventTitle: session.linkedEventTitle,
+                        segmentCount: info.count,
+                        hasCentroid: info.hasCentroid,
                         onCommit: { name in
-                            Task { await applyMapping(speakerID: speakerID, name: name) }
+                            Task { await applyMapping(speakerID: info.id, name: name) }
                         }
                     )
                 }
             }
-            .padding(12)
+            // 2026-05-25 — promoted to section-card spec (radius 10,
+            // daisyBgSidebar fill, daisyDivider border) per the shape
+            // audit. Pre-fix this used the radius-8 banner family with
+            // a cinnamon-tinted fill — visual conflation with the
+            // acoustic-loopback banner above. This is a containing
+            // card holding speaker rows, not an info chip; matching
+            // AboutView's three section cards.
+            .padding(14)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.daisyAccent.opacity(0.05))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.daisyBgSidebar)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.daisyAccent.opacity(0.18), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
             )
         }
     }
 
-    /// Speaker IDs ("A", "B", "C") that appear in the transcript body.
+    /// Speaker IDs ("A", "B", "C") that appear in the transcript body,
+    /// annotated with how many segments each one owns and whether
+    /// `speakers.json` has a saved voice fingerprint (centroid) for it.
     /// Extracted from `[Remote A]` / `[Remote B]` markers — same
     /// format `MarkdownExporter` writes via `TranscriptSegment.speakerLabel`.
-    private var detectedSpeakerIDs: [String] {
+    ///
+    /// Sorted by `count` descending so the dominant voice in the
+    /// meeting is the first row the user sees — pre-1.0.7.1 this was
+    /// alphabetical, which meant a 380-segment "Remote B" sat below a
+    /// 17-segment "Remote A" in the UI. New ordering matches the
+    /// rename mental model: name the loud one first.
+    ///
+    /// `hasCentroid` is the new signal in 1.0.7.1 — true when
+    /// FluidAudio persisted a voice embedding for this cluster.
+    /// Centroidless IDs come from short fragments that didn't form
+    /// a clean cluster (the 2026-05-25 tester Sync session saw
+    /// Remote D with 17 segments but no centroid — the rename works
+    /// for THIS session but can't auto-match future sessions because
+    /// there's no fingerprint to compare against). SpeakerNameRow
+    /// surfaces this as a "session only" caption so the user knows
+    /// the rename isn't building a reusable profile.
+    private var detectedSpeakerInfo: [(id: String, count: Int, hasCentroid: Bool)] {
         let pattern = #/\bRemote\s+([A-Z])\b/#
-        var seen: Set<String> = []
+        var counts: [String: Int] = [:]
         for match in session.transcriptText.matches(of: pattern) {
-            seen.insert(String(match.1))
+            counts[String(match.1), default: 0] += 1
         }
-        return seen.sorted()
+        return counts
+            .map { (id: $0.key, count: $0.value, hasCentroid: session.speakerCentroidIDs.contains($0.key)) }
+            .sorted {
+                // Primary: occurrence count desc. Secondary: ID asc so
+                // ties (rare) get a stable order.
+                if $0.count != $1.count { return $0.count > $1.count }
+                return $0.id < $1.id
+            }
     }
 
     /// Substitute "Remote A" → mapped name inline. The on-disk .md
@@ -864,58 +1064,131 @@ struct SessionDetailView: View {
         return parsed.centroids
     }
 
-    // MARK: - Status banner
+    // MARK: - Status feedback
+    //
+    // 2026-05-25 — the inline `actionBanner` view that used to live
+    // here was removed. It was an inline pill above the session body
+    // that surfaced "Markdown copied to clipboard" / "Moved to X" /
+    // "Summary updated" messages. Two problems Egor caught in 1.0.7:
+    //   1. State lived in `@State actionStatus` belonging to the
+    //      SwiftUI view. NavigationSplitView reuses SessionDetailView
+    //      across selection changes — so the banner survived session
+    //      switches and appeared on sessions where the action never
+    //      ran.
+    //   2. No auto-dismiss. Required a manual ⨯ click; users left
+    //      banners stuck for the entire app session.
+    // Replaced by ToastCenter.shared.show(...) at every callsite —
+    // self-dismissing, globally rendered above all windows, same
+    // channel used by the CollapsibleBlock copy buttons added the
+    // same day. Single source of truth for transient feedback.
 
-    @ViewBuilder
-    private var actionBanner: some View {
-        let isError: Bool = {
-            if case .error = actionStatus { return true }
-            return false
-        }()
-        HStack(spacing: 8) {
-            Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(isError ? Color.daisyError : Color.daisySuccess)
-            Text(actionStatusText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(3)
-            Spacer()
-            Button {
-                actionStatus = .idle
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(10)
-        .background(
-            (isError ? Color.daisyError : Color.daisySuccess).opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 6)
-        )
+    /// Gate for the acoustic-loopback banner. True when (a) the
+    /// session's frontmatter says system audio capture stayed empty
+    /// AND (b) the user hasn't yet dismissed the global explainer.
+    /// The frontmatter writer in RecordingSession already gates on
+    /// `currentMode == .meeting`, so dictation / voice-note sessions
+    /// never get `daisy_system_audio_status: empty` written and
+    /// never trigger this banner — meeting-only enforcement is
+    /// implicit. Once the user clicks "Got it" the AppStorage flag
+    /// flips and SwiftUI re-renders this whole view, hiding the
+    /// banner immediately and forever on this device.
+    private var shouldShowLoopbackBanner: Bool {
+        session.systemAudioStatus == "empty" &&
+            !hasSeenAcousticLoopbackExplainer
     }
 
-    private var actionStatusText: String {
-        switch actionStatus {
-        case .idle: return ""
-        case .message(let m), .error(let m): return m
+    /// One-liner explainer for the acoustic-loopback case, shown once
+    /// per device on the first empty-system-audio meeting the user
+    /// opens. Pre-1.0.6.12 this was a three-paragraph wall of text on
+    /// EVERY affected session — a tester whose mac trips the macOS 26
+    /// SCStream regression got 50+ identical orange paragraphs across
+    /// her library after the 1.0.6.11 update. New shape: a single line
+    /// of plain English plus a "Got it" dismiss that sets the global
+    /// `hasSeenAcousticLoopbackExplainer` flag. Deeper detail (which
+    /// hotkey, how to fix for next time, Tahoe regression context)
+    /// stays as the toast that fires once at the end of the session
+    /// itself — that's the right moment to give it, not retroactively
+    /// every time the user opens an old transcript.
+    private var acousticLoopbackBanner: some View {
+        // 2026-05-25 — pulled into the same chip family as the three
+        // Home banners (permissions / connectCalendar / deniedCalendar).
+        // Pre-fix this used raw `.orange` for icon + Got-it pill + chip
+        // background + border, with mismatched opacities (0.06 / 0.2)
+        // and a stroke (not strokeBorder). End result was a fourth
+        // banner shape entirely. Now: cinnamon chip 0.20 fill + 0.20
+        // strokeBorder, cinnamon icon, Got it as `.borderedProminent`
+        // with the same `frame(minWidth: 88)` as Fix / Connect on the
+        // Home banners. Single design family across the app.
+        // 2026-05-26 — added secondary "why" caption underneath the
+        // headline. Pre-fix the banner only said WHAT ("mic only")
+        // without WHY, so the user assumed it was a Daisy bug
+        // instead of a known macOS-side acoustic-loopback gap.
+        // The three causes listed cover ~95% of empty-system-audio
+        // sessions on the tester base — headphone routing bypasses
+        // SCStream's loopback path, "no audio actually played"
+        // hits standalone monologue/voice-note-style use, and
+        // Screen Recording revocation is the silent permission-
+        // pulled case Egor saw on his own Mac after a security
+        // update flipped it off without a re-prompt.
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "speaker.slash.fill")
+                .font(.title3)
+                .foregroundStyle(Color.daisyAccent)
+                // Align the icon optical baseline with the first
+                // line of text now that there are two text rows
+                // — without this it floats up against the chip's
+                // top padding and reads as detached from the copy.
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Other side wasn't captured this session — mic only")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("Common causes: headphones (audio bypasses the loopback path), no app played sound during the meeting, or Screen Recording access was revoked mid-session.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            // minWidth on the label, not the Button — see comment on
+            // `permissionsAttentionBanner.Fix` in HomeView.swift.
+            Button {
+                hasSeenAcousticLoopbackExplainer = true
+            } label: {
+                Text("Got it").frame(minWidth: 120)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .tint(Color.daisyAccent)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.daisyAccent.opacity(0.20),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+        )
     }
 
     // MARK: - Actions
 
     private func moveTo(folder: SessionFolder) async {
         isRunningAction = true
-        actionStatus = .message("Moving to \(folder.name)…")
         await SessionStore.shared.moveSession(session, to: folder)
-        actionStatus = .message("Moved to \(folder.name)")
+        ToastCenter.shared.show("Moved to \(folder.name)", style: .success)
         isRunningAction = false
     }
 
     private func reSummarize() async {
         guard !session.transcriptText.isEmpty else { return }
         isRunningAction = true
-        actionStatus = .message("Summarizing via \(Summarizer.shared.providerKind.shortName)…")
+        ToastCenter.shared.show(
+            "Summarizing via \(Summarizer.shared.providerKind.shortName)…",
+            style: .info
+        )
 
         // Use the canonical locale resolver — same code path as the
         // post-Stop auto-summary, so re-summarize can never produce a
@@ -937,11 +1210,78 @@ struct SessionDetailView: View {
 
         if let summary = result {
             await SessionStore.shared.updateSummary(summary, for: session)
-            actionStatus = .message("Summary updated.")
+            ToastCenter.shared.show("Summary updated", style: .success)
         } else if let err = Summarizer.shared.lastError {
-            actionStatus = .error(err)
+            ToastCenter.shared.show(err, style: .error)
         } else {
-            actionStatus = .error("No summary returned.")
+            ToastCenter.shared.show("No summary returned", style: .error)
+        }
+        isRunningAction = false
+    }
+
+    /// Same LLM call as `reSummarize` (we have to send the whole
+    /// transcript anyway — providers don't expose a follow-up-only
+    /// endpoint), but the result is MERGED rather than REPLACED:
+    /// only `clientFollowUp` from the new pass overwrites the
+    /// existing summary. Everything else (lede, sections, action
+    /// items, any user edits) is preserved.
+    ///
+    /// If the new pass ALSO returns an empty follow-up, we surface
+    /// a clear "model still judged this internal" toast instead of
+    /// silently re-writing nothing — that's the honest UX: user
+    /// pressed the button, model made the same call, here's why
+    /// nothing visibly changed.
+    private func draftFollowUp() async {
+        guard !session.transcriptText.isEmpty else { return }
+        guard let existing = session.summary else {
+            // No summary yet — fall back to a regular re-summarize so
+            // the user still gets something. The plaque only renders
+            // when summary != nil so this branch is defensive.
+            await reSummarize()
+            return
+        }
+        isRunningAction = true
+        ToastCenter.shared.show(
+            "Drafting follow-up via \(Summarizer.shared.providerKind.shortName)…",
+            style: .info
+        )
+
+        let localeHint = RecordingSession.resolveSummaryLocaleHint(
+            transcript: session.transcriptText,
+            transcriptLocale: session.locale,
+            summaryLanguageOverride: AppSettings.currentSummaryLanguage
+        )
+
+        let result = await Summarizer.shared.summarize(
+            transcript: session.transcriptText,
+            title: session.title,
+            localeHint: localeHint
+        )
+
+        if let fresh = result {
+            let trimmedFollowUp = fresh.clientFollowUp
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedFollowUp.isEmpty {
+                // Model again chose to skip — keep the existing
+                // (empty) follow-up; tell the user explicitly.
+                ToastCenter.shared.show(
+                    "Model still judged this conversation as internal — no follow-up drafted.",
+                    style: .warning
+                )
+            } else {
+                let merged = MeetingSummary(
+                    summary: existing.summary,
+                    sections: existing.sections,
+                    actionItems: existing.actionItems,
+                    clientFollowUp: trimmedFollowUp
+                )
+                await SessionStore.shared.updateSummary(merged, for: session)
+                ToastCenter.shared.show("Follow-up drafted", style: .success)
+            }
+        } else if let err = Summarizer.shared.lastError {
+            ToastCenter.shared.show(err, style: .error)
+        } else {
+            ToastCenter.shared.show("No response from the model", style: .error)
         }
         isRunningAction = false
     }
@@ -956,7 +1296,7 @@ struct SessionDetailView: View {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(assembledMarkdown(), forType: .string)
-        actionStatus = .message("Markdown copied to clipboard.")
+        ToastCenter.shared.show("Markdown copied to clipboard", style: .success)
     }
 
     /// Build a full markdown document for clipboard / share: title
@@ -1110,6 +1450,189 @@ struct SessionDetailView: View {
         if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%d:%02d", m, s)
     }
+
+    // MARK: - Collapsible-block helpers (1.0.7.1)
+
+    /// Title for the outer Summary collapsible. Held as a separate
+    /// property so we can keep it consistent with the rest of the
+    /// EN-only UI surface (per the brand-voice memory: Daisy product
+    /// UI is English only — RU bits creep in only via summary CONTENT
+    /// when the user dictated in RU, never via chrome).
+    private var summaryBlockTitle: String { "Summary" }
+
+    /// Plain-text dump of everything the Summary collapsible
+    /// renders — Meeting lede + topical sections + Next actions +
+    /// Follow-up — ready to ⌘V into any text field. Markdown stripped
+    /// (no `**bold**` / `# headers`) because the use case is "paste
+    /// into Slack / email / ChatGPT" where markdown noise is worse
+    /// than nothing. Section titles upper-cased so they survive the
+    /// plain-text round trip as visual headers.
+    ///
+    /// Returns "" when no summary is loaded (CollapsibleBlock won't
+    /// fire copy in that state, but harmless to return an empty
+    /// pasteboard string defensively).
+    private var summaryCopyText: () -> String {
+        return {
+            guard let s = session.summary else { return "" }
+            var out: [String] = []
+            let labels = summaryLabels(for: s)
+            if !s.summary.isEmpty {
+                out.append(labels.meeting.uppercased())
+                out.append(s.summary)
+            }
+            for section in s.sections {
+                if !out.isEmpty { out.append("") }
+                out.append(section.title.uppercased())
+                out.append(contentsOf: flattenBullets(section.bullets, indent: 0))
+            }
+            if !s.actionItems.isEmpty {
+                if !out.isEmpty { out.append("") }
+                out.append(labels.nextActions.uppercased())
+                for item in s.actionItems {
+                    out.append("• \(item)")
+                }
+            }
+            if !s.clientFollowUp.isEmpty {
+                if !out.isEmpty { out.append("") }
+                out.append(labels.followUp.uppercased())
+                out.append(s.clientFollowUp)
+            }
+            return out.joined(separator: "\n")
+        }
+    }
+
+    /// Recursive bullet → plain-text. Two-space indent per nesting
+    /// level, `• ` marker at every level (simpler than alternating
+    /// glyphs, and pastes cleanly into any chat surface).
+    private func flattenBullets(_ bullets: [SummaryBullet], indent: Int) -> [String] {
+        var out: [String] = []
+        let prefix = String(repeating: "  ", count: indent) + "• "
+        for b in bullets {
+            out.append(prefix + b.text)
+            if !b.children.isEmpty {
+                out.append(contentsOf: flattenBullets(b.children, indent: indent + 1))
+            }
+        }
+        return out
+    }
+}
+
+// MARK: - Collapsible block (Summary / Transcript)
+//
+// Outer container for the two-block layout SessionDetailView ships
+// in 1.0.7.1. Header is a row with chevron + title (whole row is
+// the tap target for collapse) and a copy-to-clipboard button on
+// the trailing edge. Body is rendered only when expanded — this is
+// what makes long transcripts cheap to keep collapsed by default
+// on next open.
+//
+// Expanded state persists via @AppStorage with a caller-supplied
+// key, so the user's "I always keep Transcript collapsed" or
+// "I always start with Summary closed" preference survives across
+// sessions and app restarts. Keys live under daisy.session.detail.*
+// in UserDefaults.
+//
+// Copy: caller passes a `() -> String` closure (lazy — we don't pay
+// for the full summary/transcript flatten unless the user actually
+// presses the button). Toast feedback fires after the clipboard write.
+//
+// Visual style mirrors `mdSection` (rounded rect, daisyBgSidebar fill,
+// daisyDivider stroke, 10 pt radius) so the new outer container
+// matches the existing inner cards visually — the user reads the
+// nesting as "this card holds N cards" rather than "two different
+// component families coexisting".
+
+private struct CollapsibleBlock<Content: View>: View {
+    let title: String
+    let storageKey: String
+    let copyLabel: String
+    let copyText: () -> String
+    let content: () -> Content
+
+    @AppStorage private var isExpanded: Bool
+
+    init(
+        title: String,
+        storageKey: String,
+        copyLabel: String,
+        copyText: @escaping () -> String,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.storageKey = storageKey
+        self.copyLabel = copyLabel
+        self.copyText = copyText
+        self.content = content
+        // @AppStorage with a dynamic key: have to use the underlying
+        // wrapper init directly. Default to expanded — first-run users
+        // want to see content, not have to hunt for the chevron.
+        self._isExpanded = AppStorage(wrappedValue: true, storageKey)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if isExpanded {
+                content()
+                    .padding(.top, 14)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.daisyBgSidebar)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+        )
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        // Fixed width so the title doesn't shift when
+                        // the chevron rotates between states.
+                        .frame(width: 12, alignment: .center)
+                    Text(title)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse" : "Expand")
+
+            Spacer()
+
+            Button {
+                let text = copyText()
+                guard !text.isEmpty else {
+                    ToastCenter.shared.show("Nothing to copy yet", style: .warning)
+                    return
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                ToastCenter.shared.show("\(title) copied", style: .success)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.callout)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help(copyLabel)
+        }
+    }
 }
 
 // MARK: - Speaker name row
@@ -1127,43 +1650,90 @@ private struct SpeakerNameRow: View {
     let speakerID: String
     let currentName: String
     let attendeeSuggestions: [String]
+    /// Title of the calendar event the attendees came from. nil
+    /// for manual recordings with no calendar binding. Used as a
+    /// disabled header at the top of the picker menu so the user
+    /// can visually confirm "these are attendees from THIS event"
+    /// — a tester saw what looked like emails from a different
+    /// meeting and assumed the picker was broken (2026-05-26); the
+    /// underlying cause was the wrong calendar event being bound
+    /// at session-start time, which is now visible.
+    let attendeeSourceEventTitle: String?
+    /// How many transcript segments are attributed to this speaker
+    /// cluster. Surfaced as a small "N segments" caption so the user
+    /// can prioritise renaming the dominant voice over a stray
+    /// 5-segment fragment.
+    let segmentCount: Int
+    /// True when speakers.json has a saved voice embedding for this
+    /// cluster. False means FluidAudio assigned this label to
+    /// fragments but didn't form a clean centroid — rename works for
+    /// THIS session's display, but no fingerprint will auto-match
+    /// future sessions. UX: subtle "session only" caption.
+    let hasCentroid: Bool
     let onCommit: (String?) -> Void
 
     @State private var draft: String
     @FocusState private var focused: Bool
 
-    init(speakerID: String, currentName: String, attendeeSuggestions: [String], onCommit: @escaping (String?) -> Void) {
+    init(
+        speakerID: String,
+        currentName: String,
+        attendeeSuggestions: [String],
+        attendeeSourceEventTitle: String?,
+        segmentCount: Int,
+        hasCentroid: Bool,
+        onCommit: @escaping (String?) -> Void
+    ) {
         self.speakerID = speakerID
         self.currentName = currentName
         self.attendeeSuggestions = attendeeSuggestions
+        self.attendeeSourceEventTitle = attendeeSourceEventTitle
+        self.segmentCount = segmentCount
+        self.hasCentroid = hasCentroid
         self.onCommit = onCommit
         self._draft = State(initialValue: currentName)
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Text("Remote \(speakerID)")
-                .font(.callout.weight(.medium))
-                .frame(width: 96, alignment: .leading)
-                .foregroundStyle(Color.daisyTextSecondary)
-            TextField("Name…", text: $draft)
-                .textFieldStyle(.roundedBorder)
-                .focused($focused)
-                .onSubmit { commit() }
-                .onChange(of: focused) { _, isFocused in
-                    // Commit on blur so users who click away
-                    // (rather than press Return) still persist.
-                    if !isFocused { commit() }
-                }
+        // 2026-05-26 — collapsed from the previous two-line layout
+        // (leading "Remote X" chip + bordered TextField + caption row
+        // underneath with segment count) into a single composite
+        // field. The "Remote X" anchor now lives as the TextField
+        // placeholder, so empty rows still read as "Remote A" greyed
+        // out; once the user types a name, the placeholder yields.
+        // Talk-time count and the "session only" pill move INTO the
+        // trailing edge of the same field, replacing the captionLine
+        // entirely. Net result: tighter one-line rows, no left
+        // gutter wasted on a label that just echoed the speakerID.
+        HStack(spacing: 8) {
+            speakerField
             // Suggestions menu — present only when the session has
             // calendar attendees. Quick-fill from the bound event,
             // still allows free-text in the field next to it.
+            // 2026-05-26 — top of menu shows the source event title
+            // (disabled header item) so the user can visually verify
+            // "these are attendees from THIS event". Tester saw what
+            // looked like emails from a different meeting; root
+            // cause was the wrong event bound at session-start with
+            // no on-screen indicator.
             if !attendeeSuggestions.isEmpty {
                 Menu {
-                    ForEach(attendeeSuggestions, id: \.self) { name in
-                        Button(name) {
-                            draft = name
-                            commit()
+                    if let eventTitle = attendeeSourceEventTitle,
+                       !eventTitle.isEmpty {
+                        Section("From: \(eventTitle)") {
+                            ForEach(attendeeSuggestions, id: \.self) { name in
+                                Button(name) {
+                                    draft = name
+                                    commit()
+                                }
+                            }
+                        }
+                    } else {
+                        ForEach(attendeeSuggestions, id: \.self) { name in
+                            Button(name) {
+                                draft = name
+                                commit()
+                            }
                         }
                     }
                 } label: {
@@ -1174,9 +1744,95 @@ private struct SpeakerNameRow: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Pick from event attendees")
+                .help(
+                    attendeeSourceEventTitle
+                        .map { "Pick from attendees of \"\($0)\"" }
+                        ?? "Pick from event attendees"
+                )
             }
         }
+    }
+
+    /// Composite "field" — a custom rounded container that hosts the
+    /// plain TextField on the leading edge and the meta strip
+    /// (segment count + optional "session only" pill) pinned to the
+    /// trailing edge. `.textFieldStyle(.roundedBorder)` doesn't let
+    /// us put sibling content inside its chrome, so we build our own
+    /// frame with the same proportions and add a focus-aware border.
+    /// Layout priority on the meta elements keeps them right-anchored
+    /// even when the user types a long name — the TextField scrolls
+    /// its content within the remaining width rather than pushing
+    /// the meta off-screen.
+    @ViewBuilder
+    private var speakerField: some View {
+        HStack(spacing: 8) {
+            TextField("Remote \(speakerID)", text: $draft)
+                .textFieldStyle(.plain)
+                .focused($focused)
+                .onSubmit { commit() }
+                .onChange(of: focused) { _, isFocused in
+                    // Commit on blur so users who click away (rather
+                    // than press Return) still persist their edit.
+                    if !isFocused { commit() }
+                }
+                // 2026-05-27 — sync `draft` with `currentName` when
+                // the parent flips it (e.g. the "Clear" button in
+                // speakerMappingSection sets the whole map to empty,
+                // which the parent feeds as `currentName: ""`).
+                // Without this, `@State draft` keeps the previously-
+                // typed name forever (SwiftUI ignores re-init of
+                // @State on subsequent view updates), so the field
+                // still reads "Спикер А" after Clear AND the next
+                // focus blur commits it right back into speakerMap.
+                // Egor caught: "не работает кнопка Clear".
+                .onChange(of: currentName) { _, newName in
+                    if !focused, draft != newName {
+                        draft = newName
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(segmentCountText)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .layoutPriority(1)
+            if !hasCentroid {
+                Text("session only")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(Color.daisyTextSecondary.opacity(0.12))
+                    )
+                    .layoutPriority(1)
+                    .help("No voice fingerprint was saved for this cluster — the name applies to this session only and won't auto-match future recordings.")
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(nsColor: .textBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(
+                    focused ? Color.daisyAccent.opacity(0.7) : Color.daisyDivider,
+                    lineWidth: focused ? 1.5 : 0.5
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Click anywhere inside the field — including on the
+            // meta strip — focuses the TextField. Mirrors the
+            // affordance the OS gives a bordered TextField for free.
+            focused = true
+        }
+        .animation(.easeInOut(duration: 0.12), value: focused)
+    }
+
+    private var segmentCountText: String {
+        segmentCount == 1 ? "1 segment" : "\(segmentCount) segments"
     }
 
     private func commit() {

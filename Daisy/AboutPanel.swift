@@ -66,7 +66,7 @@ enum AboutPanel {
         ]
         let result = NSMutableAttributedString()
         result.append(.init(
-            string: "Local meeting capture for Mac.\n",
+            string: "Local meeting capture for Mac\n",
             attributes: base
         ))
         result.append(.init(

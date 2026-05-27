@@ -28,12 +28,21 @@ import os
 
 @MainActor
 enum AudioRetentionSweep {
-    private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "AudioRetention")
+    // 2026-05-25 — three constants marked `nonisolated`. The enum is
+    // `@MainActor` so its members default to MainActor isolation, but
+    // these three are immutable + Sendable (Logger conforms to
+    // Sendable since macOS 11; Set<String> and [String] are Sendable
+    // because String is). Marking them nonisolated lets the off-
+    // actor Task.detached closures in `purgeOneSession` and `sweep`
+    // read them without warnings (Swift 6 strict concurrency would
+    // otherwise flag the access). No safety loss — constants can't
+    // race.
+    nonisolated private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "AudioRetention")
 
     /// Audio filenames the sweep is allowed to remove. Anything else
     /// in a session directory (transcript.md, summary.json,
     /// speakers.json, screenshots/) is preserved.
-    private static let purgeableNames: Set<String> = [
+    nonisolated private static let purgeableNames: Set<String> = [
         "microphone.caf",
         "system_audio.caf",
     ]
@@ -41,21 +50,70 @@ enum AudioRetentionSweep {
     /// `microphone.part3.caf`, etc., produced when a mid-session
     /// route change forced an archive rollover. All of them are
     /// safe to purge when the session itself is past the cutoff.
-    private static let purgeablePrefixes: [String] = [
+    nonisolated private static let purgeablePrefixes: [String] = [
         "microphone.part",
         "system_audio.part",
     ]
 
     /// Run the sweep with the current user setting. Background queue;
-    /// returns immediately. No-op for retention == 0.
+    /// returns immediately. No-op for retention == 0 (keep forever)
+    /// or retention == -1 (delete-after-transcription — that mode is
+    /// per-session and fires from `RecordingSession.finalizePostStop`
+    /// once the pipeline is done with that specific session's audio,
+    /// so the timer sweep has nothing to do at launch).
     static func runIfNeeded(retentionDays: Int) {
         guard retentionDays > 0 else {
-            log.info("retention sweep skipped (retentionDays=0)")
+            log.info("retention sweep skipped (retentionDays=\(retentionDays, privacy: .public))")
             return
         }
         let cutoff = Date().addingTimeInterval(-Double(retentionDays) * 86_400)
         Task.detached(priority: .utility) {
             await sweep(cutoff: cutoff)
+        }
+    }
+
+    /// Per-session purge — deletes raw audio archives in ONE session
+    /// directory immediately. Backs the "Delete after transcription"
+    /// retention option (`AppSettings.audioRetentionDeleteAfterTranscription`).
+    /// Called from `RecordingSession` right after the post-stop
+    /// pipeline writes transcript.md and (optionally) summary.json:
+    /// at that point Daisy has nothing else to do with the raw audio,
+    /// so a privacy-first user wants it gone immediately rather than
+    /// waiting 24h+ for the timer sweep. Best-effort, fire-and-
+    /// forget; per-file failures are logged and skipped.
+    static func purgeOneSession(at directory: URL) {
+        let dirName = directory.lastPathComponent
+        Task.detached(priority: .utility) {
+            let fm = FileManager.default
+            guard let inner = try? fm.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                log.info("per-session purge: unable to list \(dirName, privacy: .private)")
+                return
+            }
+            var purged = 0
+            var freed: Int64 = 0
+            for fileURL in inner {
+                let name = fileURL.lastPathComponent
+                let shouldPurge =
+                    purgeableNames.contains(name) ||
+                    purgeablePrefixes.contains(where: { name.hasPrefix($0) })
+                guard shouldPurge else { continue }
+                let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                do {
+                    try fm.removeItem(at: fileURL)
+                    purged += 1
+                    freed += Int64(size)
+                } catch {
+                    log.error("per-session purge failed for \(name, privacy: .private): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+            if purged > 0 {
+                let mb = Double(freed) / 1_048_576.0
+                log.info("per-session purge done for \(dirName, privacy: .private) — \(purged, privacy: .public) files, \(mb, privacy: .public) MB freed")
+            }
         }
     }
 

@@ -40,7 +40,17 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                if permissions.needsAttention { permissionsAttentionBanner }
+                // 2026-05-25 — permissions banner is the only top-level
+                // child rendered without going through a section wrapper,
+                // so it needs its own horizontal inset to match the
+                // calendar banner inside `upcomingSection` (which carries
+                // `.padding(.horizontal, 24)`). Pre-fix it went edge-to-
+                // edge and read as "different banner family" next to the
+                // calendar one directly below.
+                if permissions.needsAttention {
+                    permissionsAttentionBanner
+                        .padding(.horizontal, 24)
+                }
                 upcomingSection
                 recentSessionsSection
                 if showDestinationsHint { destinationsHint }
@@ -61,21 +71,50 @@ struct HomeView: View {
     // optional and don't trigger this banner.
 
     private var permissionsAttentionBanner: some View {
+        // 2026-05-25 — synced layout to match `connectCalendarCTA`
+        // visually. Pre-fix this banner was visibly narrower than the
+        // Connect Calendar banner directly below it, because of an
+        // outer `.padding(.horizontal)` that wasn't there on the
+        // calendar one. Also switched `.stroke` → `.strokeBorder` so
+        // the 0.5pt border draws inside the rounded-rect edge (matches
+        // calendar). Now the two banners read as one design family
+        // separated by intent: orange warning chrome for required
+        // missing perms, cinnamon info chrome for optional connect-up.
         HStack(spacing: 10) {
+            // 2026-05-25 — icon switched `Color.daisyWarning` (orange)
+            // → `Color.daisyAccent` (cinnamon) to harmonize with the
+            // cinnamon chip background. Orange triangle on cinnamon
+            // chip read as "two colours that almost match but don't",
+            // i.e. clashing. The warning semantic is carried by the
+            // glyph itself (`exclamationmark.triangle.fill`) and the
+            // title text — colour is decoration, not the carrier.
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(Color.daisyWarning)
+                .foregroundStyle(Color.daisyAccent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(missingPermissionsTitle)
                     .font(.callout.weight(.medium))
-                Text("Open Settings → Permissions to grant access.")
+                Text("Open Settings → Permissions to grant access")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
-            Button("Fix") {
+            // 2026-05-25 — minWidth lives on the LABEL inside the
+            // Button, not on the Button itself. `.frame(minWidth:)`
+            // applied to the Button only reserves layout space — the
+            // `.borderedProminent` Capsule chrome still hugs the
+            // text. Pushing minWidth INTO the Label expands the text
+            // frame the Capsule wraps around, so the chrome sizes
+            // properly. Bumped 88 → 120 the same day: the banner
+            // stretches edge-to-edge on wide windows and an 88pt CTA
+            // looked tiny against ~1000pt of empty space. 120pt
+            // gives the chrome more substantial weight without
+            // pushing toward "comically big button" territory.
+            Button {
                 AppNavigation.shared.openInSettings(.permissions)
+            } label: {
+                Text("Fix").frame(minWidth: 120)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
@@ -83,15 +122,25 @@ struct HomeView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        // 2026-05-25 — background + border unified across all three
+        // Home banners (permissions / connectCalendar / deniedCalendar)
+        // to the same `daisyAccent` chip at 0.20 opacity. Pre-fix the
+        // permissions banner used `daisyWarning` (orange) and the
+        // calendar one `daisyAccent` (cinnamon) — close enough on the
+        // cream surface that the difference read as a rendering bug,
+        // not as two intentional semantic variants. Semantic split now
+        // lives entirely in the leading icon (warning triangle vs
+        // calendar) and title text, while the chip chrome is one
+        // family. Same colour, same opacity → fill and border merge
+        // into one clean filled chip, no double-layer look.
         .background(
-            Color.daisyWarning.opacity(0.08),
+            Color.daisyAccent.opacity(0.20),
             in: RoundedRectangle(cornerRadius: 8)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.daisyWarning.opacity(0.25), lineWidth: 0.5)
+                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
         )
-        .padding(.horizontal)
     }
 
     /// "Microphone access needed" / "Accessibility access needed" /
@@ -139,8 +188,10 @@ struct HomeView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
-            Button("Set up") {
+            Button {
                 AppNavigation.shared.section = .settings
+            } label: {
+                Text("Set up").frame(minWidth: 120)
             }
             .buttonStyle(.borderedProminent)
             .tint(Color.daisyAccent)
@@ -148,10 +199,17 @@ struct HomeView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.daisyAccent.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        // 2026-05-25 — joined the unified banner family (cinnamon
+        // 0.20/0.20 chip) per the shape audit. Pre-fix this was
+        // 0.06 fill + 0.18 border — a quieter half-cousin of the
+        // four other Home banners. Egor sees this AND the calendar/
+        // permissions banners in the same scroll column; the two
+        // recipes read as "those two are different sections" not
+        // "those are sibling info messages". One recipe, every time.
+        .background(Color.daisyAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyAccent.opacity(0.18), lineWidth: 0.5)
+                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
         )
         .padding(.horizontal, 24)
     }
@@ -263,9 +321,13 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color.gray.opacity(0.04), in: RoundedRectangle(cornerRadius: 6))
+            // 2026-05-25 — pad + opacity matched to UpcomingEventRow
+            // (10/8, gray .06) so the empty state slots in where the
+            // event rows would have been, no layout jump as the day
+            // empties out.
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
         } else {
             VStack(spacing: 6) {
                 ForEach(todaysEvents) { event in
@@ -278,6 +340,15 @@ struct HomeView: View {
     }
 
     private var connectCalendarCTA: some View {
+        // 2026-05-25 — synced visual treatment to match
+        // `permissionsAttentionBanner` (above): same border opacity
+        // (0.25, was 0.20), explicit `.tint` on the button so it
+        // renders as cinnamon-accent regardless of any inherited
+        // system tint, caption trailing period dropped per the
+        // caption-period rule (see business/projects/daisy → Brand
+        // copy rules). Icon stays accent-cinnamon vs the permission
+        // banner's warning-orange so the semantic split (info CTA vs
+        // required-action warning) still reads.
         HStack(spacing: 10) {
             Image(systemName: "calendar.badge.plus")
                 .font(.title3)
@@ -285,23 +356,30 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("See your meetings here")
                     .font(.callout.weight(.medium))
-                Text("Connect Calendar to surface today's events and auto-start recordings when they begin.")
+                Text("Connect Calendar to surface today's events and auto-start recordings when they begin")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
-            Button("Connect") {
+            // minWidth inside the label — see comment on the Fix
+            // button in `permissionsAttentionBanner` for why.
+            Button {
                 Task { _ = await calendar.requestAccess() }
                 // MainView observes CalendarService.authorizationStatus
                 // and wires AppSettings + service start on its own.
+            } label: {
+                Text("Connect").frame(minWidth: 120)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
+            .tint(Color.daisyAccent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.daisyAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        // 0.20 fill + 0.20 border — same unification as the
+        // permissions banner above, see the comment there.
+        .background(Color.daisyAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
@@ -309,28 +387,50 @@ struct HomeView: View {
     }
 
     private var deniedCalendarCTA: some View {
+        // 2026-05-25 — synced with the other two Home banners
+        // (permissions + connectCalendar). Was missing the border
+        // overlay entirely and used `.bordered` button instead of
+        // `.borderedProminent` w/ explicit tint, so it read as a
+        // visually weaker family member. Now matches the warning-
+        // family treatment (orange icon + orange-tinted background +
+        // matching border). Caption trailing period dropped per the
+        // caption-period rule.
         HStack(spacing: 10) {
+            // Icon in cinnamon to match the chip — same reasoning as
+            // `permissionsAttentionBanner`. The glyph
+            // (`calendar.badge.exclamationmark`) carries the
+            // "something's wrong" semantic; the colour is harmony.
             Image(systemName: "calendar.badge.exclamationmark")
                 .font(.title3)
-                .foregroundStyle(Color.daisyWarning)
+                .foregroundStyle(Color.daisyAccent)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Calendar access is off")
                     .font(.callout.weight(.medium))
-                Text("Grant access in System Settings → Privacy → Calendars to see upcoming meetings.")
+                Text("Grant access in System Settings → Privacy → Calendars to see upcoming meetings")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
-            Button("Open Settings") {
+            Button {
                 calendar.openCalendarPrivacy()
+            } label: {
+                Text("Open Settings").frame(minWidth: 120)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .controlSize(.regular)
+            .tint(Color.daisyAccent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color.daisyWarning.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        // Same `daisyAccent` chip at 0.20/0.20 as the other two
+        // Home banners. Semantic "calendar is denied → user action
+        // needed" stays in the warning-orange icon + title text.
+        .background(Color.daisyAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+        )
     }
 
     // MARK: - Recent sessions

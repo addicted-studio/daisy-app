@@ -161,7 +161,10 @@ struct DaisyWidget: View {
             Button {
                 Task { await session.start() }
             } label: {
-                Label("Start recording", systemImage: "record.circle")
+                // 2026-05-25 — "Start recording" → "Record" to match
+                // the sidebar capsule + toolbar play button (see
+                // RecordCapsule.swift label comment for the rationale).
+                Label("Record", systemImage: "record.circle")
             }
         case .preparing, .stopping, .summarizing:
             EmptyView()
@@ -214,25 +217,22 @@ struct DaisyWidget: View {
         .keyboardShortcut("q", modifiers: [.command])
     }
 
-    private func canStartFromHere(_ status: RecordingSession.Status) -> Bool {
-        switch status {
-        case .idle, .finished, .failed: return true
-        default: return false
-        }
-    }
-
     private var hasContent: Bool {
         session.segments.contains(where: { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty })
     }
 
     private func copyLastTranscript() {
-        let text = session.segments
-            .filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { "[\($0.source.displayLabel)] \($0.text)" }
-            .joined(separator: "\n\n")
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
+        // 2026-05-25 — route through MarkdownExporter instead of
+        // building a one-off string here. Pre-fix this rendered
+        // segments with the generic `source.displayLabel` ("you" /
+        // "system") and skipped the new acoustic-echo dedup pass, so
+        // the widget context-menu "Copy last transcript" produced a
+        // different result than ContentView's footer Copy button
+        // (which already goes through MarkdownExporter). Same path
+        // now means: proper speaker labels (userDisplayName / Remote
+        // A), echo dedup honoured, single source of truth for any
+        // future transcript-shape change.
+        MarkdownExporter.copyToClipboard(session: session)
     }
 
     // MARK: - Petal amplitude / colour (driven inside the single TimelineView)

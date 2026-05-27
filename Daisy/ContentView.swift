@@ -30,6 +30,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            consentReminder
             header
             Divider()
             ScrollView {
@@ -50,6 +51,155 @@ struct ContentView: View {
                 session.localeIdentifier = "auto"
             }
         }
+        // 2026-05-26 — pull live changes to Settings → Transcription
+        // language into the popover while the session is idle. The
+        // popover's `LocalePicker` is bound to `session.localeIdentifier`,
+        // which is seeded from `settings.defaultTranscriptionLocale`
+        // at RecordingSession.init and otherwise serves as a per-
+        // session override (popover-driven). Without this onChange,
+        // switching the default in Settings → Transcription left the
+        // popover still showing the old language, which read as a
+        // broken sync. Only mirror when the session is idle / finished
+        // / failed — never yank the locale of a live recording.
+        //
+        // 2026-05-27 — extended to all three locale settings + mode.
+        // Pre-fix this only listened to `defaultTranscriptionLocale`,
+        // which meant changing the per-mode override in Settings →
+        // Voice notes / Dictation didn't pull through to the toolbar
+        // even when the session was in that mode. `currentMode`
+        // changes also resync because the effective locale depends
+        // on mode (voiceNote/dictation read overrides if set, else
+        // fall back to default).
+        .onChange(of: settings.defaultTranscriptionLocale) { _, _ in syncToolbarLocaleFromSettings() }
+        .onChange(of: settings.voiceNoteLocale) { _, _ in syncToolbarLocaleFromSettings() }
+        .onChange(of: settings.dictationLocale) { _, _ in syncToolbarLocaleFromSettings() }
+        .onChange(of: session.currentMode) { _, _ in syncToolbarLocaleFromSettings() }
+    }
+
+    /// Mirror the appropriate settings slot into `session.localeIdentifier`
+    /// while the session is idle. Mirrors the same effective-locale
+    /// logic `RecordingSession.start()` uses (per-mode override if
+    /// set, else default), so the toolbar always shows what the
+    /// NEXT Record press will actually use. Never runs during active
+    /// capture — we don't yank Whisper's locale mid-stream.
+    private func syncToolbarLocaleFromSettings() {
+        switch session.status {
+        case .idle, .finished, .failed:
+            let effective = effectiveLocaleFromSettings()
+            if session.localeIdentifier != effective {
+                session.localeIdentifier = effective
+            }
+        case .preparing, .recording, .paused, .stopping, .summarizing:
+            break
+        }
+    }
+
+    /// Resolve the locale identifier that `start()` would pick for
+    /// the current mode. Keep in lock-step with the switch in
+    /// `RecordingSession.start()` (line ~696) so toolbar + start()
+    /// can never disagree.
+    private func effectiveLocaleFromSettings() -> String {
+        let raw: String
+        switch session.currentMode {
+        case .meeting:
+            raw = settings.defaultTranscriptionLocale
+        case .voiceNote:
+            raw = settings.voiceNoteLocale.isEmpty
+                ? settings.defaultTranscriptionLocale
+                : settings.voiceNoteLocale
+        case .dictation:
+            raw = settings.dictationLocale.isEmpty
+                ? settings.defaultTranscriptionLocale
+                : settings.dictationLocale
+        }
+        return raw.isEmpty ? "auto" : raw
+    }
+
+    /// Custom binding for the toolbar `LocalePicker`. Reads
+    /// `session.localeIdentifier` so the picker reflects the
+    /// session's current effective locale. On write, mirrors the
+    /// pick into the matching Settings slot (defaults for meeting,
+    /// voiceNoteLocale / dictationLocale for the other modes) so:
+    ///   1. The pick survives `start()` — which re-reads from
+    ///      Settings and would otherwise clobber a session-only
+    ///      override (Egor caught: "наоборот не работает и потом
+    ///      язык настроек возвращает язык в тулбаре", 2026-05-27).
+    ///   2. The pick shows up next time the user opens Settings →
+    ///      Transcription, so the two surfaces are symmetric editors
+    ///      of the same value.
+    ///   3. The pick survives popover close + reopen (settings are
+    ///      persisted via @AppStorage-style `UserDefaults`).
+    /// Guard on equality so we don't trigger a `didSet → write`
+    /// loop with the `.onChange(of: settings.*)` mirror above.
+    private var toolbarLocaleBinding: Binding<String> {
+        Binding(
+            get: { session.localeIdentifier },
+            set: { newValue in
+                session.localeIdentifier = newValue
+                switch session.currentMode {
+                case .meeting:
+                    if settings.defaultTranscriptionLocale != newValue {
+                        settings.defaultTranscriptionLocale = newValue
+                    }
+                case .voiceNote:
+                    if settings.voiceNoteLocale != newValue {
+                        settings.voiceNoteLocale = newValue
+                    }
+                case .dictation:
+                    if settings.dictationLocale != newValue {
+                        settings.dictationLocale = newValue
+                    }
+                }
+            }
+        )
+    }
+
+    // MARK: - Consent reminder
+
+    /// Always-on subtle privacy line at the very top of the popover.
+    /// Pattern mirrors Granola's pre-record consent disclaimer (added
+    /// 2026 spring as part of an industry-wide consent push driven
+    /// by EU/CA regulators).
+    ///
+    /// Daisy's positioning leans hard on "audio never leaves your
+    /// Mac" — but recording other PEOPLE without their knowledge is
+    /// still a thing the user (not the app) is responsible for, and
+    /// silently shipping a meeting-recorder with zero on-screen
+    /// reminder of that responsibility reads as cavalier.
+    /// Deliberately NOT dismissible — this is a standing reminder
+    /// that lives next to the Record button, not a banner that
+    /// "expires" once the user has seen it. Subtle styling (caption
+    /// font + secondary foreground + low-contrast cream chip) keeps
+    /// it out of the visual hierarchy of actionable controls.
+    /// The Learn-more link opens mydaisy.io/privacy in the user's
+    /// default browser via NSWorkspace.
+    private var consentReminder: some View {
+        HStack(spacing: 4) {
+            Spacer(minLength: 0)
+            Text("Always get consent when transcribing others.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                if let url = URL(string: "https://mydaisy.io/privacy") {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                HStack(spacing: 2) {
+                    Text("Learn more")
+                        .font(.caption.weight(.medium))
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Open Daisy's privacy notes on mydaisy.io")
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(Color.daisyBgSidebar)
     }
 
     // MARK: - Header
@@ -60,7 +210,7 @@ struct ContentView: View {
                 Text("Daisy")
                     .font(.headline)
                 Spacer()
-                LocalePicker(localeIdentifier: $session.localeIdentifier)
+                LocalePicker(localeIdentifier: toolbarLocaleBinding)
                     .disabled(session.status == .recording || session.status == .summarizing)
             }
 
@@ -126,7 +276,7 @@ struct ContentView: View {
                     Label("Connect Calendar in Settings…", systemImage: "gear")
                 }
             } else if upcomingMeetingChoices.isEmpty {
-                Text("No upcoming meetings")
+                Text("No upcoming events")
             } else {
                 if selectedMeeting != nil {
                     Button {
@@ -168,13 +318,25 @@ struct ContentView: View {
         .disabled(session.status == .recording || session.status == .summarizing)
     }
 
-    /// Upcoming events with a meeting URL, capped to the next 6 hours
-    /// — anything further out clutters the picker and isn't what the
-    /// user is about to join right now.
+    /// Upcoming calendar events in the next 6 hours — anything
+    /// further out clutters the picker and isn't what the user is
+    /// about to join right now.
+    ///
+    /// 2026-05-25 — source switched from `upcomingMeetings` (Zoom /
+    /// Meet / Teams URL-only filter via `.isMeeting`) → `upcomingEvents`
+    /// (all calendar entries). Egor flagged the bug: Home shows
+    /// every today's event but the widget popover's picker hid
+    /// URL-less ones, returning "No upcoming meetings" when there
+    /// were obviously events on the same day (e.g. a "Test" entry
+    /// with no Zoom link). Binding is just `session.title =
+    /// meeting.title` + a meta tag — no platform-detection
+    /// depends on the URL, so the filter was invisible engineering
+    /// noise that broke user mental model ("if it's in my calendar
+    /// today, let me bind to it").
     private var upcomingMeetingChoices: [DaisyMeeting] {
         let now = Date()
         let cutoff = now.addingTimeInterval(6 * 3600)
-        return CalendarService.shared.upcomingMeetings
+        return CalendarService.shared.upcomingEvents
             .filter { $0.startDate <= cutoff && $0.endDate >= now }
     }
 
@@ -549,8 +711,12 @@ struct ContentView: View {
                 ScrollViewReader { proxy in
                     LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(filteredSegments) { segment in
-                            SegmentRow(segment: segment, origin: session.startedAt ?? Date())
-                                .id(segment.id)
+                            SegmentRow(
+                                segment: segment,
+                                origin: session.startedAt ?? Date(),
+                                displayName: session.settings.userDisplayName
+                            )
+                            .id(segment.id)
                         }
                     }
                     .onChange(of: session.segments.last?.text) { _, _ in
@@ -881,6 +1047,12 @@ struct ContentView: View {
 private struct SegmentRow: View {
     let segment: TranscriptSegment
     let origin: Date
+    /// User's configured display name (Settings → Profile → Your
+    /// name). Routed through to `segment.speakerLabel(displayName:)`
+    /// so the mic-side badge reads "egor" instead of the generic
+    /// "me" fallback. Empty string preserves the legacy "Me" label —
+    /// matches behaviour for users who haven't set a name yet.
+    let displayName: String
 
     var body: some View {
         let offset = max(0, segment.startedAt.timeIntervalSince(origin))
@@ -891,7 +1063,15 @@ private struct SegmentRow: View {
                     .foregroundStyle(.tertiary)
                 sourceBadge
             }
-            .frame(width: 52, alignment: .leading)
+            // 2026-05-25 — column width 52 → 72 per Egor's pass. 52pt
+            // fit "5:54" timer fine but truncated any 2-word badge
+            // ("speaker e", "remote b") to 2 lines, which made the
+            // transcript scroll feel inconsistent (some rows tall,
+            // some short). 72pt holds "speaker X" / "remote X" on
+            // one line at .caption2 weight; the body text column to
+            // the right loses 20pt of width which is invisible at
+            // typical popover widths (~500pt).
+            .frame(width: 72, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(segment.text)
@@ -908,9 +1088,21 @@ private struct SegmentRow: View {
     }
 
     private var sourceBadge: some View {
-        Text(segment.speakerLabel.lowercased())
+        // 2026-05-25 — pass `displayName` so the mic badge resolves
+        // to the user's configured "Your name" (Settings → Profile)
+        // instead of the generic "me" fallback. Egor flagged the
+        // bug: he had "Egor" set in Settings but the live transcript
+        // still showed "me" on every mic-side segment. Root cause:
+        // SegmentRow was calling the no-arg `segment.speakerLabel`
+        // overload (which never reads settings). System-audio
+        // segments are unaffected — those are remote voices, not
+        // the user's.
+        Text(segment.speakerLabel(displayName: displayName).lowercased())
             .font(.caption2.weight(.medium))
             .foregroundStyle(sourceColor)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .truncationMode(.tail)
             .padding(.horizontal, 4)
             .padding(.vertical, 1)
             .background(sourceColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))

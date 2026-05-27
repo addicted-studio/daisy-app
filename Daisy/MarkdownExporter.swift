@@ -86,25 +86,39 @@ enum MarkdownExporter {
             lines.append("daisy_audio_parts: [\(parts)]")
         }
 
-        // Persistent audit of system-audio capture outcome. Three
-        // states surface support-side debugging:
-        //   off       — user had the toggle disabled, mic-only run
-        //   captured  — SystemAudioCapture received at least one frame
-        //   empty     — toggle on, capture armed, zero frames received
-        //               (BT output, denied Screen Recording grant,
-        //               or other macOS-side block)
-        // When status == empty, the user already saw a warning toast
-        // at session end; the frontmatter line is the post-hoc proof
-        // for grepping across a folder of sessions.
-        let sysAudioLabel: String
-        if !session.settings.captureSystemAudio {
-            sysAudioLabel = "off"
-        } else if session.hasCapturedSystemAudio {
-            sysAudioLabel = "captured"
-        } else {
-            sysAudioLabel = "empty"
+        // Persistent audit of per-stream capture outcome. Four states
+        // surface support-side debugging (1.0.7.1):
+        //   off       — toggle disabled (or stream not applicable to mode)
+        //   captured  — frames arrived AND landed on disk above floor
+        //   empty     — armed but zero frames ever arrived (BT output,
+        //               denied Screen Recording, SCKit Tahoe regression)
+        //   truncated — frames arrived but disk write died silently
+        //               (the 2026-05-25 Billions failure mode); user
+        //               also got a loud toast at stop time. Frontmatter
+        //               line includes byte/frame counts in parens so
+        //               support can spot patterns without opening logs.
+        // Pre-1.0.7.1 only the first three existed and `captured` was
+        // derived from `hasCapturedSystemAudio` (== hasReceivedAudio in
+        // memory). That flag flips true on the first SCK callback
+        // regardless of whether AVAudioFile.write succeeded — so
+        // sessions where every frame's write threw still stamped
+        // `captured`. Now both streams use ArchiveStatus, which
+        // cross-checks frames-written + on-disk byte count.
+        // Mic line is new in 1.0.7.1 too — the Billions test caught
+        // mic.caf truncated to 5% of session length with no signal
+        // anywhere; symmetric audit prevents that class of silent loss.
+        func archiveLabel(_ status: RecordingSession.ArchiveStatus) -> String {
+            switch status {
+            case .off: return "off"
+            case .empty: return "empty"
+            case .captured(let bytes):
+                return "captured (\(bytes) B)"
+            case .truncated(let bytes, let framesWritten, let writeErrors):
+                return "truncated (\(bytes) B on disk, \(framesWritten) frames written, \(writeErrors) write errors)"
+            }
         }
-        lines.append("daisy_system_audio_status: \(sysAudioLabel)")
+        lines.append("daisy_system_audio_status: \(archiveLabel(session.systemAudioArchiveStatus))")
+        lines.append("daisy_mic_audio_status: \(archiveLabel(session.micAudioArchiveStatus))")
         lines.append("tags: [meeting, transcript, daisy]")
         lines.append("---")
         lines.append("")
@@ -197,7 +211,17 @@ enum MarkdownExporter {
 
         let origin = session.startedAt ?? Date()
         let myName = session.settings.userDisplayName
-        for segment in session.segments {
+        // 2026-05-25 — apply acoustic-echo dedup before iterating
+        // segments when the user has the suppression toggle on. Drops
+        // mic-side segments that look like echoes of nearby system-
+        // audio segments (user playing meeting through speakers
+        // instead of headphones; mic re-captures + Whisper re-
+        // transcribes the same audio, producing duplicate lines
+        // attributed to the user). See `AcousticEchoDedup.swift`.
+        let segments = session.settings.suppressAcousticEcho
+            ? AcousticEchoDedup.filter(session.segments)
+            : session.segments
+        for segment in segments {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             let offset = max(0, segment.startedAt.timeIntervalSince(origin))

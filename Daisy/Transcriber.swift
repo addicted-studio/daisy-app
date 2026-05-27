@@ -304,7 +304,28 @@ final class Transcriber {
         }
     }
 
+    /// Legacy entry point — runs live-stop + final pass back-to-back.
+    /// Kept for callers that don't care about latency. Production
+    /// callers (RecordingSession.stop) use `stopCapture()` +
+    /// `runFinalPass()` to keep the user-facing Stop snappy.
     func stop() async {
+        await stopCapture()
+        await runFinalPass()
+    }
+
+    /// Fast first stage of stopping: halt live consumers, drain
+    /// any in-flight live transcribe / diarize tasks, then return.
+    /// Does NOT run the final Whisper pass — caller must invoke
+    /// `runFinalPass()` separately (typically detached so the user
+    /// can start a new recording immediately).
+    ///
+    /// 2026-05-27 — split out of `stop()` because the final pass
+    /// on a 20-minute mic session was clocking ~4 minutes of
+    /// Whisper inference (logs: `post-stop final_transcribe_mic:
+    /// 237091ms`), all of it blocking `status = .finished`. Users
+    /// who hit Stop because they're rushing to the next meeting
+    /// got stranded in a "Stopping…" hourglass for minutes.
+    func stopCapture() async {
         guard isRunning else { return }
         liveTimer?.invalidate()
         liveTimer = nil
@@ -315,11 +336,29 @@ final class Transcriber {
         transcribeTask = nil
 
         // Wait for any in-flight live diarization pass — without
-        // this it would race with `runFinalTranscribe()` and could
-        // overwrite final speaker labels with stale live ones.
+        // this it would race with a later `runFinalPass()` and
+        // could overwrite final speaker labels with stale live ones.
         await diarizeTask?.value
         diarizeTask = nil
 
+        // NB: isRunning is intentionally left true here. The final
+        // pass still needs to consume `allSamples` and update
+        // `committedSegments` + `speakerCentroids`. We flip
+        // isRunning = false at the end of `runFinalPass()`.
+    }
+
+    /// Second stage of stopping: re-runs Whisper over the full
+    /// accumulated audio buffer for best-quality segmentation,
+    /// merges with FluidAudio diarization, and writes the final
+    /// centroids to `speakerCentroids` so RecordingSession can
+    /// persist `speakers.json`.
+    ///
+    /// On 20+ minute sessions this can take multiple minutes of
+    /// Neural Engine time. Production callers run this detached
+    /// from `RecordingSession.stop()` so the user is freed the
+    /// moment audio capture stops, not the moment the final pass
+    /// finishes.
+    func runFinalPass() async {
         await runFinalTranscribe()
         isRunning = false
     }
@@ -554,6 +593,22 @@ final class Transcriber {
 
     private func runFinalTranscribe() async {
         guard !allSamples.isEmpty, let started = sessionStartedAt else { return }
+        // 2026-05-27 — cooperative cancellation. With the 1.0.7.3 two-
+        // stage Stop, this method runs inside the detached finalize
+        // Task. If the user hits Start on a new recording mid-final-
+        // pass, RecordingSession.start() cancels summaryTask and
+        // resets the transcriber. We need to bail without touching
+        // `committedSegments` / `speakerCentroids` — otherwise the
+        // Whisper output from the old session would land on top of
+        // the new session's freshly-reset state. The actual Whisper
+        // inference itself isn't cancellation-aware, so the worst
+        // case is wasted Neural Engine time on the old session's
+        // audio while the new session's live transcription queues
+        // behind it; the state-corruption path is closed.
+        if Task.isCancelled {
+            log.info("Final pass: cancelled before start — bailing")
+            return
+        }
         let samples = allSamples
         let lang = languageHint
 
@@ -578,6 +633,17 @@ final class Transcriber {
         do {
             let result = try await whisperResult
             let output = await diarizationOutput
+
+            // Second cancellation check — Whisper + diarization
+            // just returned but the user may have started a new
+            // recording during that time. `allSamples`,
+            // `samplesDropped`, etc. have been reset by then;
+            // mutating committedSegments here would clobber the
+            // new session's state-in-progress.
+            if Task.isCancelled {
+                log.info("Final pass: cancelled after Whisper/diarize — skipping commit")
+                return
+            }
 
             // The final pass covers the audio currently in
             // `allSamples`. If the buffer was trimmed on a long

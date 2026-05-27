@@ -142,6 +142,24 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     nonisolated(unsafe) private var archiveURL: URL?
     nonisolated(unsafe) private var archiveWriter: AVAudioFile?
 
+    // 2026-05-25 — counters for the silent-write-death detector
+    // surfaced in the Billions test: SCKit was delivering buffers
+    // (hasReceivedAudio=true, transcriber got 44 min of audio) but
+    // the on-disk system_audio.caf landed as 0 bytes. Two failure
+    // modes the existing log-only path missed:
+    //   • AVAudioFile open succeeded but write threw on EVERY frame
+    //   • Open succeeded, first write succeeded, later writes threw
+    //     (route change / device reset / disk pressure) and we only
+    //     emitted a log.error per frame — no surfaced counter
+    // These counters give RecordingSession.stop() an authoritative
+    // "did anything actually persist?" answer so frontmatter status
+    // and the post-stop toast can tell truth, not just hasReceivedAudio.
+    // All access happens on `outputQueue` (single-threaded) so the
+    // nonisolated(unsafe) attribution matches archiveURL/Writer.
+    nonisolated(unsafe) private var archiveFramesWritten: UInt64 = 0
+    nonisolated(unsafe) private var archiveWriteErrorCount: Int = 0
+    nonisolated(unsafe) private var firstArchiveWriteError: String?
+
     private let outputQueue = DispatchQueue(
         label: "app.essazanov.Daisy.SystemAudioOutput",
         qos: .userInitiated
@@ -175,6 +193,14 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             lastSampleAt = nil
             hasReceivedAudio = false
             silenceWarningFired = false
+            // Truncation-detector counters — fresh start zeros them.
+            // Resume keeps them so a mid-session pause/resume doesn't
+            // erase the evidence of an earlier write failure cluster.
+            outputQueue.sync {
+                archiveFramesWritten = 0
+                archiveWriteErrorCount = 0
+                firstArchiveWriteError = nil
+            }
         }
         state = .starting
         lastError = nil
@@ -383,8 +409,31 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         let config = SCStreamConfiguration()
         config.capturesAudio = true
         config.sampleRate = 48_000
-        config.channelCount = 2
-        config.excludesCurrentProcessAudio = true
+        // macOS 26.0.x (early Tahoe) regressed ScreenCaptureKit
+        // loopback for the default config — SCStream attaches without
+        // an exception but never delivers a single audio buffer, even
+        // on built-in speakers with no Bluetooth in the picture
+        // (tester 2026-05-23, frontmatter daisy_system_audio_status:
+        // empty, log "Silent SCStream detected after 30s"). The most
+        // commonly-reported workaround for Tahoe SCStream audio bugs
+        // is single-channel mono + dropping `excludesCurrentProcessAudio`.
+        // We apply both behind `#available(macOS 26, *)` so 14 / 15
+        // keep the year-validated 2-channel + self-exclusion path,
+        // and 26+ gets the conservative variant that has the best
+        // chance of delivering frames. Track: business/projects/daisy
+        // → "Известные баги macOS 26.0.1 Tahoe".
+        if #available(macOS 26.0, *) {
+            config.channelCount = 1
+            // Leave excludesCurrentProcessAudio at default (false) on
+            // macOS 26+ — we don't need it (Daisy doesn't play system
+            // audio during a meeting recording, just brief sound
+            // effects at start/pause/resume/stop), and on Tahoe early
+            // builds this knob is suspected of suppressing the whole
+            // loopback delivery.
+        } else {
+            config.channelCount = 2
+            config.excludesCurrentProcessAudio = true
+        }
         config.width = 2
         config.height = 2
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
@@ -706,12 +755,45 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         }
         do {
             try archiveWriter?.write(from: pcm)
+            // 2026-05-25 — counter for the silent-write-death detector.
+            // hasReceivedAudio flips true on first SCK buffer (above);
+            // archiveFramesWritten flips up only on a successful disk
+            // write. Divergence between the two is the truncation
+            // signal RecordingSession.stop() now toasts on.
+            archiveFramesWritten &+= UInt64(pcm.frameLength)
         } catch {
             // One sample's write failure shouldn't trash the whole
             // recording — log and move on. Persistent failures will
             // pollute the log but the live transcript stays intact.
             log.error("System audio archive write failed: \(error.localizedDescription, privacy: .public)")
+            archiveWriteErrorCount &+= 1
+            if firstArchiveWriteError == nil {
+                firstArchiveWriteError = error.localizedDescription
+            }
         }
+    }
+
+    // MARK: - Archive-truncation telemetry (read by RecordingSession)
+
+    /// Total audio frames that successfully landed in the archive
+    /// AVAudioFile via `try archiveWriter.write(from:)`. Zero means
+    /// either no SCK buffers arrived (combine with `hasReceivedAudio`
+    /// to distinguish) OR every write threw (combine with
+    /// `archiveWriteErrorsSummary` for the cause).
+    ///
+    /// Thread-safe: read via `outputQueue.sync` because the writer
+    /// path mutates this from that queue. Cheap — single hop, no
+    /// allocation.
+    var archivedFrameCount: UInt64 {
+        outputQueue.sync { archiveFramesWritten }
+    }
+
+    /// (errorCount, firstErrorMessage). Non-zero `count` with
+    /// `archivedFrameCount` ≪ wallClockFrames is the canonical
+    /// "truncated" signal. Used by RecordingSession.stop() to
+    /// pick `.captured` vs `.truncated` and to choose toast copy.
+    var archiveWriteErrorsSummary: (count: Int, first: String?) {
+        outputQueue.sync { (archiveWriteErrorCount, firstArchiveWriteError) }
     }
 
     /// Peak amplitude (in dB, where 0 dB = full-scale) over the

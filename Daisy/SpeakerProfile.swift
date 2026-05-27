@@ -64,7 +64,15 @@ struct SpeakerProfile: Codable, Identifiable, Sendable, Hashable {
 /// profile encodes who Alex's voice sounds like.
 ///
 /// File layout: `<session-dir>/speakers.json`.
-struct SpeakerCentroidsFile: Codable, Sendable {
+///
+/// `nonisolated` so the Codable conformance can be used from a
+/// nonisolated context (specifically `RecordingSession.makeStoredSession`,
+/// which decodes this file off the main actor). Under the project's
+/// Swift 6 default-actor-isolation = MainActor, an unannotated type
+/// gets @MainActor and so does its synthesised Decodable conformance,
+/// which the nonisolated callsite can't reach. Type is a pure data
+/// container with no shared mutable state, so opting out is safe.
+nonisolated struct SpeakerCentroidsFile: Codable, Sendable {
     let centroids: [String: [Float]]
 }
 

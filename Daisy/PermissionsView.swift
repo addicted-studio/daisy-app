@@ -34,9 +34,21 @@ struct PermissionsView: View {
     @ViewBuilder
     private var permissionsSection: some View {
         Section {
+            // 2026-05-25 — captions trimmed to one short sentence
+            // each. Pre-fix every row carried 2-3 sentences with a
+            // "Required." / "Optional." prefix, repeating what the
+            // explicit `Optional` pill next to the title already
+            // said (and what its absence said for required rows).
+            // The result was a wall of paragraphs the user had to
+            // skim through before figuring out what to click. New
+            // shape: badge tells you required vs optional, caption
+            // tells you why this one knob exists. Detail / failure
+            // modes still live in their respective help text and
+            // toasts at the moment they matter, not preemptively
+            // here.
             permissionRow(
                 title: "Microphone",
-                caption: "Required. Daisy captures your audio locally — without mic access nothing can be recorded.",
+                caption: "Captures your voice",
                 iconName: "mic.fill",
                 isRequired: true,
                 status: permissions.microphone,
@@ -46,7 +58,7 @@ struct PermissionsView: View {
 
             permissionRow(
                 title: "Accessibility",
-                caption: "Required for the dictation hotkey — Daisy pastes the transcript into the active app via ⌘V. Without this, dictation falls back to copy-only.",
+                caption: "Lets dictation paste into any app",
                 iconName: "keyboard",
                 isRequired: true,
                 status: permissions.accessibility,
@@ -56,7 +68,7 @@ struct PermissionsView: View {
 
             permissionRow(
                 title: "Calendar",
-                caption: "Optional. Lets Daisy auto-start recording when a meeting begins and tag transcripts with the right event.",
+                caption: "Auto-starts recording at meeting times",
                 iconName: "calendar",
                 isRequired: false,
                 status: permissions.calendar,
@@ -66,7 +78,7 @@ struct PermissionsView: View {
 
             permissionRow(
                 title: "Screen recording",
-                caption: "Optional. Captures the other side of meetings via system audio (Zoom / Meet / Teams) — without it, recordings include only your mic.",
+                caption: "Captures the other side of meetings",
                 iconName: "rectangle.on.rectangle",
                 isRequired: false,
                 status: permissions.screenRecording,
@@ -76,7 +88,7 @@ struct PermissionsView: View {
 
             permissionRow(
                 title: "Notifications",
-                caption: "Optional. Lets Daisy post a banner when auto-start fires (so you can tap Stop if it wasn't the right meeting) and when auto-stop saves a recording.",
+                caption: "Banner when Daisy auto-starts or saves",
                 iconName: "bell",
                 isRequired: false,
                 status: permissions.notifications,
@@ -84,23 +96,34 @@ struct PermissionsView: View {
                 openSettings: permissions.openNotificationSettings
             )
         } header: {
-            HStack {
-                Text("System access")
-                Spacer()
-                if permissions.needsAttention {
-                    Label("Required permission missing", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.daisyWarning)
-                } else if permissions.hasAllRequiredGranted && permissions.hasAllOptionalGranted {
-                    Label("All granted", systemImage: "checkmark.seal.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.daisySuccess)
+            // 2026-05-25 — promoted the privacy explainer from the
+            // Section footer up to the header, immediately under
+            // "System access". Pre-fix it sat at the very bottom
+            // of the Permissions tab below five rows of buttons,
+            // i.e. exactly where nobody reads it. The whole point
+            // of the paragraph is "don't worry, these don't ship
+            // data anywhere" — that reassurance has to land BEFORE
+            // the user starts approving prompts, not after.
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("System access")
+                    Spacer()
+                    if permissions.needsAttention {
+                        Label("Required permission missing", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.daisyWarning)
+                    } else if permissions.hasAllRequiredGranted && permissions.hasAllOptionalGranted {
+                        Label("All granted", systemImage: "checkmark.seal.fill")
+                            .font(.caption)
+                            .foregroundStyle(Color.daisySuccess)
+                    }
                 }
+                Text("Daisy works entirely on-device. None of these permissions ship data anywhere — they only let macOS know which local APIs Daisy may call. You can revoke any of them later in System Settings → Privacy & Security")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textCase(nil)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        } footer: {
-            Text("Daisy works entirely on-device. None of these permissions ship data anywhere — they only let macOS know which local APIs Daisy may call. You can revoke any of them later in System Settings → Privacy & Security.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -197,9 +220,18 @@ struct PermissionsView: View {
         case .denied, .insufficient, .restricted:
             // .restricted = managed device, the user can't toggle but
             // surfacing the deeplink anyway in case an admin can act.
+            // 2026-05-26 — explicit `.tint(Color.daisyTextPrimary)`
+            // because the default `.bordered` tint on Daisy's cream
+            // surface collapses into the background (washed-out
+            // orange-on-cream — Egor flagged the row as unactionable-
+            // looking). Inking the button gives it readable text +
+            // a dark outline without piling another orange element
+            // on a row that already accents in cinnamon (icon +
+            // "Optional" pill + title).
             Button("Open Settings…") { openSettings() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
         case .granted:
             Button("Revoke…") { openSettings() }
                 .buttonStyle(.bordered)

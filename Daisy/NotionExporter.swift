@@ -240,14 +240,6 @@ actor NotionExporter {
         ]
     }
 
-    private func bullet(_ text: String) -> [String: Any] {
-        [
-            "object": "block",
-            "type": "bulleted_list_item",
-            "bulleted_list_item": ["rich_text": richText(text)]
-        ]
-    }
-
     private func divider() -> [String: Any] {
         ["object": "block", "type": "divider", "divider": [String: Any]()]
     }

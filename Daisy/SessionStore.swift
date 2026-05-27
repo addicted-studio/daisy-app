@@ -538,17 +538,36 @@ final class SessionStore {
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
 
-        // Folder slug + tag + speaker mapping — parsed once at load.
+        // Folder slug + tag + speaker mapping + system-audio status
+        // — parsed once at load. NB: `parsedFm` here is the
+        // ParsedFrontmatter struct, distinct from the outer-scope
+        // `fm` (FileManager) — don't conflate the two.
         var folderSlug = "inbox"
         var tag = ""
         var attendees: [String] = []
+        var linkedEventTitle: String?
         var speakerMap: [String: String] = [:]
+        var systemAudioStatus: String?
         if let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
             let parsedFm = parseFrontmatter(in: text)
             folderSlug = parsedFm.folder ?? "inbox"
             tag = parsedFm.tag ?? ""
             attendees = parsedFm.attendees
+            linkedEventTitle = parsedFm.linkedEventTitle
             speakerMap = parsedFm.speakerMap
+            systemAudioStatus = parsedFm.systemAudioStatus
+        }
+
+        // speakers.json sidecar — just the centroid KEY set, not the
+        // 256-dim embeddings (those are heavy and the UI only needs to
+        // know "does this transcript ID have a saved voice fingerprint
+        // or not"). 1.0.7.1 addition for the speaker-mapping UX.
+        var centroidIDs: Set<String> = []
+        let speakersURL = directory.appendingPathComponent("speakers.json")
+        if let data = try? Data(contentsOf: speakersURL),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let centroids = parsed["centroids"] as? [String: Any] {
+            centroidIDs = Set(centroids.keys)
         }
 
         return StoredSession(
@@ -568,7 +587,10 @@ final class SessionStore {
             folderSlug: folderSlug,
             tag: tag,
             meetingAttendees: attendees,
-            speakerMap: speakerMap
+            linkedEventTitle: linkedEventTitle,
+            speakerMap: speakerMap,
+            speakerCentroidIDs: centroidIDs,
+            systemAudioStatus: systemAudioStatus
         )
     }
 
@@ -659,10 +681,34 @@ struct StoredSession: Identifiable, Sendable {
     /// Attendees captured from the bound EKEvent when this session
     /// was started from the calendar. Empty otherwise.
     let meetingAttendees: [String]
+    /// Title of the calendar event this session was bound to at
+    /// start time (e.g. "Customer call · Maria — Acme"). Nil for
+    /// manual recordings with no calendar binding. Used by the
+    /// SpeakerNameRow attendee picker as a header so the user can
+    /// verify the attendee list is from the expected event.
+    let linkedEventTitle: String?
     /// User-supplied mapping from speaker id (`"A"`, `"B"`, …) to
     /// real attendee name. Read from `daisy_speaker_map:`
     /// frontmatter. Empty until user fills it in via Detail view.
     let speakerMap: [String: String]
+    /// Keys of `centroids` in this session's `speakers.json` sidecar.
+    /// Read at session-load time so SessionDetailView can tell which
+    /// transcript speaker IDs have a saved voice fingerprint and
+    /// which don't (fragmented clusters that ended up in transcript
+    /// without a clean centroid). Used by the Name-the-speakers UI
+    /// to flag "session only" rows. Empty for sessions that predate
+    /// speakers.json (pre-1.0.4) or where diarization didn't run.
+    let speakerCentroidIDs: Set<String>
+    /// Status of system-audio capture for this session, read from
+    /// `daisy_system_audio_status:` frontmatter. Possible values:
+    /// `"ok"` (frames received), `"empty"` (capture was on but no
+    /// frames arrived — typically Bluetooth output or the macOS
+    /// 26.0.x SCStream regression), or `nil` for sessions that
+    /// predate this field. SessionDetailView reads it to show the
+    /// "couldn't capture the other side" banner so the user
+    /// understands why every transcript line collapses to their
+    /// own display name instead of per-speaker labels.
+    let systemAudioStatus: String?
 
     var hasSummary: Bool { summary != nil }
     var hasScreenshots: Bool { !screenshotURLs.isEmpty }
@@ -696,7 +742,17 @@ nonisolated private struct ParsedFrontmatter {
     var folder: String?
     var tag: String?
     var attendees: [String] = []
+    /// Title of the calendar event this session was bound to at
+    /// start time, if any. Used by SessionDetailView to label the
+    /// attendee picker so the user can verify "these are attendees
+    /// from THIS event" — a tester reported seeing what looked like
+    /// emails from a different meeting, which turned out to be the
+    /// case where the wrong event was bound at session-start; the
+    /// picker had no header naming the source.
+    var linkedEventTitle: String?
     var speakerMap: [String: String] = [:]
+    /// `"ok"` / `"empty"` / nil — see StoredSession.systemAudioStatus.
+    var systemAudioStatus: String?
     /// Markdown body after the closing `---`. Empty if no frontmatter.
     var body: String
 }
@@ -741,14 +797,34 @@ nonisolated private func parseFrontmatter(in markdown: String) -> ParsedFrontmat
             if parsed.tag == nil { parsed.tag = valueRaw }
         case "daisy_event_attendees":
             parsed.attendees = parseYAMLArray(valueRaw)
+        case "daisy_event_title":
+            // YAML-quoted via MarkdownExporter.yamlQuote; strip the
+            // surrounding double quotes for display.
+            parsed.linkedEventTitle = yamlUnquote(valueRaw)
         case "daisy_speaker_map":
             parsed.speakerMap = parseYAMLDict(valueRaw)
+        case "daisy_system_audio_status":
+            parsed.systemAudioStatus = valueRaw
         default:              break
         }
     }
     let body = lines[(endIdx + 1)...].joined(separator: "\n")
     parsed.body = body
     return parsed
+}
+
+/// Strip surrounding double quotes from a YAML scalar value. The
+/// frontmatter writer (`MarkdownExporter.yamlQuote`) wraps strings
+/// in `"..."` to handle commas, colons, and bracket chars safely.
+/// For display we want the raw text back.
+nonisolated private func yamlUnquote(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespaces)
+    guard trimmed.hasPrefix("\""), trimmed.hasSuffix("\""), trimmed.count >= 2 else {
+        return trimmed
+    }
+    return String(trimmed.dropFirst().dropLast())
+        // yamlQuote escapes embedded "→\" — undo for display.
+        .replacingOccurrences(of: "\\\"", with: "\"")
 }
 
 /// Parse a YAML-style inline array — `["Alex", "Maria", "Boris"]`.

@@ -196,8 +196,12 @@ final class DictationPaste {
         // their input field state on focus-acquired.
         Thread.sleep(forTimeInterval: 0.08)
 
+        // 2026-05-27 — bundleIdentifier is `.private`. Not strictly
+        // PII but a precise fingerprint of which apps the user
+        // dictates into; not something we want in the public unified
+        // log stream long-term.
         let frontmostBefore = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "<unknown>"
-        log.info("Posting ⌘V — frontmost app: \(frontmostBefore, privacy: .public)")
+        log.info("Posting ⌘V — frontmost app: \(frontmostBefore, privacy: .private)")
 
         let tap = CGEventTapLocation.cgSessionEventTap
         cmdDown.post(tap: tap)

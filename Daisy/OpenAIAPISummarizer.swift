@@ -69,8 +69,9 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         // Retry on transient 429 / 5xx / network errors — shared
-        // helper lives in AnthropicAPISummarizer.fetchWithRetry.
-        let (data, response) = try await AnthropicAPISummarizer.fetchWithRetry(
+        // helper in CloudHTTPRetry (pre-1.0.7.3 this lived on
+        // AnthropicAPISummarizer, cross-provider naming was awkward).
+        let (data, response) = try await CloudHTTPRetry.fetch(
             request: request,
             session: urlSession,
             log: log
