@@ -193,6 +193,25 @@ struct MainView: View {
         // edge alongside our principal pill — we already provide
         // the title via the pill itself.
         .navigationTitle("")
+        // 2026-05-27 — remove SwiftUI's auto-generated sidebar toggle
+        // from the toolbar. Apple bug on macOS 26.2: the toggle is
+        // backed by `NSSegmentedCell`, and during layout / mouseDown
+        // processing the bridge runs `swift_task_isCurrentExecutor`
+        // → `swift_getObjectType` → `objc_msgSend` on a deallocated
+        // class metadata pointer (use-after-free in the Swift
+        // concurrency↔AppKit bridge). Reproduces on 1.0.7.3 / 26.2
+        // (25C56) every time the user starts a recording (via
+        // hotkey AND main-window button). Same UAF family as the
+        // documented 26.0.1 SwiftUI Button crash, now in
+        // SystemSegmentedControl. Hiding the toggle means SwiftUI
+        // doesn't materialize the NSSegmentedCell, so the buggy
+        // code path can't execute. Trade-off: user loses the
+        // 1-click sidebar collapse from the toolbar; they can
+        // still drag the divider, and Daisy's sidebar is
+        // permanently informative (Home / Library / Connections /
+        // Settings / About) so collapsing it wasn't a primary use
+        // case anyway.
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
             // Leading placement on the detail-pane toolbar (right
             // after the sidebar's right edge). Native macOS apps
