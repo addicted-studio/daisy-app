@@ -71,6 +71,26 @@ final class MCPServer {
     /// rather than the request just dying mid-flight.
     @ObservationIgnored private var currentSessionID: String?
 
+    /// Sliding window of recent SSE-open timestamps for the
+    /// connection-storm circuit breaker. Pruned to the last 30s on
+    /// every open. If we see > 5 opens in 30s, we shut the listener
+    /// down for 5 minutes. Real-world trigger: Claude Desktop's
+    /// mcp-remote reconnect loop wedges on macOS 26.2 and hammers
+    /// our SSE endpoint every 3 seconds, which kept Daisy's runloop
+    /// busy enough that an unrelated SwiftUI concurrency bug
+    /// (swift_task_isCurrentExecutor UAF in DesignLibrary HStack
+    /// during layout cycles) fired predictably during the next
+    /// `start recording` action and crashed the process. Memory
+    /// note: `feedback_tahoe_swiftui_button_assumeisolated_crash`.
+    /// Killing the storm removes the layout-pressure trigger.
+    @ObservationIgnored private var recentSSEOpenings: [Date] = []
+    @ObservationIgnored private var stormCooldownEndsAt: Date?
+
+    /// Storm thresholds — exceeded = circuit breaker trips.
+    private static let stormWindow: TimeInterval = 30
+    private static let stormThreshold = 5
+    private static let stormCooldown: TimeInterval = 5 * 60
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -280,6 +300,45 @@ final class MCPServer {
     // MARK: - SSE stream (server → client)
 
     private func openSSEStream(on connection: NWConnection) async {
+        // ── Connection-storm circuit breaker ─────────────────────────
+        //
+        // Reject the connection at the application layer if we've seen
+        // > stormThreshold opens in stormWindow. NWConnection.cancel()
+        // closes the TCP socket; a well-behaved client interprets that
+        // as "server unavailable", backs off, and stops pile-on.
+        // mcp-remote will keep retrying but at our rate, not its
+        // bugged 3-second cadence. After stormCooldown elapses, the
+        // breaker auto-resets on the next non-storm open.
+        let now = Date()
+        if let until = stormCooldownEndsAt, now < until {
+            log.warning("MCP connection-storm cooldown active until \(until, privacy: .public) — rejecting")
+            connection.cancel()
+            return
+        }
+        recentSSEOpenings.append(now)
+        recentSSEOpenings.removeAll { now.timeIntervalSince($0) > Self.stormWindow }
+        if recentSSEOpenings.count > Self.stormThreshold {
+            stormCooldownEndsAt = now.addingTimeInterval(Self.stormCooldown)
+            recentSSEOpenings.removeAll()
+            log.error("MCP connection storm: \(Self.stormThreshold, privacy: .public)+ opens in \(Int(Self.stormWindow), privacy: .public)s — tearing down listener for \(Int(Self.stormCooldown), privacy: .public)s. Likely cause: a misbehaving MCP client (e.g. mcp-remote with broken reconnect). Daisy stays usable; restart the app or wait \(Int(Self.stormCooldown / 60), privacy: .public) min to re-enable MCP.")
+            connection.cancel()
+            // Stop the listener entirely so subsequent TCP attempts
+            // hit ECONNREFUSED at the kernel and the client's retry
+            // logic shifts to a real backoff. Schedule re-arm in
+            // stormCooldown.
+            stop()
+            // Re-arm with the same port the user has configured
+            // (defaults.integer returns 0 for missing; fall back to
+            // the same 54321 default AppSettings uses).
+            let storedPort = UserDefaults.standard.integer(forKey: "daisy.mcpServerPort")
+            let restartPort = storedPort > 0 ? storedPort : 54321
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Self.stormCooldown * 1_000_000_000))
+                self?.start(port: restartPort)
+            }
+            return
+        }
+
         // Drop any previous stream — single-client transport.
         // Cancel the OLD timer first so it can't race onto the new
         // connection. tearDownSSE handles both.
