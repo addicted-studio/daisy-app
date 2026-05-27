@@ -25,11 +25,29 @@ extension View {
     /// for the ~90% of Macs still on Sonoma/Sequoia.
     @ViewBuilder
     func daisyGlass<S: Shape>(in shape: S) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(in: shape)
-        } else {
-            self
-        }
+        // 2026-05-27 — DISABLED on every macOS version. `glassEffect(in:)`
+        // is backed by DesignLibrary, and on macOS 26.2 (25C56) its body
+        // runs `swift_task_isCurrentExecutor` → `swift_getObjectType`
+        // during SwiftUI's layout pass and dereferences freed class
+        // metadata → EXC_BREAKPOINT (pointer-authentication trap DA).
+        // Reproduces 100% on Record: when `session.status` flips to
+        // `.recording`, the sidebar List in MainView restructures (Stop
+        // button + status pill appear) and `DynamicContainerInfo`
+        // re-evaluates the `RecordCapsule` glass row mid-layout, firing
+        // the buggy path. Same Swift concurrency↔AppKit UAF family as the
+        // NSSegmentedCell sidebar-toggle crash fixed in c612635, and as
+        // the documented 26.0.1 SwiftUI Button crash — so we disable
+        // across ALL of 26.x, not just 26.2. Not materializing the
+        // glassEffect means the buggy DesignLibrary code can't run.
+        //
+        // No-op is a safe degradation: every call site paints its own
+        // Capsule fill + hairline stroke directly under this modifier
+        // (RecordCapsule, ContentView record button), so we lose only the
+        // Liquid Glass sheen — the control's shape and legibility are
+        // unchanged, identical to the macOS 14/15 render path. Re-enable
+        // by restoring `if #available(macOS 26.0, *) { self.glassEffect(in: shape) }`
+        // once Apple ships a 26.x with the DesignLibrary UAF fixed.
+        self
     }
 
     /// Hide the window toolbar's frosted background. On macOS 26 this
