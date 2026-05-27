@@ -187,7 +187,12 @@ final class CalendarService {
             let isKey = w.isKeyWindow
             let isMain = w.isMainWindow
             let titled = w.styleMask.contains(.titled)
-            permLog.info("  window[\(idx, privacy: .public)] class=\(cls, privacy: .public) title='\(title, privacy: .public)' ident=\(ident, privacy: .public) visible=\(visible, privacy: .public) canBecomeKey=\(canKey, privacy: .public) isKey=\(isKey, privacy: .public) isMain=\(isMain, privacy: .public) titled=\(titled, privacy: .public)")
+            // 2026-05-27 — title flipped to `.private`. Today window
+            // titles are "Daisy" or empty; safe. Tomorrow if a per-
+            // session window adds the meeting title to chrome (which
+            // is PII), this log would silently leak it into the unified
+            // log. Preventive downgrade.
+            permLog.info("  window[\(idx, privacy: .public)] class=\(cls, privacy: .public) title='\(title, privacy: .private)' ident=\(ident, privacy: .public) visible=\(visible, privacy: .public) canBecomeKey=\(canKey, privacy: .public) isKey=\(isKey, privacy: .public) isMain=\(isMain, privacy: .public) titled=\(titled, privacy: .public)")
         }
 
         // ─── Try to key any plausible main window ─────────────────────
@@ -202,7 +207,7 @@ final class CalendarService {
 
         if let candidate {
             candidate.makeKeyAndOrderFront(nil)
-            permLog.info("bringAppToForegroundForPrompt: keyed window class=\(String(describing: type(of: candidate)), privacy: .public) title='\(candidate.title, privacy: .public)'")
+            permLog.info("bringAppToForegroundForPrompt: keyed window class=\(String(describing: type(of: candidate)), privacy: .public) title='\(candidate.title, privacy: .private)'")
         } else {
             permLog.error("bringAppToForegroundForPrompt: NO key-eligible visible window found — calendar prompt cannot anchor")
         }

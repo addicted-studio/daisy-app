@@ -1,0 +1,130 @@
+//
+//  SelectableTextView.swift
+//  Daisy
+//
+//  Read-only NSTextView wrapped for SwiftUI. Reason this exists:
+//  SwiftUI `Text(...).textSelection(.enabled)` inside a ScrollView on
+//  macOS 26 only lets the user drag-select content within the current
+//  viewport — anything that has scrolled out of view can't be reached
+//  by a drag-extending selection, and ⌘A is similarly clipped.
+//  Reported by Egor on 2026-05-25 on a 44-min transcript view:
+//  "выделение работает только на то, что в первый экран попадает".
+//
+//  The workaround is to put the long text into the AppKit text system
+//  via NSTextView, which has had proper full-content selection,
+//  ⌘A / ⌘C / Find behaviour since the System 7 era. We size the
+//  NSTextView intrinsically based on its content so it embeds cleanly
+//  inside a SwiftUI ScrollView — outer scrolling is owned by SwiftUI,
+//  the NSTextView itself doesn't scroll, it just lays out tall.
+//
+//  Read-only: `isEditable = false` blocks the user from typing into
+//  the transcript by accident. `isSelectable = true` keeps selection
+//  + copy + Find Bar working. Background draw is off so the view
+//  inherits whatever SwiftUI background sits behind it.
+//
+
+import AppKit
+import SwiftUI
+
+struct SelectableTextView: NSViewRepresentable {
+
+    let text: String
+    let font: NSFont
+
+    init(_ text: String, font: NSFont = NSFont.preferredFont(forTextStyle: .body)) {
+        self.text = text
+        self.font = font
+    }
+
+    func makeNSView(context: Context) -> NSTextView {
+        let tv = NSTextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.drawsBackground = false
+        tv.backgroundColor = .clear
+        tv.textContainerInset = .zero
+        tv.font = font
+        tv.textColor = .labelColor
+        // Strict SwiftUI-driven sizing: NSTextView never tries to
+        // grow itself, the height is exactly what `sizeThatFits`
+        // returns. With `isVerticallyResizable = true` AppKit
+        // could lay out tall content that didn't fit the SwiftUI
+        // frame, which made the transcript visually overflow the
+        // outer CollapsibleBlock's rounded background (last few
+        // lines drawn past the bottom border, no parent clip).
+        // false + a precise sizeThatFits gives the parent block a
+        // height that always matches what we actually draw.
+        tv.isVerticallyResizable = false
+        tv.isHorizontallyResizable = false
+        // Zero out the lineFragmentPadding so left edge aligns with
+        // whatever container the view sits in (matches SwiftUI Text
+        // baseline, no surprise indent).
+        tv.textContainer?.lineFragmentPadding = 0
+        // Tall vertical container — sized for real on layout pass via
+        // sizeThatFits below. Width gets pinned by the SwiftUI layout.
+        tv.textContainer?.containerSize = NSSize(
+            width: 0,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        // 1.0.7.1 — enable Find Bar so ⌘F works inside long transcripts.
+        // Mac users expect this on any sufficiently text-heavy surface;
+        // SwiftUI Text has no equivalent.
+        tv.usesFindBar = true
+        tv.isIncrementalSearchingEnabled = true
+        // Inserts via setString so updateNSView can diff against
+        // the current value cheaply.
+        tv.string = text
+        return tv
+    }
+
+    func updateNSView(_ nsView: NSTextView, context: Context) {
+        if nsView.string != text {
+            nsView.string = text
+            // Force layout-manager flush so the next sizeThatFits
+            // call reads a fresh usedRect (otherwise a transcript
+            // that grew mid-session — e.g. live append — could
+            // measure against stale glyph ranges and underflow).
+            if let lm = nsView.layoutManager, let tc = nsView.textContainer {
+                lm.ensureLayout(for: tc)
+            }
+            nsView.invalidateIntrinsicContentSize()
+        }
+        if nsView.font != font {
+            nsView.font = font
+            nsView.invalidateIntrinsicContentSize()
+        }
+    }
+
+    /// Intrinsic sizing — tell SwiftUI how tall to make us for a given
+    /// proposed width. Without this the NSTextView gets a default
+    /// height and scrolls internally (bad — we want the outer ScrollView
+    /// to scroll). Computes the actual laid-out glyph rect for the
+    /// proposed width, returns that height. Runs on each layout pass
+    /// the parent makes; cost is one glyph layout per resize event.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0 else { return nil }
+        guard let container = nsView.textContainer,
+              let layoutManager = nsView.layoutManager else {
+            return nil
+        }
+        container.containerSize = NSSize(
+            width: width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        // `ensureLayout` forces the layout manager to *complete*
+        // layout for the entire container (not just generate glyph
+        // ranges). `glyphRange` alone left the trailing paragraph
+        // un-laid-out on long transcripts, so usedRect reported a
+        // height shorter than what NSTextView actually drew — the
+        // last few lines fell outside the SwiftUI frame and
+        // visually spilled below the outer CollapsibleBlock's
+        // rounded background.
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container)
+        // Small bottom buffer absorbs sub-pixel rounding between
+        // the layout manager's float math and SwiftUI's integer
+        // pixel grid — without it a long transcript can still
+        // clip its last glyph row by a fractional pixel.
+        return CGSize(width: width, height: ceil(used.height) + 2)
+    }
+}

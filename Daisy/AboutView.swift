@@ -44,18 +44,45 @@ struct AboutView: View {
     // MARK: - Brand header
 
     private var brandHeader: some View {
-        HStack(spacing: 16) {
+        // 2026-05-25 — merged the bottom-of-page "Daisy is built so
+        // your meetings stay on your Mac…" paragraph into this header
+        // subtitle. Pre-fix the page had two short value-prop
+        // statements ~600pt apart: one under the title (Local
+        // meeting capture for Mac.) and one at the very bottom
+        // (full privacy explainer). The visual split made the
+        // footer paragraph feel like fine print no one reads,
+        // while the top subtitle was just a category descriptor.
+        // Merged: the title pill carries both pieces — what it is
+        // + what's on-device — and we drop the duplicate "for Mac"
+        // from the original footer along the way. Trailing period
+        // dropped per the Daisy caption rule (see
+        // business/projects/daisy → Brand copy rules).
+        HStack(alignment: .top, spacing: 16) {
             DaisyMark(size: 56, tint: .primary)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Daisy")
                     .font(.title.weight(.semibold))
-                Text("Local meeting capture for Mac.")
+                Text("Local meeting capture for Mac — audio, transcript, and summary all on-device by default. Cloud LLMs (Anthropic, OpenAI) and MCP integrations are strictly opt-in")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(versionLine)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
+                    .padding(.top, 2)
+                    // 2026-05-27 — click-to-copy on the About header
+                    // version line. Same affordance as the sidebar
+                    // version pill in MainView; both copy
+                    // "Daisy <version> (<build>)" so support pastes
+                    // are uniform regardless of which surface the
+                    // user clicked from. No icon / no visual change
+                    // per Egor's constraint — discoverability via
+                    // `.help` tooltip only. `.contentShape` widens
+                    // the hit target to the full text frame.
+                    .contentShape(Rectangle())
+                    .onTapGesture { VersionInfo.copyToClipboardWithToast() }
+                    .help("Click to copy version")
             }
             Spacer()
         }
@@ -75,7 +102,7 @@ struct AboutView: View {
             // need for a second presentation of it.
             HStack(spacing: 12) {
                 Image(systemName: "arrow.down.circle")
-                    .frame(width: 22)
+                    .frame(width: 18) // 2026-05-25 — was 22, matched to SettingsView + PermissionsView icon column for cross-surface row-rhythm
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Automatically check for updates")
@@ -148,6 +175,13 @@ struct AboutView: View {
                 )
                 divider
                 aboutRow(
+                    icon: "bubble.left.and.bubble.right",
+                    title: "Community",
+                    detail: "Q&A, ideas, show-and-tell",
+                    url: URL(string: "https://github.com/addicted-studio/daisy-app/discussions")
+                )
+                divider
+                aboutRow(
                     icon: "doc.text",
                     title: "License",
                     detail: "Apache 2.0 — open source",
@@ -202,12 +236,9 @@ struct AboutView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
             )
-
-            Text("Daisy is built so your meetings stay on your Mac — audio, transcript, and summary, all on-device by default. Cloud LLMs (Anthropic, OpenAI) and MCP integrations are strictly opt-in.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 4)
+            // Bottom paragraph removed 2026-05-25 — merged into the
+            // page-top brand header so the value-prop landed before
+            // the user scrolled five rows of links instead of after.
         }
     }
 
@@ -237,7 +268,7 @@ struct AboutView: View {
     ) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .frame(width: 22)
+                .frame(width: 18) // 2026-05-25 — was 22, matched to SettingsView + PermissionsView icon column for cross-surface row-rhythm consistency
                 .foregroundStyle(.secondary)
             Text(title)
                 .foregroundStyle(.primary)
@@ -264,9 +295,12 @@ struct AboutView: View {
     }
 
     private var versionLine: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
-        return "Version \(version) (\(build))"
+        // Displayed format ("Version X (build)") differs from the
+        // clipboard payload ("Daisy X (build)") — the surrounding
+        // About panel already labels itself "Daisy", so the in-UI
+        // "Version" prefix avoids redundancy. See VersionInfo for
+        // the support-paste payload.
+        "Version \(VersionInfo.marketingVersion) (\(VersionInfo.buildNumber))"
     }
 }
 

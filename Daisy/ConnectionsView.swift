@@ -187,7 +187,7 @@ struct ConnectionsView: View {
             if googleAccount.isConnected {
                 HStack(spacing: 10) {
                     Image(systemName: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.daisySuccess)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Connected as")
                             .font(.caption)
@@ -233,7 +233,7 @@ struct ConnectionsView: View {
             if let err = googleConnectError {
                 Text(err)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.daisyError)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -244,7 +244,7 @@ struct ConnectionsView: View {
             // Google approves and the Beta badge comes off.
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.daisyWarning)
                     .font(.caption)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Pre-verification — heads up on the Google consent screen")
@@ -263,19 +263,27 @@ struct ConnectionsView: View {
         } header: {
             HStack(spacing: 8) {
                 Text("Google Calendar")
+                // 2026-05-25 — "Beta" meta-pill switched
+                // .orange → daisyAccent so it shares the meta-tag
+                // recipe with the ZOOM/MEET platform pill in
+                // UpcomingEventRow (HomeView). Raw .orange in this
+                // app is reserved for daisyRecording (mic-active);
+                // a static "Beta" tag wearing recording-orange read
+                // as "this connector is currently capturing" at
+                // peripheral glance.
                 Text("Beta")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
-                        Capsule().fill(Color.orange.opacity(0.18))
+                        Capsule().fill(Color.daisyAccent.opacity(0.18))
                     )
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.daisyAccent)
                 Spacer()
                 if googleAccount.isConnected {
                     Text("Connected")
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.daisySuccess)
                 }
             }
         }

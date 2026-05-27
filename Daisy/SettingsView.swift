@@ -60,11 +60,6 @@ struct SettingsView: View {
     /// to subscribe to CoreAudio hot-plug notifications (added in
     /// post-launch hardening).
     @State private var micDevices: [AudioInputDevice] = []
-    /// Cumulative rotation degrees for the mic-refresh icon. Each tap
-    /// adds 360° so the icon spins forward on every press, mirroring
-    /// the calendar refresh affordance in HomeView. Same control,
-    /// same feedback — different data source.
-    @State private var micRefreshRotation: Double = 0
     /// On-disk Whisper cache stats — populated by an off-thread
     /// scan in `transcriptionTab.task`. `cacheRefreshTick` is the
     /// nudge the task watches; we bump it after Remove unused so
@@ -339,10 +334,14 @@ struct SettingsView: View {
     /// SessionsFolder reads UserDefaults directly (not @Observable).
     @ViewBuilder
     private var storageRow: some View {
+        // 2026-05-25 — leading icons removed from all four Storage rows
+        // (folder / clock.arrow.circlepath / trash / doc.text). Egor's
+        // call: with row titles already strong ("Sessions folder",
+        // "Delete audio after", "Clear all audio now", "Notion") the
+        // icons were decoration, not navigation, and they pushed the
+        // titles' x-position 28pt to the right vs the header text on
+        // the same Form. Cleaner without them.
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Sessions folder")
                     .font(.callout.weight(.medium))
@@ -387,6 +386,22 @@ struct SettingsView: View {
             ?? SessionsFolder.defaultContainerLabel
     }
 
+    /// Caption under "Delete audio after" — flips wording per option
+    /// so the user reads the right justification for whichever mode
+    /// they've chosen. "After transcription" needs a different
+    /// sentence than "24 hours" (no time-based framing makes sense).
+    /// All variants honor the no-trailing-period brand rule.
+    private var retentionCaptionText: String {
+        switch settings.audioRetentionDays {
+        case AppSettings.audioRetentionDeleteAfterTranscription:
+            return "Audio deletes as soon as the transcript and summary are written. Transcripts, summaries and screenshots stay forever — audio is the heavy part"
+        case 0:
+            return "Daisy never deletes audio. Transcripts, summaries and screenshots also stay forever"
+        default:
+            return "Daisy deletes the audio recording once a session is this old. Transcripts, summaries and screenshots stay forever — audio is the heavy part"
+        }
+    }
+
     // MARK: - Notion destination (under Storage)
 
     /// Notion destination row + auto-send toggle + DisclosureGroup
@@ -411,31 +426,66 @@ struct SettingsView: View {
     @ViewBuilder
     private var clearAudioCacheRow: some View {
         let mb = Double(audioCacheBytes) / 1_048_576.0
+        // 2026-05-25 UX-copy pass:
+        //   - "across N file(s)" with parenthesised plural-s reads
+        //     sloppy at N=1 ("1 file(s)") and was the most visible
+        //     copy nit in any screenshot of this row. Switched to a
+        //     proper singular/plural switch + middle dot (matches
+        //     menu-bar formatting elsewhere in the app).
+        //   - "Nothing to clear" stays as-is — fine.
+        //   - "file" → "recording" — the user thinks of these as
+        //     meeting recordings, not files. Same reason "cache" got
+        //     dropped from the row title (dev word).
         let sizeText: String = {
             if audioCacheFiles == 0 { return "Nothing to clear" }
-            if mb < 1024 { return String(format: "%.0f MB across %d file(s)", mb, audioCacheFiles) }
-            return String(format: "%.2f GB across %d file(s)", mb / 1024.0, audioCacheFiles)
+            let noun = audioCacheFiles == 1 ? "recording" : "recordings"
+            let size: String
+            if mb < 1024 { size = String(format: "%.0f MB", mb) }
+            else { size = String(format: "%.2f GB", mb / 1024.0) }
+            return "\(size) · \(audioCacheFiles) \(noun)"
         }()
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "trash")
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Clear audio cache now")
+                // Title weight bumped to .callout.medium for parity
+                // with the other row titles in this Section
+                // (Sessions folder / Notion). Without it the row
+                // visually deemphasised itself, like an info row
+                // instead of an actionable one.
+                Text("Clear all audio now")
+                    .font(.callout.weight(.medium))
                 Text(sizeText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button(role: .destructive) {
+            // 2026-05-25 — dropped `role: .destructive` on the row
+            // trigger. The role forces a system tint that renders
+            // muddy peach in `.disabled` state on the cream / ivory
+            // surface, and `role` overrides any explicit `.tint`
+            // we set. Pre-fix the disabled button visually clashed
+            // with the rest of the Section (toggles + secondary
+            // buttons). Now: explicit red tint only when the action
+            // is actually available; secondary grey when disabled.
+            // The destructive intent still gets surfaced — inside
+            // the confirm alert, where it belongs. This matches the
+            // pattern in Linear / Things / Reeder where destructive
+            // red lives in the confirm sheet, not the row trigger.
+            // Also: "Clear…" → "Clear" — ellipsis = "more input
+            // needed" per macOS HIG (file picker, text entry, etc).
+            // A y/n confirm alert isn't more input, so the trailing
+            // dot was just noise.
+            Button {
                 showingClearAudioConfirm = true
             } label: {
                 if clearingAudioCache {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("Clear…")
+                    Text("Clear")
                 }
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(audioCacheFiles == 0 ? Color.secondary : Color.red)
             .disabled(clearingAudioCache || audioCacheFiles == 0)
         }
         .task(id: audioCacheRefreshTick) {
@@ -443,8 +493,24 @@ struct SettingsView: View {
             audioCacheFiles = result.files
             audioCacheBytes = result.bytes
         }
-        .alert("Clear all audio archives?", isPresented: $showingClearAudioConfirm) {
-            Button("Clear", role: .destructive) {
+        // 2026-05-25 alert copy rewrite:
+        //   - "archives" → "recordings" (archive reads cold and
+        //     mirrors the same backend-y term we got rid of in the
+        //     row title).
+        //   - alert message dropped `microphone.caf` /
+        //     `system_audio.caf` filenames entirely — pure
+        //     engineering leak, users don't know those names.
+        //   - confirm button "Clear" → "Delete" to match the new
+        //     alert title verb (consistency: title says delete,
+        //     button says delete).
+        //   - "Cleared X of audio" toast → "Freed X" — shorter,
+        //     reads as a user benefit (space back) rather than
+        //     restating the action.
+        //   - "Audio cache was already empty" → "Nothing to clear —
+        //     audio is already gone" mirrors the row caption when
+        //     idle so the language is consistent before/after.
+        .alert("Delete all audio recordings?", isPresented: $showingClearAudioConfirm) {
+            Button("Delete", role: .destructive) {
                 clearingAudioCache = true
                 AudioRetentionSweep.runNow { _, freedBytes in
                     let mb = Double(freedBytes) / 1_048_576.0
@@ -454,8 +520,8 @@ struct SettingsView: View {
                     }()
                     ToastCenter.shared.show(
                         freedBytes > 0
-                            ? "Cleared \(freedText) of audio"
-                            : "Audio cache was already empty",
+                            ? "Freed \(freedText)"
+                            : "Nothing to clear — audio is already gone",
                         style: .success
                     )
                     clearingAudioCache = false
@@ -464,16 +530,13 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removes every microphone.caf and system_audio.caf across all sessions. Transcripts, summaries and screenshots are kept. This can't be undone.")
+            Text("Daisy deletes the audio from every session right now. Transcripts, summaries and screenshots stay. This can't be undone.")
         }
     }
 
     @ViewBuilder
     private var notionDestinationRow: some View {
         HStack(spacing: 10) {
-            Image(systemName: "doc.text")
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text("Notion")
@@ -540,7 +603,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Notion")
                                 .font(.headline)
-                            Text("Push finished sessions into a Notion page or database.")
+                            Text("Send finished sessions into a Notion page or database.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -635,23 +698,32 @@ struct SettingsView: View {
     /// action), configured-but-untested (warning to test first),
     /// configured-and-tested (passive confirmation).
     private var notionRowCaption: String {
+        // 2026-05-25 — UX copy pass found that two of these strings
+        // referenced "below", which was true when the Notion deep
+        // config lived in a DisclosureGroup right under this row.
+        // The 1.0.5.4 move pulled that config into a modal sheet
+        // opened from a gear button on the same row, so "below"
+        // became factually wrong — there is no longer anything
+        // below to configure. Rewritten to point at the gear, and
+        // verb-aligned across the three states ("send" vs the old
+        // mixed "push" / "pushes").
         if !settings.hasNotionCredentials {
-            return "Push finished sessions to Notion as a child page or a database row. Configure below to enable."
+            return "Send finished sessions to Notion as a child page or a database row. Set it up in the gear."
         }
         if settings.lastNotionTestPassedAt == nil {
-            return "Pass Test connection first — auto-send needs a confirmed working setup."
+            return "Run Test connection in the gear first — auto-send only turns on once it passes."
         }
-        return "Pushes the session to Notion the moment you stop recording."
+        return "Sends each session to Notion the moment you stop recording."
     }
 
     private var notionToggleHelp: String {
         if !settings.hasNotionCredentials {
-            return "Configure Notion settings below first."
+            return "Open Notion settings in the gear first."
         }
         if settings.lastNotionTestPassedAt == nil {
             return "Run Test connection before enabling auto-send."
         }
-        return "Auto-push finished sessions to Notion."
+        return "Auto-send finished sessions to Notion."
     }
 
     @ViewBuilder
@@ -792,6 +864,15 @@ struct SettingsView: View {
             // → "Profiles", Mail → "Profiles"), which reads as a
             // labelled identity container rather than a pronoun.
             Section {
+                // 2026-05-25 — caption ("Replaces \"Me\" in transcripts
+                // and lets the summarizer address you by name") removed.
+                // The label "Your name" + the placeholder "e.g. Egor"
+                // already carry intent for anyone scanning Settings;
+                // the longer rationale moved to a tooltip on a
+                // post-PH polish if it turns out we need it. Dropping
+                // the caption also kills Form's auto-inserted row
+                // separator since the Section now has a single row —
+                // no more half-divider underneath the field.
                 LabeledContent("Your name") {
                     TextField("", text: $settings.userDisplayName, prompt: Text("e.g. Egor"))
                         .textFieldStyle(.roundedBorder)
@@ -799,9 +880,6 @@ struct SettingsView: View {
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity)
                 }
-                Text("Shown in transcripts and in the summary prompt for your own voice. Without it, your lines are labeled \"Me\" — fine for solo notes, but the summarizer can't address you by name in multi-person meetings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } header: {
                 Text("Profile")
             }
@@ -838,34 +916,86 @@ struct SettingsView: View {
             // overwhelming for users who'll never wire Notion up.
             Section {
                 storageRow
-                Text("Audio, transcripts, summaries and screenshots land in `Daisy/Sessions/` under this folder. Older recordings stay where they were.")
+                // 2026-05-25 footer rewrite — old "Older recordings
+                // stay where they were" got misread by testers as
+                // "old recordings will be deleted." New phrasing
+                // makes the future-vs-already-recorded split
+                // explicit, and tightens the inventory list at the
+                // same time.
+                Text("Future recordings land in a `Daisy/Sessions` folder here — audio, transcripts, summaries and screenshots together. Anything you've already recorded stays where it is.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Picker(selection: $settings.audioRetentionDays) {
-                    Text("24 hours").tag(1)
-                    Text("7 days").tag(7)
-                    Text("30 days").tag(30)
-                    Text("Keep forever").tag(0)
-                } label: {
+                // Retention picker — wrapped in the same HStack +
+                // leading-icon shape as `storageRow` /
+                // `clearAudioCacheRow` / `notionDestinationRow`.
+                // Pre-2026-05-25 this used a stock `Picker(label:
+                // VStack(...))` with no leading icon, which broke
+                // the row rhythm in this Section (folder icon /
+                // [nothing] / trash icon / doc icon). Now every
+                // row carries an 18pt leading icon, the section
+                // reads as one cohesive list. Icon
+                // `clock.arrow.circlepath` is the SF Symbols
+                // vocabulary for retention / TTL / auto-erase —
+                // the same glyph macOS Mail uses for its
+                // auto-erase preference.
+                //
+                // Caption also rewrites — old version leaked the
+                // `.caf` filename (engineering noise users don't
+                // care about). New version names what changes on
+                // disk without the implementation detail.
+                HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Delete audio after")
-                        Text("Removes the raw .caf audio files once a session is older than this. Transcripts, summaries, and screenshots stay forever — audio is what dominates disk space.")
+                            .font(.callout.weight(.medium))
+                        Text(retentionCaptionText)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                }
-                .pickerStyle(.menu)
-                .onChange(of: settings.audioRetentionDays) { _, new in
-                    // Apply immediately so the user sees disk freed
-                    // without waiting for next launch.
-                    AudioRetentionSweep.runIfNeeded(retentionDays: new)
+                    Spacer()
+                    // 2026-05-25 — added "After transcription" as the
+                    // first option (tag = sentinel -1). New-install
+                    // default per AppSettings. Per-session purge fires
+                    // from RecordingSession.finalizePostStop once the
+                    // pipeline is done with the audio — no timer
+                    // involved. Existing "24h / 7d / 30d / Forever"
+                    // options preserved so power users (legal,
+                    // journalists, anyone who re-summarizes from
+                    // audio later) keep the same control they had.
+                    Picker("", selection: $settings.audioRetentionDays) {
+                        Text("After transcription")
+                            .tag(AppSettings.audioRetentionDeleteAfterTranscription)
+                        Text("24 hours").tag(1)
+                        Text("7 days").tag(7)
+                        Text("30 days").tag(30)
+                        Text("Keep forever").tag(0)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .onChange(of: settings.audioRetentionDays) { _, new in
+                        // Apply immediately so the user sees disk freed
+                        // without waiting for next launch. -1 is a
+                        // per-session mode (kicks in on the next
+                        // finished session); runIfNeeded no-ops it
+                        // safely — past sessions aren't surprise-
+                        // deleted, the user can hit Clear if they
+                        // want a hard reset.
+                        AudioRetentionSweep.runIfNeeded(retentionDays: new)
+                    }
                 }
 
                 clearAudioCacheRow
 
-                Divider()
+                // Dropped explicit Divider() that used to sit
+                // between clearAudioCacheRow and notionDestinationRow
+                // — Form's native row separators are enough, and the
+                // extra divider was reading as an "empty content gap"
+                // visually (Egor flagged 2026-05-25). Once we split
+                // this Section into "Sessions folder" / "Send to"
+                // (post-launch refactor) the separator becomes a
+                // proper Section gap automatically.
 
                 notionDestinationRow
             } header: {
@@ -1061,54 +1191,47 @@ struct SettingsView: View {
     // than a bare "System default" label.
     @ViewBuilder
     private var micPickerRow: some View {
+        // 2026-05-25 — pre-fix this row carried a manual re-scan
+        // button (`arrow.trianglehead.2.clockwise` glyph next to the
+        // Picker) and a one-line explainer caption. Both removed:
+        //   • Re-scan: redundant — Daisy already observes CoreAudio
+        //     device changes via `refreshMicDevices()` on form load,
+        //     and AVAudioSession route-change notifications keep
+        //     `micDevices` live. The button only existed as a paranoid
+        //     fallback that never fired in practice; visual clutter on
+        //     a row that's a single picker.
+        //   • Caption ("Daisy uses this device for the microphone
+        //     track. Pick \"System default\" to follow your macOS Sound
+        //     settings."): the LabeledContent label "Microphone" and
+        //     the explicit "System default (…)" option name carry
+        //     enough intent for anyone scanning Settings. The longer
+        //     "what System default does" explanation isn't load-
+        //     bearing — picker behaviour is obvious on tap.
         LabeledContent("Microphone") {
-            HStack(spacing: 8) {
-                Picker("", selection: $settings.selectedMicDeviceUID) {
-                    Text(systemDefaultLabel).tag("")
-                    if !micDevices.isEmpty {
-                        Divider()
-                        ForEach(micDevices) { device in
-                            Text(device.name).tag(device.uid)
-                        }
-                    }
-                    // If the saved UID isn't in the live list (device
-                    // unplugged since selection), include a disabled
-                    // placeholder so the Picker can still display the
-                    // current value rather than silently snapping to
-                    // System default. The user sees that something is
-                    // missing and can act on it.
-                    if !settings.selectedMicDeviceUID.isEmpty,
-                       !micDevices.contains(where: { $0.uid == settings.selectedMicDeviceUID }) {
-                        Divider()
-                        Text("Saved device (not connected)")
-                            .tag(settings.selectedMicDeviceUID)
+            Picker("", selection: $settings.selectedMicDeviceUID) {
+                Text(systemDefaultLabel).tag("")
+                if !micDevices.isEmpty {
+                    Divider()
+                    ForEach(micDevices) { device in
+                        Text(device.name).tag(device.uid)
                     }
                 }
-                .labelsHidden()
-                .fixedSize()
-
-                // Re-scan affordance — mirrors the calendar refresh
-                // button in HomeView: same icon, same secondary tint,
-                // same 360° spin on tap. Same metaphor everywhere we
-                // re-pull external state.
-                Button {
-                    refreshMicDevices()
-                    withAnimation(.easeInOut(duration: 0.7)) {
-                        micRefreshRotation += 360
-                    }
-                } label: {
-                    Image(systemName: "arrow.trianglehead.2.clockwise")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(micRefreshRotation))
+                // If the saved UID isn't in the live list (device
+                // unplugged since selection), include a disabled
+                // placeholder so the Picker can still display the
+                // current value rather than silently snapping to
+                // System default. The user sees that something is
+                // missing and can act on it.
+                if !settings.selectedMicDeviceUID.isEmpty,
+                   !micDevices.contains(where: { $0.uid == settings.selectedMicDeviceUID }) {
+                    Divider()
+                    Text("Saved device (not connected)")
+                        .tag(settings.selectedMicDeviceUID)
                 }
-                .buttonStyle(.plain)
-                .help("Re-scan input devices")
             }
+            .labelsHidden()
+            .fixedSize()
         }
-        Text("Daisy uses this device for the microphone track. Pick \"System default\" to follow your macOS Sound settings.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
     }
 
     private var systemDefaultLabel: String {
@@ -1185,18 +1308,57 @@ struct SettingsView: View {
             // down the description too; the long version moved to
             // the footer.
             Section {
+                // 2026-05-25 — primary "Speakers mode" picker added in
+                // 1.0.7. Two modes:
+                //  • Split (true, default) = current behavior;
+                //    pyannote diarizes the system stream into separate
+                //    Remote A / Remote B / Remote C clusters.
+                //  • Two sides (false) = Granola-style. System stream
+                //    gets a single "Remote" label regardless of how
+                //    many voices. Mic stream is still "you".
+                // 2026-05-26 — renamed "All speakers" → "Split" to
+                // match the verb form of the action ("split each
+                // voice into its own row") and pair-cadence-wise
+                // with "Two sides" (1-2 syllables each).
+                // Strings consolidated to EN in 1.0.7 — the picker
+                // shipped briefly with RU radio labels + EN section
+                // chrome, which broke the language rhythm of the rest
+                // of the Whisper form. Whole form is EN, so are these.
+                // Caption under the picker and the section footer
+                // were both removed shortly after: both quoted the
+                // "Two sides" label literally, which read like a live
+                // status of which mode was active and contradicted
+                // the actual selection (e.g. radio on "All speakers"
+                // with caption "Pick 'Two sides' if…" feels like a
+                // bug to the user even when the copy is descriptive).
+                // The option names alone are self-explanatory; no
+                // example-name parenthesis either — they overloaded
+                // the row with internal-jargon proper nouns.
+                Picker(selection: $settings.diarizeRemoteSpeakers) {
+                    Text("Split")
+                        .tag(true)
+                    Text("Two sides")
+                        .tag(false)
+                } label: {
+                    Text("Speakers in transcript")
+                }
+                .pickerStyle(.inline)
+
                 Toggle(isOn: $settings.diarizeMicrophone) {
                     Text("Diarize microphone too")
-                    Text("Splits voices in your mic into Speaker A / B instead of one \"Me\". Use when remote people are heard through your speakers.")
+                    Text("Splits voices in your mic into Speaker A / B instead of one \"Me\". Use when remote people are heard through your speakers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Toggle(isOn: $settings.suppressAcousticEcho) {
+                    Text("Suppress acoustic echo")
+                    Text("Drops mic-side lines that look like echoes of the remote audio (happens when you play meetings through speakers instead of headphones). Sequential matches in a 2-second window — single quoted lines are kept")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Diarization")
-            } footer: {
-                Text("Adds ~15-25% to processing time. System audio is always diarized.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
 
             Section {

@@ -10,7 +10,7 @@
 //  "you're now recording" without needing a textbook explanation.
 //
 //  States:
-//   • idle / finished / failed → accent-tinted capsule, "Start"
+//   • idle / finished / failed → accent-tinted capsule, "Record"
 //   • recording                → orange capsule, "Stop · 01:23"
 //   • preparing/stopping/sum.  → dimmed capsule with hourglass
 //
@@ -22,7 +22,14 @@ struct RecordCapsule: View {
 
     var body: some View {
         Button(action: handleTap) {
-            HStack(spacing: 8) {
+            // 2026-05-25 — HStack spacing 8 → 6 to match the implicit
+            // icon-to-text spacing of `Label(systemImage:)` rows in
+            // `List(.sidebar)`. Pre-fix the icon-to-text gap inside
+            // the capsule was visibly wider than inside the Home /
+            // Library / Connections / Settings / About rows above,
+            // so even with matching outer width the internal rhythm
+            // looked off.
+            HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.callout.weight(.semibold))
                 Text(label)
@@ -35,8 +42,27 @@ struct RecordCapsule: View {
                         .foregroundStyle(.white.opacity(0.85))
                 }
             }
+            // 2026-05-25 — horizontal padding bumped 8 → 12 per Egor's
+            // sidebar pass. Pre-bump the 8pt inset (chosen to
+            // compensate the Capsule curve so the icon aligned with
+            // the sidebar row chip x-position) made the play/pause
+            // glyph sit too close to the left curve and the timer
+            // too close to the right curve — text "breathed" less
+            // than the equivalent padding in the row chips above.
+            // 12pt restores air around both ends; the icon x drifts
+            // ~4pt inward of the sidebar row chip but the capsule
+            // now reads as a self-contained pill rather than an
+            // over-stretched one. Stop & save below got the same
+            // bump for matched-pair rhythm.
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            // 2026-05-25 — bumped vertical padding 8 → 14 (+6 each
+            // side = +12pt total height) per Egor's eyeball pass on
+            // the sidebar. Previously the capsule felt tight against
+            // the row labels above it; with the bigger touch target
+            // the Record button now reads as the unambiguous primary
+            // action of the sidebar, matches the visual weight of
+            // the brand mark + Daisy pill above.
+            .padding(.vertical, 14)
             .frame(maxWidth: .infinity)
             .foregroundStyle(foreground)
             .background(
@@ -86,15 +112,22 @@ struct RecordCapsule: View {
     }
 
     private var label: String {
+        // 2026-05-25 — idle / finished label changed "Start" → "Record"
+        // to match the verb used everywhere else in the app (toolbar
+        // play button, dock badge title, hotkey hint "⌘⇧R"). "Start"
+        // is generic — start what? — and Daisy's three modes (meeting,
+        // voice note, dictation) are all variants of "record". The
+        // recording-state labels (Pause / Resume / Stop) stay as
+        // standard media verbs once a session is in flight.
         switch session.status {
         case .recording:    return "Pause"
         case .paused:       return "Resume"
         case .preparing:    return "Preparing…"
         case .stopping:     return "Stopping…"
         case .summarizing:  return "Summarizing…"
-        case .finished:     return "Start"
+        case .finished:     return "Record"
         case .failed:       return "Try again"
-        case .idle:         return "Start"
+        case .idle:         return "Record"
         }
     }
 
@@ -142,8 +175,8 @@ struct RecordCapsule: View {
         switch session.status {
         case .recording:    return "Pause (Space)"
         case .paused:       return "Resume (Space)"
-        case .idle:         return "Start a new recording (Space)"
-        case .finished:     return "Start another recording (Space)"
+        case .idle:         return "Record a new session (Space)"
+        case .finished:     return "Record another session (Space)"
         case .failed:       return "Try recording again"
         default:            return ""
         }

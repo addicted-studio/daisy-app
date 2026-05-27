@@ -14,6 +14,7 @@
 //      openWindow(id: "main")
 //
 
+import AppKit
 import EventKit
 import SwiftUI
 
@@ -342,14 +343,16 @@ struct MainView: View {
             // section header — header label was visual noise.
             Section {
                 RecordCapsule(session: session)
-                    // Match the horizontal insets of List(.sidebar)
-                    // rows so the capsule lines up exactly with the
-                    // Home / History / Settings highlight chips
-                    // above it. Zero leading/trailing here lets the
-                    // capsule's own internal padding define the
-                    // visual width, identical to how Label rows
-                    // render in macOS sidebar.
-                    .listRowInsets(EdgeInsets(top: 14, leading: 0, bottom: 4, trailing: 0))
+                    // 2026-05-25 — capsule was visibly narrower than
+                    // the Home / Library / etc. selection chips above.
+                    // `List(.sidebar)` adds ~8pt implicit horizontal
+                    // inset that we can't override directly. Negative
+                    // listRowInsets cancel that inset so the capsule's
+                    // outer edges land at the same x-coordinates as
+                    // the highlight chip on the row above. Combined
+                    // with the capsule's own 10pt internal text
+                    // padding the visual width now matches.
+                    .listRowInsets(EdgeInsets(top: 14, leading: -8, bottom: 4, trailing: -8))
                     .listRowBackground(Color.clear)
 
                 // Stop & save lives next to the toggle capsule so a
@@ -367,8 +370,17 @@ struct MainView: View {
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                         }
+                        // 2026-05-25 — padding tracks RecordCapsule's
+                        // pad recipe exactly so the two capsules
+                        // render as a matched pair (same width, same
+                        // height, same internal rhythm — Pause toggle
+                        // on top, Stop & save underneath). Egor's
+                        // pass bumped horizontal 8 → 12 to give the
+                        // stop glyph + label room from the capsule
+                        // curve. If RecordCapsule's h-pad ever moves,
+                        // bump this one in lockstep.
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 14)
                         .foregroundStyle(Color.daisyTextPrimary)
                         .background(
                             Capsule(style: .continuous).fill(Color.daisyBgElevated)
@@ -378,7 +390,11 @@ struct MainView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 4, trailing: 0))
+                    // Same negative-inset compensation as RecordCapsule
+                    // above so the Stop button lines up with the
+                    // capsule edges (and therefore with the sidebar
+                    // row chips above) instead of sitting indented.
+                    .listRowInsets(EdgeInsets(top: 0, leading: -8, bottom: 4, trailing: -8))
                     .listRowBackground(Color.clear)
                 }
 
@@ -389,7 +405,19 @@ struct MainView: View {
                 // before the actionable button, which felt wrong.
                 if session.status == .recording || session.status == .paused {
                     SystemAudioStatusPill(session: session)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 8, trailing: 0))
+                        // 2026-05-25 — top inset 0 → 12 per Egor's
+                        // pass. The status pill belongs to a
+                        // different visual family than the Pause /
+                        // Stop & save matched-pair above (capsules =
+                        // primary actions; pill = informational
+                        // status). Pre-bump the 4pt gap inherited
+                        // from Pause→Stop made the three rows read
+                        // as one undifferentiated stack. 12pt drops
+                        // the pill far enough below the action pair
+                        // to be parsed as "status note on the
+                        // current recording" rather than "third
+                        // button in a row".
+                        .listRowInsets(EdgeInsets(top: 12, leading: -8, bottom: 8, trailing: -8))
                         .listRowBackground(Color.clear)
                 }
             }
@@ -410,6 +438,20 @@ struct MainView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
+                    // 2026-05-27 — click-to-copy on the version pill.
+                    // Useful for bug reports / support — user posts a
+                    // GitHub issue or DM and pastes "Daisy 1.0.7.2 (29)"
+                    // instead of squinting at the pill, then asking
+                    // which one is the build. No visual change: same
+                    // font/colour/padding. `.contentShape` widens the
+                    // hit-target to the whole text frame (otherwise
+                    // SwiftUI hit-tests glyph rectangles only, which
+                    // makes single-digit versions tiny). `.help`
+                    // surfaces the affordance on hover without adding
+                    // an icon, per Egor's "no icon" constraint.
+                    .contentShape(Rectangle())
+                    .onTapGesture { VersionInfo.copyToClipboardWithToast() }
+                    .help("Click to copy version")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -417,9 +459,7 @@ struct MainView: View {
         }
     }
 
-    private var appVersion: String {
-        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.0"
-    }
+    private var appVersion: String { VersionInfo.marketingVersion }
 
     // MARK: Detail
 
@@ -475,6 +515,15 @@ private struct SystemAudioStatusPill: View {
     /// Matches the visual weight of the warning states below so the
     /// status row stays consistent regardless of state — eye lands
     /// on the same shape, only the colour and copy change.
+    ///
+    /// 2026-05-25 — opacity recipe synced to the unified banner
+    /// family (0.20 fill + 0.20 strokeBorder). Pre-sync this used
+    /// 0.10 / 0.25 (the "subtle status pill" recipe) but the
+    /// warning siblings below were on the same recipe with no
+    /// affordance distinction — eye couldn't pick out that the
+    /// warning was clickable. Now all three states share the
+    /// banner-family 0.20/0.20 chip, vertical pad bumped 6 → 10 to
+    /// give the text room when it wraps to two lines.
     private var capturingPill: some View {
         HStack(spacing: 6) {
             Circle()
@@ -487,12 +536,12 @@ private struct SystemAudioStatusPill: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .background(
-            Capsule(style: .continuous).fill(Color.daisySuccess.opacity(0.10))
+            Capsule(style: .continuous).fill(Color.daisySuccess.opacity(0.20))
         )
         .overlay(
-            Capsule(style: .continuous).strokeBorder(Color.daisySuccess.opacity(0.25), lineWidth: 0.5)
+            Capsule(style: .continuous).strokeBorder(Color.daisySuccess.opacity(0.20), lineWidth: 0.5)
         )
     }
 
@@ -500,30 +549,41 @@ private struct SystemAudioStatusPill: View {
     /// mic only. Tap opens System Settings → Privacy → Screen
     /// Recording so the user can flip the toggle without leaving
     /// the recording flow.
+    ///
+    /// 2026-05-25 — joined the unified banner family (cinnamon
+    /// daisyAccent 0.20/0.20 chip, icon also daisyAccent — warning
+    /// semantic lives in the glyph and the "Fix" trailing label).
+    /// Pre-sync used daisyWarning gold; gold pill in the sidebar
+    /// next to the cinnamon affordances above broke the cream
+    /// rhythm. Text now allows 2 lines so "Only your voice — Screen
+    /// Recording is off" doesn't truncate to "Scr..." in the
+    /// constrained sidebar width (Egor flagged 2026-05-25). Vertical
+    /// pad 10 gives the second line of caption breathing room.
     private var deniedPill: some View {
         Button {
             ScreenRecordingPermission.openSystemSettings()
         } label: {
-            HStack(spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
-                    .foregroundStyle(Color.daisyWarning)
+                    .foregroundStyle(Color.daisyAccent)
                 Text("Only your voice — Screen Recording is off")
                     .font(.caption)
                     .foregroundStyle(Color.daisyTextPrimary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
                 Text("Fix")
-                    .font(.caption.weight(.medium))
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.daisyAccent)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 10)
             .background(
-                Capsule(style: .continuous).fill(Color.daisyWarning.opacity(0.10))
+                Capsule(style: .continuous).fill(Color.daisyAccent.opacity(0.20))
             )
             .overlay(
-                Capsule(style: .continuous).strokeBorder(Color.daisyWarning.opacity(0.25), lineWidth: 0.5)
+                Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)
@@ -534,24 +594,30 @@ private struct SystemAudioStatusPill: View {
     /// (display gone, ScreenCaptureKit threw, etc). The recording
     /// keeps going with mic only — full error in the help tooltip
     /// for the curious; the user-facing label stays simple.
+    ///
+    /// 2026-05-25 — same banner-family treatment as `deniedPill`.
+    /// 2-line allowance + cinnamon 0.20/0.20 chip. No trailing CTA
+    /// since there's nothing to click — the error is informational
+    /// (the recording continues with mic only anyway).
     private func failedPill(_ message: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.caption2)
-                .foregroundStyle(Color.daisyWarning)
+                .foregroundStyle(Color.daisyAccent)
             Text("Only your voice — couldn't reach the other side")
                 .font(.caption)
                 .foregroundStyle(Color.daisyTextPrimary)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 10)
         .background(
-            Capsule(style: .continuous).fill(Color.daisyWarning.opacity(0.10))
+            Capsule(style: .continuous).fill(Color.daisyAccent.opacity(0.20))
         )
         .overlay(
-            Capsule(style: .continuous).strokeBorder(Color.daisyWarning.opacity(0.25), lineWidth: 0.5)
+            Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
         )
         .help(message)
     }

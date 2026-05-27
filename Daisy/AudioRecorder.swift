@@ -51,6 +51,28 @@ private final class WriteErrorBox: @unchecked Sendable {
     }
 }
 
+/// Companion to WriteErrorBox — total audio frames that successfully
+/// landed on disk via `try audioFile.write(from:)`. Same render-thread
+/// constraint: incremented inside the installTap closure with no
+/// MainActor hop. RecordingSession compares this against
+/// `elapsed * sampleRate` and the on-disk file size to decide whether
+/// the mic stream archive is healthy, empty, or truncated.
+private final class FrameCountBox: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<UInt64>(initialState: 0)
+
+    func add(_ frames: UInt64) {
+        lock.withLock { $0 &+= frames }
+    }
+
+    func snapshot() -> UInt64 {
+        lock.withLock { $0 }
+    }
+
+    func reset() {
+        lock.withLock { $0 = 0 }
+    }
+}
+
 nonisolated enum DaisyError: LocalizedError {
     case noMicrophone
     case speechUnauthorized
@@ -126,6 +148,17 @@ final class AudioRecorder {
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "AudioRecorder")
     @ObservationIgnored
     private let writeErrors = WriteErrorBox()
+    /// Counter of audio frames that successfully landed in the
+    /// AVAudioFile via `try fileRef.write(from: buffer)` on the render
+    /// thread. Mirrors the symmetric counter in SystemAudioCapture and
+    /// is the truthful "did anything actually persist?" answer that
+    /// RecordingSession.stop() needs to decide between `.captured` and
+    /// `.truncated` for frontmatter + the post-stop toast. Pre-1.0.7.1
+    /// the only signal was `elapsed > 0` (wall-clock, NOT disk write
+    /// success), which is what allowed the 2026-05-25 Billions test to
+    /// land a 44-minute transcript on top of a 135.9-second mic.caf.
+    @ObservationIgnored
+    private let framesWritten = FrameCountBox()
 
     /// Stashed at `start()` time so the route-change recovery path can
     /// re-pin the engine to the same device after macOS yanks it out
@@ -193,6 +226,24 @@ final class AudioRecorder {
     /// `microphone.part2.caf` etc. alongside the primary file.
     @ObservationIgnored
     private(set) var archivedParts: [URL] = []
+
+    /// Total audio frames that successfully landed on disk via
+    /// `try fileRef.write(from: buffer)`. RecordingSession compares
+    /// this against `elapsed * sampleRate` and the on-disk file size
+    /// to detect mid-session AVAudioFile write death (the 2026-05-25
+    /// Billions failure: tap delivered ~44min of audio to the live
+    /// transcriber but only 135.9s of it reached disk). Zero means
+    /// every write threw or the tap was never installed.
+    var archivedFrameCount: UInt64 {
+        framesWritten.snapshot()
+    }
+
+    /// (errorCount, firstError) from render-thread write failures.
+    /// Non-zero count combined with `archivedFrameCount` far below
+    /// expected is the canonical truncation signal.
+    var archiveWriteErrorsSummary: (count: Int, first: (any Error)?) {
+        writeErrors.snapshot()
+    }
 
     /// Monotonic part index, incremented each time we open a new
     /// .caf for a format change. Starts at 1 for the base file.
@@ -294,6 +345,7 @@ final class AudioRecorder {
 
         lastInputFormat = format
         writeErrors.reset()
+        framesWritten.reset()
         bufferTimestamp.reset()
         installInputTap(format: format)
 
@@ -707,6 +759,7 @@ final class AudioRecorder {
         let fileRef = audioFile
         let analyzerRef = analyzer
         let writeErrorsRef = writeErrors
+        let framesWrittenRef = framesWritten
         let timestampRef = bufferTimestamp
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
@@ -719,6 +772,10 @@ final class AudioRecorder {
             if let fileRef {
                 do {
                     try fileRef.write(from: buffer)
+                    // Only counted on success. Divergence between
+                    // this and elapsed*sampleRate is the truncation
+                    // signal RecordingSession.stop() surfaces.
+                    framesWrittenRef.add(UInt64(buffer.frameLength))
                 } catch {
                     writeErrorsRef.record(error)
                 }

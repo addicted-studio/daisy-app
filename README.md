@@ -66,7 +66,8 @@ Release notes for each version go in `scripts/release-notes/<shortVersion>.md` a
 
 ## Support and contact
 
-- Product issues, feature requests, general questions → file an issue on this repo or email **essazanov@pm.me**
+- Questions, ideas, show-and-tell → [GitHub Discussions](https://github.com/addicted-studio/daisy-app/discussions)
+- Product issues, feature requests → file an issue on this repo or email **essazanov@pm.me**
 - Security disclosures → see [`SECURITY.md`](./SECURITY.md)
 - End-user docs → <https://mydaisy.io/support>
 - Privacy policy → <https://mydaisy.io/privacy>

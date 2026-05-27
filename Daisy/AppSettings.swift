@@ -170,6 +170,58 @@ final class AppSettings {
         didSet { defaults.set(diarizeMicrophone, forKey: Self.k_diarizeMicrophone) }
     }
 
+    /// Speakers mode for the system-audio stream. When `true` (default,
+    /// behaviour up to 1.0.6.x), pyannote diarizes the remote stream
+    /// into Bobby / Wags / Faraday / etc — one label per detected
+    /// voice cluster. When `false` ("Two sides" / Granola-style),
+    /// the remote diarizer is disabled entirely and every system-audio
+    /// segment gets a single "Remote" label. The latter is useful
+    /// when:
+    ///   • Meeting has rapid back-and-forth or similar-sounding voices
+    ///     where the auto-detector over-splits clusters (4 actual
+    ///     speakers → 5+ labels with gaps like A / B / D / F / G)
+    ///   • User just wants the simpler "you vs them" output and
+    ///     doesn't care which remote spoke
+    ///   • Faster post-stop (skips pyannote on system stream)
+    /// The mic stream is unaffected — it's still labeled with
+    /// `userDisplayName` or "Me".
+    var diarizeRemoteSpeakers: Bool {
+        didSet { defaults.set(diarizeRemoteSpeakers, forKey: Self.k_diarizeRemoteSpeakers) }
+    }
+
+    /// Post-merge dedup pass for acoustic loopback. When ON (default),
+    /// after both mic and system transcribers finish, the merge step
+    /// walks every mic-side segment and drops it if a system-side
+    /// segment within ±2s has matching text (normalized Levenshtein
+    /// similarity >0.8, ±20% length). Targets the case where the user
+    /// plays meeting audio through speakers instead of headphones:
+    /// the mic picks up the same audio and Whisper transcribes it
+    /// twice. Sequential matches (3+ consecutive) are treated as
+    /// confirmed echo. Isolated single matches are kept on the
+    /// assumption that the user might be quoting what the other
+    /// person said. Set OFF only if you need every mic segment
+    /// preserved (e.g., diagnostic / archival use cases) and accept
+    /// the duplicate-attribution noise.
+    var suppressAcousticEcho: Bool {
+        didSet { defaults.set(suppressAcousticEcho, forKey: Self.k_suppressAcousticEcho) }
+    }
+
+    /// Post-stop global speaker re-clustering. When ON (default), once
+    /// the post-stop pipeline writes transcript + summary, a final
+    /// async pass loads the full concatenated audio off disk and
+    /// re-runs pyannote diarization with global context (the live
+    /// path only sees streaming 10-30s chunks, so the same voice
+    /// can fragment into Remote A / Remote D / Remote G across
+    /// chunks). The re-clustered labels are mapped back to the live
+    /// transcript by IoU overlap so user-applied speaker names
+    /// (Remote A → Алиса) survive. Adds 30-90s of background work
+    /// for typical meetings; user-visible state stays in `.finished`
+    /// throughout. Set OFF for the fastest possible Stop & save and
+    /// accept that some speakers may fragment.
+    var globalReclusterAfterStop: Bool {
+        didSet { defaults.set(globalReclusterAfterStop, forKey: Self.k_globalReclusterAfterStop) }
+    }
+
     /// Display name used for the user's own voice in transcripts.
     /// Empty (default) → falls back to the legacy "Me" label.
     /// When set, mic-source segments render as `[Egor]` instead of
@@ -182,15 +234,32 @@ final class AppSettings {
     }
 
     /// Days to keep raw audio (.caf) files for finished sessions.
-    /// 0 == keep forever (default — preserves backwards-compat for
-    /// existing users). Positive value triggers a background sweep
-    /// at app launch that deletes microphone.caf / system_audio.caf
-    /// older than the cutoff, but leaves transcript.md / summary.json
-    /// / screenshots intact. Useful for users tight on disk —
-    /// transcripts + summaries are tiny, audio dominates the footprint.
+    /// Tag conventions:
+    ///   • `audioRetentionDeleteAfterTranscription` (-1) — fresh-
+    ///     install default since 1.0.6.12. Audio purges per-session
+    ///     immediately after `finalizePostStop` lands transcript +
+    ///     summary on disk. No timer sweep involved. Matches the
+    ///     "audio doesn't outlive the pipeline" privacy posture
+    ///     Granola made the table-stakes in this category.
+    ///   • `0` — keep forever. Default for users upgrading from
+    ///     pre-1.0.6.12 builds who never opened Settings → Storage.
+    ///   • positive N — keep N days, then sweep at app launch
+    ///     (`AudioRetentionSweep.runIfNeeded`). Existing 1/7/30
+    ///     picks preserve their semantic.
+    /// In all modes, transcript.md / summary.json / speakers.json /
+    /// screenshots stay intact — only raw `.caf` archives are
+    /// purged.
     var audioRetentionDays: Int {
         didSet { defaults.set(audioRetentionDays, forKey: Self.k_audioRetentionDays) }
     }
+
+    /// Sentinel value for `audioRetentionDays` meaning "delete the
+    /// raw audio as soon as Daisy is done with it (post-transcript +
+    /// summary)". Negative so it never collides with a real day
+    /// count, both forward and backward. Constant exposed publicly
+    /// so callers (RecordingSession, SettingsView, AudioRetentionSweep)
+    /// don't magic-number the -1.
+    static let audioRetentionDeleteAfterTranscription: Int = -1
 
     /// When ON, Daisy plays a short macOS system sound on recording
     /// transitions (start / pause / resume / stop). Off for users
@@ -220,6 +289,23 @@ final class AppSettings {
     /// moment the user closes the sheet.
     var hasShownFirstRun: Bool {
         didSet { defaults.set(hasShownFirstRun, forKey: Self.k_hasShownFirstRun) }
+    }
+
+    /// Set the first time a user opens a meeting session whose
+    /// `daisy_system_audio_status` is `empty` and reads the
+    /// acoustic-loopback explainer banner in SessionDetailView. After
+    /// that, the banner stops appearing on subsequent empty-audio
+    /// sessions — the user has been told once, no need to repeat the
+    /// same paragraph every time they open one. Pre-1.0.6.12 the
+    /// banner showed unconditionally on every affected session, which
+    /// for a tester whose mac happens to trip the macOS 26 SCStream
+    /// regression meant a wall of identical orange explainers across
+    /// 50+ retroactive sessions after the 1.0.6.11 update.
+    var hasSeenAcousticLoopbackExplainer: Bool {
+        didSet {
+            defaults.set(hasSeenAcousticLoopbackExplainer,
+                         forKey: Self.k_hasSeenAcousticLoopbackExplainer)
+        }
     }
 
     /// When ON, finishing a session (Stop & save → summary done)
@@ -490,6 +576,15 @@ final class AppSettings {
         self.notifyOnAutoStart = defaults.object(forKey: Self.k_notifyOnAutoStart) as? Bool ?? true
         self.notifyOnAutoStop = defaults.object(forKey: Self.k_notifyOnAutoStop) as? Bool ?? true
         self.diarizeMicrophone = defaults.object(forKey: Self.k_diarizeMicrophone) as? Bool ?? false
+        // 2026-05-25 — three diarization-quality settings added in
+        // 1.0.7. All default ON so existing users get the new behavior
+        // automatically (the changes are quality improvements, not
+        // semantic shifts — diarizeRemoteSpeakers default matches the
+        // prior implicit behavior; the other two are post-processing
+        // passes that only run when the conditions trigger).
+        self.diarizeRemoteSpeakers = defaults.object(forKey: Self.k_diarizeRemoteSpeakers) as? Bool ?? true
+        self.suppressAcousticEcho = defaults.object(forKey: Self.k_suppressAcousticEcho) as? Bool ?? true
+        self.globalReclusterAfterStop = defaults.object(forKey: Self.k_globalReclusterAfterStop) as? Bool ?? true
         self.userDisplayName = (defaults.string(forKey: Self.k_userDisplayName) ?? "")
         // 24-hour retention is the new default for fresh installs
         // (1.0.6.9+). Raw audio dominates Daisy's disk footprint
@@ -506,12 +601,25 @@ final class AppSettings {
         // explicit value in UserDefaults keeps it regardless;
         // `defaults.object(...) as? Int` returns nil only for keys
         // that were never written.
+        // 2026-05-25 — fresh-install default changed from `1` (24h
+        // timer sweep) to `audioRetentionDeleteAfterTranscription`
+        // (-1; per-session purge after the post-stop pipeline). New
+        // installs get the strongest privacy posture without losing
+        // the option to keep audio; existing users who never opened
+        // Settings → Storage still default to `0` (keep forever) to
+        // preserve backwards-compat — they didn't opt in to any
+        // purge behaviour and the upgrade shouldn't surprise-delete
+        // yesterday's recordings. Anyone with an explicit value in
+        // UserDefaults keeps it (storedRetention non-nil path).
         let storedRetention = defaults.object(forKey: Self.k_audioRetentionDays) as? Int
         let isFreshInstall = !defaults.bool(forKey: Self.k_hasShownFirstRun)
-        self.audioRetentionDays = storedRetention ?? (isFreshInstall ? 1 : 0)
+        self.audioRetentionDays = storedRetention
+            ?? (isFreshInstall ? Self.audioRetentionDeleteAfterTranscription : 0)
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
+        self.hasSeenAcousticLoopbackExplainer =
+            defaults.bool(forKey: Self.k_hasSeenAcousticLoopbackExplainer)
         self.autoSendNotion = defaults.object(forKey: Self.k_autoSendNotion) as? Bool ?? false
         let lastTs = defaults.double(forKey: Self.k_lastNotionTestPassedAt)
         self.lastNotionTestPassedAt = lastTs > 0 ? Date(timeIntervalSince1970: lastTs) : nil
@@ -605,11 +713,16 @@ final class AppSettings {
     private static let k_notifyOnAutoStart = "daisy.notifyOnAutoStart"
     private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
     private static let k_diarizeMicrophone = "daisy.diarizeMicrophone"
+    private static let k_diarizeRemoteSpeakers = "daisy.diarizeRemoteSpeakers"
+    private static let k_suppressAcousticEcho = "daisy.suppressAcousticEcho"
+    private static let k_globalReclusterAfterStop = "daisy.globalReclusterAfterStop"
     private static let k_userDisplayName = "daisy.userDisplayName"
     private static let k_audioRetentionDays = "daisy.audioRetentionDays"
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
     private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"
+    private static let k_hasSeenAcousticLoopbackExplainer =
+        "daisy.hasSeenAcousticLoopbackExplainer"
     private static let k_autoSendNotion = "daisy.autoSendNotion"
     private static let k_lastNotionTestPassedAt = "daisy.lastNotionTestPassedAt"
     private static let k_defaultDestinationID = "daisy.defaultDestinationID"

@@ -130,6 +130,43 @@ final class RecordingSession {
         case failed(String)         // SCStream.startCapture() threw or stopped unexpectedly
     }
 
+    /// Post-stop audit verdict for an individual archive file (.caf
+    /// on disk). Distinct from the live `SystemAudioStatus` /
+    /// recording-state machine — this is what the user sees in the
+    /// transcript frontmatter and in any "save outcome" toast.
+    ///
+    /// Pre-1.0.7.1 the frontmatter only distinguished off / captured /
+    /// empty, all derived from in-memory `hasReceivedAudio`. The
+    /// Billions 2026-05-25 test exposed the silent case missing from
+    /// that taxonomy: SCKit was delivering buffers (transcriber got
+    /// 44 min), AVAudioFile.write was throwing mid-session (every
+    /// frame after some point), and the frontmatter still proudly
+    /// stamped `captured` because at least ONE buffer had arrived
+    /// before things went sideways. `.truncated` is the new fourth
+    /// state — surfaced as a post-stop warning toast AND a grep-able
+    /// frontmatter line.
+    enum ArchiveStatus: Equatable {
+        /// User had the toggle disabled (system) or stream isn't
+        /// applicable to mode (mic in dictation-only mode). No file
+        /// was expected.
+        case off
+        /// File exists, frames-written matches expected within a
+        /// reasonable tolerance, on-disk byte count is non-trivial.
+        case captured(bytes: Int64)
+        /// Stream was armed but zero frames ever arrived (BT output,
+        /// SCKit Tahoe regression, denied permission). User saw a
+        /// mid-recording warning toast (silenceMonitor) but also gets
+        /// this in the frontmatter for post-hoc grep.
+        case empty
+        /// **The silent-write-death case.** Frames arrived in callbacks
+        /// (hasReceivedAudio=true) but disk-write count is far below
+        /// what was received, or the file size is < header threshold
+        /// despite reported frames, or a non-trivial number of write
+        /// errors fired. User gets a loud toast at stop time so they
+        /// know their audio is partial.
+        case truncated(bytes: Int64, framesWritten: UInt64, writeErrors: Int)
+    }
+
     private(set) var status: Status = .idle
 
     /// Post-Stop summary lifecycle. Set to `.generating` the moment
@@ -140,13 +177,31 @@ final class RecordingSession {
     /// widget's amber-pulse "summary cooking" indicator.
     private(set) var summaryGenerationState: SummaryGenerationState = .idle
 
-    /// Detached task spun up by `stop()` that handles summarize →
-    /// summary.json write → autoSend, in that order. Held so a fresh
-    /// `start()` / `reset()` can cancel it. Kept @ObservationIgnored
-    /// because the Task reference itself isn't UI-relevant — only
-    /// `summaryGenerationState` is.
+    /// Detached task spun up by `stop()` that handles the full post-
+    /// stop pipeline (final Whisper pass → speaker match → re-render
+    /// transcript.md → summary → autoSend → audio purge). Held so a
+    /// fresh `start()` / `reset()` can cancel it. Kept
+    /// @ObservationIgnored because the Task reference itself isn't
+    /// UI-relevant — only `summaryGenerationState` is.
     @ObservationIgnored
     private var summaryTask: Task<Void, Never>?
+
+    /// Monotonic generation counter for `summaryTask`. Bumped on
+    /// every spawn. The finalize task captures its own generation at
+    /// spawn time, and only clears `summaryTask` at exit when its
+    /// captured generation still matches `summaryTaskGeneration` —
+    /// i.e., when no fresh `stop()` has rotated the slot to a newer
+    /// task in the meantime. Without this, the race is:
+    ///   1. M1 stop → spawn T1 (gen=1)
+    ///   2. User starts M2 → `start()` cancels T1, nils slot
+    ///   3. M2 stop → spawn T2 (gen=2)
+    ///   4. T1 wakes from Whisper, sees Task.isCancelled, runs
+    ///      `bailRotated` which would `summaryTask = nil`,
+    ///      clobbering T2's reference — T2 is now uncancellable.
+    /// Generation check at exit (`if myGen == summaryTaskGeneration`)
+    /// makes T1's cleanup a no-op once T2 has rotated past it.
+    @ObservationIgnored
+    private var summaryTaskGeneration: UInt = 0
 
     /// True when the most recent `start()` skipped system audio
     /// because `CGPreflightScreenCaptureAccess()` returned false.
@@ -357,7 +412,15 @@ final class RecordingSession {
         )
         self.systemTranscriber = Transcriber(
             localeIdentifier: effective,
-            source: .systemAudio
+            source: .systemAudio,
+            // 2026-05-25 — diarization on the remote stream is now
+            // user-gated via `settings.diarizeRemoteSpeakers`. Default
+            // true preserves the historical per-voice clustering;
+            // false collapses every system-audio segment to a single
+            // "Remote" label (Granola-style two-side mode). Useful
+            // for users hitting pyannote over-segmentation on
+            // rapid-fire dialogue with similar voices.
+            diarize: settings.diarizeRemoteSpeakers
         )
         self.summarizer = Summarizer.shared
         self.screenshots = ScreenshotCapture()
@@ -566,10 +629,14 @@ final class RecordingSession {
         // directly here would be erased by reset().
         pendingBoundMeeting = meeting
         pendingFolderHint = .work
-        // Title CAN be set directly — reset() does not clear `title`,
-        // and start()'s "if title.isEmpty" fallback only fires when
-        // the user didn't explicitly set one.
-        title = meeting.title
+        // 2026-05-25: previously we set `title = meeting.title` here
+        // because reset() didn't clear title. That created the bug
+        // where a meeting's name leaked into a later voice-note
+        // session days afterward (stale title sat in memory the whole
+        // time). Now reset() clears title, and start()'s title-
+        // generation block picks up `boundMeeting.title` directly when
+        // the mode is meeting + a binding exists. No need to set
+        // title here at all.
 
         await start()
 
@@ -1085,12 +1152,33 @@ final class RecordingSession {
            currentMode == .meeting,
            elapsed > 60,
            !systemAudio.hasReceivedAudio {
+            // Two well-understood causes: Bluetooth output (macOS
+            // refuses to loop BT audio through ScreenCaptureKit), and
+            // a ScreenCaptureKit regression on macOS 26.0.x (early
+            // Tahoe builds) where SCStream reports `.capturing` but
+            // never delivers a single audio buffer even with wired or
+            // built-in output. Phrase the toast neutrally so we don't
+            // mislead the macOS 26 cohort into chasing a BT issue
+            // they don't have.
+            // 2026-05-25 — toast shortened to one line per Egor's
+            // pass. Pre-fix this was a 4-sentence wall (microphone
+            // track + system loopback + Tahoe regression caveat +
+            // built-in-speaker workaround + diarization implication)
+            // that wrapped to ~4 lines of dense text in the toast
+            // surface — visually overwhelming and edge-to-edge on
+            // wide displays. The same session also surfaces the
+            // acousticLoopbackBanner inside SessionDetailView when
+            // the user opens it, which carries the one-line warning
+            // permanently (until "Got it"). The Tahoe-specific
+            // "switch to built-in speakers" workaround was also
+            // unreliable in tester reports — keeping it in the
+            // toast set a false expectation of fix-ability.
             ToastCenter.shared.show(
-                "System audio was empty for this session — usually Bluetooth output. Other participants weren't captured separately, so per-speaker labels in the transcript will be 'Me' only. Use built-in speakers or wired headphones for next time.",
+                "Other side wasn't captured — only your mic was recorded this session",
                 style: .warning,
-                duration: .seconds(10)
+                duration: .seconds(8)
             )
-            log.warning("Session ended with empty system audio despite captureSystemAudio=on. Likely BT output.")
+            log.warning("Session ended with empty system audio despite captureSystemAudio=on (no audio buffers from SCStream — BT output, or macOS 26 SCStream regression)")
         }
         // NOTE: do NOT release the user-folder ticket here yet —
         // we still need to write transcript.md and summary.json
@@ -1114,19 +1202,94 @@ final class RecordingSession {
             return
         }
 
-        // Final Whisper pass — full audio, best segmentation.
-        await micTranscriber.stop()
-        await systemTranscriber.stop()
+        // 2026-05-25 — per-stage timing for the pre-`.finished`
+        // pipeline. Pre-fix every stage between Final pass and
+        // status=.finished ran silently; on long sessions users
+        // reported "пост-обработка очень долгая" with nothing to
+        // attribute it to (see [[feedback_silent_early_returns_need_logger_category]]).
+        // Mirrors the OSSignposter spans inside finalizePostStop so
+        // Instruments traces and `log show --signpost` both line up
+        // under PostStop category; the .info lines below are visible
+        // in plain `log show ... --info --debug` as a fallback.
+        let stopSignposter = OSSignposter(subsystem: "app.essazanov.Daisy", category: "PostStop")
+        func ms(_ start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
-        // Voice fingerprint pass — match this session's speaker
-        // clusters against the persistent SpeakerProfileStore so
-        // returning speakers get auto-named ("Alex" not "Remote A")
-        // before the user even opens the transcript. Also writes
-        // a `speakers.json` sidecar with raw centroids so when the
-        // user MANUALLY renames a Remote in SessionDetailView, we
-        // know which embedding to associate with the new name and
-        // can persist a fresh profile.
-        applySpeakerProfileMatches()
+        // 2026-05-27 — TWO-STAGE STOP (1.0.7.3).
+        //
+        // Pre-fix this is where we ran the full Whisper final pass
+        // (mic + system) inline, blocking `status = .finished` until
+        // it returned. On a 20+ minute mic session this clocked
+        // 237091ms in real-world logs — the user sees "Stopping…"
+        // for 4 minutes and can't start the next recording. PH
+        // launch is in a week and meeting-to-meeting flow is core,
+        // so we changed shape.
+        //
+        // New shape:
+        //   1. `stopCapture()` instead of `stop()` on each transcriber
+        //      — drains live consumers + in-flight diarization, no
+        //      final Whisper pass. Returns in well under a second.
+        //   2. Render transcript.md from LIVE-accumulated segments
+        //      (they're real Whisper output too, just per-window
+        //      context instead of full-session context). User opens
+        //      the session, sees content immediately.
+        //   3. `status = .finished` fires below — user is unblocked.
+        //   4. Detached task (`finalizePostStop`) runs the final
+        //      Whisper pass + applySpeakerProfileMatches +
+        //      re-renders/overwrites transcript.md with final
+        //      quality, then continues to summary + autoSend.
+        //
+        // Trade-off: transcript.md is live-quality for ~tens of
+        // seconds to a few minutes after Stop, then polishes
+        // itself. Users who hit Stop are typically rushing to the
+        // next meeting and will look at the transcript later — by
+        // which time the final pass is done. Summary still uses
+        // final-quality transcript (waits for re-render).
+        let stopCaptureState = stopSignposter.beginInterval("stop_capture", id: stopSignposter.makeSignpostID())
+        let t_stopCapture = Date()
+        async let micCaptured: Void = micTranscriber.stopCapture()
+        async let sysCaptured: Void = systemTranscriber.stopCapture()
+        _ = await (micCaptured, sysCaptured)
+        stopSignposter.endInterval("stop_capture", stopCaptureState)
+        log.info("post-stop stop_capture: \(ms(t_stopCapture), privacy: .public)ms")
+        // applySpeakerProfileMatches is intentionally NOT called
+        // here — it depends on `speakerCentroids` which only get
+        // populated by the final pass. The detached task runs it
+        // after `runFinalPass()` lands.
+
+        // 2026-05-25 — silent-write-death audit (1.0.7.1). Pre-fix the
+        // only signals were `hasReceivedAudio` (in-memory flag, flips
+        // true on first buffer regardless of disk write outcome) and a
+        // per-write `log.error` line that no user ever sees. Result:
+        // the Billions test session shipped frontmatter that claimed
+        // `daisy_system_audio_status: captured` while system_audio.caf
+        // was 0 bytes, mic.caf had 5% of the audio the transcript
+        // referenced, and the user got zero indication anything was
+        // wrong. Now: we read both ArchiveStatus values BEFORE the
+        // frontmatter is rendered, log the verdict structurally for
+        // `log show`, and toast if either side is truncated so the
+        // user has the chance to keep the raw .caf around for repair
+        // instead of letting delete-after-transcription nuke it.
+        let micStatus = micAudioArchiveStatus
+        let sysStatus = systemAudioArchiveStatus
+        log.info("post-stop archive_audit mic: \(String(describing: micStatus), privacy: .public)")
+        log.info("post-stop archive_audit system: \(String(describing: sysStatus), privacy: .public)")
+
+        if case .truncated(let bytes, let framesWritten, let writeErrors) = micStatus {
+            log.error("Mic archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
+            ToastCenter.shared.show(
+                "Mic recording is incomplete — only part of your audio made it to disk. Keep this session's folder to recover what's there.",
+                style: .error,
+                duration: .seconds(12)
+            )
+        }
+        if case .truncated(let bytes, let framesWritten, let writeErrors) = sysStatus {
+            log.error("System audio archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
+            ToastCenter.shared.show(
+                "Other-side audio is incomplete — capture started but the file didn't grow. Transcript may still be usable; raw audio is partial.",
+                style: .error,
+                duration: .seconds(12)
+            )
+        }
 
         // Dictation mode — fully ephemeral. By this point Whisper
         // has produced its final transcript; hand it to the
@@ -1154,9 +1317,20 @@ final class RecordingSession {
         // Save markdown next to the audio archive. A failure here means
         // the user just lost their transcript on disk — surface it
         // loudly rather than swallowing.
+        // `renderMarkdown` runs AcousticEchoDedup + transcript shaping
+        // internally; on long sessions with hundreds of segments this
+        // is the likely "long silent stage" suspect. Split into render
+        // vs write so we can tell which one is slow.
         if let dir = sessionDirectory {
             let url = dir.appendingPathComponent("transcript.md")
+            let renderState = stopSignposter.beginInterval("render_markdown", id: stopSignposter.makeSignpostID())
+            let t_render = Date()
             let md = MarkdownExporter.renderMarkdown(session: self)
+            stopSignposter.endInterval("render_markdown", renderState)
+            log.info("post-stop render_markdown: \(ms(t_render), privacy: .public)ms, \(md.count, privacy: .public) bytes")
+
+            let writeState = stopSignposter.beginInterval("write_transcript_md", id: stopSignposter.makeSignpostID())
+            let t_write = Date()
             do {
                 try md.write(to: url, atomically: true, encoding: .utf8)
             } catch {
@@ -1166,6 +1340,8 @@ final class RecordingSession {
                     style: .error
                 )
             }
+            stopSignposter.endInterval("write_transcript_md", writeState)
+            log.info("post-stop write_transcript_md: \(ms(t_write), privacy: .public)ms")
         }
 
         // ── Granola-style: status → .finished BEFORE summary ──────────
@@ -1211,50 +1387,79 @@ final class RecordingSession {
         // .finished) fires. Without this, MainView's deep-link
         // would land on Library with `pendingLibrarySelection`
         // pointing at an ID that hasn't been parsed yet.
+        let refreshState = stopSignposter.beginInterval("session_store_refresh", id: stopSignposter.makeSignpostID())
+        let t_refresh = Date()
         await SessionStore.shared.refresh()
+        stopSignposter.endInterval("session_store_refresh", refreshState)
+        log.info("post-stop session_store_refresh: \(ms(t_refresh), privacy: .public)ms")
         status = .finished
 
-        if willSummarize {
-            let transcriptText = fullTranscriptText
-            let titleSnapshot = title
-            let localeHint = localeHintForSummary
-            // Transfer ticket ownership to the detached task BEFORE
-            // spawning it. If the user hits Stop & save on M1 and
-            // then immediately starts M2 (calendar auto-rotation,
-            // hotkey, whatever), `start()` will assign a NEW ticket
-            // to `self.sessionsFolderTicket` for M2 — and pre-1.0.3
-            // the M1 task would later call `releaseSessionsFolderTicket()`,
-            // releasing M2's ticket and silently breaking M2's file
-            // writes. Snapshot here, release via `defer` on the
-            // captured value only.
-            let ticketSnapshot = sessionsFolderTicket
-            sessionsFolderTicket = nil
-            summaryTask = Task { [weak self] in
-                defer { ticketSnapshot?.release() }
-                await self?.finalizePostStop(
-                    sessionID: sessionID,
-                    directory: dir,
-                    transcript: transcriptText,
-                    title: titleSnapshot,
-                    localeHint: localeHint
-                )
-            }
-        } else {
-            // No summary needed; release ticket + run autoSend (it
-            // may still want to ship the transcript-only payload to
-            // Notion / MCP). Sync here is fine — short, no LLM.
-            releaseSessionsFolderTicket()
-            await runAutoSendDestinations()
+        // 2026-05-27 — ALWAYS launch the detached finalize task,
+        // not just for the summary case. The final Whisper pass
+        // moved out of `.stopping` and into the detached path; the
+        // task now owns: runFinalPass(mic+system) → speakerMatch →
+        // re-render transcript.md → (optionally) summary → autoSend
+        // → audio purge. The "no summary needed" branch used to
+        // skip launching the task at all; now it still launches,
+        // just sets willSummarize=false so the LLM step is no-op'd.
+        let titleSnapshot = title
+        let localeHint = localeHintForSummary
+        // Transfer ticket ownership to the detached task BEFORE
+        // spawning it. If the user hits Stop & save on M1 and
+        // then immediately starts M2 (calendar auto-rotation,
+        // hotkey, whatever), `start()` will assign a NEW ticket
+        // to `self.sessionsFolderTicket` for M2 — and pre-1.0.3
+        // the M1 task would later call `releaseSessionsFolderTicket()`,
+        // releasing M2's ticket and silently breaking M2's file
+        // writes. Snapshot here, release via `defer` on the
+        // captured value only.
+        let ticketSnapshot = sessionsFolderTicket
+        sessionsFolderTicket = nil
+        // Bump generation BEFORE spawning so the task captures the
+        // post-bump value. Wrapping add (&+=) is safe — at one stop
+        // per second forever this overflows in ~136 years.
+        summaryTaskGeneration &+= 1
+        let myGeneration = summaryTaskGeneration
+        summaryTask = Task { [weak self] in
+            defer { ticketSnapshot?.release() }
+            await self?.finalizePostStop(
+                sessionID: sessionID,
+                directory: dir,
+                title: titleSnapshot,
+                localeHint: localeHint,
+                willSummarize: willSummarize,
+                generation: myGeneration
+            )
         }
     }
 
-    /// Detached post-Stop pipeline: summarize → write summary.json →
-    /// fan out to auto-send destinations → tell SessionStore the
-    /// session is up-to-date. Each step checks `Task.isCancelled`
-    /// and that `sessionDirectory` still matches the captured
-    /// session ID — either guard fires if `start()` already kicked
-    /// off a new recording on top of this one, in which case we
-    /// bail without touching the new session's state.
+    /// Detached post-Stop pipeline. Runs everything that used to
+    /// block `.stopping` for minutes on long sessions:
+    ///
+    ///   1. **Final Whisper pass** on mic + system (parallel). This
+    ///      is the heavy work — 237s observed on a 20-min session in
+    ///      the 2026-05-27 log report. Used to sit inline in
+    ///      `Transcriber.stop()`, holding `status = .stopping` until
+    ///      it returned and locking the user out of starting a new
+    ///      recording. Now it runs here so Stop is snappy.
+    ///   2. **Speaker profile matching** — needs the final-pass
+    ///      `speakerCentroids`, so it can only run after (1).
+    ///   3. **Re-render transcript.md** with final-quality segments.
+    ///      The inline path in `stop()` already wrote a live-quality
+    ///      transcript.md; we overwrite it here with the polished
+    ///      version.
+    ///   4. **Summary** (if `willSummarize`) → write summary.json.
+    ///   5. **Auto-send** to Notion / MCP destinations.
+    ///   6. **Audio purge** if delete-after-transcription mode is on.
+    ///
+    /// Each stage checks `Task.isCancelled` and that `sessionDirectory`
+    /// still matches the captured session ID — either guard fires if
+    /// `start()` already kicked off a new recording on top of this
+    /// one, in which case we bail without touching the new session's
+    /// state. The render+write pair runs SYNCHRONOUSLY without an
+    /// intervening await so MainActor scheduling guarantees no other
+    /// task can mutate `segments` between the snapshot and the disk
+    /// write.
     ///
     /// **Ticket ownership.** This function does NOT touch
     /// `sessionsFolderTicket`. The caller transferred ownership of
@@ -1266,67 +1471,218 @@ final class RecordingSession {
     private func finalizePostStop(
         sessionID: String,
         directory: URL,
-        transcript: String,
         title: String,
-        localeHint: String?
+        localeHint: String?,
+        willSummarize: Bool,
+        generation: UInt
     ) async {
-        // OSSignpost ranges around the three slow phases. Lets
+        // OSSignpost ranges around each slow phase. Lets
         // `xctrace export --xpc Daisy --tracing-key=signposts` show
-        // a user "your 90-second summary spent 78s in the LLM call
-        // and 12s in autoSend". Ships nothing off-device — Apple
-        // System Log only. The signpost subsystem matches the
-        // logger subsystem so they coalesce in Console.app.
+        // a user "your 4-minute finalize spent 237s in final_pass,
+        // 32s in summarize, 1.2s in auto_send". Ships nothing
+        // off-device — Apple System Log only. The signpost subsystem
+        // matches the logger subsystem so they coalesce in
+        // Console.app.
         let signposter = OSSignposter(subsystem: "app.essazanov.Daisy", category: "PostStop")
+        func ms(_ start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
 
-        let summarizeState = signposter.beginInterval("summarize", id: signposter.makeSignpostID())
-        let summary = await summarizer.summarize(
-            transcript: transcript,
-            title: title,
-            localeHint: localeHint
-        )
-        signposter.endInterval("summarize", summarizeState)
+        // Helper to bail cleanly when the session rotated under us.
+        // Resets the generation state (only meaningful for the
+        // willSummarize path, since the no-summary path never called
+        // beginGenerating) and clears summaryTask — but ONLY if the
+        // slot still points at us. If a fresh `stop()` has spawned a
+        // newer task while we were inside Whisper, the slot now
+        // holds that task's reference and nilling it would lose the
+        // handle. See `summaryTaskGeneration` doc for the full race.
+        @MainActor func bailRotated(stage: String) async {
+            log.info("Finalize: \(stage, privacy: .public) — session rotated, bailing")
+            if willSummarize {
+                summaryGenerationState = .failed("cancelled")
+                await SessionStore.shared.finishGenerating(sessionID)
+            }
+            if generation == summaryTaskGeneration {
+                summaryTask = nil
+            }
+        }
 
-        if Task.isCancelled {
-            summaryGenerationState = .failed("cancelled")
-            await SessionStore.shared.finishGenerating(sessionID)
-            summaryTask = nil
+        // ── Stage 1: Final Whisper pass ──────────────────────────────
+        //
+        // Both transcribers run their final pass concurrently. Each
+        // re-runs Whisper over its full accumulated buffer (up to the
+        // 30-min cap baked into runFinalTranscribe), producing
+        // segment quality that beats the live per-window output. On
+        // an M-series Mac this is CPU-bound on the Neural Engine; on
+        // a 20-min mic session it clocks ~237s in production logs,
+        // which is exactly why we moved it off the inline Stop path.
+        //
+        // `runFinalPass` is wrapped to flip `Transcriber.isRunning =
+        // false` at the end — capture stopped in stop(), but
+        // isRunning is intentionally held true between stopCapture()
+        // and runFinalPass() because the final pass still mutates
+        // committedSegments + speakerCentroids on the same instance.
+        let finalPassState = signposter.beginInterval("final_pass", id: signposter.makeSignpostID())
+        let t_final = Date()
+        async let micFinal: Void = micTranscriber.runFinalPass()
+        async let sysFinal: Void = systemTranscriber.runFinalPass()
+        _ = await (micFinal, sysFinal)
+        signposter.endInterval("final_pass", finalPassState)
+        log.info("post-stop final_pass: \(ms(t_final), privacy: .public)ms")
+
+        if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
+            await bailRotated(stage: "after final_pass")
             return
         }
 
-        if let summary {
-            let writeState = signposter.beginInterval("write_summary", id: signposter.makeSignpostID())
-            let url = directory.appendingPathComponent("summary.json")
-            do {
-                let data = try JSONEncoder().encode(summary)
-                try data.write(to: url)
-            } catch {
-                log.error("Failed to write summary.json: \(error.localizedDescription, privacy: .public)")
-                ToastCenter.shared.show(
-                    "Couldn't save summary file. Check Console for details.",
-                    style: .error
-                )
-            }
-            signposter.endInterval("write_summary", writeState)
+        // ── Stage 2: Speaker profile matching ────────────────────────
+        //
+        // Reads system-side speakerCentroids that the final pass just
+        // populated, looks each one up in SpeakerProfileStore, and
+        // writes speakers.json. Without the final pass first, this
+        // would silently no-op on long sessions where the live
+        // diarizer hadn't yet committed full-session centroids.
+        let matchState = signposter.beginInterval("speaker_match", id: signposter.makeSignpostID())
+        let t_match = Date()
+        applySpeakerProfileMatches()
+        signposter.endInterval("speaker_match", matchState)
+        log.info("post-stop speaker_match: \(ms(t_match), privacy: .public)ms")
+
+        // ── Stage 3: Re-render transcript.md with final-quality data ─
+        //
+        // The inline path in stop() wrote a transcript.md from
+        // live-accumulated segments so the user has SOMETHING the
+        // moment they hit Stop. Now we overwrite it with the polished
+        // version. Render + write run as a tight synchronous pair
+        // (no await in between) so MainActor scheduling guarantees no
+        // other task can mutate `segments` while we're snapshotting.
+        let reRenderState = signposter.beginInterval("re_render_md", id: signposter.makeSignpostID())
+        let t_reRender = Date()
+        let md = MarkdownExporter.renderMarkdown(session: self)
+        signposter.endInterval("re_render_md", reRenderState)
+        log.info("post-stop re_render_md: \(ms(t_reRender), privacy: .public)ms, \(md.count, privacy: .public) bytes")
+
+        let reWriteState = signposter.beginInterval("re_write_md", id: signposter.makeSignpostID())
+        let t_reWrite = Date()
+        let mdURL = directory.appendingPathComponent("transcript.md")
+        do {
+            try md.write(to: mdURL, atomically: true, encoding: .utf8)
+        } catch {
+            // Don't toast on re-write failure — the user already has
+            // the live-quality transcript.md from stop(), so this is
+            // a quality regression rather than data loss. Logged so
+            // the next `log show` pass catches it.
+            log.error("Failed to re-write transcript.md: \(error.localizedDescription, privacy: .public)")
+        }
+        signposter.endInterval("re_write_md", reWriteState)
+        log.info("post-stop re_write_md: \(ms(t_reWrite), privacy: .public)ms")
+
+        // Refresh History so any opened SessionDetailView re-reads
+        // the freshly-written final-quality transcript instead of
+        // sticking with the live snapshot it loaded a few seconds ago.
+        await SessionStore.shared.refresh()
+
+        if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
+            await bailRotated(stage: "after re-render")
+            return
         }
 
+        // ── Stage 4: Summary (if requested) ──────────────────────────
+        //
+        // The summarizer takes the final-quality transcript text —
+        // built from the same `segments` array we just rendered to
+        // disk — and produces a structured MeetingSummary. The pre-
+        // 1.0.7.3 path snapshotted `transcript` BEFORE the final
+        // Whisper pass landed, which meant the LLM saw live-quality
+        // segments while the on-disk transcript.md had final-quality
+        // ones. Now both share the same source.
+        var summary: MeetingSummary? = nil
+        if willSummarize {
+            let transcriptText = fullTranscriptText
+            let summarizeState = signposter.beginInterval("summarize", id: signposter.makeSignpostID())
+            let t_summarize = Date()
+            summary = await summarizer.summarize(
+                transcript: transcriptText,
+                title: title,
+                localeHint: localeHint
+            )
+            signposter.endInterval("summarize", summarizeState)
+            log.info("post-stop summarize: \(ms(t_summarize), privacy: .public)ms, transcript=\(transcriptText.count, privacy: .public) bytes, summary=\(summary != nil ? "ok" : "nil", privacy: .public)")
+
+            if Task.isCancelled {
+                summaryGenerationState = .failed("cancelled")
+                await SessionStore.shared.finishGenerating(sessionID)
+                if generation == summaryTaskGeneration {
+                    summaryTask = nil
+                }
+                return
+            }
+
+            if let summary {
+                let writeState = signposter.beginInterval("write_summary", id: signposter.makeSignpostID())
+                let t_writeSummary = Date()
+                let url = directory.appendingPathComponent("summary.json")
+                do {
+                    let data = try JSONEncoder().encode(summary)
+                    try data.write(to: url)
+                } catch {
+                    log.error("Failed to write summary.json: \(error.localizedDescription, privacy: .public)")
+                    ToastCenter.shared.show(
+                        "Couldn't save summary file. Check Console for details.",
+                        style: .error
+                    )
+                }
+                signposter.endInterval("write_summary", writeState)
+                log.info("post-stop write_summary: \(ms(t_writeSummary), privacy: .public)ms")
+            }
+        }
+
+        // ── Stage 5: Auto-send to downstream destinations ────────────
+        //
         // If a fresh recording has begun in the meantime (reset()
         // ran), instance state has rotated and autoSend would push
         // the WRONG session to Notion/MCP. Skip — user can resend
         // manually from History.
         if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
-            summaryGenerationState = .failed("cancelled")
-            await SessionStore.shared.finishGenerating(sessionID)
-            summaryTask = nil
+            await bailRotated(stage: "before auto_send")
             return
         }
 
         let autoSendState = signposter.beginInterval("auto_send", id: signposter.makeSignpostID())
+        let t_autoSend = Date()
         await runAutoSendDestinations()
         signposter.endInterval("auto_send", autoSendState)
+        log.info("post-stop auto_send: \(ms(t_autoSend), privacy: .public)ms")
 
-        summaryGenerationState = (summary != nil) ? .ready : .failed("no summary")
-        summaryTask = nil
-        await SessionStore.shared.finishGenerating(sessionID)
+        // ── Stage 6: Audio purge if delete-after-transcription ───────
+        //
+        // Pipeline is done with the audio (transcript + summary
+        // landed on disk, downstream destinations have shipped).
+        // Delete-after-transcription mode kicks in here: drop the
+        // raw .caf for THIS session immediately.
+        //
+        // Gating: for the summary path we wait for summary success
+        // (so the user can re-summarize from SessionDetailView if it
+        // failed). For the no-summary path (voice notes, autoSummarize
+        // disabled, provider unavailable) we purge unconditionally —
+        // there's no second-chance LLM pass to keep audio around for,
+        // and transcript.md is final-quality by this point.
+        let canPurge = willSummarize ? (summary != nil) : true
+        if canPurge,
+           settings.audioRetentionDays == AppSettings.audioRetentionDeleteAfterTranscription {
+            AudioRetentionSweep.purgeOneSession(at: directory)
+        }
+
+        // Final state flip. The no-summary path never called
+        // beginGenerating, so finishGenerating would no-op — skip it
+        // entirely to keep the trace clean.
+        if willSummarize {
+            summaryGenerationState = (summary != nil) ? .ready : .failed("no summary")
+            await SessionStore.shared.finishGenerating(sessionID)
+        }
+        // Same generation guard as bailRotated — see `summaryTaskGeneration`
+        // doc for the race we're protecting against.
+        if generation == summaryTaskGeneration {
+            summaryTask = nil
+        }
     }
 
     /// Fan the just-finished session out to any destination the
@@ -1429,7 +1785,8 @@ final class RecordingSession {
             segments: segments,
             summary: summarizer.lastSummary,
             folderSlug: sessionFolderSlug,
-            tag: tag
+            tag: tag,
+            systemAudioStatus: systemAudioStatusValue
         )
         for integration in autoIntegrations {
             let ok = await MCPDispatcher.send(integration, for: stored)
@@ -1559,7 +1916,8 @@ final class RecordingSession {
             segments: segments,
             summary: summarizer.lastSummary,
             folderSlug: folder.slug,
-            tag: tag
+            tag: tag,
+            systemAudioStatus: systemAudioStatusValue
         )
     }
 
@@ -1577,7 +1935,8 @@ final class RecordingSession {
         segments: [TranscriptSegment],
         summary: MeetingSummary?,
         folderSlug: String,
-        tag: String = ""
+        tag: String = "",
+        systemAudioStatus: String? = nil
     ) -> StoredSession {
         let transcriptText = segments
             .map { "\($0.text)" }
@@ -1586,6 +1945,21 @@ final class RecordingSession {
         let transcriptURL = directory.appendingPathComponent("transcript.md")
         let micURL = directory.appendingPathComponent("microphone.caf")
         let systemURL = directory.appendingPathComponent("system_audio.caf")
+        // Read centroid IDs from the sidecar speakers.json if it
+        // exists — same path SessionStore.refresh uses. Lets the
+        // "session only" UI flag in SessionDetailView work for
+        // sessions surfaced through this in-memory builder (post-
+        // stop MCP auto-send and the manual Send-to snapshot path).
+        // Empty Set is fine when the file is absent or unreadable;
+        // SessionDetailView treats missing == "all session-only".
+        let centroidIDs: Set<String> = {
+            let url = directory.appendingPathComponent("speakers.json")
+            guard let data = try? Data(contentsOf: url),
+                  let file = try? JSONDecoder().decode(SpeakerCentroidsFile.self, from: data) else {
+                return []
+            }
+            return Set(file.centroids.keys)
+        }()
         return StoredSession(
             id: id,
             directoryURL: directory,
@@ -1603,7 +1977,17 @@ final class RecordingSession {
             folderSlug: folderSlug,
             tag: tag,
             meetingAttendees: [],
-            speakerMap: [:]
+            // In-memory builder (post-stop MCP auto-send + manual
+            // Send-to snapshot) — the bound calendar event title
+            // is available off the live RecordingSession, but the
+            // function is `static` and doesn't carry it through.
+            // Passing nil is the safe default; SessionStore.refresh
+            // will re-read frontmatter on the next library scan and
+            // pick up the title from disk.
+            linkedEventTitle: nil,
+            speakerMap: [:],
+            speakerCentroidIDs: centroidIDs,
+            systemAudioStatus: systemAudioStatus
         )
     }
 
@@ -1637,6 +2021,20 @@ final class RecordingSession {
         systemArchiveURL = nil
         startedAt = nil
         boundMeeting = nil
+        // Tester bug 2026-05-25: a calendar-bound meeting (title set
+        // to the event name, e.g. "Pilik's Birthday") completed days
+        // earlier, the session was saved, and `title` lived on in
+        // memory. Two days later a voice-note hotkey hit triggered a
+        // new session — reset() cleared boundMeeting/folder/currentMode
+        // but NOT title. start() checked `if title.isEmpty` to decide
+        // whether to regenerate, found it non-empty, and the voice
+        // note was saved under "Pilik's Birthday". Cleared here so
+        // the regeneration path in start() always runs from a clean
+        // slate. The `pendingBoundMeeting` flow in `bindToMeeting`
+        // re-sets the title from `meeting.title` AFTER reset() — same
+        // pattern as boundMeeting / folder / mode pending fields —
+        // so calendar-driven sessions still inherit the event name.
+        title = ""
         folder = .inbox
         tag = ""
         currentMode = .meeting
@@ -1697,9 +2095,124 @@ final class RecordingSession {
     /// the system-audio capture outcome without us widening
     /// `systemAudio`'s visibility. True == at least one PCM frame
     /// landed during the session; false == capture was armed but
-    /// stayed silent (usually BT output) OR was never armed.
+    /// stayed silent (usually BT output, or the macOS 26 SCStream
+    /// regression) OR was never armed.
     var hasCapturedSystemAudio: Bool {
         systemAudio.hasReceivedAudio
+    }
+
+    // MARK: - Archive truncation audit (1.0.7.1)
+
+    /// Minimum on-disk byte count for a CAF file to be considered
+    /// "has actual audio data". CAF header + format/data chunk
+    /// metadata is typically 100-200 bytes; we use a comfortable
+    /// 4 KB threshold so a file that's just chunk-headers-and-nothing
+    /// gets correctly classified as truncated. Picked conservatively
+    /// — even a 1-second mono float32 capture at 16 kHz is 64 KB,
+    /// well above this floor.
+    private static let archiveDataFloorBytes: Int64 = 4096
+
+    /// Render-thread write-error tolerance before flipping captured →
+    /// truncated. A few transient errors (disk pressure, momentary
+    /// device handover) are tolerable; >25 means systemic failure
+    /// and the file is almost certainly partial. Matches the toast
+    /// threshold AudioRecorder already uses for its post-stop
+    /// summary (AudioRecorder.swift `if errCount > 25`).
+    private static let archiveWriteErrorTolerance: Int = 25
+
+    /// Read on-disk byte count for an archive URL. Returns 0 for
+    /// missing file (FileManager throws → treat as nothing on disk).
+    /// Synchronous file-system stat — only called once per stream
+    /// per stop(), not in a hot loop.
+    private static func archiveBytesOnDisk(_ url: URL?) -> Int64 {
+        guard let url else { return 0 }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    /// Post-stop audit of the system-audio archive. See `ArchiveStatus`
+    /// docs for the four states and the failure mode each one names.
+    /// Called from `stop()` after Final pass + from `MarkdownExporter`
+    /// for the frontmatter line. Idempotent and side-effect-free —
+    /// only reads counters + file size.
+    var systemAudioArchiveStatus: ArchiveStatus {
+        guard settings.captureSystemAudio, currentMode == .meeting else {
+            return .off
+        }
+        let bytes = Self.archiveBytesOnDisk(systemArchiveURL)
+        let receivedAnything = systemAudio.hasReceivedAudio
+        let framesWritten = systemAudio.archivedFrameCount
+        let (errCount, _) = systemAudio.archiveWriteErrorsSummary
+
+        if !receivedAnything {
+            // SCKit never delivered a buffer. Same case the existing
+            // silenceMonitor surfaces mid-recording.
+            return .empty
+        }
+        // Buffer(s) arrived. Now check whether ANY of them landed on
+        // disk. Three truncation paths:
+        //   1. File is missing or below the data floor — open failed
+        //      silently, or every write threw before the writer
+        //      could grow the data chunk beyond headers.
+        //   2. Frames-written counter is zero despite hasReceivedAudio
+        //      — open succeeded but every write throw triggered the
+        //      catch branch. The Billions 2026-05-25 failure mode.
+        //   3. Write errors above tolerance — even if some frames
+        //      landed, the file is so partial that the user needs
+        //      to know before they try to re-summarize.
+        if bytes < Self.archiveDataFloorBytes
+            || framesWritten == 0
+            || errCount > Self.archiveWriteErrorTolerance
+        {
+            return .truncated(
+                bytes: bytes,
+                framesWritten: framesWritten,
+                writeErrors: errCount
+            )
+        }
+        return .captured(bytes: bytes)
+    }
+
+    /// Post-stop audit of the microphone archive. Symmetric to
+    /// `systemAudioArchiveStatus` — mic almost always exists in
+    /// meeting/voiceNote/dictation modes; `.off` is mostly a future
+    /// hook for hypothetical mic-disabled modes.
+    var micAudioArchiveStatus: ArchiveStatus {
+        // Mic is always recorded in all three modes (meeting, voice
+        // note, dictation). There's no setting to disable it — the
+        // recorder is the entire point. So the .off case is reserved
+        // for the no-permission early-return path; we surface it as
+        // "empty" instead here, since "no permission to record mic"
+        // is a real failure the user should know about.
+        let bytes = Self.archiveBytesOnDisk(micArchiveURL)
+        let framesWritten = recorder.archivedFrameCount
+        let (errCount, _) = recorder.archiveWriteErrorsSummary
+        let receivedAnything = framesWritten > 0 || bytes > 0
+
+        if !receivedAnything {
+            return .empty
+        }
+        if bytes < Self.archiveDataFloorBytes
+            || framesWritten == 0
+            || errCount > Self.archiveWriteErrorTolerance
+        {
+            return .truncated(
+                bytes: bytes,
+                framesWritten: framesWritten,
+                writeErrors: errCount
+            )
+        }
+        return .captured(bytes: bytes)
+    }
+
+    /// Convenience: the same three-state status MarkdownExporter
+    /// writes to `daisy_system_audio_status:` frontmatter, surfaced
+    /// here so the in-process `StoredSession` snapshots used by
+    /// auto-send and Send-to carry the same flag. `"ok"` /
+    /// `"empty"` / `nil` (capture was off, no opinion to record).
+    var systemAudioStatusValue: String? {
+        guard settings.captureSystemAudio else { return nil }
+        return systemAudio.hasReceivedAudio ? "ok" : "empty"
     }
 
     private var isFailed: Bool {
