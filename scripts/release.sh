@@ -429,7 +429,16 @@ if [[ -f "${LATEST_VERSION_FILE}" ]]; then
 // rewritten in step [6/6] from the same VERSION argument.
 
 export const LATEST_VERSION = "${VERSION}";
-export const LATEST_DMG_URL = \`/downloads/Daisy-\${LATEST_VERSION}.dmg\`;
+export const LATEST_BUILD = ${BUILD};
+// ?v=\${LATEST_BUILD} is a cache-bust query string. DMG filename only
+// encodes the marketing version (Daisy-1.0.7.3.dmg) and gets re-published
+// across builds under the same marketing version. Without the query
+// string, browsers that downloaded an earlier build stay stuck on the
+// cached copy for the lifetime of /downloads' Cache-Control max-age.
+// Bumping the build number on every release moves the cache key forward
+// so the next visit fetches the freshly-published binary. Added
+// 2026-05-27 after build 33→35 cache-trap caught users on stale DMG.
+export const LATEST_DMG_URL = \`/downloads/Daisy-\${LATEST_VERSION}.dmg?v=\${LATEST_BUILD}\`;
 EOF
     echo "  ✓ Rewrote lib/latestVersion.ts → ${VERSION}"
 else
