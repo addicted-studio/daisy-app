@@ -277,6 +277,25 @@ final class Summarizer {
     var openaiModel: String {
         didSet { UserDefaults.standard.set(openaiModel, forKey: Self.kOpenAIModel) }
     }
+    /// Ollama model + base URL (build 40). Model is the tag the user
+    /// has actually pulled (`ollama pull <name>`); base URL is the
+    /// Ollama daemon endpoint (default 127.0.0.1:11434, overridable
+    /// for users running Ollama on a non-default port).
+    var ollamaModel: String {
+        didSet { UserDefaults.standard.set(ollamaModel, forKey: Self.kOllamaModel) }
+    }
+    var ollamaBaseURL: String {
+        didSet { UserDefaults.standard.set(ollamaBaseURL, forKey: Self.kOllamaBaseURL) }
+    }
+    /// LM Studio model + base URL (build 40). Model id must match
+    /// what's loaded in the LM Studio UI; base URL is the local-server
+    /// endpoint (default 127.0.0.1:1234).
+    var lmStudioModel: String {
+        didSet { UserDefaults.standard.set(lmStudioModel, forKey: Self.kLMStudioModel) }
+    }
+    var lmStudioBaseURL: String {
+        didSet { UserDefaults.standard.set(lmStudioBaseURL, forKey: Self.kLMStudioBaseURL) }
+    }
 
     // MARK: - Private
 
@@ -286,6 +305,10 @@ final class Summarizer {
     private static let kProvider = "daisy.summaryProvider"
     private static let kAnthropicModel = "daisy.anthropicModel"
     private static let kOpenAIModel = "daisy.openaiModel"
+    private static let kOllamaModel = "daisy.ollamaModel"
+    private static let kOllamaBaseURL = "daisy.ollamaBaseURL"
+    private static let kLMStudioModel = "daisy.lmStudioModel"
+    private static let kLMStudioBaseURL = "daisy.lmStudioBaseURL"
 
     private init() {
         // Default to Apple Intelligence on macOS 26+ (where
@@ -305,6 +328,14 @@ final class Summarizer {
             ?? AnthropicAPISummarizer.defaultModelID
         self.openaiModel = UserDefaults.standard.string(forKey: Self.kOpenAIModel)
             ?? OpenAIAPISummarizer.defaultModelID
+        self.ollamaModel = UserDefaults.standard.string(forKey: Self.kOllamaModel)
+            ?? OllamaAPISummarizer.defaultModelID
+        self.ollamaBaseURL = UserDefaults.standard.string(forKey: Self.kOllamaBaseURL)
+            ?? OllamaAPISummarizer.defaultBaseURLString
+        self.lmStudioModel = UserDefaults.standard.string(forKey: Self.kLMStudioModel)
+            ?? LMStudioAPISummarizer.defaultModelID
+        self.lmStudioBaseURL = UserDefaults.standard.string(forKey: Self.kLMStudioBaseURL)
+            ?? LMStudioAPISummarizer.defaultBaseURLString
 
         Task { await refreshAvailability() }
     }
@@ -329,6 +360,10 @@ final class Summarizer {
             return "Anthropic API key is missing. Add it in Settings → Summary Provider."
         case .openai:
             return "OpenAI API key is missing. Add it in Settings → Summary Provider."
+        case .ollama:
+            return "Couldn't reach Ollama at \(ollamaBaseURL). Open Terminal and run `ollama serve`, then pull a model with `ollama pull \(OllamaAPISummarizer.defaultModelID)`."
+        case .lmStudio:
+            return "Couldn't reach LM Studio at \(lmStudioBaseURL). Open the LM Studio app, load a model, then start the local server (Developer tab → Start)."
         case .mcp:
             return "MCP summarizer isn't configured. Open Settings → Summary → MCP and set the server URL, tool name, and arguments template."
         }
@@ -418,6 +453,18 @@ final class Summarizer {
             return AnthropicAPISummarizer(model: anthropicModel)
         case .openai:
             return OpenAIAPISummarizer(model: openaiModel)
+        case .ollama:
+            // Parse base URL with fallback to default if user typed
+            // something malformed. Both adapters tolerate a missing
+            // trailing slash — they `appendingPathComponent` rather
+            // than string-concat.
+            let url = URL(string: ollamaBaseURL)
+                ?? URL(string: OllamaAPISummarizer.defaultBaseURLString)!
+            return OllamaAPISummarizer(baseURL: url, model: ollamaModel)
+        case .lmStudio:
+            let url = URL(string: lmStudioBaseURL)
+                ?? URL(string: LMStudioAPISummarizer.defaultBaseURLString)!
+            return LMStudioAPISummarizer(baseURL: url, model: lmStudioModel)
         case .mcp:
             let defaults = UserDefaults.standard
             let urlString = defaults.string(forKey: "daisy.mcpSummarizer.url")

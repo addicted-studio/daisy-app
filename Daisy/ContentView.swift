@@ -1075,7 +1075,7 @@ struct ContentView: View {
     private func handlePrimaryAction() {
         switch session.status {
         case .recording:
-            session.pause()
+            Task { await session.pause() }
         case .paused:
             Task { await session.resume() }
         case .preparing, .stopping, .summarizing:

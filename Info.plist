@@ -68,18 +68,35 @@
     <!-- Sparkle 2.x — auto-update configuration. The public EdDSA
          key is the verifier for every signed DMG Sparkle downloads;
          the matching private key lives in the build-machine login
-         keychain. SUEnableInstallerLauncherService routes the
-         install through Sparkle's bundled XPC services, which is the
-         only path that works under the App Sandbox (see the
-         com.apple.security.temporary-exception.mach-lookup.global-name
-         entitlement in Daisy.entitlements). -->
+         keychain.
+
+         ─── SUEnableInstallerLauncherService deliberately OMITTED ───
+         Sparkle docs (https://sparkle-project.org/documentation/sandboxing/)
+         are explicit: "Do not enable this XPC Service if your
+         application is not sandboxed. … If your app is not sandboxed,
+         please remove or disable SUEnableInstallerLauncherService in
+         your app's Info.plist." Daisy runs unsandboxed (Hardened
+         Runtime only — see Daisy.entitlements; app-sandbox key absent).
+
+         Builds 30 → 34 had `SUEnableInstallerLauncherService=true`
+         left over from a pre-sandbox-disable bootstrap. Sparkle took
+         the sandboxed launch path and tried to bootstrap_look_up the
+         mach service `<bundle-id>-spki`, which under Hardened Runtime
+         requires `com.apple.security.temporary-exception.mach-lookup.global-name`
+         in entitlements. That entitlement was never added (it's a
+         sandbox-only escape hatch and would be rejected on Apple
+         review for a non-sandboxed app anyway). Result: launchd
+         denied bootstrap with xpc_error=[159], Sparkle surfaced
+         "An error occurred while running the updater" on EVERY
+         update attempt. Auto-update has been broken since the very
+         first Sparkle-enabled release. Fixed 2026-05-27 by removing
+         the key — Sparkle now takes the unsandboxed in-process
+         install path, which Just Works for non-sandboxed apps. -->
     <key>SUFeedURL</key>
     <string>https://mydaisy.io/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>drZN6wJxqeB0iagvo4hk1ZQhO3wceIPWoazYjMK9VFk=</string>
     <key>SUEnableAutomaticChecks</key>
-    <true/>
-    <key>SUEnableInstallerLauncherService</key>
     <true/>
 </dict>
 </plist>

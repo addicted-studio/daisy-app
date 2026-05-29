@@ -145,7 +145,7 @@ enum AudioRetentionSweep {
             return (0, 0)
         }
         defer { Task { @MainActor in ticket.release() } }
-        let sessionsDir = ticket.url.appendingPathComponent("Sessions", isDirectory: true)
+        let sessionsDir = ticket.url.appendingPathComponent("Daisy/Sessions", isDirectory: true)
         guard let entries = try? fm.contentsOfDirectory(
             at: sessionsDir,
             includingPropertiesForKeys: [.isDirectoryKey],
@@ -194,7 +194,7 @@ enum AudioRetentionSweep {
             return SweepResult(purgedFiles: 0, freedBytes: 0)
         }
         defer { Task { @MainActor in ticket.release() } }
-        let sessionsDir = ticket.url.appendingPathComponent("Sessions", isDirectory: true)
+        let sessionsDir = ticket.url.appendingPathComponent("Daisy/Sessions", isDirectory: true)
         guard let entries = try? fm.contentsOfDirectory(
             at: sessionsDir,
             includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],

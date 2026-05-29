@@ -99,14 +99,12 @@ enum SettingsTab: String, Hashable, Sendable {
 enum ConnectionSection: String, Hashable, Sendable {
     case mcpServer
     case autoRouting
-    /// Google Calendar OAuth tab. Shipped with a `Beta` badge
-    /// while Google's OAuth verification is in flight — the flow
-    /// fully works, but users will see an "App isn't verified"
-    /// interstitial from Google's consent screen until the
-    /// verification request clears review (typically 2–6 weeks
-    /// after submission). Once approved we drop the badge and
-    /// the in-tab notice.
-    case googleCalendar
+    // Google Calendar OAuth row moved to Settings → Permissions
+    // → Calendar in build 42 (2026-05-28). Both calendar sources
+    // (Apple via EventKit, Google via OAuth) now live side-by-side
+    // in Permissions so users see "where Daisy reads calendar data
+    // from" in one place. Connections is now strictly outbound
+    // integrations (auto-routing + MCP server).
 }
 
 @Observable

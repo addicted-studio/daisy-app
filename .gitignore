@@ -28,3 +28,6 @@ xcuserdata/
 # Secrets / local config
 .env
 *.pem
+
+# Claude Code local settings (do not commit)
+.claude/settings.local.json
