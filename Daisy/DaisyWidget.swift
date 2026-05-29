@@ -218,7 +218,7 @@ struct DaisyWidget: View {
     }
 
     private var hasContent: Bool {
-        session.segments.contains(where: { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty })
+        !session.displaySegments.isEmpty
     }
 
     private func copyLastTranscript() {

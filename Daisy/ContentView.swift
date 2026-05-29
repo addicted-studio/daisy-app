@@ -15,6 +15,24 @@ import SwiftUI
 import AppKit
 import EventKit
 
+// MARK: - Live transcript autoscroll plumbing
+
+/// True when the bottom of the scrollable content sits within the pin
+/// threshold of the visible container bottom — i.e. the user is parked at
+/// the newest line. Reduced to a `Bool` so `onPreferenceChange` only fires
+/// (and state only flips) on threshold crossings, not on every scroll frame.
+private struct PinnedToBottomKey: PreferenceKey {
+    static var defaultValue: Bool = true
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = nextValue() }
+}
+
+/// Global-space maxY of the live transcript scroll container, the reference
+/// edge for `PinnedToBottomKey`. Changes on layout/resize, not on scroll.
+private struct ContainerBottomYKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct ContentView: View {
     @Bindable var session: RecordingSession
     @Bindable var settings: AppSettings
@@ -28,6 +46,15 @@ struct ContentView: View {
     /// carries the event binding in its frontmatter.
     @State private var selectedMeeting: DaisyMeeting?
 
+    /// Live-transcript autoscroll gate. `true` ⇒ stick to the newest line
+    /// on each update; flips to `false` when the user scrolls up to read
+    /// back, so incoming segments don't yank them down. Driven by
+    /// `PinnedToBottomKey` off the sentinel below the transcript.
+    @State private var isPinnedToBottom = true
+    /// Global-space bottom edge of the transcript scroll container; updated
+    /// only on layout/resize (not per scroll frame), feeds the pin predicate.
+    @State private var liveContainerBottomY: CGFloat = 0
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             consentReminder
@@ -37,10 +64,35 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     summaryCard
                     transcriptList
+                    // Sentinel parked at the very bottom of the content.
+                    // Its global maxY vs. the container bottom tells us
+                    // whether the user is pinned to the latest line. Mapped
+                    // straight to a Bool so scrolling within a zone doesn't
+                    // churn state — only crossing the 24pt threshold does.
+                    Color.clear
+                        .frame(height: 1)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: PinnedToBottomKey.self,
+                                    value: geo.frame(in: .global).maxY <= liveContainerBottomY + 24
+                                )
+                            }
+                        )
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: ContainerBottomYKey.self,
+                        value: geo.frame(in: .global).maxY
+                    )
+                }
+            )
+            .onPreferenceChange(ContainerBottomYKey.self) { liveContainerBottomY = $0 }
+            .onPreferenceChange(PinnedToBottomKey.self) { isPinnedToBottom = $0 }
             Divider()
             errorBanner
             footer
@@ -692,25 +744,41 @@ struct ContentView: View {
 
     // MARK: - Transcript
 
+    /// Live popover renders only the most recent N lines. The full
+    /// transcript is still saved/exported in full — this cap just keeps the
+    /// LazyVStack diff and first-open layout flat on long sessions.
+    private static let liveWindowCount = 200
+
     private var transcriptList: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let display = session.displaySegments
+        let windowed = display.count > Self.liveWindowCount
+            ? Array(display.suffix(Self.liveWindowCount))
+            : display
+        // Composite key fires autoscroll both when a new segment is appended
+        // (count changes) and when the live last segment grows in place (text
+        // changes). Keying on text alone would miss a new segment whose text
+        // duplicates the previous last line. \u{1F} (unit separator) keeps
+        // count and text from colliding.
+        let autoscrollKey = "\(display.count)\u{1F}\(display.last?.text ?? "")"
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Transcript")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                if !session.segments.isEmpty {
-                    Text("\(filteredSegments.count) line\(filteredSegments.count == 1 ? "" : "s")")
+                if !display.isEmpty {
+                    Text("\(display.count) line\(display.count == 1 ? "" : "s")")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
             }
 
-            if filteredSegments.isEmpty {
+            if windowed.isEmpty {
                 emptyState
             } else {
                 ScrollViewReader { proxy in
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(filteredSegments) { segment in
+                        ForEach(windowed) { segment in
                             SegmentRow(
                                 segment: segment,
                                 origin: session.startedAt ?? Date(),
@@ -719,20 +787,22 @@ struct ContentView: View {
                             .id(segment.id)
                         }
                     }
-                    .onChange(of: session.segments.last?.text) { _, _ in
-                        if let last = session.segments.last?.id {
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                proxy.scrollTo(last, anchor: .bottom)
-                            }
+                    .onChange(of: autoscrollKey) { _, _ in
+                        guard isPinnedToBottom, let last = display.last?.id else { return }
+                        proxy.scrollTo(last, anchor: .bottom)   // no withAnimation
+                    }
+                    .onAppear {
+                        // Open the popover already at the newest line.
+                        // LazyVStack rows aren't realised on the first
+                        // onAppear pass, so hop a runloop before scrolling.
+                        guard let last = display.last?.id else { return }
+                        DispatchQueue.main.async {
+                            proxy.scrollTo(last, anchor: .bottom)
                         }
                     }
                 }
             }
         }
-    }
-
-    private var filteredSegments: [TranscriptSegment] {
-        session.segments.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 
     private var emptyState: some View {
@@ -985,7 +1055,7 @@ struct ContentView: View {
     }
 
     private var hasSegments: Bool {
-        session.segments.contains(where: { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty })
+        !session.displaySegments.isEmpty
     }
 
     /// Path of the auto-saved transcript markdown for the current

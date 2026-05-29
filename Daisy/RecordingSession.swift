@@ -280,11 +280,68 @@ final class RecordingSession {
     /// affordance.
     var archivedAudioParts: [URL] { recorder.archivedParts }
 
-    /// Merged transcript across mic + system, sorted by absolute start time.
+    /// Merged transcript across mic + system, sorted by absolute start
+    /// time. Cached behind a `(mic.segmentsVersion, system.segmentsVersion)`
+    /// composite key — see build 41 comment on `Transcriber.segmentsVersion`
+    /// for the why. Tl;dr: pre-build-41 this re-sorted both arrays on
+    /// every Observable read, and on a 53-min session (1000+ segments
+    /// per transcriber) that drowned the MainActor; pause/resume clicks
+    /// queued behind ~8 seconds of accumulated sort work, the widget
+    /// flower animation stalled at 0 fps.
+    ///
+    /// Cache hits when both transcribers' versions match the snapshot
+    /// captured at last sort. Reading their `segmentsVersion` registers
+    /// them in Observable dependency tracking, so when either transcriber
+    /// mutates, the current view scope invalidates and re-reads here.
     var segments: [TranscriptSegment] {
-        (micTranscriber.segments + systemTranscriber.segments)
+        let micV = micTranscriber.segmentsVersion
+        let sysV = systemTranscriber.segmentsVersion
+        if _segmentsCacheMicVersion == micV && _segmentsCacheSysVersion == sysV {
+            return _segmentsCache
+        }
+        let merged = (micTranscriber.segments + systemTranscriber.segments)
             .sorted(by: { $0.startedAt < $1.startedAt })
+        _segmentsCache = merged
+        _segmentsCacheMicVersion = micV
+        _segmentsCacheSysVersion = sysV
+        return _segmentsCache
     }
+    @ObservationIgnored
+    private var _segmentsCache: [TranscriptSegment] = []
+    @ObservationIgnored
+    private var _segmentsCacheMicVersion: Int = -1
+    @ObservationIgnored
+    private var _segmentsCacheSysVersion: Int = -1
+
+    /// `segments` minus empty / whitespace-only lines, cached behind the
+    /// same `(mic, system) segmentsVersion` composite key as `segments`.
+    /// The live transcript popover reads this so SwiftUI does not run an
+    /// O(N) `.filter` (plus a `String` allocation per segment) on every
+    /// body re-evaluation — pre-this, `ContentView.filteredSegments` was
+    /// recomputed 3-4× per render and again every `liveIntervalSec` pass.
+    /// Predicate is byte-for-byte the old `filteredSegments` one, so
+    /// behaviour is unchanged; the filter just runs once per mutation.
+    /// Reading the transcribers' `segmentsVersion` here registers the
+    /// Observable dependency, so this cache invalidates exactly when
+    /// `segments` does.
+    var displaySegments: [TranscriptSegment] {
+        let micV = micTranscriber.segmentsVersion
+        let sysV = systemTranscriber.segmentsVersion
+        if _displayCacheMicVersion == micV && _displayCacheSysVersion == sysV {
+            return _displayCache
+        }
+        let filtered = segments.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
+        _displayCache = filtered
+        _displayCacheMicVersion = micV
+        _displayCacheSysVersion = sysV
+        return _displayCache
+    }
+    @ObservationIgnored
+    private var _displayCache: [TranscriptSegment] = []
+    @ObservationIgnored
+    private var _displayCacheMicVersion: Int = -1
+    @ObservationIgnored
+    private var _displayCacheSysVersion: Int = -1
 
     /// Derived from `SystemAudioCapture.state` + the once-per-session
     /// denial flag set when preflight rejected us at start. UI binds
