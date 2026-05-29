@@ -40,12 +40,20 @@ struct DaisyWidget: View {
         }
     }
 
+    // Geometry shrunk 20% in build 45 — request was to make the active
+    // recording widget less obtrusive on screen. Petal/center/canvas all
+    // multiplied by 0.8 to preserve proportions; `passiveScale` still
+    // applies on top, so passive (idle/finished) state shrinks
+    // proportionally relative to the new active baseline. Panel
+    // container in FloatingPanelController.swift dropped 80 → 64 to
+    // match (shadow padding stays ≈9.5pt on each side, well clear of
+    // the .shadow(radius:6, y:3) blur extent).
     private let petalCount = 8
-    private let basePetalLength: CGFloat = 7
-    private let maxPetalLength: CGFloat = 18
-    private let petalWidth: CGFloat = 7
-    private let centerSize: CGFloat = 10
-    private let canvasSize: CGFloat = 56
+    private let basePetalLength: CGFloat = 5.6   // was 7
+    private let maxPetalLength: CGFloat = 14.4   // was 18
+    private let petalWidth: CGFloat = 5.6        // was 7
+    private let centerSize: CGFloat = 8          // was 10
+    private let canvasSize: CGFloat = 45         // was 56
     private let petalGap: CGFloat = 0.5
 
     var body: some View {
@@ -93,8 +101,9 @@ struct DaisyWidget: View {
         .scaleEffect(celebrationScale * passiveScale)
         .animation(.easeInOut(duration: 0.35), value: passiveScale)
         // Shadow needs room — the panel is sized larger than canvasSize
-        // (FloatingPanelController wraps the widget in an 80×80 ZStack)
-        // so this blur isn't clipped against the panel edge.
+        // (FloatingPanelController wraps the widget in a 64×64 ZStack;
+        // was 80×80 pre-build-45 when canvasSize was 56) so this blur
+        // isn't clipped against the panel edge.
         .shadow(color: .black.opacity(0.35), radius: 6, x: 0, y: 3)
         .contentShape(Circle())
         .onTapGesture {
@@ -137,7 +146,7 @@ struct DaisyWidget: View {
         switch session.status {
         case .recording:
             Button {
-                session.pause()
+                Task { await session.pause() }
             } label: {
                 Label("Pause", systemImage: "pause.fill")
             }
@@ -458,7 +467,7 @@ struct DaisyWidget: View {
     private func togglePrimary() {
         switch session.status {
         case .recording:
-            session.pause()
+            Task { await session.pause() }
         case .paused:
             Task { await session.resume() }
         case .preparing, .stopping, .summarizing:

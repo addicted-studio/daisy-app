@@ -167,23 +167,46 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "SystemAudio")
 
     /// PCM stream of system audio. Read this **before** `start()`.
+    ///
+    /// Both the assignment and the `onTermination` nil-out happen
+    /// inside `outputQueue.sync` so the in-flight `sampleBufferCallback`
+    /// (which reads `bufferContinuation` via `bufferContinuation?.yield`)
+    /// never observes a half-mutated state. The other
+    /// `nonisolated(unsafe)` fields (`archiveWriter`, `archiveURL`)
+    /// already serialize through the same queue — this one was an
+    /// oversight that the macOS audit caught (build 40 fix).
     var buffers: AsyncStream<AudioChunk> {
         AsyncStream { continuation in
-            self.bufferContinuation = continuation
+            self.outputQueue.sync {
+                self.bufferContinuation = continuation
+            }
             continuation.onTermination = { @Sendable [weak self] _ in
-                self?.bufferContinuation = nil
+                self?.outputQueue.sync {
+                    self?.bufferContinuation = nil
+                }
             }
         }
     }
 
     func start(archiveURL: URL? = nil) async throws {
         guard state == .idle || state == .stopped || state == .paused else { return }
+        // Capture the original state at function entry so the
+        // placeholder-creation block (which runs after `state` has
+        // already been flipped to `.capturing`) can still tell
+        // whether this is a fresh start or a resume. Critical:
+        // FileManager.createFile() on a path whose ExtAudioFile is
+        // already open (resume case) detaches the inode and the
+        // archive ends up 0 bytes on disk even though writes keep
+        // succeeding into the orphaned descriptor. Caught 2026-05-28
+        // build 37: 3,645,120 frames "written" with 0 writeErrors,
+        // 0 bytes on disk.
+        let isFreshStart = (state == .idle || state == .stopped)
         // Only adopt a new archive URL on a fresh start. Resume
         // (state == .paused) keeps the writer that was opened
         // during the original start, so the file accumulates one
         // contiguous recording across pause/resume cycles instead
         // of clobbering itself.
-        if state == .idle || state == .stopped {
+        if isFreshStart {
             self.archiveURL = archiveURL
             self.archiveWriter = nil
             // Reset level-meter and silence-monitor state on fresh
@@ -231,7 +254,23 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         // pre-fix behaviour where no file at all meant the post-
         // mortem couldn't tell capture-never-started from capture-
         // received-nothing).
-        if let url = self.archiveURL {
+        //
+        // GATED on `isFreshStart` — on resume (state == .paused at
+        // entry) `archiveWriter` is still holding an open ExtAudioFile
+        // pointing at `url.path`. Calling `FileManager.createFile()`
+        // on that path detaches the inode the open descriptor is
+        // writing into: writes keep returning success to ARC but
+        // they're streaming into an orphaned block, and the directory
+        // entry stays at the zero-byte placeholder forever. Symptom:
+        // `archiveFramesWritten` shows millions of frames with zero
+        // writeErrors AND the file is 0 bytes on disk. Confirmed
+        // 2026-05-28 build 37 crash log:
+        //     "System audio archive TRUNCATED: 0 bytes on disk,
+        //      3645120 frames written, 0 write errors"
+        // Fix: only stamp the placeholder when we're starting fresh
+        // and `archiveWriter == nil` (the writer hasn't been opened
+        // yet). Resume path keeps the live writer untouched.
+        if isFreshStart, let url = self.archiveURL {
             let created = FileManager.default.createFile(
                 atPath: url.path,
                 contents: nil,
@@ -443,12 +482,37 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         do {
             try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: outputQueue)
+            // Build 41 — also subscribe to `.screen` even though we
+            // never use the video frames. SCStream cannot run "audio-
+            // only" (it always generates at least one video frame per
+            // `minimumFrameInterval`). Without a `.screen` output
+            // registered, every produced video frame triggered a 1 Hz
+            // "stream output NOT found. Dropping frame" error in the
+            // log (caught in the 2026-05-28 pause-hang investigation —
+            // ~3000 spurious error lines per 50-min session). With a
+            // registered output our `stream(_:didOutputSampleBuffer:_:)`
+            // sees `outputType == .screen`, fails the `.audio` guard
+            // on the first line, and returns — zero meaningful work,
+            // but the SCStream side stops erroring. Dedicated queue so
+            // discarded video traffic doesn't share the audio output
+            // queue's serial slot.
+            try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: screenDiscardQueue)
             try await stream.startCapture()
         } catch {
             throw DaisyError.audioEngineFailed("Could not start system audio: \(error.localizedDescription)")
         }
         return stream
     }
+
+    /// Throwaway queue for the `.screen` output we register only to
+    /// silence SCStream's "stream output NOT found" error spam. See
+    /// the call site in `buildAndStartSystemAudioStream()` for the
+    /// full rationale. `.utility` qos because frames are immediately
+    /// discarded; no urgency.
+    private let screenDiscardQueue = DispatchQueue(
+        label: "app.essazanov.Daisy.SystemAudioScreenDiscard",
+        qos: .utility
+    )
 
     // MARK: - Default-output-device change observer
 

@@ -143,8 +143,15 @@ struct SettingsView: View {
         // `SystemSegmentedControl → DesignLibrary` path. Reverted
         // when the crash turned out to correlate with low disk +
         // a partly-downloaded Whisper model on the tester's
-        // machine, not the segmented control itself. Native
-        // chrome restored; root cause tracked separately.
+        // machine, not the segmented control itself. 2026-05-28
+        // briefly tried the same workaround again in build 38 after
+        // a build 37 crash with NSSegmentedControl in the stack —
+        // reverted again in build 39 after observing the crash
+        // correlates with recording start/stop cycles (not tab
+        // navigation), suggesting the NSSegmentedControl is the
+        // pathway the layout pressure lands on, not the trigger.
+        // Native chrome restored; root cause being chased
+        // separately via the audio engine rebuild work.
         // Consume any one-shot deep-link from AppNavigation. Set on
         // appear (initial entry into Settings) AND on change (user
         // jumps from FirstRun while Settings sheet is already
@@ -393,6 +400,8 @@ struct SettingsView: View {
     /// All variants honor the no-trailing-period brand rule.
     private var retentionCaptionText: String {
         switch settings.audioRetentionDays {
+        case AppSettings.audioRetentionDoNotRecord:
+            return "Audio never touches your disk. Daisy transcribes from the live mic stream and discards each buffer as soon as it's been through Whisper. Strongest privacy posture — but if Daisy crashes mid-meeting, the transcript is lost too, and you can't re-run transcription with a better model later. Transcripts, summaries and screenshots still save normally"
         case AppSettings.audioRetentionDeleteAfterTranscription:
             return "Audio deletes as soon as the transcript and summary are written. Transcripts, summaries and screenshots stay forever — audio is the heavy part"
         case 0:
@@ -634,12 +643,22 @@ struct SettingsView: View {
                     }
 
                     LabeledContent {
+                        // pickerStyle(.menu) instead of .segmented:
+                        // macOS 26.2 ships an Apple-side UAF in the Swift
+                        // concurrency ↔ AppKit bridge that crashes any
+                        // SwiftUI Picker(.segmented) on layout (it routes
+                        // through SystemSegmentedControl, an NSSegmentedControl
+                        // wrapper — same UAF family as the NavigationSplitView
+                        // sidebar toggle we removed in build 33). 2 options
+                        // fit the menu naturally in this LabeledContent
+                        // trailing slot. Restore .segmented post-26.x once
+                        // Apple ships the fix.
                         Picker("", selection: $settings.notionParentKind) {
                             Text("Page").tag("page")
                             Text("Database").tag("database")
                         }
                         .labelsHidden()
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                         .fixedSize()
                     } label: {
                         labelWithCaption("Parent type",
@@ -964,6 +983,17 @@ struct SettingsView: View {
                     // journalists, anyone who re-summarizes from
                     // audio later) keep the same control they had.
                     Picker("", selection: $settings.audioRetentionDays) {
+                        // Don't record at all — strongest privacy
+                        // posture, pattern (d) from the 2026-05-28
+                        // competitor audit. Whisper still works
+                        // (live in-memory PCM stream), the on-disk
+                        // .caf archive is just skipped. Trade-off:
+                        // no crash recovery, no re-transcription
+                        // later. Aimed at users in regulated
+                        // environments and the "I just want
+                        // notes, not recordings" majority.
+                        Text("Don't record audio")
+                            .tag(AppSettings.audioRetentionDoNotRecord)
                         Text("After transcription")
                             .tag(AppSettings.audioRetentionDeleteAfterTranscription)
                         Text("24 hours").tag(1)
@@ -1334,15 +1364,36 @@ struct SettingsView: View {
                 // The option names alone are self-explanatory; no
                 // example-name parenthesis either — they overloaded
                 // the row with internal-jargon proper nouns.
+                // pickerStyle(.radioGroup) instead of .inline:
+                // macOS 26.2 ships an Apple-side UAF in the Swift
+                // concurrency ↔ AppKit bridge that crashes SwiftUI
+                // Picker(.inline) on macOS — .inline routes through
+                // SystemSegmentedControl (NSSegmentedControl wrapper),
+                // same UAF family as the NavigationSplitView sidebar
+                // toggle we removed in build 33. Reproduced on build 36
+                // when the user hit start → silent recording → restart
+                // and the picker re-laid out mid-cycle. .radioGroup uses
+                // real NSButtons (NOT NSCell-backed), which is the only
+                // discrete-select macOS picker style not on any 26.x UAF
+                // stack. Visual change: stacked radios instead of a
+                // segmented row — actually reads more "settings" anyway.
+                //
+                // Labels renamed 2026-05-28 from "Split"/"Two sides" to
+                // "Per speaker"/"Me vs. others" because the original
+                // labels collided with the sidebar's "Recording both
+                // sides" status pill — a user reported the conflict in
+                // the same crash thread. New labels describe what shows
+                // up in the transcript (per-speaker rows vs. just me
+                // and everyone-else) without borrowing "sides" vocab.
                 Picker(selection: $settings.diarizeRemoteSpeakers) {
-                    Text("Split")
+                    Text("Per speaker")
                         .tag(true)
-                    Text("Two sides")
+                    Text("Me vs. others")
                         .tag(false)
                 } label: {
                     Text("Speakers in transcript")
                 }
-                .pickerStyle(.inline)
+                .pickerStyle(.radioGroup)
 
                 Toggle(isOn: $settings.diarizeMicrophone) {
                     Text("Diarize microphone too")
@@ -1359,6 +1410,17 @@ struct SettingsView: View {
                 }
             } header: {
                 Text("Diarization")
+            }
+
+            Section {
+                Toggle(isOn: $settings.liveTranscriptionEnabled) {
+                    Text("Show transcript live during meeting")
+                    Text("OFF runs Whisper as a single pass on Stop instead of every ~2s during recording. Lighter on long meetings — pause/resume stays instant on 1h+ sessions and the daisy widget never stutters. Trade-off: toolbar transcript stays empty until you press Stop. Dictation always uses live regardless of this switch.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Live transcription")
             }
 
             Section {
@@ -1735,6 +1797,61 @@ struct SettingsView: View {
             }
             .pickerStyle(.menu)
 
+        case .ollama:
+            LabeledContent("Server URL") {
+                TextField("", text: $summarizer.ollamaBaseURL, prompt: Text(OllamaAPISummarizer.defaultBaseURLString))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity)
+            }
+            Picker("Model", selection: $summarizer.ollamaModel) {
+                ForEach(OllamaAPISummarizer.availableModels, id: \.id) { item in
+                    Text(item.label).tag(item.id)
+                }
+                // Free-form fallback — user may have pulled a model
+                // we don't list (custom fine-tunes, latest tags etc.).
+                // tag("") keeps the picker from rejecting an unknown
+                // current value; the inline TextField below is the
+                // real authoring surface for off-list IDs.
+                if !OllamaAPISummarizer.availableModels.contains(where: { $0.id == summarizer.ollamaModel }) {
+                    Text("Custom: \(summarizer.ollamaModel)").tag(summarizer.ollamaModel)
+                }
+            }
+            .pickerStyle(.menu)
+            LabeledContent("Model tag") {
+                TextField("", text: $summarizer.ollamaModel, prompt: Text(OllamaAPISummarizer.defaultModelID))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity)
+            }
+
+        case .lmStudio:
+            LabeledContent("Server URL") {
+                TextField("", text: $summarizer.lmStudioBaseURL, prompt: Text(LMStudioAPISummarizer.defaultBaseURLString))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity)
+            }
+            Picker("Model", selection: $summarizer.lmStudioModel) {
+                ForEach(LMStudioAPISummarizer.availableModels, id: \.id) { item in
+                    Text(item.label).tag(item.id)
+                }
+                if !LMStudioAPISummarizer.availableModels.contains(where: { $0.id == summarizer.lmStudioModel }) {
+                    Text("Custom: \(summarizer.lmStudioModel)").tag(summarizer.lmStudioModel)
+                }
+            }
+            .pickerStyle(.menu)
+            LabeledContent("API identifier") {
+                TextField("", text: $summarizer.lmStudioModel, prompt: Text(LMStudioAPISummarizer.defaultModelID))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity)
+            }
+
         case .mcp:
             // `prompt:` (placeholder) + `labelsHidden()` so Form
             // doesn't promote the title to a trailing accessory and
@@ -1776,6 +1893,8 @@ struct SettingsView: View {
         case .appleIntelligence: return true
         case .anthropic: return settings.anthropicAPIKey.isEmpty
         case .openai: return settings.openaiAPIKey.isEmpty
+        case .ollama: return summarizer.ollamaBaseURL.isEmpty || summarizer.ollamaModel.isEmpty
+        case .lmStudio: return summarizer.lmStudioBaseURL.isEmpty || summarizer.lmStudioModel.isEmpty
         case .mcp:
             return settings.mcpSummarizerURL.isEmpty
                 || settings.mcpSummarizerToolName.isEmpty
@@ -1794,8 +1913,12 @@ struct SettingsView: View {
             return "Transcripts are sent to Anthropic over HTTPS using your own API key. Create one at console.anthropic.com/settings/keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05."
         case .openai:
             return "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05."
+        case .ollama:
+            return "Daisy calls your local Ollama server (`ollama serve`) over its native `/api/chat` REST. No API key, no network egress — everything stays on your Mac. Pull the model first: `ollama pull \(OllamaAPISummarizer.defaultModelID)`. Free."
+        case .lmStudio:
+            return "Daisy calls your local LM Studio server over its OpenAI-compatible `/v1/chat/completions` REST. No API key, no network egress — everything stays on your Mac. Load a model in the LM Studio app and click Developer → Start. The API identifier in this picker must match the one LM Studio shows under the loaded model. Free."
         case .mcp:
-            return "Daisy connects to your local MCP server over HTTP+SSE and calls one tool per summary. Most wrappers (Ollama, LM Studio, llama.cpp) expose `chat` or `complete` — use Quick setup below or check your wrapper's docs."
+            return "Advanced — for users running a custom MCP server (Python shim, `mcp-ollama` wrapper, etc.). Daisy connects over HTTP+SSE and calls one tool per summary. For stock Ollama or LM Studio use their dedicated providers above instead — those work without an MCP shim."
         }
     }
 
@@ -1807,20 +1930,23 @@ struct SettingsView: View {
                 Text("Use template for")
                 Spacer()
                 Menu("Pick wrapper") {
-                    Button("Ollama (chat tool)") {
-                        applyMCPSummarizerPreset(.ollama)
-                    }
-                    Button("LM Studio (chat tool)") {
-                        applyMCPSummarizerPreset(.lmStudio)
-                    }
                     Button("llama.cpp (complete tool)") {
                         applyMCPSummarizerPreset(.llamaCpp)
                     }
+                    // Ollama + LM Studio presets removed in build 40:
+                    // those products don't speak MCP+SSE natively, so
+                    // the preset's URL/tool/template would silently
+                    // fail at first summary. Stock Ollama and LM Studio
+                    // each have their own dedicated provider above
+                    // (Settings → Summary → Provider) that hits their
+                    // real REST endpoint directly. MCP preset list now
+                    // shows only wrappers that genuinely DO expose an
+                    // MCP-over-SSE surface.
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
             }
-            Text("Fills the URL, tool name, and arguments template with sensible defaults for that wrapper. You can still edit anything by hand below.")
+            Text("Fills the URL, tool name, and arguments template with sensible defaults for that wrapper. For stock Ollama or LM Studio, switch the provider above instead — those have dedicated adapters that work without an MCP shim.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {

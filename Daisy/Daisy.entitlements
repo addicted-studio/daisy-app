@@ -45,5 +45,17 @@
 	     включить Sandbox. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
+
+	<!-- Network server — нужен для MCPServer's NWListener на 127.0.0.1:54321.
+	     Под Hardened Runtime macOS 14+ NWListener.bind возвращает
+	     `Network.NWError error 1 - Operation not permitted` (EPERM, не
+	     EADDRINUSE) без этого entitlement даже на loopback. Symptom
+	     зафиксирован в build 33 logs:
+	         "MCP listener failed: Operation not permitted"
+	     Apple DTS thread 740051 подтверждает: EPERM на NWListener.bind
+	     = policy denial, нужен `com.apple.security.network.server` даже
+	     non-sandboxed под Hardened Runtime. -->
+	<key>com.apple.security.network.server</key>
+	<true/>
 </dict>
 </plist>

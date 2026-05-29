@@ -80,13 +80,23 @@ struct IntegrationEditor: View {
                 hint: draft.kind == .mcp
                     ? "MCP — full JSON-RPC client, tool-name and arguments template required."
                     : "Webhook — Daisy POSTs the rendered template directly to the URL as JSON. No tool name needed.",
+                // pickerStyle(.menu) instead of .segmented: macOS 26.2
+                // ships an Apple-side UAF in the Swift concurrency ↔ AppKit
+                // bridge that crashes any SwiftUI Picker(.segmented) on
+                // layout (it routes through SystemSegmentedControl, an
+                // NSSegmentedControl wrapper — same UAF family as the
+                // NavigationSplitView sidebar toggle we removed in
+                // build 33). 2 options fit the menu naturally in this
+                // dense form row. Restore .segmented post-26.x once
+                // Apple ships the fix.
                 control: Picker("", selection: $draft.kind) {
                     ForEach(DestinationKind.allCases, id: \.self) { kind in
                         Text(kind == .mcp ? "MCP server" : "Webhook").tag(kind)
                     }
                 }
                 .labelsHidden()
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+                .fixedSize()
             )
 
             field(

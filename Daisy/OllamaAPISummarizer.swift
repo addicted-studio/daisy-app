@@ -1,0 +1,192 @@
+//
+//  OllamaAPISummarizer.swift
+//  Daisy
+//
+//  SummaryProvider that talks to a locally-running Ollama (https://ollama.com)
+//  via its native `/api/chat` REST endpoint. No API key required — Ollama
+//  binds to 127.0.0.1:11434 by default and accepts unauthenticated requests
+//  from localhost. Data never leaves the Mac.
+//
+//  Why this exists as a first-class provider (build 40):
+//  Pre-build-40 the user-visible "Ollama" option in Settings → Summary
+//  Provider routed through `MCPSummarizer` with a preset baseURL and a
+//  JSON arguments template that assumed an MCP+SSE shim was running. But
+//  stock Ollama does NOT speak MCP — it speaks its own REST. Picking
+//  "Ollama" in Daisy without first installing `mcp-ollama` (or similar)
+//  caused every summary to fail with a cryptic
+//  "MCP server didn't send an `endpoint` event within the handshake window."
+//  message. The pre-PH audit (2026-05-28) flagged this as a P0 blocker:
+//  every PH visitor copy-pasting Ollama would hit it.
+//
+//  This adapter posts to `/api/chat` directly, asks for `format: "json"`,
+//  and parses the resulting `message.content` as the standard
+//  `CloudSummaryDTO` shape. Probe via `/api/tags`.
+//
+
+import Foundation
+import os
+
+nonisolated struct OllamaAPISummarizer: SummaryProvider {
+    let kind: SummaryProviderKind = .ollama
+
+    /// Base URL of the Ollama server. Default: `http://127.0.0.1:11434`.
+    /// User can override in Settings if they've remapped Ollama to a
+    /// non-default port (rare but possible — e.g. running it inside a
+    /// container with port forwarding).
+    let baseURL: URL
+
+    /// Ollama model identifier. Must already be pulled locally
+    /// (`ollama pull <model>`). Reasonable defaults below.
+    let model: String
+
+    let urlSession: URLSession
+
+    private let log = Logger(subsystem: "app.essazanov.Daisy", category: "OllamaSummarizer")
+
+    init(
+        baseURL: URL = URL(string: "http://127.0.0.1:11434")!,
+        model: String = "llama3.2:latest",
+        urlSession: URLSession = .shared
+    ) {
+        self.baseURL = baseURL
+        self.model = model
+        self.urlSession = urlSession
+    }
+
+    /// "Is Ollama actually running and answering?" probe via `/api/tags`.
+    /// Cheap (no model load, just a directory listing). Returns false on
+    /// any network error or non-2xx status — Settings UI flips the
+    /// provider pill to "unavailable" so the user knows before they
+    /// record a 45-minute meeting.
+    func isReady() async -> Bool {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/tags"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 2 // tight — Ollama on localhost responds <50ms
+        do {
+            let (_, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse else { return false }
+            return (200..<300).contains(http.statusCode)
+        } catch {
+            return false
+        }
+    }
+
+    func summarize(
+        transcript: String,
+        title: String,
+        localeHint: String?
+    ) async throws -> MeetingSummary {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 40 else {
+            throw SummaryProviderError.transcriptTooShort
+        }
+
+        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint)
+        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed)
+
+        // Ollama /api/chat request shape:
+        //   { model, messages: [{role, content}], format: "json",
+        //     stream: false, options: { num_ctx, temperature } }
+        // `format: "json"` makes Ollama constrain output to valid JSON
+        // (its equivalent of OpenAI's JSON mode). `stream: false` so we
+        // get one response object back instead of NDJSON chunks.
+        // `num_ctx: 16384` — wider context than Ollama's default 2048
+        // so a 30-min meeting transcript fits. Bigger contexts cost RAM
+        // (~250MB per 8k tokens on llama3.2), but a meeting summarizer
+        // is the worst case for context starvation; defaults are wrong
+        // here.
+        let body: [String: Any] = [
+            "model": model,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user",   "content": userPrompt]
+            ],
+            "format": "json",
+            "stream": false,
+            "options": [
+                "num_ctx": 16384,
+                "temperature": 0.4
+            ]
+        ]
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/chat"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Big timeout — Ollama on M-series Mac can take 30-60s for a
+        // 30-min meeting through llama3.2:8b. cold-loaded models add
+        // another ~10s on first call.
+        request.timeoutInterval = 180
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await urlSession.data(for: request)
+        } catch {
+            // Localhost network errors usually mean Ollama is not
+            // running. Translate to a friendlier provider error so
+            // the UI can suggest the fix ("Open Terminal, run
+            // `ollama serve`") instead of dumping the raw network
+            // error.
+            throw SummaryProviderError.modelUnavailable(
+                provider: "Ollama",
+                reason: "Couldn't reach Ollama at \(baseURL.absoluteString). Make sure `ollama serve` is running, then try again. (\(error.localizedDescription))"
+            )
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw SummaryProviderError.invalidResponse(provider: "Ollama")
+        }
+        if !(200..<300).contains(http.statusCode) {
+            let bodyString = String(data: data, encoding: .utf8) ?? "<empty>"
+            log.error("Ollama HTTP \(http.statusCode): \(bodyString, privacy: .private)")
+            // Common Ollama failure: 404 with `{"error":"model 'X' not found"}`.
+            // Surface that verbatim — it's the actionable case.
+            throw SummaryProviderError.httpError(
+                provider: "Ollama",
+                status: http.statusCode,
+                body: bodyString
+            )
+        }
+
+        // Response shape: { "message": { "role": "assistant", "content": "<JSON>" }, ... }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = json["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw SummaryProviderError.invalidResponse(provider: "Ollama")
+        }
+
+        do {
+            let dto = try CloudSummaryDTO.decode(from: content)
+            return dto.toMeetingSummary()
+        } catch {
+            throw SummaryProviderError.parseFailed(
+                provider: "Ollama",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    // MARK: - Catalog
+
+    /// Default model. We pick `llama3.2:latest` because it's the
+    /// best balance of small-enough-to-pull (~2GB) and capable-enough-
+    /// for-meeting-summaries. User can override in Settings.
+    static let defaultModelID = "llama3.2:latest"
+
+    /// Default base URL. Stock Ollama binds here.
+    static let defaultBaseURLString = "http://127.0.0.1:11434"
+
+    /// Catalog of well-known Ollama models. Used by the Settings
+    /// model picker. User-typed model IDs are also accepted (free
+    /// text field), this is just convenience for the common cases.
+    /// Sizes are approximate as of mid-2026.
+    static let availableModels: [(id: String, label: String)] = [
+        ("llama3.2:latest",        "Llama 3.2 (3B, ~2 GB) — recommended"),
+        ("llama3.1:8b",            "Llama 3.1 8B (~4.7 GB)"),
+        ("llama3.1:70b",           "Llama 3.1 70B (~40 GB) — needs 64GB Mac"),
+        ("qwen2.5:7b-instruct",    "Qwen 2.5 7B (~4.7 GB) — multilingual"),
+        ("qwen2.5:14b-instruct",   "Qwen 2.5 14B (~9 GB) — multilingual"),
+        ("mistral:7b-instruct",    "Mistral 7B (~4.1 GB)"),
+        ("gemma2:9b",              "Gemma 2 9B (~5.4 GB)"),
+        ("gpt-oss:20b",            "GPT-OSS 20B (~13 GB)"),
+    ]
+}

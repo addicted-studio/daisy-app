@@ -133,6 +133,36 @@ enum AudioInputDevices {
         return status == noErr ? id : 0
     }
 
+    /// Read the *actual* hardware stream sample rate from CoreAudio.
+    /// Used as a defensive cross-check against `AVAudioNode.outputFormat(forBus:)`
+    /// inside the route-change recovery path — after pinning the AUHAL
+    /// to a new device, AVAudioEngine has been observed (macOS 26.2,
+    /// Apple DevForum 680785 / 683348) to return the *previous* device's
+    /// cached format from `outputFormat(forBus:)`. Installing a tap with
+    /// that stale format trips Apple's internal assertion
+    /// `format.sampleRate == inputHWFormat.sampleRate` and crashes the
+    /// app. This helper lets `AudioRecorder` cross-check and fall to
+    /// paused on disagreement rather than ship the assertion to users.
+    ///
+    /// Returns nil if CoreAudio refuses or the device has no input scope.
+    static func streamFormatSampleRate(for id: AudioDeviceID) -> Double? {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamFormat,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let status = AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &format)
+        guard status == noErr, format.mSampleRate > 0 else {
+            if status != noErr {
+                log.error("StreamFormat read failed for device \(id, privacy: .public) (status \(status, privacy: .public))")
+            }
+            return nil
+        }
+        return format.mSampleRate
+    }
+
     /// A device qualifies as an "input" if it has at least one
     /// stream on the input scope. Most output-only devices (HDMI
     /// displays, headphones) report zero here.

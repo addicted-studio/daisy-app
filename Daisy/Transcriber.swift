@@ -107,11 +107,57 @@ struct TranscriptSegment: Identifiable, Sendable, Equatable {
 final class Transcriber {
     // MARK: - Observable
 
-    /// Merged committed + pending segments, sorted by start time. Reads
-    /// of this property re-evaluate when either list changes.
+    /// Monotonic version counter — bumped on every mutation of
+    /// `committedSegments` or `pendingSegments`. Build 41 added this as
+    /// the cache key for `segments` and as the Observable surface that
+    /// downstream consumers (RecordingSession.segments, UI) actually
+    /// depend on. Reading `segmentsVersion` registers it as a dependency
+    /// in the Observable tracking system, so when we bump it, every
+    /// view that read it invalidates.
+    ///
+    /// **Why this exists:** pre-build-41 `segments` was a computed
+    /// property doing `(committedSegments + pendingSegments).sorted{...}`
+    /// on every read. With a 53-minute session producing ~1000 segments
+    /// per transcriber, every Observable read of `session.segments`
+    /// (Widget TimelineView@30fps, toolbar marquee `.onChange`, the
+    /// transcript list, etc.) re-sorted both arrays — O(N log N) on
+    /// the MainActor, hundreds of times per second. Symptom: pause/
+    /// resume click queued behind ~8 seconds of accumulated MainActor
+    /// work; widget flower animation stuck at 0 fps; toolbar marquee
+    /// jittered on every Whisper commit. Build 41 caches the sort
+    /// result keyed on `segmentsVersion` so consecutive reads are
+    /// O(1) until the next mutation actually invalidates.
+    private(set) var segmentsVersion: Int = 0
+    @ObservationIgnored
+    private var _segmentsCache: [TranscriptSegment] = []
+    @ObservationIgnored
+    private var _segmentsCacheVersion: Int = -1
+
+    /// Merged committed + pending segments, sorted by start time.
+    /// Cached behind `segmentsVersion` — see comment above.
     var segments: [TranscriptSegment] {
-        (committedSegments + pendingSegments)
+        // Read `segmentsVersion` first so Observable dependency tracking
+        // registers it for the current view scope. When `invalidateSegmentsCache()`
+        // bumps the version, all dependents invalidate. The cache slots
+        // (`_segmentsCache`, `_segmentsCacheVersion`) are `@ObservationIgnored`
+        // so they don't add noise to the dependency graph.
+        let currentVersion = segmentsVersion
+        if _segmentsCacheVersion == currentVersion {
+            return _segmentsCache
+        }
+        let merged = (committedSegments + pendingSegments)
             .sorted(by: { $0.startedAt < $1.startedAt })
+        _segmentsCache = merged
+        _segmentsCacheVersion = currentVersion
+        return _segmentsCache
+    }
+
+    /// Bump the version stamp so the next `segments` read re-sorts.
+    /// Call after any mutation of `committedSegments` or `pendingSegments`.
+    /// Wrapping add (&+=) is safe — at one mutation per ms forever this
+    /// overflows in ~292 million years.
+    private func invalidateSegmentsCache() {
+        segmentsVersion &+= 1
     }
     private(set) var isRunning = false
     private(set) var lastError: String?
@@ -250,18 +296,38 @@ final class Transcriber {
 
     // MARK: - Lifecycle
 
-    func start(consuming audio: AsyncStream<AudioChunk>, startedAt: Date) {
+    /// `liveTranscription = true` (default, historical behaviour):
+    /// kick Whisper every `liveIntervalSec` seconds so live segments
+    /// land in the toolbar popover and widget feeds in near-real-time.
+    /// Hammers MainActor with per-window commits + cache invalidations
+    /// + SwiftUI cascades — fine on short meetings, expensive on
+    /// 1.5h+ sessions where the cumulative cost saturates the main
+    /// thread and pause/resume clicks stack behind it.
+    ///
+    /// `liveTranscription = false` (build 43 deferred mode): skip
+    /// the liveTimer entirely. The consumerTask still ingests audio
+    /// into `allSamples` so the on-disk archive grows, but Whisper
+    /// stays silent for the duration. On Stop, `runFinalPass()` runs
+    /// the same single-shot pass it always did and the transcript
+    /// materialises in one go. Toolbar popover shows an empty list
+    /// during recording; downstream UI that reads `segments` sees
+    /// an empty array until Stop. This is the architectural escape
+    /// hatch for users whose meetings are long enough that live
+    /// transcription is more cost than value.
+    func start(consuming audio: AsyncStream<AudioChunk>, startedAt: Date, liveTranscription: Bool = true) {
         guard !isRunning else { return }
         sessionStartedAt = startedAt
         isRunning = true
         lastError = nil
         committedSegments.removeAll()
         pendingSegments.removeAll()
+        invalidateSegmentsCache()
         committedThroughSec = 0
         allSamples.removeAll()
         samplesDropped = 0
         bucketIDs.removeAll()
         converter = nil
+        liveTranscriptionEnabled = liveTranscription
 
         consumerTask = Task { @MainActor [weak self] in
             for await chunk in audio {
@@ -270,13 +336,21 @@ final class Transcriber {
             }
         }
 
-        liveTimer = Timer.scheduledTimer(withTimeInterval: liveIntervalSec, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let strong = self else { return }
-                strong.kickLiveTranscribe()
+        if liveTranscription {
+            liveTimer = Timer.scheduledTimer(withTimeInterval: liveIntervalSec, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let strong = self else { return }
+                    strong.kickLiveTranscribe()
+                }
             }
         }
     }
+
+    /// True when the active session started with `liveTranscription = true`.
+    /// Captured at `start()` time so pause/resume don't try to re-arm
+    /// a timer the deferred-mode session never had.
+    @ObservationIgnored
+    private var liveTranscriptionEnabled: Bool = true
 
     /// Soft pause. Kill the live re-transcribe timer so no rolling
     /// Whisper passes run while we're paused — but keep the
@@ -293,9 +367,12 @@ final class Transcriber {
         // its result will land on the same segment maps.
     }
 
-    /// Re-arm the live re-transcribe timer.
+    /// Re-arm the live re-transcribe timer. No-op for deferred-mode
+    /// sessions (build 43) — the session never had a live timer, so
+    /// resume has nothing to re-arm; the audio ingestion side
+    /// continues regardless.
     func resume() {
-        guard isRunning, liveTimer == nil else { return }
+        guard isRunning, liveTimer == nil, liveTranscriptionEnabled else { return }
         liveTimer = Timer.scheduledTimer(withTimeInterval: liveIntervalSec, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let strong = self else { return }
@@ -375,6 +452,7 @@ final class Transcriber {
         lastDiarizeSec = 0
         committedSegments.removeAll()
         pendingSegments.removeAll()
+        invalidateSegmentsCache()
         committedThroughSec = 0
         allSamples.removeAll()
         samplesDropped = 0
@@ -518,6 +596,9 @@ final class Transcriber {
             updateLockedLanguageIfPossible()
         }
         pendingSegments = newPending
+        // Mutations to committedSegments / pendingSegments above — bump
+        // the cache version so the next `segments` read re-sorts.
+        invalidateSegmentsCache()
 
         // Live diarization tick — only for system-audio transcribers,
         // and only every ~15s of accumulated audio. Mic source skips
@@ -587,6 +668,8 @@ final class Transcriber {
             }
             return copy
         }
+        // Replaced committedSegments wholesale — invalidate cache.
+        invalidateSegmentsCache()
     }
 
     // MARK: - Final transcribe on stop
@@ -711,6 +794,10 @@ final class Transcriber {
             committedSegments.append(contentsOf: mergedFresh)
             committedSegments.sort { $0.startSec < $1.startSec }
             committedThroughSec = committedSegments.map(\.endSec).max() ?? 0
+            // Final-pass replaced/extended committedSegments — invalidate
+            // cache so any subsequent `segments` read picks up the
+            // higher-quality final-pass output.
+            invalidateSegmentsCache()
             // Stash centroids so RecordingSession.stop() can write
             // the speakers.json sidecar + match against profiles.
             speakerCentroids = output.centroids

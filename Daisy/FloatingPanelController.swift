@@ -155,16 +155,20 @@ final class FloatingPanelController {
         // Container is bigger than the daisy itself so the SwiftUI
         // drop-shadow has room to breathe — otherwise the panel's
         // content rect clips it into a hard rectangle.
+        // Sized 64×64 in build 45 (was 80×80) to match the 20%-smaller
+        // active daisy geometry (canvasSize 56 → 45 in DaisyWidget). The
+        // shadow has ~9.5pt of padding around the active state, more
+        // for passive (the daisy still shrinks to 0.66× in idle/finished).
         let container = ZStack {
             widget
         }
-        .frame(width: 80, height: 80)
+        .frame(width: 64, height: 64)
         let hosting = NSHostingController(rootView: container)
         hosting.view.wantsLayer = true
         hosting.view.layer?.backgroundColor = CGColor.clear
 
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 80, height: 80),
+            contentRect: NSRect(x: 0, y: 0, width: 64, height: 64),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false

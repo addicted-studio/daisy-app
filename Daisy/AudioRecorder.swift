@@ -126,8 +126,17 @@ final class AudioRecorder {
 
     // MARK: - Private
 
+    /// AVAudioEngine instance. **Mutable** (not `let`) because on
+    /// macOS 26.5 `engine.reset()` doesn't actually flush the cached
+    /// inputNode format after an AUHAL device swap (the Apple bug we
+    /// chase in `handleConfigurationChange`'s de-sync guard). The
+    /// only reliable workaround when reset() leaves us with a stale
+    /// format is to throw away the engine entirely and build a new
+    /// instance from scratch — `rebuildEngineAndRetry()` does this.
+    /// Build 39 fix; pre-39 this was `let` and recovery silently
+    /// paused the session on every EarPods unplug.
     @ObservationIgnored
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     @ObservationIgnored
     private var audioFile: AVAudioFile?
     @ObservationIgnored
@@ -396,16 +405,116 @@ final class AudioRecorder {
         log.info("AudioRecorder paused after \(self.elapsed, privacy: .public)s")
     }
 
-    /// Resume after `pause()`. Re-starts the engine without touching
-    /// the tap or the file handle — the existing AVAudioFile keeps
-    /// writing where it left off.
+    /// Resume after `pause()`. Re-derives the AUHAL binding + audio
+    /// format from current HW state before starting the engine — this
+    /// is the symmetric counterpart of `handleConfigurationChange()`
+    /// for the mic-paused-then-device-changed scenario.
+    ///
+    /// **The bug this fixes (build 44 → 45):** the previous resume()
+    /// just called `engine.start()` and re-armed the watchdog, on the
+    /// assumption that pause was always user-intentional and the
+    /// hardware was unchanged. That breaks in two real-world flows
+    /// captured in `daisy-log-1054.txt`:
+    /// (a) `fallToPaused()` from a watchdog-triggered route-change
+    ///     recovery — the engine is paused with a tap format cached
+    ///     from the OLD device (e.g. 16 kHz BT-SCO mic), and by the
+    ///     time the user presses Resume the BT headphones may be
+    ///     gone and the active device is now BuiltIn at 48 kHz.
+    ///     `engine.start()` returns success but the very next buffer
+    ///     arrival blows up with
+    ///         `kAudioUnitErr_FormatNotSupported (-10868)`
+    ///     ("Error, formats don't match! HW format: 48000 Hz, tap
+    ///     format: 16000 Hz" in CoreAudio's log).
+    /// (b) User manually pauses → switches mic in Settings (or unplugs
+    ///     EarPods) → presses Resume. Same stale-format situation, just
+    ///     reached via the intentional pause path.
+    ///
+    /// The fix mirrors `handleConfigurationChange()`'s recovery flow:
+    /// re-pin AUHAL → `engine.reset()` to flush the stale outputFormat
+    /// cache → re-derive format from `inputNode.outputFormat(forBus:)`
+    /// → CoreAudio cross-check → on de-sync escalate to
+    /// `rebuildEngineAndRetry()` → otherwise roll the archive into a
+    /// new part if the format changed (existing AVAudioFile can't
+    /// accept the new format) → install fresh tap → start engine.
     func resume() throws {
         guard state == .paused else { return }
+
+        // --- Symmetric recovery prep (see header comment) ---
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        if engine.isRunning {
+            engine.stop()
+        }
+        applyPreferredInputDevice(uid: activePreferredDeviceUID)
+        engine.reset()
+
+        let newFormat = input.outputFormat(forBus: 0)
+        guard newFormat.channelCount > 0 else {
+            log.error("Resume failed — no input channels available on current device.")
+            throw DaisyError.audioEngineFailed("No audio input device available. Connect a mic and try again.")
+        }
+
+        // Same CoreAudio cross-check the route-change path uses.
+        // Catches the macOS 26.5 stale-format-after-reset() case
+        // where outputFormat() returns the prior device's rate.
+        if let auDeviceID = currentAUHALInputDeviceID(),
+           let hwSampleRate = AudioInputDevices.streamFormatSampleRate(for: auDeviceID),
+           abs(newFormat.sampleRate - hwSampleRate) > 0.5 {
+            log.warning("Format de-sync at resume: AVAudioEngine reports \(newFormat.sampleRate, privacy: .public) Hz, CoreAudio reports \(hwSampleRate, privacy: .public) Hz on device \(auDeviceID, privacy: .public). Attempting full engine rebuild.")
+            guard rebuildEngineAndRetry() else {
+                log.error("Engine rebuild on resume failed. Staying paused.")
+                throw DaisyError.audioEngineFailed("Mic device changed and the audio engine couldn't reinitialize. Hit Record to start a new session.")
+            }
+            // rebuildEngineAndRetry() installed a fresh tap on a brand
+            // new engine, called engine.start(), and armed its own
+            // watchdog. We only need to flip state machine bookkeeping
+            // — same bookkeeping the non-rebuild happy-path does below.
+            startedAt = Date()
+            elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.tick() }
+            }
+            state = .recording
+            log.info("AudioRecorder resumed via engine rebuild")
+            return
+        }
+
+        // Roll archive if the active device's format differs from what
+        // we were writing pre-pause (e.g. paused on BuiltIn 48 kHz →
+        // user plugged EarPods 44.1 kHz → resumed). AVAudioFile can't
+        // ingest frames in a different format than it was opened with,
+        // so silent data-loss is the alternative if we just kept the
+        // old file handle.
+        let formatChanged = !(lastInputFormat.map { Self.formatsAreEqual($0, newFormat) } ?? false)
+        if formatChanged, let baseURL = archivedFileURL {
+            audioFile = nil
+            partCounter += 1
+            let newPartURL = Self.makePartURL(base: baseURL, part: partCounter)
+            do {
+                audioFile = try AVAudioFile(forWriting: newPartURL, settings: newFormat.settings)
+                archivedParts.append(newPartURL)
+                let oldRate = lastInputFormat?.sampleRate ?? 0
+                let oldChans = lastInputFormat?.channelCount ?? 0
+                log.warning("Audio format changed at resume (\(oldRate, privacy: .public) Hz / \(oldChans, privacy: .public) ch → \(newFormat.sampleRate, privacy: .public) Hz / \(newFormat.channelCount, privacy: .public) ch). Archive rolled to \(newPartURL.lastPathComponent, privacy: .public).")
+            } catch {
+                log.error("Failed to open part \(self.partCounter, privacy: .public) for new format at resume: \(error.localizedDescription, privacy: .public). Continuing without archive for this part.")
+                audioFile = nil
+            }
+        }
+
+        lastInputFormat = newFormat
+        installInputTap(format: newFormat)
+
+        // Re-prepare before start — same belt-and-braces reasoning as
+        // the route-change path: AVAudioEngine's internal AU state was
+        // touched by `reset()` above and some macOS versions throw
+        // `kAudioUnitErr_Uninitialized` from `start()` without it.
+        engine.prepare()
         do {
             try engine.start()
         } catch {
             throw DaisyError.audioEngineFailed(error.localizedDescription)
         }
+
         // Open a new active interval; `tick` will sum it with
         // `accumulatedActiveSec` for the user-visible elapsed value.
         startedAt = Date()
@@ -413,12 +522,9 @@ final class AudioRecorder {
             Task { @MainActor [weak self] in self?.tick() }
         }
         state = .recording
-        // Mirror the route-change recovery watchdog — engine.start()
-        // here can also return success while AUHAL is on a stale or
-        // dead device (e.g., user picked a new mic in Settings during
-        // the pause, then unplugged it before resuming). Without this,
-        // resume-into-dead-device produces the same silent timer-only
-        // recording that route-change recovery used to.
+        // engine.start() can return success while AUHAL is on a stale
+        // or dead device. Watchdog falls us to paused if no buffer
+        // arrives within 5s.
         armRecoveryWatchdog()
         log.info("AudioRecorder resumed")
     }
@@ -530,6 +636,17 @@ final class AudioRecorder {
         let input = engine.inputNode
         input.removeTap(onBus: 0)
 
+        // Belt-and-braces engine stop. AVAudioEngineConfigurationChange
+        // signals that the *configuration* changed, not necessarily that
+        // the engine itself transitioned to stopped — on some hardware /
+        // macOS 26.2 the engine remains in a running state from
+        // AVAudioEngine's perspective even though the underlying graph
+        // is dead. Calling stop() unconditionally ensures `reset()`
+        // below sees a clean, stopped engine.
+        if engine.isRunning {
+            engine.stop()
+        }
+
         // Re-pin to the user's preferred device. If the saved UID is
         // no longer connected (e.g. AirPods just disconnected) this
         // logs a warning and silently falls back to system default —
@@ -538,12 +655,66 @@ final class AudioRecorder {
         // format, because device choice determines the format.
         applyPreferredInputDevice(uid: activePreferredDeviceUID)
 
+        // The bug this fixes (build 33 → 34, macOS 26.2): AVAudioEngine
+        // caches `inputNode.outputFormat(forBus: 0)` from the AUHAL's
+        // PREVIOUS device binding and does NOT auto-refresh after we
+        // change the AU's `kAudioOutputUnitProperty_CurrentDevice`.
+        // Without `reset()` here, the read on the next line returns
+        // the stale pre-route-change format (e.g. 44.1 kHz from
+        // disconnected EarPods) while the AUHAL is actually now bound
+        // to a 48 kHz BuiltIn mic. The subsequent `installTap(…, format:)`
+        // trips Apple's internal assertion
+        //     `format.sampleRate == inputHWFormat.sampleRate`
+        // and the app crashes with an Obj-C exception that punches
+        // straight through our Swift error handling.
+        //
+        // `engine.reset()` forces the inputNode's audio unit to
+        // re-init against the now-current AudioDeviceID, so the
+        // following `outputFormat(forBus:)` reads fresh state.
+        //
+        // Refs: Apple DevForum threads 680785 ("AVAudioEngine sample
+        // rate mismatch on newer devices") and 683348 ("output format
+        // 0ch after setDeviceID"). AudioKit follows the same pattern
+        // in `AVAudioEngine+Devices.swift`.
+        engine.reset()
+
         let newFormat = input.outputFormat(forBus: 0)
         guard newFormat.channelCount > 0 else {
             log.error("Recovery failed — no input channels available after route change. Pausing.")
             fallToPaused()
             ToastCenter.shared.show(
                 "Mic disconnected — recording paused. Connect a mic and hit Resume.",
+                style: .warning
+            )
+            return
+        }
+
+        // Defensive cross-check against the actual hardware. Even with
+        // `engine.reset()` above, on macOS 26.5 `outputFormat(forBus:)`
+        // routinely returns the PREVIOUS device's cached format (caught
+        // build 36/37 logs: AVE reports 44100 Hz from disconnected
+        // EarPods while the AUHAL is bound to BuiltIn at 48000 Hz).
+        // Ask CoreAudio directly what sample rate the now-bound device
+        // reports. If the two disagree, escalate to a full engine
+        // rebuild — that's the only thing that actually flushes the
+        // cached format on 26.5. If even the rebuild can't get a
+        // matching format we fall to paused with a "Hit Resume" toast.
+        if let auDeviceID = currentAUHALInputDeviceID(),
+           let hwSampleRate = AudioInputDevices.streamFormatSampleRate(for: auDeviceID),
+           abs(newFormat.sampleRate - hwSampleRate) > 0.5 {
+            log.warning("Format de-sync after route change: AVAudioEngine reports \(newFormat.sampleRate, privacy: .public) Hz, CoreAudio reports \(hwSampleRate, privacy: .public) Hz on device \(auDeviceID, privacy: .public). Attempting full engine rebuild.")
+            if rebuildEngineAndRetry() {
+                log.info("Recovery via engine rebuild succeeded — recording continues")
+                ToastCenter.shared.show(
+                    "Mic device changed — recording continues.",
+                    style: .info
+                )
+                return
+            }
+            log.error("Engine rebuild also failed. Falling to paused.")
+            fallToPaused()
+            ToastCenter.shared.show(
+                "Mic format changed — recording paused. Hit Resume to retry.",
                 style: .warning
             )
             return
@@ -609,6 +780,131 @@ final class AudioRecorder {
                 "Mic changed — recording paused. Hit Resume to continue.",
                 style: .warning
             )
+        }
+    }
+
+    // MARK: - Full engine rebuild (macOS 26.5 stale-format workaround)
+
+    /// Throw away the current `AVAudioEngine` and build a fresh
+    /// instance, then re-run the start sequence (pin device → read
+    /// format → install tap → prepare → start). The programmatic
+    /// equivalent of "user presses Stop, then Record again".
+    ///
+    /// **Why this exists:** on macOS 26.5 `engine.reset()` does NOT
+    /// flush AVAudioEngine's cached inputNode format. After an AUHAL
+    /// device swap (EarPods unplug → BuiltIn mic takes over),
+    /// `inputNode.outputFormat(forBus: 0)` keeps returning the
+    /// previous device's format indefinitely, and the de-sync guard
+    /// in `handleConfigurationChange` ends up firing on every route
+    /// change → session falls to paused, user sees "audio doesn't
+    /// record" with no recovery path other than Stop+Record. Build
+    /// 34/35/36/37 all hit this. Recreating the engine is the only
+    /// thing that drops the cache.
+    ///
+    /// Returns `true` if rebuild + start succeeded, `false` if even
+    /// the new engine can't get a coherent format or refuses to start
+    /// (in which case the caller falls back to `.paused` with a Resume
+    /// toast).
+    ///
+    /// Preserves: `archiveURL`, `bufferContinuation`, `analyzer`,
+    /// `framesWritten` / `writeErrors` totals (so the post-stop audit
+    /// counts across the rebuild boundary). Rolls the archive into a
+    /// new `.partN.caf` if the new format differs, same as the
+    /// in-place recovery path did.
+    private func rebuildEngineAndRetry() -> Bool {
+        // Tear down the old engine. The observer is bound to the old
+        // engine *instance* (the `object:` arg to addObserver was the
+        // `engine` we're about to throw away), so it must be removed
+        // here and re-added against the new instance below — otherwise
+        // future ConfigurationChange notifications come through on a
+        // dead observer and recovery never runs.
+        if let observer = configChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            configChangeObserver = nil
+        }
+        engine.inputNode.removeTap(onBus: 0)
+        if engine.isRunning {
+            engine.stop()
+        }
+
+        // Replace the engine. The old instance becomes orphaned and
+        // is released by ARC once nothing else references it (Sparkle's
+        // appcast XHR or some other unrelated retain won't pin it).
+        engine = AVAudioEngine()
+
+        // Re-pin to the user's preferred device on the NEW engine's
+        // inputNode AUHAL. Same call as the original `start()` path —
+        // applies the saved `activePreferredDeviceUID` (empty string
+        // == "follow system default").
+        applyPreferredInputDevice(uid: activePreferredDeviceUID)
+
+        let input = engine.inputNode
+        let newFormat = input.outputFormat(forBus: 0)
+        guard newFormat.channelCount > 0 else {
+            log.error("Engine rebuild failed — no input channels available on the new engine instance.")
+            return false
+        }
+
+        // Cross-check the rebuilt engine's reported format against
+        // CoreAudio's direct read. If it STILL disagrees after a full
+        // engine rebuild, we're in deep water (likely a kernel-side
+        // AUHAL bug rather than the SwiftUI-layer cache) — give up
+        // auto-recovery rather than crash in installTap.
+        if let auDeviceID = currentAUHALInputDeviceID(),
+           let hwSampleRate = AudioInputDevices.streamFormatSampleRate(for: auDeviceID),
+           abs(newFormat.sampleRate - hwSampleRate) > 0.5 {
+            log.error("Engine rebuild produced ANOTHER format de-sync: AVE \(newFormat.sampleRate, privacy: .public) Hz vs CoreAudio \(hwSampleRate, privacy: .public) Hz. Auto-recovery exhausted.")
+            return false
+        }
+
+        // Roll archive if format differs from what we had pre-rebuild
+        // (e.g., 44.1 kHz EarPods → 48 kHz BuiltIn). AVAudioFile can't
+        // accept frames in a different format than it was opened with,
+        // so the only way to keep writing is a new .partN.caf.
+        let formatChanged = !(lastInputFormat.map { Self.formatsAreEqual($0, newFormat) } ?? false)
+        if formatChanged, let baseURL = archivedFileURL {
+            audioFile = nil
+            partCounter += 1
+            let newPartURL = Self.makePartURL(base: baseURL, part: partCounter)
+            do {
+                audioFile = try AVAudioFile(forWriting: newPartURL, settings: newFormat.settings)
+                archivedParts.append(newPartURL)
+                let oldRate = lastInputFormat?.sampleRate ?? 0
+                log.warning("Engine-rebuild rolled archive (\(oldRate, privacy: .public) Hz → \(newFormat.sampleRate, privacy: .public) Hz) → \(newPartURL.lastPathComponent, privacy: .public)")
+            } catch {
+                log.error("Failed to open part \(self.partCounter, privacy: .public) for new format: \(error.localizedDescription, privacy: .public). Continuing without archive for this part.")
+                audioFile = nil
+            }
+        }
+
+        lastInputFormat = newFormat
+        installInputTap(format: newFormat)
+
+        // Re-register the ConfigurationChange observer against the
+        // NEW engine instance — the previous one was removed above.
+        // Without this, the next route change on the rebuilt engine
+        // wouldn't trigger our handler and we'd silently die.
+        configChangeObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handleConfigurationChange()
+            }
+        }
+
+        engine.prepare()
+        do {
+            try engine.start()
+            // Same watchdog the in-place recovery arms — engine.start()
+            // can return success while AUHAL silently delivers no
+            // buffers. Watchdog catches that within 5s.
+            armRecoveryWatchdog()
+            return true
+        } catch {
+            log.error("Rebuilt engine.start() failed: \(error.localizedDescription, privacy: .public)")
+            return false
         }
     }
 
@@ -782,33 +1078,65 @@ final class AudioRecorder {
             }
             continuationRef?.yield(AudioChunk(pcm: buffer, time: time))
 
-            let peak = Self.peakLevelDB(of: buffer)
+            // Coalesce spectrum + level publishes to ~30 Hz (build 43).
+            // Pre-build-43 we computed FFT + spawned a `Task @MainActor`
+            // for EVERY render buffer — 50–100 Hz depending on
+            // bufferSize/sampleRate. Each Task queued on MainActor as
+            // a property mutation that the widget's TimelineView
+            // (also @30 Hz) didn't actually need that often: spectrum
+            // is a visual, not a measurement. 50 Hz of MainActor
+            // churn was a meaningful chunk of the pause/resume hang
+            // budget on long sessions. Now: we only ship a Task if
+            // the wall clock has advanced ~33 ms since the last
+            // ship, and skip the FFT itself when gated (FFT is
+            // cheap but allocating + publishing the bands array
+            // ISN'T — analyzer's scratch buffers + the MainActor
+            // assign trigger Observable invalidation). The render-
+            // thread tap closure is single-threaded so the
+            // `nonisolated(unsafe)` timestamp is safe without a
+            // lock.
+            let nowRefTime = Date().timeIntervalSinceReferenceDate
+            if nowRefTime - Self.lastSpectrumPublishRefTime > Self.spectrumPublishIntervalSec {
+                Self.lastSpectrumPublishRefTime = nowRefTime
+                let peak = Self.peakLevelDB(of: buffer)
 
-            // Compute spectrum bands for the daisy widget. FFT of 2048
-            // samples is ~0.5 ms on Apple Silicon — safe on render
-            // thread. The UnsafeBufferPointer is borrowed for the
-            // duration of bands(...) only — SpectrumAnalyzer copies
-            // into its own pre-allocated scratch immediately. Pre-
-            // 1.0.3 we did `Array(UnsafeBufferPointer(...))` here
-            // which allocated ~16 KB heap per buffer at 100 Hz, with
-            // a real priority-inversion risk against the engine's
-            // internal mutexes during malloc slow paths.
-            var bands: [Float]? = nil
-            if let ch = buffer.floatChannelData?[0] {
-                let frames = Int(buffer.frameLength)
-                let sampleRate = buffer.format.sampleRate
-                let bufferPtr = UnsafeBufferPointer(start: ch, count: frames)
-                bands = analyzerRef.bands(from: bufferPtr, sampleRate: sampleRate)
-            }
+                // Compute spectrum bands for the daisy widget. FFT of 2048
+                // samples is ~0.5 ms on Apple Silicon — safe on render
+                // thread. The UnsafeBufferPointer is borrowed for the
+                // duration of bands(...) only — SpectrumAnalyzer copies
+                // into its own pre-allocated scratch immediately. Pre-
+                // 1.0.3 we did `Array(UnsafeBufferPointer(...))` here
+                // which allocated ~16 KB heap per buffer at 100 Hz, with
+                // a real priority-inversion risk against the engine's
+                // internal mutexes during malloc slow paths.
+                var bands: [Float]? = nil
+                if let ch = buffer.floatChannelData?[0] {
+                    let frames = Int(buffer.frameLength)
+                    let sampleRate = buffer.format.sampleRate
+                    let bufferPtr = UnsafeBufferPointer(start: ch, count: frames)
+                    bands = analyzerRef.bands(from: bufferPtr, sampleRate: sampleRate)
+                }
 
-            Task { @MainActor [weak self] in
-                self?.levelDB = peak
-                if let b = bands {
-                    self?.spectrumBands = b
+                Task { @MainActor [weak self] in
+                    self?.levelDB = peak
+                    if let b = bands {
+                        self?.spectrumBands = b
+                    }
                 }
             }
         }
     }
+
+    /// Wall-clock timestamp of the most recent spectrum/level publish
+    /// to MainActor. Single-threaded (render-thread tap closure only)
+    /// so `nonisolated(unsafe)` is safe. Static so it survives engine
+    /// rebuilds and route-change reconfigurations without resetting
+    /// the rate-limit window.
+    nonisolated(unsafe) private static var lastSpectrumPublishRefTime: TimeInterval = 0
+    /// 33 ms = ~30 Hz cap. The widget's TimelineView is also 30 Hz,
+    /// so any faster ship is wasted UI work that just steals MainActor
+    /// time from other consumers.
+    private static let spectrumPublishIntervalSec: TimeInterval = 1.0 / 30.0
 
     /// Compare two AVAudioFormats on the dimensions that matter to
     /// AVAudioFile compatibility. NSObject equality on AVAudioFormat
@@ -832,6 +1160,34 @@ final class AudioRecorder {
         let stem = base.deletingPathExtension().lastPathComponent
         let dir = base.deletingLastPathComponent()
         return dir.appendingPathComponent("\(stem).part\(part).\(ext)")
+    }
+
+    /// Read back the AudioDeviceID currently bound to
+    /// `engine.inputNode`'s AUHAL. Used by the route-change recovery
+    /// path to cross-check `outputFormat(forBus:)` against CoreAudio's
+    /// view of the device's stream format (see the de-sync guard in
+    /// `handleConfigurationChange`). Returns nil if the audioUnit is
+    /// missing or `AudioUnitGetProperty` fails — caller skips the
+    /// guard and trusts AVAudioEngine on its word, which is the
+    /// pre-build-34 behaviour.
+    private func currentAUHALInputDeviceID() -> AudioDeviceID? {
+        guard let audioUnit = engine.inputNode.audioUnit else {
+            return nil
+        }
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(
+            audioUnit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            &size
+        )
+        guard status == noErr, deviceID != 0 else {
+            return nil
+        }
+        return deviceID
     }
 
     /// Point `engine.inputNode`'s underlying HAL audio unit at a

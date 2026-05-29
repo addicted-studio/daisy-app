@@ -551,7 +551,7 @@ final class RecordingSession {
         case .idle, .finished, .failed:
             await start()
         case .recording:
-            pause()
+            await pause()
         case .paused:
             await resume()
         case .preparing, .stopping, .summarizing:
@@ -836,11 +836,11 @@ final class RecordingSession {
         // `sessionsFolderTicket` retained until the next start/reset.
         await WhisperEngine.shared.ensureLoaded()
         if case .failed(let msg) = WhisperEngine.shared.state {
-            failFast("Whisper model failed to load: \(msg)")
+            await failFast("Whisper model failed to load: \(msg)")
             return
         }
         guard WhisperEngine.shared.isReady else {
-            failFast("Whisper model isn't ready yet — try again in a moment.")
+            await failFast("Whisper model isn't ready yet — try again in a moment.")
             return
         }
 
@@ -853,21 +853,39 @@ final class RecordingSession {
         }
         sessionDirectory = dir
 
-        let micArchive = dir?.appendingPathComponent("microphone.caf")
-        let systemArchive = dir?.appendingPathComponent("system_audio.caf")
+        // Pattern (d) per the 2026-05-28 competitor research:
+        // when audioRetentionDays == audioRetentionDoNotRecord (-2),
+        // skip the on-disk .caf archives entirely. AVAudioFile is
+        // never opened on the mic tap, SCStream's archiveWriter is
+        // never lazy-opened on the system-audio path. Whisper still
+        // gets full audio via the live AsyncStream<AudioChunk>
+        // continuations so transcript quality is unaffected — only
+        // the disk artifact is gone. Strongest privacy posture in
+        // the Storage picker; the trade-off is no crash-recovery
+        // (if Daisy goes away mid-meeting, transcript is lost too)
+        // and no "re-summarize with a better model" after the fact.
+        let skipAudioArchive = settings.audioRetentionDays == AppSettings.audioRetentionDoNotRecord
+        let micArchive = skipAudioArchive ? nil : dir?.appendingPathComponent("microphone.caf")
+        let systemArchive = skipAudioArchive ? nil : dir?.appendingPathComponent("system_audio.caf")
 
         let nowStarted = Date()
 
-        // Wire mic.
+        // Wire mic. Build 43: `liveTranscription` propagated from
+        // AppSettings — when OFF, the transcriber accumulates audio
+        // for `runFinalPass()` but doesn't fire per-window Whisper
+        // commits during the meeting. Dictation mode forces live ON
+        // regardless of the setting because dictation IS the live
+        // transcript (paste happens on hotkey release).
+        let liveTranscription = settings.liveTranscriptionEnabled || currentMode == .dictation
         let micAudio = recorder.buffers
-        micTranscriber.start(consuming: micAudio, startedAt: nowStarted)
+        micTranscriber.start(consuming: micAudio, startedAt: nowStarted, liveTranscription: liveTranscription)
         do {
             try recorder.start(
                 archiveURL: micArchive,
                 preferredDeviceUID: settings.selectedMicDeviceUID
             )
         } catch {
-            failFast(error.localizedDescription)
+            await failFast(error.localizedDescription)
             return
         }
         micArchiveURL = recorder.archivedFileURL
@@ -907,7 +925,7 @@ final class RecordingSession {
                 )
             } else {
                 let systemAudioStream = systemAudio.buffers
-                systemTranscriber.start(consuming: systemAudioStream, startedAt: nowStarted)
+                systemTranscriber.start(consuming: systemAudioStream, startedAt: nowStarted, liveTranscription: liveTranscription)
                 do {
                     try await systemAudio.start(archiveURL: systemArchive)
                     systemArchiveURL = systemArchive
@@ -1115,10 +1133,20 @@ final class RecordingSession {
     /// shouldn't capture a side-conversation you didn't intend to
     /// record. Pause cuts the input stream entirely, not just the
     /// live transcript view.
-    func pause() {
+    func pause() async {
         guard status == .recording else { return }
         recorder.pause()
-        Task { await systemAudio.pause() }
+        // Was: `Task { await systemAudio.pause() }` — unawaited race.
+        // User who pause→resume'd quickly caught `systemAudio.state`
+        // still at `.capturing` (the detached pause Task hadn't
+        // completed), and `resume()`'s `guard state == .paused`
+        // silently returned. Net effect: SCStream never paused, then
+        // "resumed" with stale capture state → system audio went
+        // silent until full Stop+Start. Build 40 fix per macOS audit:
+        // make pause() async + await the SystemAudio pause so
+        // `status = .paused` flips only after the pause has
+        // actually committed downstream.
+        await systemAudio.pause()
         micTranscriber.pause()
         systemTranscriber.pause()
         screenshots.stop()
@@ -1348,18 +1376,28 @@ final class RecordingSession {
             )
         }
 
-        // Dictation mode — fully ephemeral. By this point Whisper
-        // has produced its final transcript; hand it to the
-        // `DictationPaste` coordinator which:
-        //   1. Snapshots the current clipboard
-        //   2. Writes the transcript
-        //   3. Tries to auto-paste via Accessibility-permitted ⌘V
-        //   4. Schedules a 10 s restore so the user's previous
-        //      clipboard contents come back if they haven't
-        //      copied anything else.
-        // Then nuke the session directory + reset. No transcript.md,
-        // no summary.json, no History entry, no autoSend.
+        // Dictation mode — fully ephemeral. Run the final Whisper pass
+        // INLINE before reading `fullTranscriptText` (build 41 fix):
+        // pre-build-41 we relied on the live windowed transcriber
+        // having committed everything by the time `stopCapture()`
+        // returned, but the live transcriber requires either a full
+        // 14-second VAD window OR an end-of-speech silence boundary
+        // to commit a segment. Short utterances ("просто для аудита",
+        // ~1.2 s) released as soon as the user lifted the hotkey
+        // never got either — buffer flushed silently, no transcript,
+        // paste landed empty. User feedback: "цветок видит, но текст
+        // не вставляется; приходится держать с тишиной".
+        //
+        // Final pass forces Whisper to transcribe whatever's in the
+        // mic buffer regardless of VAD state. Typical <30s dictation
+        // → 200-800ms decode. The Stop blocks for that window before
+        // paste; price for short-utterance reliability.
+        //
+        // For non-dictation modes the final pass runs in the detached
+        // `finalizePostStop` task after `.finished` flips — that path
+        // still applies, just below.
         if currentMode == .dictation {
+            await micTranscriber.runFinalPass()
             let transcriptText = fullTranscriptText
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             DictationPaste.shared.handle(transcript: transcriptText)
@@ -1937,7 +1975,7 @@ final class RecordingSession {
     /// idempotent cleanup: release the ticket, stop both transcribers,
     /// stop the recorder + system-audio capture, cancel auto-stop
     /// timers, then flip the status. Safe to call multiple times.
-    private func failFast(_ message: String) {
+    private func failFast(_ message: String) async {
         log.error("Session start failed: \(message, privacy: .public)")
         releaseSessionsFolderTicket()
         micTranscriber.reset()
@@ -1945,7 +1983,15 @@ final class RecordingSession {
         // recorder/systemAudio may not have started yet on early
         // paths (Whisper-failed branches) — reset is idempotent.
         recorder.reset()
-        Task { await systemAudio.stop() }
+        // Was: `Task { await systemAudio.stop() }` — unawaited race
+        // with the next start(). If the user immediately retried
+        // (e.g. after a "Whisper not ready yet" early-exit), the
+        // next systemAudio.start() could run before this stop() had
+        // finished, leaving SCStream in an inconsistent "starting
+        // over an already-starting stream" state. Build 40 fix per
+        // macOS audit: make failFast() async + await the stop so
+        // the next start() always sees a clean slate.
+        await systemAudio.stop()
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()

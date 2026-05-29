@@ -48,12 +48,62 @@ nonisolated struct MCPSummarizer: SummaryProvider {
     }
 
     func isReady() async -> Bool {
-        // We don't pre-flight — `connect()` would open a TCP socket
-        // and might wake the user's wrapper. Instead we treat "URL
-        // and tool name are non-empty" as ready; real reachability
-        // surfaces on first summarize.
-        !toolName.trimmingCharacters(in: .whitespaces).isEmpty
-            && !argumentsTemplate.trimmingCharacters(in: .whitespaces).isEmpty
+        // Cheap reachability probe: TCP-connect to the MCP server's
+        // SSE endpoint with a 2-second deadline. We do NOT complete
+        // the handshake (no `initialize` request, no `tools/list`),
+        // just verify there's something accepting HTTP at the URL.
+        // That keeps the probe cheap enough to run on Settings open
+        // without waking heavyweight model-load paths inside the
+        // user's wrapper.
+        //
+        // Pre-build-40: this just checked non-empty `toolName` and
+        // `argumentsTemplate` and returned true. The summarizer
+        // reported `.available` even when the MCP server was off,
+        // and the user found out only after they'd recorded a 45-min
+        // meeting and waited through a long handshake-timeout error.
+        // Pre-PH audit (2026-05-28) flagged it; this is the fix.
+        guard !toolName.trimmingCharacters(in: .whitespaces).isEmpty,
+              !argumentsTemplate.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return false
+        }
+
+        var request = URLRequest(url: baseURL.appendingPathComponent("sse"))
+        request.httpMethod = "GET"
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 2
+
+        do {
+            // We don't care about the body — only that the server
+            // responds within the deadline. URLSession.data won't
+            // fire until either the response is complete OR the
+            // timeout hits; for SSE that would never return because
+            // the stream stays open. Wrap in a Task that cancels
+            // itself after the timeout.
+            let probeTask = Task<Bool, Never> {
+                do {
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    if let http = response as? HTTPURLResponse {
+                        return (200..<500).contains(http.statusCode)
+                    }
+                    return false
+                } catch {
+                    return false
+                }
+            }
+            // Race the probe against a 2.5s wall-clock deadline so an
+            // open-and-blocking SSE stream doesn't pin the Settings UI.
+            let deadline = Task<Bool, Never> {
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                return false
+            }
+            return await withTaskGroup(of: Bool.self) { group in
+                group.addTask { await probeTask.value }
+                group.addTask { await deadline.value }
+                let first = await group.next() ?? false
+                group.cancelAll()
+                return first
+            }
+        }
     }
 
     func summarize(

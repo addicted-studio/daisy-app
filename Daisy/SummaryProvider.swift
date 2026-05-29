@@ -23,10 +23,24 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     case appleIntelligence
     case anthropic
     case openai
-    /// Talks to a user-configured local MCP server that wraps a
-    /// local LLM (Ollama / llama.cpp / LM Studio via an MCP shim).
-    /// Closes the language gap Apple Intelligence leaves around RU,
-    /// UA, PL and friends without any data leaving the Mac.
+    /// Ollama (https://ollama.com) on `127.0.0.1:11434` via its native
+    /// `/api/chat` REST endpoint. Build 40 added this as a first-class
+    /// provider after the pre-PH audit caught the MCP-shim disguise:
+    /// users picking "Ollama" used to land on an MCP+SSE preset that
+    /// Ollama doesn't speak natively, so every PH first-tap failed
+    /// with a cryptic SSE handshake error. Now: native /api/chat,
+    /// works out of the box against a stock `ollama serve`.
+    case ollama
+    /// LM Studio (https://lmstudio.ai) on `127.0.0.1:1234` via its
+    /// OpenAI-compatible `/v1/chat/completions` REST endpoint. Same
+    /// build-40 rescue as Ollama. Mostly mirrors OpenAIAPISummarizer
+    /// with a custom base URL and no API key.
+    case lmStudio
+    /// Talks to a user-configured local MCP server. Reserved for the
+    /// power-user case where the user runs an actual MCP server
+    /// (`mcp-ollama`, custom Python shim, etc.). Build 40 stripped
+    /// the Ollama / LM Studio / llama.cpp presets that used to live
+    /// here — those are now their own first-class providers.
     case mcp
 
     var displayName: String {
@@ -34,7 +48,9 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .appleIntelligence: return "Apple Intelligence (on-device)"
         case .anthropic: return "Anthropic Claude API"
         case .openai: return "OpenAI GPT API"
-        case .mcp: return "Local LLM via MCP"
+        case .ollama: return "Ollama (local)"
+        case .lmStudio: return "LM Studio (local)"
+        case .mcp: return "Custom MCP server (advanced)"
         }
     }
 
@@ -43,12 +59,14 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .appleIntelligence: return "Apple Intelligence"
         case .anthropic: return "Anthropic"
         case .openai: return "OpenAI"
+        case .ollama: return "Ollama"
+        case .lmStudio: return "LM Studio"
         case .mcp: return "MCP"
         }
     }
 
     var isLocal: Bool {
-        self == .appleIntelligence || self == .mcp
+        self == .appleIntelligence || self == .ollama || self == .lmStudio || self == .mcp
     }
 
     var requiresAPIKey: Bool {
@@ -65,6 +83,10 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
             return "Sent to Anthropic over HTTPS, using your API key."
         case .openai:
             return "Sent to OpenAI over HTTPS, using your API key."
+        case .ollama:
+            return "Sent to your local Ollama on 127.0.0.1 — stays on your Mac."
+        case .lmStudio:
+            return "Sent to your local LM Studio on 127.0.0.1 — stays on your Mac."
         case .mcp:
             return "Sent to your MCP server — stays local if it's on 127.0.0.1."
         }

@@ -90,7 +90,7 @@ struct RecordCapsule: View {
         // dedicated Stop button in the popover / kebab — not here.
         switch session.status {
         case .recording:
-            session.pause()
+            Task { await session.pause() }
         case .paused:
             Task { await session.resume() }
         case .idle, .finished, .failed:

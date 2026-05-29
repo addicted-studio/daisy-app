@@ -170,6 +170,28 @@ final class AppSettings {
         didSet { defaults.set(diarizeMicrophone, forKey: Self.k_diarizeMicrophone) }
     }
 
+    /// When ON (default), Whisper transcribes audio in rolling 2-second
+    /// passes WHILE the meeting is happening, so the user sees segments
+    /// appear in the toolbar popover in near-real-time. When OFF,
+    /// Whisper is silent during recording — only the audio archive
+    /// gets written to disk; transcription runs as a single pass on
+    /// Stop. Off-mode is dramatically lighter on the MainActor (no
+    /// per-window commits + cache invalidations + SwiftUI cascades),
+    /// which makes long sessions feel snappier and pause/resume
+    /// react instantly even on 1.5h+ recordings. Trade-off: no live
+    /// transcript view during the meeting. Build 43 added this as
+    /// an opt-in perf escape hatch after Egor's hypothesis: "может
+    /// можно сделать так что бы не сразу превращать в текст и так
+    /// будет легче?" — yes, materially.
+    ///
+    /// Future direction: this may become default OFF for ≥macOS 26
+    /// where MainActor saturation under the new SwiftUI Observable
+    /// system is more pronounced. For now default ON keeps the
+    /// behaviour everyone's used to.
+    var liveTranscriptionEnabled: Bool {
+        didSet { defaults.set(liveTranscriptionEnabled, forKey: Self.k_liveTranscriptionEnabled) }
+    }
+
     /// Speakers mode for the system-audio stream. When `true` (default,
     /// behaviour up to 1.0.6.x), pyannote diarizes the remote stream
     /// into Bobby / Wags / Faraday / etc — one label per detected
@@ -260,6 +282,20 @@ final class AppSettings {
     /// so callers (RecordingSession, SettingsView, AudioRetentionSweep)
     /// don't magic-number the -1.
     static let audioRetentionDeleteAfterTranscription: Int = -1
+
+    /// Sentinel value for `audioRetentionDays` meaning "don't write
+    /// audio to disk at all" (build 44). The strongest privacy
+    /// posture in the picker — Whisper still consumes from the live
+    /// in-memory PCM stream (AsyncStream from the tap closure), so
+    /// the transcript is unaffected; only the on-disk `.caf` archive
+    /// is skipped. RecordingSession reads this constant and passes
+    /// `archiveURL: nil` to `recorder.start()` and
+    /// `systemAudio.start()`. Trade-off: no crash-recovery from
+    /// disk (if Daisy crashes mid-meeting the transcript is lost),
+    /// no re-transcription with a different Whisper model later.
+    /// Matches the "transcription only" mode Fireflies / Read.ai /
+    /// Wispr Flow ship as a compliance / privacy escape hatch.
+    static let audioRetentionDoNotRecord: Int = -2
 
     /// When ON, Daisy plays a short macOS system sound on recording
     /// transitions (start / pause / resume / stop). Off for users
@@ -576,6 +612,11 @@ final class AppSettings {
         self.notifyOnAutoStart = defaults.object(forKey: Self.k_notifyOnAutoStart) as? Bool ?? true
         self.notifyOnAutoStop = defaults.object(forKey: Self.k_notifyOnAutoStop) as? Bool ?? true
         self.diarizeMicrophone = defaults.object(forKey: Self.k_diarizeMicrophone) as? Bool ?? false
+        // Default ON. `defaults.object(forKey:) as? Bool ?? true`
+        // pattern so fresh installs get live transcription on (the
+        // historical behaviour) but the user's explicit OFF survives
+        // across launches.
+        self.liveTranscriptionEnabled = defaults.object(forKey: Self.k_liveTranscriptionEnabled) as? Bool ?? true
         // 2026-05-25 — three diarization-quality settings added in
         // 1.0.7. All default ON so existing users get the new behavior
         // automatically (the changes are quality improvements, not
@@ -713,6 +754,7 @@ final class AppSettings {
     private static let k_notifyOnAutoStart = "daisy.notifyOnAutoStart"
     private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
     private static let k_diarizeMicrophone = "daisy.diarizeMicrophone"
+    private static let k_liveTranscriptionEnabled = "daisy.liveTranscriptionEnabled"
     private static let k_diarizeRemoteSpeakers = "daisy.diarizeRemoteSpeakers"
     private static let k_suppressAcousticEcho = "daisy.suppressAcousticEcho"
     private static let k_globalReclusterAfterStop = "daisy.globalReclusterAfterStop"
