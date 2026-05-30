@@ -220,6 +220,17 @@ final class Transcriber {
     private var liveTimer: Timer?
     private var transcribeTask: Task<Void, Never>?
 
+    /// Apple SpeechAnalyzer live engine (macOS 26+ Lite tier). Stored as
+    /// `AnyObject?` so the property itself isn't gated on macOS 26; always
+    /// accessed behind `if #available`. nil ⇒ the Whisper rolling-window
+    /// timer drives live instead (Full tier, or Lite fallback when Apple
+    /// is unavailable / its model isn't installed yet).
+    private var appleEngine: AnyObject?
+    /// Session-audio seconds elapsed when the Apple engine began receiving
+    /// buffers — added to its input-relative result times so segments land
+    /// on the session timeline.
+    private var appleEngineStartSec: Double = 0
+
     /// Live diarization task. Only spawned for `.systemAudio`
     /// transcribers — mic is always "Me", no clustering needed.
     /// Runs on a coarser cadence than `transcribeTask` (every
@@ -269,12 +280,17 @@ final class Transcriber {
 
     // MARK: - Tuning constants
 
-    private let liveIntervalSec: Double = 2.0
+    /// Live re-transcribe cadence. Lite runs less often (3.5 s vs 2 s)
+    /// to cut CPU/ANE load on long meetings; the final pass on Stop is
+    /// full quality regardless of tier. Read after `liveTier` is set.
+    private var liveIntervalSec: Double { liveTier == .lite ? 3.5 : 2.0 }
     private let liveWindowSec: Double = 30.0
     /// A segment is promoted to "committed" once its end time falls more
     /// than this many seconds before the trailing edge of the rolling
     /// window. Whisper still has refinement room for younger segments.
-    private let commitMarginSec: Double = 10.0
+    /// Lite commits sooner (6 s vs 10 s) so the unsettled tail is
+    /// re-decoded fewer times before it settles.
+    private var commitMarginSec: Double { liveTier == .lite ? 6.0 : 10.0 }
 
     // MARK: - Init
 
@@ -314,7 +330,7 @@ final class Transcriber {
     /// an empty array until Stop. This is the architectural escape
     /// hatch for users whose meetings are long enough that live
     /// transcription is more cost than value.
-    func start(consuming audio: AsyncStream<AudioChunk>, startedAt: Date, liveTranscription: Bool = true) {
+    func start(consuming audio: AsyncStream<AudioChunk>, startedAt: Date, tier: LiveTranscriptionTier = .full) {
         guard !isRunning else { return }
         sessionStartedAt = startedAt
         isRunning = true
@@ -327,7 +343,7 @@ final class Transcriber {
         samplesDropped = 0
         bucketIDs.removeAll()
         converter = nil
-        liveTranscriptionEnabled = liveTranscription
+        liveTier = tier
 
         consumerTask = Task { @MainActor [weak self] in
             for await chunk in audio {
@@ -336,21 +352,19 @@ final class Transcriber {
             }
         }
 
-        if liveTranscription {
-            liveTimer = Timer.scheduledTimer(withTimeInterval: liveIntervalSec, repeats: true) { [weak self] _ in
-                Task { @MainActor [weak self] in
-                    guard let strong = self else { return }
-                    strong.kickLiveTranscribe()
-                }
-            }
+        if tier != .off {
+            startLivePath()
         }
     }
 
-    /// True when the active session started with `liveTranscription = true`.
-    /// Captured at `start()` time so pause/resume don't try to re-arm
-    /// a timer the deferred-mode session never had.
+    /// Live-transcription tier this session started with (Full/Lite/Off),
+    /// captured at `start()` time. Drives cadence (`liveIntervalSec`),
+    /// commit margin (`commitMarginSec`) and the live decode profile.
+    /// `.off` means no live timer at all (deferred mode — one full pass
+    /// on Stop); pause/resume read this so a deferred-mode session never
+    /// tries to re-arm a timer it never had.
     @ObservationIgnored
-    private var liveTranscriptionEnabled: Bool = true
+    private var liveTier: LiveTranscriptionTier = .full
 
     /// Soft pause. Kill the live re-transcribe timer so no rolling
     /// Whisper passes run while we're paused — but keep the
@@ -372,13 +386,144 @@ final class Transcriber {
     /// resume has nothing to re-arm; the audio ingestion side
     /// continues regardless.
     func resume() {
-        guard isRunning, liveTimer == nil, liveTranscriptionEnabled else { return }
+        guard isRunning, liveTier != .off else { return }
+        // Apple engine keeps streaming across pause (no buffers flow while
+        // the upstream capture is paused), so there's nothing to re-arm.
+        if appleEngine != nil { return }
+        guard liveTimer == nil else { return }
+        scheduleWhisperLiveTimer()
+    }
+
+    // MARK: - Live engine selection
+
+    /// Pick the live engine for this session: Apple SpeechTranscriber for
+    /// the Lite tier on macOS 26+ with a concrete locale (zero app memory,
+    /// faster); otherwise the Whisper rolling-window timer (Full tier, or
+    /// the Lite fallback while/if Apple is unavailable).
+    private func startLivePath() {
+        if liveTier == .lite, #available(macOS 26, *), let appleLocale = resolvedAppleLocale() {
+            Task { @MainActor [weak self] in
+                guard let self, self.isRunning, self.appleEngine == nil, self.liveTimer == nil else { return }
+                if await AppleSpeechLiveEngine.isUsable(locale: appleLocale),
+                   await AppleSpeechLiveEngine.ensureModelReady(locale: appleLocale) {
+                    let engine = AppleSpeechLiveEngine(locale: appleLocale) { [weak self] result in
+                        self?.applyAppleLiveResult(result)
+                    }
+                    do {
+                        try await engine.start()
+                        guard self.isRunning else { await engine.finish(); return }
+                        // Capture the offset at the moment Apple goes live, so
+                        // its input-relative times map onto session time.
+                        self.appleEngineStartSec = Double(self.samplesDropped + self.allSamples.count) / 16_000.0
+                        self.appleEngine = engine
+                        self.log.info("Live engine: Apple SpeechTranscriber (\(appleLocale.identifier, privacy: .public))")
+                        return
+                    } catch {
+                        self.log.error("Apple live engine failed — using Whisper-Lite: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+                // Fallback: Whisper rolling-window timer.
+                if self.isRunning, self.appleEngine == nil, self.liveTimer == nil {
+                    self.scheduleWhisperLiveTimer()
+                }
+            }
+        } else {
+            scheduleWhisperLiveTimer()
+        }
+    }
+
+    private func scheduleWhisperLiveTimer() {
         liveTimer = Timer.scheduledTimer(withTimeInterval: liveIntervalSec, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let strong = self else { return }
                 strong.kickLiveTranscribe()
             }
         }
+    }
+
+    /// Concrete `Locale` for the Apple engine, or nil when the user is on
+    /// Auto-detect (Apple has no language detection — Whisper-Lite, which
+    /// does, handles that case).
+    private func resolvedAppleLocale() -> Locale? {
+        let id = localeIdentifier
+        let prefix = id.split(separator: "-").first.map(String.init)?.lowercased() ?? "auto"
+        guard prefix != "auto", !id.isEmpty else { return nil }
+        return Locale(identifier: id)
+    }
+
+    /// Change the live tier mid-session (thermal/low-power auto-downgrade).
+    /// Apple-engine sessions are already Lite and are left as-is; the
+    /// Whisper path re-arms its timer so the new cadence + decode profile
+    /// (both derive from `liveTier`) take effect immediately.
+    func setLiveTier(_ newTier: LiveTranscriptionTier) {
+        guard isRunning, newTier != liveTier else { return }
+        liveTier = newTier
+        if appleEngine != nil { return }
+        liveTimer?.invalidate()
+        liveTimer = nil
+        if newTier != .off {
+            scheduleWhisperLiveTimer()
+        }
+    }
+
+    private func finishAppleEngine() async {
+        if #available(macOS 26, *), let engine = appleEngine as? AppleSpeechLiveEngine {
+            await engine.finish()
+        }
+        appleEngine = nil
+    }
+
+    /// Map one Apple live result into committed/pending, mirroring
+    /// `applyLivePass`'s 100 ms bucketing so SwiftUI keeps stable row
+    /// identity as a volatile result updates and then finalizes.
+    private func applyAppleLiveResult(_ r: AppleLiveResult) {
+        guard isRunning, let started = sessionStartedAt else { return }
+        let text = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let absStart = appleEngineStartSec + r.startSec
+        let absEnd = max(absStart, appleEngineStartSec + r.endSec)
+        let bucket = Int(absStart * 10)
+        let id = bucketIDs[bucket] ?? UUID()
+        bucketIDs[bucket] = id
+
+        if r.isFinal {
+            if !text.isEmpty {
+                let seg = TranscriptSegment(
+                    id: id,
+                    startedAt: started.addingTimeInterval(absStart),
+                    text: text,
+                    isFinal: true,
+                    source: source,
+                    endSec: absEnd,
+                    startSec: absStart
+                )
+                if let idx = committedSegments.firstIndex(where: { $0.id == id }) {
+                    committedSegments[idx] = seg
+                } else {
+                    committedSegments.append(seg)
+                }
+                committedThroughSec = max(committedThroughSec, absEnd)
+                updateLockedLanguageIfPossible()
+            }
+            pendingSegments.removeAll { $0.id == id || $0.endSec <= committedThroughSec }
+        } else if !text.isEmpty {
+            let seg = TranscriptSegment(
+                id: id,
+                startedAt: started.addingTimeInterval(absStart),
+                text: text,
+                isFinal: false,
+                source: source,
+                endSec: absEnd,
+                startSec: absStart
+            )
+            if let idx = pendingSegments.firstIndex(where: { $0.id == id }) {
+                pendingSegments[idx] = seg
+            } else {
+                pendingSegments.removeAll { $0.endSec <= committedThroughSec }
+                pendingSegments.append(seg)
+            }
+        }
+        invalidateSegmentsCache()
+        kickLiveDiarizeIfDue(currentAudioSec: absEnd)
     }
 
     /// Legacy entry point — runs live-stop + final pass back-to-back.
@@ -408,6 +553,8 @@ final class Transcriber {
         liveTimer = nil
         consumerTask?.cancel()
         consumerTask = nil
+
+        await finishAppleEngine()
 
         await transcribeTask?.value
         transcribeTask = nil
@@ -488,6 +635,12 @@ final class Transcriber {
             samplesDropped += toDrop
             log.info("Transcriber rolling buffer trimmed: dropped \(toDrop, privacy: .public) samples (total dropped: \(self.samplesDropped, privacy: .public))")
         }
+
+        // Forward to the Apple live engine (Lite tier, macOS 26+) when active.
+        // `allSamples` still accumulates above for the final Whisper pass.
+        if #available(macOS 26, *), let engine = appleEngine as? AppleSpeechLiveEngine {
+            engine.ingest(chunk.pcm)
+        }
     }
 
     // MARK: - Live (chunked) transcribe
@@ -515,12 +668,14 @@ final class Transcriber {
         let windowStartSec = Double(samplesDropped + clampedOffset) / 16_000.0
         let windowEndSec = Double(latestAbsolute) / 16_000.0
         let lang = languageHint
+        let liveProfile: WhisperEngine.DecodeProfile = (liveTier == .lite) ? .lite : .full
 
         transcribeTask = Task { @MainActor [weak self] in
             do {
                 let result = try await WhisperEngine.shared.transcribe(
                     samples: samples,
-                    language: lang
+                    language: lang,
+                    profile: liveProfile
                 )
                 if let strong = self {
                     strong.applyLivePass(

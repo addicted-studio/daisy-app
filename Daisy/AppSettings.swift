@@ -188,8 +188,8 @@ final class AppSettings {
     /// where MainActor saturation under the new SwiftUI Observable
     /// system is more pronounced. For now default ON keeps the
     /// behaviour everyone's used to.
-    var liveTranscriptionEnabled: Bool {
-        didSet { defaults.set(liveTranscriptionEnabled, forKey: Self.k_liveTranscriptionEnabled) }
+    var liveTranscriptionTier: LiveTranscriptionTier {
+        didSet { defaults.set(liveTranscriptionTier.rawValue, forKey: Self.k_liveTranscriptionTier) }
     }
 
     /// Speakers mode for the system-audio stream. When `true` (default,
@@ -616,7 +616,19 @@ final class AppSettings {
         // pattern so fresh installs get live transcription on (the
         // historical behaviour) but the user's explicit OFF survives
         // across launches.
-        self.liveTranscriptionEnabled = defaults.object(forKey: Self.k_liveTranscriptionEnabled) as? Bool ?? true
+        // Live transcription tier (Full/Lite/Off). Migrates the pre-tier
+        // binary toggle: a saved tier wins; else the old on/off bool maps
+        // on→Lite (the new lighter default) / off→Off; else fresh install
+        // defaults to Lite. The final pass on Stop is full quality at any
+        // tier, so Lite only affects the throwaway live preview.
+        if let raw = defaults.string(forKey: Self.k_liveTranscriptionTier),
+           let tier = LiveTranscriptionTier(rawValue: raw) {
+            self.liveTranscriptionTier = tier
+        } else if let oldBool = defaults.object(forKey: Self.k_liveTranscriptionEnabled) as? Bool {
+            self.liveTranscriptionTier = oldBool ? .lite : .off
+        } else {
+            self.liveTranscriptionTier = .lite
+        }
         // 2026-05-25 — three diarization-quality settings added in
         // 1.0.7. All default ON so existing users get the new behavior
         // automatically (the changes are quality improvements, not
@@ -755,6 +767,7 @@ final class AppSettings {
     private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
     private static let k_diarizeMicrophone = "daisy.diarizeMicrophone"
     private static let k_liveTranscriptionEnabled = "daisy.liveTranscriptionEnabled"
+    private static let k_liveTranscriptionTier = "daisy.liveTranscriptionTier"
     private static let k_diarizeRemoteSpeakers = "daisy.diarizeRemoteSpeakers"
     private static let k_suppressAcousticEcho = "daisy.suppressAcousticEcho"
     private static let k_globalReclusterAfterStop = "daisy.globalReclusterAfterStop"
@@ -790,6 +803,28 @@ final class AppSettings {
 ///
 /// `id` is the 2-letter ISO code stored in `AppSettings.summaryLanguage`,
 /// or the literal `"auto"` for "use the transcript's language".
+/// Live-transcription cost tier, surfaced in Settings → Transcription.
+/// `full` is the original behaviour (turbo model, 2 s cadence, full
+/// decode); `lite` trims cadence + decode for a much lighter live
+/// preview; `off` shows no live transcript and runs a single full pass
+/// on Stop (the build-43 "deferred" path). The final transcript on Stop
+/// is always full quality regardless of tier.
+enum LiveTranscriptionTier: String, CaseIterable, Identifiable, Sendable {
+    case full
+    case lite
+    case off
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .full: return "Full"
+        case .lite: return "Lite"
+        case .off:  return "Off"
+        }
+    }
+}
+
 /// `displayName` is what the picker shows. The order roughly mirrors
 /// `Transcriber.availableLocales` so the two pickers feel related.
 enum SummaryLanguage: String, CaseIterable, Identifiable, Sendable {

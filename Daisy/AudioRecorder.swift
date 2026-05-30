@@ -176,6 +176,17 @@ final class AudioRecorder {
     @ObservationIgnored
     private var activePreferredDeviceUID: String = ""
 
+    /// Stable UID of the input device the AUHAL is *actually* bound to,
+    /// refreshed inside `bindInputAUHAL` on every successful bind. This
+    /// is the authoritative "device we're recording on" — set by US at
+    /// bind time, NOT read back from the AUHAL (which, after a route-
+    /// change graph teardown, can already report the NEW system-default
+    /// device). The keep-device branch of `handleConfigurationChange`
+    /// resolves THIS back to a live `AudioDeviceID` instead of trusting
+    /// `currentAUHALInputDeviceID()`. nil until the first bind.
+    @ObservationIgnored
+    private var lastBoundInputUID: String?
+
     /// NotificationCenter token for the engine-configuration-change
     /// observer. Held so we can remove it on `stop()` and in `deinit`
     /// without retain-cycling through `self`. nil between sessions.
@@ -207,6 +218,14 @@ final class AudioRecorder {
     /// the rest of the meeting on a dead tap.
     @ObservationIgnored
     private var recoveryWatchdog: Timer?
+    /// Monotonic generation for the recovery watchdog. Bumped on every
+    /// arm AND cancel, captured in the timer closure, and re-checked in
+    /// `checkRecoveryProgress`. Under route-change flapping a Timer can
+    /// already have hopped its task to the MainActor by the time we
+    /// cancel it; the generation guard makes that stale task a no-op
+    /// instead of letting it act on an outdated `armedAt`.
+    @ObservationIgnored
+    private var recoveryGeneration: Int = 0
     /// Render-thread → MainActor bridge for last-buffer timestamp. The tap
     /// closure writes through this; the MainActor watchdog reads it.
     private final class BufferTimestampBox: @unchecked Sendable {
@@ -217,6 +236,33 @@ final class AudioRecorder {
     }
     @ObservationIgnored
     private let bufferTimestamp = BufferTimestampBox()
+
+    /// Render-thread → MainActor bridge for mic signal LIVENESS (level,
+    /// not mere arrival). The tap records each sampled buffer's RMS;
+    /// the MainActor silence monitor reads the last time RMS cleared the
+    /// liveness floor. `lastRMS` is kept only so the trip log can report
+    /// the level we paused on — some SCO stacks emit faint comfort-noise,
+    /// useful for calibrating `micLivenessFloorDB` from real logs.
+    private final class MicLivenessBox: @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock<(aboveFloorAt: Date?, lastRMS: Float)>(
+            initialState: (nil, -160)
+        )
+        func record(rms: Float, at: Date, floor: Float) {
+            lock.withLock { state in
+                state.lastRMS = rms
+                if rms > floor { state.aboveFloorAt = at }
+            }
+        }
+        func snapshot() -> (aboveFloorAt: Date?, lastRMS: Float) { lock.withLock { $0 } }
+        func reset(to date: Date?) { lock.withLock { $0 = (date, -160) } }
+    }
+    @ObservationIgnored
+    private let micLiveness = MicLivenessBox()
+    /// Repeating MainActor timer that runs the signal-level silence
+    /// check while `.recording`. Distinct from `recoveryWatchdog`
+    /// (one-shot, arrival-only, armed around route changes).
+    @ObservationIgnored
+    private var silenceMonitor: Timer?
 
     /// Format the engine's input bus is running at right now.
     /// Captured in `start()` and refreshed in `handleConfigurationChange`
@@ -376,6 +422,7 @@ final class AudioRecorder {
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tick() }
         }
+        startSilenceMonitor()
 
         log.info("AudioRecorder started")
     }
@@ -388,6 +435,7 @@ final class AudioRecorder {
     func pause() {
         guard state == .recording else { return }
         cancelRecoveryWatchdog()
+        stopSilenceMonitor()
         engine.pause()
         elapsedTimer?.invalidate()
         elapsedTimer = nil
@@ -474,6 +522,7 @@ final class AudioRecorder {
                 Task { @MainActor [weak self] in self?.tick() }
             }
             state = .recording
+            startSilenceMonitor()
             log.info("AudioRecorder resumed via engine rebuild")
             return
         }
@@ -501,7 +550,15 @@ final class AudioRecorder {
             }
         }
 
-        lastInputFormat = newFormat
+        // Only advance the format baseline when we have a live file to
+        // match it (or aren't archiving at all). If a format-change roll
+        // FAILED to open the new part, keep the OLD baseline so the next
+        // route change re-detects the change and retries the roll, instead
+        // of marking us "in sync" with a format we have no open file for —
+        // which would silently kill the archive until stop().
+        if audioFile != nil || archivedFileURL == nil {
+            lastInputFormat = newFormat
+        }
         installInputTap(format: newFormat)
 
         // Re-prepare before start — same belt-and-braces reasoning as
@@ -526,6 +583,7 @@ final class AudioRecorder {
         // or dead device. Watchdog falls us to paused if no buffer
         // arrives within 5s.
         armRecoveryWatchdog()
+        startSilenceMonitor()
         log.info("AudioRecorder resumed")
     }
 
@@ -539,6 +597,7 @@ final class AudioRecorder {
         }
         removeInputDeviceListener()
         cancelRecoveryWatchdog()
+        stopSilenceMonitor()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         bufferContinuation?.finish()
@@ -647,13 +706,41 @@ final class AudioRecorder {
             engine.stop()
         }
 
-        // Re-pin to the user's preferred device. If the saved UID is
-        // no longer connected (e.g. AirPods just disconnected) this
-        // logs a warning and silently falls back to system default —
-        // exactly what the user wants ("keep recording on whatever
-        // mic is available now"). Must happen BEFORE we read the new
-        // format, because device choice determines the format.
-        applyPreferredInputDevice(uid: activePreferredDeviceUID)
+        // Re-pin BEFORE reading the new format (device choice determines
+        // the format). Decide whether to KEEP the device we were recording
+        // on or FOLLOW the new system default.
+        //
+        // We override the OS in exactly ONE case: an unpinned session
+        // where the new default INPUT is a Bluetooth device. Connecting
+        // AirPods for *output* makes macOS flip the default input onto
+        // their SCO mic, which frequently delivers pure silence — the
+        // arrival watchdog passes, status stays .recording, and the rest
+        // of the meeting records nothing. We don't trust that flip and
+        // keep the device we were already on. For a wired/USB input
+        // change (transport ≠ Bluetooth) the user intends it, so we
+        // follow it; and a pinned mic always follows the pinned UID.
+        //
+        // The device-to-keep is resolved from `lastBoundInputUID` (the
+        // UID we recorded at bind time), NOT from `currentAUHALInputDeviceID()`:
+        // after the graph teardown the AUHAL can already report the new
+        // BT device, which would make "keep current" silently keep the
+        // very device we're trying to avoid. UID is stable across the
+        // teardown; AudioDeviceID is session-local. (To intentionally
+        // record through a BT mic, pick it in Settings — that sets a
+        // pinned UID and takes the follow branch below.)
+        let deviceBefore = currentAUHALInputDeviceID()   // logging only
+        let newDefaultID = AudioInputDevices.systemDefaultInputID()
+        let newDefaultIsBluetooth = newDefaultID != 0 && AudioInputDevices.isBluetooth(newDefaultID)
+
+        if activePreferredDeviceUID.isEmpty,
+           newDefaultIsBluetooth,
+           let keepUID = lastBoundInputUID,
+           let keepID = AudioInputDevices.deviceID(forUID: keepUID) {
+            log.info("Config change, no pinned mic — new system-default input is Bluetooth; keeping the device we were recording on (UID \(keepUID, privacy: .public), id \(keepID, privacy: .public); AUHAL now reports \(deviceBefore ?? 0, privacy: .public)) to stop a BT-output route hijacking the recording mic.")
+            bindInputAUHAL(to: keepID)
+        } else {
+            applyPreferredInputDevice(uid: activePreferredDeviceUID)
+        }
 
         // The bug this fixes (build 33 → 34, macOS 26.2): AVAudioEngine
         // caches `inputNode.outputFormat(forBus: 0)` from the AUHAL's
@@ -744,7 +831,15 @@ final class AudioRecorder {
             }
         }
 
-        lastInputFormat = newFormat
+        // Only advance the format baseline when we have a live file to
+        // match it (or aren't archiving at all). If a format-change roll
+        // FAILED to open the new part, keep the OLD baseline so the next
+        // route change re-detects the change and retries the roll, instead
+        // of marking us "in sync" with a format we have no open file for —
+        // which would silently kill the archive until stop().
+        if audioFile != nil || archivedFileURL == nil {
+            lastInputFormat = newFormat
+        }
         installInputTap(format: newFormat)
 
         // Re-prepare the engine graph BEFORE start() — the route
@@ -877,7 +972,15 @@ final class AudioRecorder {
             }
         }
 
-        lastInputFormat = newFormat
+        // Only advance the format baseline when we have a live file to
+        // match it (or aren't archiving at all). If a format-change roll
+        // FAILED to open the new part, keep the OLD baseline so the next
+        // route change re-detects the change and retries the roll, instead
+        // of marking us "in sync" with a format we have no open file for —
+        // which would silently kill the archive until stop().
+        if audioFile != nil || archivedFileURL == nil {
+            lastInputFormat = newFormat
+        }
         installInputTap(format: newFormat)
 
         // Re-register the ConfigurationChange observer against the
@@ -994,10 +1097,12 @@ final class AudioRecorder {
     /// only signal that actually proves the new graph is alive.
     private func armRecoveryWatchdog(deadline: TimeInterval = 5.0) {
         cancelRecoveryWatchdog()
+        recoveryGeneration &+= 1
+        let generation = recoveryGeneration
         let armedAt = Date()
         recoveryWatchdog = Timer.scheduledTimer(withTimeInterval: deadline, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.checkRecoveryProgress(armedAt: armedAt)
+                self?.checkRecoveryProgress(armedAt: armedAt, generation: generation)
             }
         }
     }
@@ -1005,9 +1110,17 @@ final class AudioRecorder {
     private func cancelRecoveryWatchdog() {
         recoveryWatchdog?.invalidate()
         recoveryWatchdog = nil
+        // Bump so an already-fired-but-not-yet-run timer task bails out.
+        recoveryGeneration &+= 1
     }
 
-    private func checkRecoveryProgress(armedAt: Date) {
+    private func checkRecoveryProgress(armedAt: Date, generation: Int) {
+        // A newer arm/cancel happened after this timer fired (route-change
+        // flapping) — act on it and we'd be using a stale armedAt.
+        guard generation == recoveryGeneration else {
+            log.info("Stale recovery watchdog (gen \(generation, privacy: .public) ≠ \(self.recoveryGeneration, privacy: .public)) — ignoring.")
+            return
+        }
         recoveryWatchdog = nil
         guard state == .recording else { return }
         let current = bufferTimestamp.snapshot()
@@ -1027,6 +1140,7 @@ final class AudioRecorder {
     /// the level/spectrum so the widget doesn't appear frozen.
     private func fallToPaused() {
         cancelRecoveryWatchdog()
+        stopSilenceMonitor()
         // Clear the debounce so a follow-up CoreAudio listener fire
         // (user plugged a working mic right after the fall) isn't
         // swallowed by the 2-sec window — they deserve to recover.
@@ -1040,6 +1154,48 @@ final class AudioRecorder {
         levelDB = -160
         spectrumBands = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
         state = .paused
+    }
+
+    // MARK: - Mic silence watchdog (signal level, not arrival)
+
+    private func startSilenceMonitor() {
+        stopSilenceMonitor()
+        micLiveness.reset(to: Date())   // grace anchor from now
+        silenceMonitor = Timer.scheduledTimer(
+            withTimeInterval: Self.silenceMonitorIntervalSec, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.checkMicSilence() }
+        }
+    }
+
+    private func stopSilenceMonitor() {
+        silenceMonitor?.invalidate()
+        silenceMonitor = nil
+    }
+
+    /// Signal-level dead-input check, run on a timer while recording.
+    /// The arrival watchdog only proves *some* buffer landed; this proves
+    /// the buffers carry SIGNAL. If mic RMS has stayed below the liveness
+    /// floor for `micSilenceWindowSec` (zero excursions above it), the
+    /// input is delivering silence — BT-SCO, hardware mute, a dead device,
+    /// or any future silent path — so the meeting is recording nothing.
+    /// Pause and tell the user. This is the catch-all the keep-device fix
+    /// can't be: it fires even if we ended up on a silent device anyway.
+    private func checkMicSilence() {
+        guard state == .recording else { return }
+        let snap = micLiveness.snapshot()
+        // `aboveFloorAt` is re-anchored to "now" whenever the tap is
+        // (re)installed or the monitor (re)starts, so it's non-nil
+        // throughout a recording; the guard is purely defensive.
+        guard let reference = snap.aboveFloorAt else { return }
+        let silentFor = Date().timeIntervalSince(reference)
+        guard silentFor >= Self.micSilenceWindowSec else { return }
+        log.error("Mic silence watchdog fired — RMS below \(Self.micLivenessFloorDB, privacy: .public) dBFS for \(Int(silentFor), privacy: .public)s (last RMS \(snap.lastRMS, privacy: .public) dBFS). Falling to paused.")
+        fallToPaused()
+        ToastCenter.shared.show(
+            "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume.",
+            style: .warning
+        )
     }
 
     /// Install (or re-install) the audio render-thread tap on
@@ -1057,6 +1213,11 @@ final class AudioRecorder {
         let writeErrorsRef = writeErrors
         let framesWrittenRef = framesWritten
         let timestampRef = bufferTimestamp
+        let livenessRef = micLiveness
+        // Fresh grace window every time a new audio path starts (start,
+        // resume, route-change recovery, engine rebuild) so the silence
+        // monitor doesn't trip during the brief no-buffer transition.
+        micLiveness.reset(to: Date())
 
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, time in
             // Render thread — keep work minimal. Buffer-write failures
@@ -1099,6 +1260,13 @@ final class AudioRecorder {
             if nowRefTime - Self.lastSpectrumPublishRefTime > Self.spectrumPublishIntervalSec {
                 Self.lastSpectrumPublishRefTime = nowRefTime
                 let peak = Self.peakLevelDB(of: buffer)
+                // Fold liveness sampling into the same gate. RMS (not
+                // peak) so a denormal spike can't fake a live signal.
+                livenessRef.record(
+                    rms: Self.rmsLevelDB(of: buffer),
+                    at: Date(),
+                    floor: Self.micLivenessFloorDB
+                )
 
                 // Compute spectrum bands for the daisy widget. FFT of 2048
                 // samples is ~0.5 ms on Apple Silicon — safe on render
@@ -1137,6 +1305,22 @@ final class AudioRecorder {
     /// so any faster ship is wasted UI work that just steals MainActor
     /// time from other consumers.
     private static let spectrumPublishIntervalSec: TimeInterval = 1.0 / 30.0
+
+    /// Mic liveness floor in dBFS. A live mic — even in a quiet room —
+    /// sits at a noise floor around −50…−70 dBFS; a dead/silent input
+    /// (a BT-SCO mic delivering nothing, hardware mute, a device that
+    /// keeps the AUHAL alive but sends digital zero) reads ≤ −120 dBFS
+    /// or exact zero. The 40+ dB gap means −80 cleanly separates "alive
+    /// but quiet" from "dead". Measured as RMS (not peak) so a single
+    /// denormal/transient spike can't fake liveness.
+    private static let micLivenessFloorDB: Float = -80
+    /// How long mic RMS must stay below `micLivenessFloorDB`, with zero
+    /// excursions above it, before we treat the input as dead and pause.
+    /// Long enough not to trip on a natural pause in speech (the floor
+    /// already clears room tone, so this is headroom against edge cases).
+    private static let micSilenceWindowSec: TimeInterval = 10
+    /// Cadence of the MainActor liveness check.
+    private static let silenceMonitorIntervalSec: TimeInterval = 2
 
     /// Compare two AVAudioFormats on the dimensions that matter to
     /// AVAudioFile compatibility. NSObject equality on AVAudioFormat
@@ -1233,25 +1417,38 @@ final class AudioRecorder {
                 return
             }
         }
+        bindInputAUHAL(to: deviceID)
+    }
+
+    /// Explicitly bind `inputNode`'s AUHAL to a concrete `AudioDeviceID`
+    /// via `kAudioOutputUnitProperty_CurrentDevice`. Factored out of
+    /// `applyPreferredInputDevice` so route-change recovery can re-pin to
+    /// "the device we were already recording on" without re-resolving
+    /// through the system-default path (see `handleConfigurationChange`).
+    /// `kAudioOutputUnitProperty_CurrentDevice` is the right property name
+    /// even for AUHAL units configured as inputs — AVAudioEngine wraps an
+    /// AUHAL on its inputNode for exactly this purpose.
+    private func bindInputAUHAL(to deviceID: AudioDeviceID) {
         guard let audioUnit = engine.inputNode.audioUnit else {
-            log.error("engine.inputNode.audioUnit is nil — can't route to preferred device")
+            log.error("engine.inputNode.audioUnit is nil — can't route to device \(deviceID, privacy: .public)")
             return
         }
-        // `kAudioOutputUnitProperty_CurrentDevice` is the right
-        // property name even for AUHAL units configured as inputs;
-        // AVAudioEngine wraps an AUHAL on its inputNode for exactly
-        // this purpose.
+        var mutableID = deviceID
         let status = AudioUnitSetProperty(
             audioUnit,
             kAudioOutputUnitProperty_CurrentDevice,
             kAudioUnitScope_Global,
             0,
-            &deviceID,
+            &mutableID,
             UInt32(MemoryLayout<AudioDeviceID>.size)
         )
         if status != noErr {
             log.error("AudioUnitSetProperty(CurrentDevice) failed (status \(status, privacy: .public), deviceID \(deviceID, privacy: .public))")
         } else {
+            // Remember, by stable UID, the device we actually bound to.
+            // Keep the previous value if CoreAudio can't resolve a UID
+            // for this ID — better a slightly stale anchor than none.
+            lastBoundInputUID = AudioInputDevices.uid(for: deviceID) ?? lastBoundInputUID
             log.info("Bound mic AUHAL to device ID \(deviceID, privacy: .public)")
         }
     }
@@ -1288,5 +1485,29 @@ final class AudioRecorder {
         }
         guard peak > 0 else { return -160 }
         return 20 * log10(peak)
+    }
+
+    /// Root-mean-square level of the buffer in dBFS. Unlike peak, a lone
+    /// denormal/transient spike can't mask an otherwise-silent stream —
+    /// exactly the BT-SCO "buffers flowing but silent" failure the
+    /// liveness watchdog must catch. Same single-pass cost as the peak
+    /// scan; called at the same ~30 Hz gate.
+    nonisolated private static func rmsLevelDB(of buffer: AVAudioPCMBuffer) -> Float {
+        guard let channels = buffer.floatChannelData else { return -160 }
+        let frames = Int(buffer.frameLength)
+        let count = Int(buffer.format.channelCount)
+        guard frames > 0, count > 0 else { return -160 }
+        var sumSquares: Float = 0
+        for ch in 0..<count {
+            let ptr = channels[ch]
+            for i in 0..<frames {
+                let v = ptr[i]
+                sumSquares += v * v
+            }
+        }
+        let meanSquare = sumSquares / Float(frames * count)
+        guard meanSquare > 0 else { return -160 }
+        // 10·log10(power) == 20·log10(rms amplitude).
+        return 10 * log10(meanSquare)
     }
 }

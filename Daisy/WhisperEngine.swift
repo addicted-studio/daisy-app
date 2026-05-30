@@ -432,10 +432,22 @@ final class WhisperEngine {
 
     // MARK: - Transcribe
 
+    /// Decode cost profile for a transcription pass. `.lite` trims the
+    /// expensive knobs (4 ANE workers, greedy `topK: 1`, no temperature
+    /// fallbacks) for throwaway live passes; `.full` is the quality path
+    /// used for every final pass and for the Full live tier. The anti-
+    /// hallucination thresholds + VAD are identical across both — only
+    /// the search width / retry count change.
+    enum DecodeProfile: Sendable {
+        case full
+        case lite
+    }
+
     /// Run a transcription pass against 16 kHz mono Float samples.
     /// Multiple callers are serialized. `language` is a two-letter ISO
-    /// code ("en", "ru") or nil for auto-detect.
-    func transcribe(samples: [Float], language: String?) async throws -> [WhisperSegment] {
+    /// code ("en", "ru") or nil for auto-detect. `profile` trades decode
+    /// cost for quality — see `DecodeProfile`.
+    func transcribe(samples: [Float], language: String?, profile: DecodeProfile = .full) async throws -> [WhisperSegment] {
         await acquireSlot()
         defer { releaseSlot() }
 
@@ -483,10 +495,18 @@ final class WhisperEngine {
         // wrong language on noise (English speaker → spurious
         // "ありがとうございました"). `Transcriber` snaps `language`
         // to the locked locale after the first few confident segments.
+        // Lite live passes trade search width for speed/energy: 4 ANE
+        // workers instead of the macOS default 16 (16 on a short VAD span
+        // every few seconds just burst-overheats the ANE), greedy
+        // `topK: 1`, and no temperature fallbacks. The anti-hallucination
+        // thresholds + VAD are kept identical — the final full-quality
+        // pass on Stop (always `.full`) cleans up anything Lite missed.
+        let isLite = profile == .lite
         let options = DecodingOptions(
             task: .transcribe,
             language: language,
-            temperatureFallbackCount: 3,
+            temperatureFallbackCount: isLite ? 0 : 3,
+            topK: isLite ? 1 : 5,
             detectLanguage: language == nil,
             skipSpecialTokens: true,
             withoutTimestamps: false,
@@ -494,6 +514,7 @@ final class WhisperEngine {
             compressionRatioThreshold: 2.4,
             logProbThreshold: -1.0,
             noSpeechThreshold: 0.4,
+            concurrentWorkerCount: isLite ? 4 : 16,
             chunkingStrategy: .vad
         )
 
