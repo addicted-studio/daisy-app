@@ -327,17 +327,6 @@ struct DaisyWidget: View {
         return baseline
     }
 
-    /// True if Whisper is mid-download or mid-load. Used to fork
-    /// the .preparing state's visual cue from "stream startup, ~1s"
-    /// to "first-time model setup, 1-3 minutes" — the latter must
-    /// LOOK different or the user assumes the app is hung.
-    private var isWhisperWarmingUp: Bool {
-        switch WhisperEngine.shared.state {
-        case .downloading, .loading, .notLoaded: return true
-        case .ready, .failed:                    return false
-        }
-    }
-
     private func centerColor(
         for status: RecordingSession.Status,
         mode: RecordingSession.RecordingMode,
@@ -389,10 +378,14 @@ struct DaisyWidget: View {
         // Stream-startup .preparing (model already loaded) stays
         // plain white — fast, not worth a special signal.
         case .preparing:
-            if isWhisperWarmingUp {
-                let pulse = 0.55 + 0.40 * (0.5 + 0.5 * sin(sweep * .pi))
-                return Color.daisyCenterIdle.opacity(pulse)
-            }
+            // Static white core during Preparing. The petal shimmer (the
+            // "loader") is the only motion; the core stays calm. The old
+            // Whisper-warmup amber pulse was removed here — a small core
+            // fading 0.55↔0.95 (plus its shadow) *under* the spinning petals
+            // read as a glitchy "loader + blinking core" combo, and snapped
+            // to white when warmup finished mid-Preparing. The long first-run
+            // model download is still signalled as text (the status/tooltip
+            // WhisperEngine.state switch below), just not in the core.
             return Color.white.opacity(0.92)
         // Finished + processing → plain white. The "done" celebration
         // is the scale-pop animation, not a colour change.
