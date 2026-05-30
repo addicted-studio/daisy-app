@@ -1293,13 +1293,29 @@ final class RecordingSession {
         // (or any other path that didn't actually capture audio),
         // there's no point keeping the session directory around as a
         // husk. Bail out before running Whisper / writing markdown.
+        // Did we capture anything worth keeping? Two data-loss fixes vs.
+        // the old check (which only tested the BASE microphone.caf /
+        // system_audio.caf files):
+        //   1. Count frames across ALL parts via `archivedFrameCount`,
+        //      not just the base file. A route change — including the
+        //      spurious one that fires ~24 ms after start — rolls the
+        //      archive into `microphone.partN.caf` and leaves the BASE
+        //      file 0 bytes. The old `fileExistsNonEmpty(micArchiveURL)`
+        //      then saw "no audio" and deleted a session that actually
+        //      had minutes of audio in a .partN file (real repro: 81 s
+        //      recorded, live transcript fine, whole session erased on Stop).
+        //   2. Never delete a session that produced transcript segments,
+        //      even at zero audio frames — covers "Don't record audio"
+        //      mode (the transcript IS the product) and any path where
+        //      audio didn't reach disk but Whisper still committed text.
         let capturedAnyAudio =
-            (micArchiveURL.flatMap { fileExistsNonEmpty($0) } ?? false) ||
-            (systemArchiveURL.flatMap { fileExistsNonEmpty($0) } ?? false)
-        if !capturedAnyAudio {
+            recorder.archivedFrameCount > 0 ||
+            systemAudio.archivedFrameCount > 0
+        let hasTranscript = !segments.isEmpty
+        if !capturedAnyAudio && !hasTranscript {
             if let dir = sessionDirectory {
                 try? FileManager.default.removeItem(at: dir)
-                log.info("Stop: no audio captured, removed empty session dir")
+                log.info("Stop: no audio and no transcript captured, removed empty session dir")
             }
             reset()
             return
