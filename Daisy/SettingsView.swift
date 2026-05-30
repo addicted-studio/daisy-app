@@ -1413,12 +1413,17 @@ struct SettingsView: View {
             }
 
             Section {
-                Toggle(isOn: $settings.liveTranscriptionEnabled) {
+                Picker(selection: $settings.liveTranscriptionTier) {
+                    Text("Full — best live quality, heaviest").tag(LiveTranscriptionTier.full)
+                    Text("Lite — lighter live, every ~3.5s").tag(LiveTranscriptionTier.lite)
+                    Text("Off — transcribe once on Stop").tag(LiveTranscriptionTier.off)
+                } label: {
                     Text("Show transcript live during meeting")
-                    Text("OFF runs Whisper as a single pass on Stop instead of every ~2s during recording. Lighter on long meetings — pause/resume stays instant on 1h+ sessions and the daisy widget never stutters. Trade-off: toolbar transcript stays empty until you press Stop. Dictation always uses live regardless of this switch.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
+                .pickerStyle(.radioGroup)
+                Text("Lite trims the live decode (fewer ANE workers, greedy sampling, no temperature fallbacks) and runs every ~3.5s instead of 2s — much lighter on long meetings, with a slightly rougher live preview. Off runs Whisper as a single pass on Stop: the toolbar transcript stays empty until then, but pause/resume stays instant on 1h+ sessions and the daisy widget never stutters. The final transcript on Stop is always full quality regardless of this setting, and dictation always uses live.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } header: {
                 Text("Live transcription")
             }

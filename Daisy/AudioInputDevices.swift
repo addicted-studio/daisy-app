@@ -83,6 +83,90 @@ enum AudioInputDevices {
         return nil
     }
 
+    /// Stable UID for a live `AudioDeviceID`, or nil if CoreAudio can't
+    /// resolve it. The inverse of `deviceID(forUID:)`. `AudioRecorder`
+    /// uses this to remember — by stable identity, not the session-local
+    /// `AudioDeviceID` — which device a recording is actually bound to,
+    /// so a mid-session Bluetooth default-input flip can be told apart
+    /// from the device the user/engine is on.
+    static func uid(for id: AudioDeviceID) -> String? {
+        return deviceUID(id)
+    }
+
+    /// True if `id` uses a Bluetooth transport (or, for an aggregate,
+    /// any active sub-device does). Lets the route-change recovery gate
+    /// its "keep the current mic" decision on transport: connecting
+    /// AirPods for *output* drags the default *input* onto their SCO
+    /// mic, which frequently delivers pure silence — we want to ignore
+    /// that flip, but still follow an intentional wired/USB input
+    /// change. Aggregate-aware (AirPods nested in a multi-output
+    /// aggregate still read as Bluetooth). Mirrors the equivalent check
+    /// on the system-audio (output) side in `SystemAudioCapture`.
+    static func isBluetooth(_ id: AudioDeviceID) -> Bool {
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var transportAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let tStatus = AudioObjectGetPropertyData(
+            id, &transportAddress, 0, nil, &size, &transportType
+        )
+        guard tStatus == noErr else { return false }
+
+        if transportType == kAudioDeviceTransportTypeBluetooth
+            || transportType == kAudioDeviceTransportTypeBluetoothLE {
+            return true
+        }
+
+        // Aggregate? Drill into the active sub-devices once (no deep
+        // recursion — a direct transport check per sub covers the real
+        // configs we care about, e.g. AirPods inside a multi-output).
+        guard transportType == kAudioDeviceTransportTypeAggregate else {
+            return false
+        }
+        var subDevicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioAggregateDevicePropertyActiveSubDeviceList,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var subDevicesSize: UInt32 = 0
+        let szStatus = AudioObjectGetPropertyDataSize(
+            id, &subDevicesAddress, 0, nil, &subDevicesSize
+        )
+        guard szStatus == noErr, subDevicesSize > 0 else { return false }
+
+        let count = Int(subDevicesSize) / MemoryLayout<AudioObjectID>.size
+        var subDevices = [AudioObjectID](repeating: 0, count: count)
+        let listStatus = subDevices.withUnsafeMutableBufferPointer { buf -> OSStatus in
+            var sz = subDevicesSize
+            return AudioObjectGetPropertyData(
+                id, &subDevicesAddress, 0, nil, &sz, buf.baseAddress!
+            )
+        }
+        guard listStatus == noErr else { return false }
+
+        for sub in subDevices where sub != kAudioObjectUnknown {
+            var subTransport: UInt32 = 0
+            var subSize = UInt32(MemoryLayout<UInt32>.size)
+            var subAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let s = AudioObjectGetPropertyData(
+                sub, &subAddress, 0, nil, &subSize, &subTransport
+            )
+            if s == noErr,
+               subTransport == kAudioDeviceTransportTypeBluetooth
+                || subTransport == kAudioDeviceTransportTypeBluetoothLE {
+                return true
+            }
+        }
+        return false
+    }
+
     // MARK: - CoreAudio plumbing
 
     private static func allDeviceIDs() -> [AudioDeviceID] {

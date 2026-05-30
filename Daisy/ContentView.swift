@@ -33,6 +33,21 @@ private struct ContainerBottomYKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }
 
+/// Captures the hosting `NSWindow` of a SwiftUI view — used by the
+/// MenuBarExtra popover's close button to `orderOut` itself, since
+/// `MenuBarExtra(.window)` exposes no dismissal API of its own.
+private struct PopoverWindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        DispatchQueue.main.async { onResolve(v.window) }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onResolve(nsView.window) }
+    }
+}
+
 struct ContentView: View {
     @Bindable var session: RecordingSession
     @Bindable var settings: AppSettings
@@ -54,10 +69,12 @@ struct ContentView: View {
     /// Global-space bottom edge of the transcript scroll container; updated
     /// only on layout/resize (not per scroll frame), feeds the pin predicate.
     @State private var liveContainerBottomY: CGFloat = 0
+    /// Hosting NSWindow of the MenuBarExtra popover, captured via
+    /// `PopoverWindowAccessor`, so the close button can dismiss it.
+    @State private var popoverWindow: NSWindow?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            consentReminder
             header
             Divider()
             ScrollView {
@@ -96,8 +113,11 @@ struct ContentView: View {
             Divider()
             errorBanner
             footer
+            Divider()
+            consentReminder
         }
         .background(Color.daisyBgPrimary)
+        .background(PopoverWindowAccessor { popoverWindow = $0 })
         .onAppear {
             if session.localeIdentifier.isEmpty {
                 session.localeIdentifier = "auto"
@@ -256,6 +276,24 @@ struct ContentView: View {
 
     // MARK: - Header
 
+    /// Dismiss the menu-bar popover. `MenuBarExtra(.window)` has no native
+    /// close control, so we order out the hosting NSWindow (captured via
+    /// `PopoverWindowAccessor`). The menu-bar icon reopens it; recording is
+    /// unaffected — the session lives in `RecordingSession`, not this view.
+    private var closeButton: some View {
+        Button {
+            popoverWindow?.orderOut(nil)
+        } label: {
+            Image(systemName: "xmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(5)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Close this window — recording keeps running; reopen from the menu bar")
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -264,6 +302,7 @@ struct ContentView: View {
                 Spacer()
                 LocalePicker(localeIdentifier: toolbarLocaleBinding)
                     .disabled(session.status == .recording || session.status == .summarizing)
+                closeButton
             }
 
             HStack(spacing: 6) {

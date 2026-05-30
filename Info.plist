@@ -64,6 +64,11 @@
     <string>Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Daisy captures the system audio of your meetings via Screen Recording so it can transcribe what other participants say. No video frames are saved or sent anywhere.</string>
+    <!-- macOS 26+ "Lite" live transcription uses Apple's on-device
+         SpeechAnalyzer. It runs entirely on your Mac (system speech
+         models), but the framework still gates first use on this string. -->
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Daisy uses on-device speech recognition to show a lighter live transcript while you record. Everything stays on your Mac — nothing is sent to Apple or any server.</string>
 
     <!-- Sparkle 2.x — auto-update configuration. The public EdDSA
          key is the verifier for every signed DMG Sparkle downloads;

@@ -412,6 +412,19 @@ final class RecordingSession {
     /// session (no point pestering them every 30s).
     private var autoStopSuppressed: Bool = false
 
+    /// Live tier the active session STARTED with — the restore target once
+    /// thermal/low-power pressure clears. Only Full sessions auto-downgrade.
+    @ObservationIgnored
+    private var startedLiveTier: LiveTranscriptionTier = .full
+    /// True while a thermal/low-power auto-downgrade (Full→Lite) is in
+    /// effect. Runtime only — never written to `settings.liveTranscriptionTier`.
+    @ObservationIgnored
+    private var thermalDowngradeActive = false
+    @ObservationIgnored
+    private var thermalObserver: NSObjectProtocol?
+    @ObservationIgnored
+    private var powerObserver: NSObjectProtocol?
+
     /// Active recording mode. Persists across pause/resume but
     /// resets to `.meeting` on `reset()` — fresh sessions default
     /// to the original Daisy meeting flow unless a mode-specific
@@ -876,9 +889,11 @@ final class RecordingSession {
         // commits during the meeting. Dictation mode forces live ON
         // regardless of the setting because dictation IS the live
         // transcript (paste happens on hotkey release).
-        let liveTranscription = settings.liveTranscriptionEnabled || currentMode == .dictation
+        // Dictation IS the live transcript, so it always runs live at Full
+        // regardless of the meeting tier; otherwise honour the user's tier.
+        let tier: LiveTranscriptionTier = currentMode == .dictation ? .full : settings.liveTranscriptionTier
         let micAudio = recorder.buffers
-        micTranscriber.start(consuming: micAudio, startedAt: nowStarted, liveTranscription: liveTranscription)
+        micTranscriber.start(consuming: micAudio, startedAt: nowStarted, tier: tier)
         do {
             try recorder.start(
                 archiveURL: micArchive,
@@ -925,7 +940,7 @@ final class RecordingSession {
                 )
             } else {
                 let systemAudioStream = systemAudio.buffers
-                systemTranscriber.start(consuming: systemAudioStream, startedAt: nowStarted, liveTranscription: liveTranscription)
+                systemTranscriber.start(consuming: systemAudioStream, startedAt: nowStarted, tier: tier)
                 do {
                     try await systemAudio.start(archiveURL: systemArchive)
                     systemArchiveURL = systemArchive
@@ -947,6 +962,7 @@ final class RecordingSession {
 
         startedAt = nowStarted
         status = .recording
+        installThermalDowngrade(startedTier: tier)
         if settings.recordingSoundsEnabled { SoundEffects.playStart(for: currentMode) }
 
         // Optional screenshots.
@@ -1201,6 +1217,7 @@ final class RecordingSession {
         // first, change their mind, then commit). Anything else is a
         // no-op so transient states aren't interrupted.
         guard status == .recording || status == .paused else { return }
+        removeThermalDowngrade()
         // Stop cue fires up front — by the time the final
         // transcribe + summary finish (seconds later), the user has
         // moved on to other tasks. The audio cue confirms the
@@ -1219,6 +1236,7 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()
+        removeThermalDowngrade()
 
         // Surface the "system audio capture armed but received zero
         // frames" condition before the user navigates away from the
@@ -1995,6 +2013,7 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()
+        removeThermalDowngrade()
         sessionDirectory = nil
         micArchiveURL = nil
         systemArchiveURL = nil
@@ -2103,6 +2122,62 @@ final class RecordingSession {
         return size > 1024  // anything below ~1 KB is just CAF headers
     }
 
+    // MARK: - Thermal / low-power auto-downgrade
+
+    /// Watch thermal state + Low Power Mode while a Full-tier session runs
+    /// and silently drop live transcription Full→Lite under pressure,
+    /// auto-restoring when it clears. The final pass on Stop stays full
+    /// quality and the user's saved tier is never modified (runtime override).
+    private func installThermalDowngrade(startedTier: LiveTranscriptionTier) {
+        removeThermalDowngrade()
+        startedLiveTier = startedTier
+        // Only Full sessions have headroom to shed; Lite/Off/Apple are
+        // already light. (Dictation forces Full but is short — harmless.)
+        guard startedTier == .full else { return }
+        let nc = NotificationCenter.default
+        thermalObserver = nc.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.evaluateThermalDowngrade() }
+        }
+        powerObserver = nc.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.evaluateThermalDowngrade() }
+        }
+        // Evaluate immediately in case we START already hot / in Low Power Mode.
+        evaluateThermalDowngrade()
+    }
+
+    private func removeThermalDowngrade() {
+        if let t = thermalObserver { NotificationCenter.default.removeObserver(t); thermalObserver = nil }
+        if let p = powerObserver { NotificationCenter.default.removeObserver(p); powerObserver = nil }
+        thermalDowngradeActive = false
+    }
+
+    private func evaluateThermalDowngrade() {
+        guard status == .recording, startedLiveTier == .full else { return }
+        let info = ProcessInfo.processInfo
+        let hot = info.thermalState == .serious || info.thermalState == .critical
+        let shouldThrottle = hot || info.isLowPowerModeEnabled
+        if shouldThrottle, !thermalDowngradeActive {
+            thermalDowngradeActive = true
+            micTranscriber.setLiveTier(.lite)
+            systemTranscriber.setLiveTier(.lite)
+            log.info("Live transcription auto-downgraded Full→Lite (\(hot ? "thermal" : "low-power", privacy: .public))")
+            ToastCenter.shared.show(
+                "High \(hot ? "heat" : "power") load — live transcript eased to Lite. The final transcript on Stop stays full quality.",
+                style: .info
+            )
+        } else if !shouldThrottle, thermalDowngradeActive {
+            thermalDowngradeActive = false
+            micTranscriber.setLiveTier(startedLiveTier)
+            systemTranscriber.setLiveTier(startedLiveTier)
+            log.info("Live transcription auto-restored to Full (load normalised)")
+            ToastCenter.shared.show("Load eased — live transcript back to Full.", style: .info)
+        }
+    }
+
     func reset() {
         // Best-effort cancel of any post-Stop finalize task. start()
         // already cancels first (so this is usually a no-op), but
@@ -2117,6 +2192,7 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.stop()
         cancelAutoStop()
+        removeThermalDowngrade()
         releaseSessionsFolderTicket()
         summarizer.clear()
         sessionDirectory = nil
