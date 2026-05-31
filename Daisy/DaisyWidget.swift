@@ -24,6 +24,10 @@ struct DaisyWidget: View {
     var onHideRequest: (TimeInterval) -> Void = { _ in }
 
     @Environment(\.openWindow) private var openWindow
+    /// Honour System Settings → Accessibility → Display → Reduce Motion.
+    /// Under reduce-motion we drop the rotating comet shimmer (a static
+    /// ring instead) and the celebration spring (instant settle).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Scales the whole daisy briefly when the session lands in
     /// `.finished` — the "celebration" pop that finishes the loader
@@ -33,10 +37,29 @@ struct DaisyWidget: View {
     /// Daisy shrinks in "passive" states (idle, finished) so it sits
     /// less prominently after recording is done. Full size during
     /// active work (recording / preparing / summarizing / failed).
-    private var passiveScale: CGFloat {
-        switch session.status {
-        case .idle, .finished: return 0.66
+    /// Driven EXPLICITLY (not a computed property) so the finished
+    /// transition can SEQUENCE the celebration pop *before* the shrink —
+    /// otherwise the spring pop and the shrink animate the same
+    /// `scaleEffect` from two clocks at once and the daisy "celebrates
+    /// while deflating". Initialised from the current status in onAppear.
+    @State private var passiveScale: CGFloat = 0.80
+
+    /// Passive states sit at 0.80 (was 0.66 — that deflated the finished
+    /// daisy to ~a third of its size; 0.80 still recedes without looking
+    /// like it shrank away).
+    private static func targetPassiveScale(_ status: RecordingSession.Status) -> CGFloat {
+        switch status {
+        case .idle, .finished: return 0.80
         default: return 1.0
+        }
+    }
+
+    /// True for the "loader" states whose comet shimmer rotates — those
+    /// run at 60fps (see `body`); everything else at 30fps.
+    private static func isShimmerStatus(_ status: RecordingSession.Status) -> Bool {
+        switch status {
+        case .preparing, .stopping, .summarizing: return true
+        default: return false
         }
     }
 
@@ -62,13 +85,23 @@ struct DaisyWidget: View {
         // Status only changes computed values per petal (amplitude +
         // colour), never the view identity — that fixed the "petals
         // fall apart" flicker we used to get on stop.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+        //
+        // Frame cadence is status-driven: the continuously-ROTATING comet
+        // (preparing / stopping / summarizing) runs at 60fps so it doesn't
+        // stair-step on a 120Hz ProMotion display; everything else
+        // (audio-reactive recording, static states) stays at 30fps to keep
+        // redraw cheap. Sweep + amplitude derive from wall-clock / live
+        // bands (not accumulated in the timeline), so swapping the interval
+        // never jumps the animation. Reduce-Motion → 30fps (comet is static).
+        let shimmering = Self.isShimmerStatus(session.status)
+        let interval = (!reduceMotion && shimmering) ? 1.0 / 60.0 : 1.0 / 30.0
+        return TimelineView(.animation(minimumInterval: interval, paused: false)) { context in
             let status = session.status
             let mode = session.currentMode
             let summaryGen = session.summaryGenerationState
             let bands = session.spectrumBands
             let sweep = Self.computeSweep(from: context.date)
-            let center = centerColor(for: status, mode: mode, summaryGen: summaryGen, sweep: sweep)
+            let center = centerColor(for: status, mode: mode, summaryGen: summaryGen)
 
             ZStack {
                 Circle()
@@ -77,7 +110,7 @@ struct DaisyWidget: View {
                 ForEach(0..<petalCount, id: \.self) { i in
                     let petalAngle = Double(i) * 360.0 / Double(petalCount)
                     Petal(
-                        amplitude: amplitudeFor(petalIndex: i, bands: bands, status: status),
+                        amplitude: amplitudeFor(petalIndex: i, bands: bands, status: status, mode: mode),
                         angleDegrees: petalAngle,
                         color: petalColor(petalAngle: petalAngle, sweep: sweep, status: status),
                         width: petalWidth,
@@ -95,11 +128,11 @@ struct DaisyWidget: View {
             }
         }
         .frame(width: canvasSize, height: canvasSize)
-        // Combined scale: celebration pop × passive-state shrink.
-        // The pop is driven by `onChange` (spring); the passive shrink
-        // animates via the implicit `animation(_:value:)` below.
+        // Combined scale: celebration pop × passive-state shrink. Both are
+        // @State driven from `onChange` (handleStatusChange) so the finished
+        // transition can sequence pop → settle instead of animating one
+        // `scaleEffect` from two competing clocks.
         .scaleEffect(celebrationScale * passiveScale)
-        .animation(.easeInOut(duration: 0.35), value: passiveScale)
         // Shadow needs room — the panel is sized larger than canvasSize
         // (FloatingPanelController wraps the widget in a 64×64 ZStack;
         // was 80×80 pre-build-45 when canvasSize was 56) so this blur
@@ -111,7 +144,10 @@ struct DaisyWidget: View {
         }
         .contextMenu { contextMenuItems }
         .onChange(of: session.status) { _, newStatus in
-            playCelebrationIfFinished(newStatus)
+            handleStatusChange(newStatus)
+        }
+        .onAppear {
+            passiveScale = Self.targetPassiveScale(session.status)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
@@ -120,16 +156,48 @@ struct DaisyWidget: View {
         .help(tooltip)
     }
 
-    /// Two-stage spring bounce when the session reaches `.finished`.
-    /// Reads as: shimmer was spinning → daisy "lands" → petals settle.
-    private func playCelebrationIfFinished(_ status: RecordingSession.Status) {
-        guard case .finished = status else { return }
-        withAnimation(.spring(response: 0.30, dampingFraction: 0.55)) {
-            celebrationScale = 1.18
+    /// Handle a status change in one place: the passive-scale (sequenced
+    /// behind the celebration on finish), the celebration pop, and the
+    /// failure cue. Centralised so the two scale animations never overlap
+    /// on the shared `scaleEffect`.
+    private func handleStatusChange(_ status: RecordingSession.Status) {
+        let target = Self.targetPassiveScale(status)
+        if case .finished = status {
+            // Celebrate at full size, THEN settle small. The shrink is
+            // delayed past the pop so the two don't fight (previously both
+            // ran at once and the daisy "celebrated while deflating").
+            playCelebration()
+            let shrink = Animation.easeInOut(duration: 0.35)
+            withAnimation(reduceMotion ? shrink : shrink.delay(0.55)) {
+                passiveScale = target
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                passiveScale = target
+            }
+        }
+        // Failure has no visual settle of its own and (until now) no audio —
+        // a lost recording deserves a distinct, gentle cue. Fired here so it
+        // covers every path into `.failed`.
+        if case .failed = status, session.settings.recordingSoundsEnabled {
+            SoundEffects.playError()
+        }
+    }
+
+    /// Celebration pop when the session reaches `.finished`. Reads as:
+    /// shimmer was spinning → daisy "lands" → petals settle. Overshoot
+    /// dialled to 1.10 (was 1.18) so it stays calm — Daisy is a quiet
+    /// background tool, not a perky consumer app. Skipped under Reduce
+    /// Motion (instant settle). The matching "done" sound is fired by the
+    /// model the instant `.finished` is set, so it lands with this pop.
+    private func playCelebration() {
+        guard !reduceMotion else { celebrationScale = 1.0; return }
+        withAnimation(.spring(response: 0.30, dampingFraction: 0.58)) {
+            celebrationScale = 1.10
         }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(280))
-            withAnimation(.spring(response: 0.40, dampingFraction: 0.65)) {
+            try? await Task.sleep(for: .milliseconds(300))
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.70)) {
                 celebrationScale = 1.0
             }
         }
@@ -254,16 +322,34 @@ struct DaisyWidget: View {
     private func amplitudeFor(
         petalIndex: Int,
         bands: [Float],
-        status: RecordingSession.Status
+        status: RecordingSession.Status,
+        mode: RecordingSession.RecordingMode
     ) -> Float {
         switch status {
         case .recording:
+            // 8 petals, mirrored across the vertical axis → the lower 4 of
+            // the analyzer's 6 voice-tuned bands drive symmetric "blooming"
+            // (petal i and petal 7-i share a band). The bands are already
+            // dB-normalised + noise-gated + asymmetric-smoothed upstream in
+            // SpectrumAnalyzer (fast attack / slow decay), so the petals are
+            // a faithful read of the live spectrum, not raw FFT jitter.
             let half = petalCount / 2
             let bandIndex = petalIndex < half
                 ? petalIndex
                 : (petalCount - 1 - petalIndex)
             guard bandIndex < bands.count else { return 0.12 }
-            return max(0.12, bands[bandIndex])
+            // Subtle per-mode "character" so the three recording modes read
+            // as different by MOTION, not only by the small centre dot:
+            // dictation a touch calmer (steady solo voice), voice-note a
+            // touch livelier. Kept near 1.0 so petals stay a faithful read
+            // of the spectrum — set all gains to 1.0 for a pure visualiser.
+            let gain: Float
+            switch mode {
+            case .meeting:   gain = 1.0
+            case .dictation: gain = 0.92
+            case .voiceNote: gain = 1.06
+            }
+            return max(0.12, min(1.0, bands[bandIndex] * gain))
         case .preparing, .stopping, .summarizing:
             return 0.60
         case .paused:
@@ -285,6 +371,8 @@ struct DaisyWidget: View {
     ) -> Color {
         switch status {
         case .preparing, .stopping, .summarizing:
+            // Reduce Motion: no rotating comet — a calm, uniform ring.
+            if reduceMotion { return Color.white.opacity(0.82) }
             let opacity = Self.shimmerOpacity(petalAngle: petalAngle, sweep: sweep)
             return Color.white.opacity(opacity)
         case .recording:
@@ -322,7 +410,10 @@ struct DaisyWidget: View {
         let baseline = 0.55
         let peak = 1.0
         if delta < trailDeg {
-            return baseline + (peak - baseline) * (1 - delta / trailDeg)
+            // Eased (not linear) falloff so the trail reads as light
+            // tapering off, not a hard gradient wipe.
+            let t = 1 - delta / trailDeg
+            return baseline + (peak - baseline) * pow(t, 1.4)
         }
         return baseline
     }
@@ -330,8 +421,7 @@ struct DaisyWidget: View {
     private func centerColor(
         for status: RecordingSession.Status,
         mode: RecordingSession.RecordingMode,
-        summaryGen: RecordingSession.SummaryGenerationState,
-        sweep: Double
+        summaryGen: RecordingSession.SummaryGenerationState
     ) -> Color {
         // "Summary cooking" indicator — when status is .finished but
         // the post-Stop detached task is still running summarize +
@@ -343,11 +433,13 @@ struct DaisyWidget: View {
         // so it's a calmer cousin of recording orange — never
         // confused with "still capturing".
         if case .finished = status, summaryGen == .generating {
-            // 0.55 → 0.95 → 0.55 over a ~3 s cycle (sweep is the
-            // 0…1 sweep already used for petal shimmer; doubling
-            // here gives a slightly slower beat).
-            let pulse = 0.55 + 0.40 * (0.5 + 0.5 * sin(sweep * .pi))
-            return Color.daisyCenterIdle.opacity(pulse)
+            // "Summary cooking" → STATIC warm amber. The opacity sin-pulse
+            // was removed: a centre blinking 0.55↔0.95 under the (now
+            // static) petals re-introduced exactly the "loader + blinking
+            // core" glitch we deliberately removed from .preparing. The
+            // amber HUE (a calm cousin of recording orange) plus the
+            // "Generating summary…" tooltip carry the signal — no blink.
+            return Color.daisyCenterIdle
         }
         switch status {
         // Recording — center hue encodes the active mode so the

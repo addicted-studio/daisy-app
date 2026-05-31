@@ -268,8 +268,9 @@ final class RecordingSession {
     // Re-exported recorder state.
     var elapsed: TimeInterval { recorder.elapsed }
     var levelDB: Float { recorder.levelDB }
-    /// Live audio spectrum (8 bands, 0…1) used by the floating Daisy
-    /// widget to animate its petals. Forwarded from the mic recorder.
+    /// Live audio spectrum (6 voice-tuned bands, 0…1) used by the floating
+    /// Daisy widget to animate its petals — the lower 4 drive the 8 petals,
+    /// mirrored for symmetry. Forwarded from the mic recorder.
     var spectrumBands: [Float] { recorder.spectrumBands }
     /// Every archived audio file the mic recorder produced for this
     /// session. Always at least `[microphone.caf]` while recording;
@@ -1168,7 +1169,8 @@ final class RecordingSession {
         screenshots.stop()
         silenceMonitor.pause()
         status = .paused
-        if settings.recordingSoundsEnabled { SoundEffects.playPause() }
+        // Pause cue removed — it fired mid-capture (leak window) and the
+        // widget colour already signals paused (gray). See SoundEffects.
         log.info("Session paused after \(self.elapsed, privacy: .public)s")
     }
 
@@ -1207,7 +1209,8 @@ final class RecordingSession {
         bindCurrentMeetingIfPossible()
         scheduleAutoStopIfNeeded()
         status = .recording
-        if settings.recordingSoundsEnabled { SoundEffects.playResume() }
+        // Resume cue removed — same reasoning as pause (mid-capture leak
+        // window + redundant with the widget colour). See SoundEffects.
         log.info("Session resumed")
     }
 
@@ -1218,11 +1221,10 @@ final class RecordingSession {
         // no-op so transient states aren't interrupted.
         guard status == .recording || status == .paused else { return }
         removeThermalDowngrade()
-        // Stop cue fires up front — by the time the final
-        // transcribe + summary finish (seconds later), the user has
-        // moved on to other tasks. The audio cue confirms the
-        // click "took" even if the heavy work is still running.
-        if settings.recordingSoundsEnabled { SoundEffects.playStop() }
+        // No stop-click cue — it fired before capture stopped (tailing the
+        // recording) and before any work finished. The "done" cue now plays
+        // when `.finished` lands (SoundEffects.playFinished) — leak-safe and
+        // synced to the widget's celebration pop.
         if status == .paused {
             // Make sure any half-open paused pipelines are fully
             // torn down before the final transcribe.
@@ -1524,6 +1526,7 @@ final class RecordingSession {
             // can run, no auto-send needed.
             releaseSessionsFolderTicket()
             status = .finished
+            if settings.recordingSoundsEnabled { SoundEffects.playFinished() }
             return
         }
         let sessionID = dir.lastPathComponent
@@ -1550,6 +1553,7 @@ final class RecordingSession {
         stopSignposter.endInterval("session_store_refresh", refreshState)
         log.info("post-stop session_store_refresh: \(ms(t_refresh), privacy: .public)ms")
         status = .finished
+        if settings.recordingSoundsEnabled { SoundEffects.playFinished() }
 
         // 2026-05-27 — ALWAYS launch the detached finalize task,
         // not just for the summary case. The final Whisper pass

@@ -70,8 +70,16 @@ extension Color {
     // stays in conversation with the warm-cream surfaces.
 
     static let daisyDictation = Color(
-        light: Color(hex: 0x8A6BC9),
-        dark:  Color(hex: 0xA98EE0)
+        // 2026-05-31 — lifted toward systemOrange's perceptual lightness
+        // (L*≈71) and warmed a touch toward heather so dictation no longer
+        // reads DIMMER or colder than its orange/coral siblings on the dark
+        // puck (measured: orange L*≈71, coral ≈62, lilac was ≈54 — a 2.6×
+        // luminance spread that made meetings look "louder"). Was light
+        // 0x8A6BC9 / dark 0xA98EE0. ⚠️ EYEBALL on device — this is the one
+        // colour change the review flagged as needing a live look; revert
+        // to the old hexes if the heather drifts too pale.
+        light: Color(hex: 0xA98AD4),
+        dark:  Color(hex: 0xC0A8E6)
     )
 
     /// Halo / glow companion to `daisyDictation`.
@@ -91,8 +99,12 @@ extension Color {
     // ~55% so it stays a calm presence, not a cosmetic-pink shout.
 
     static let daisyVoiceNote = Color(
-        light: Color(hex: 0xE86A7C),
-        dark:  Color(hex: 0xF08495)
+        // 2026-05-31 — lifted toward systemOrange's L* (was light 0xE86A7C
+        // L*≈62 / dark 0xF08495) so meetings / voice-note / dictation sit
+        // at matched visual weight — none reads as "more important". Hue +
+        // ~55% saturation intent unchanged. ⚠️ EYEBALL on device.
+        light: Color(hex: 0xEE8593),
+        dark:  Color(hex: 0xF49DAA)
     )
 
     /// Halo / glow companion to `daisyVoiceNote`.
