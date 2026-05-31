@@ -409,9 +409,11 @@ struct ContentView: View {
         .disabled(session.status == .recording || session.status == .summarizing)
     }
 
-    /// Upcoming calendar events in the next 6 hours — anything
-    /// further out clutters the picker and isn't what the user is
-    /// about to join right now.
+    /// Upcoming calendar entries within `CalendarService.upcomingWindowSec`
+    /// — the SAME window the menu-bar next-meeting label uses, so the
+    /// picker can always select whatever the menu bar names. This was 6h
+    /// here while the label was 8h, so an event 6–8h out showed in the
+    /// menu bar but returned "No upcoming events" in the picker.
     ///
     /// 2026-05-25 — source switched from `upcomingMeetings` (Zoom /
     /// Meet / Teams URL-only filter via `.isMeeting`) → `upcomingEvents`
@@ -426,7 +428,7 @@ struct ContentView: View {
     /// today, let me bind to it").
     private var upcomingMeetingChoices: [DaisyMeeting] {
         let now = Date()
-        let cutoff = now.addingTimeInterval(6 * 3600)
+        let cutoff = now.addingTimeInterval(CalendarService.upcomingWindowSec)
         return CalendarService.shared.upcomingEvents
             .filter { $0.startDate <= cutoff && $0.endDate >= now }
     }
