@@ -40,20 +40,20 @@ struct DaisyWidget: View {
         }
     }
 
-    // Geometry shrunk 20% in build 45 — request was to make the active
-    // recording widget less obtrusive on screen. Petal/center/canvas all
-    // multiplied by 0.8 to preserve proportions; `passiveScale` still
-    // applies on top, so passive (idle/finished) state shrinks
-    // proportionally relative to the new active baseline. Panel
-    // container in FloatingPanelController.swift dropped 80 → 64 to
-    // match (shadow padding stays ≈9.5pt on each side, well clear of
-    // the .shadow(radius:6, y:3) blur extent).
+    // Geometry: build 45 shrank everything 20% (×0.8 off the original
+    // 7/18/7/10/56); then +10% per request → net ×0.88 of original.
+    // Petal/center/canvas scale together to preserve proportions;
+    // `passiveScale` still applies on top, so passive (idle/finished)
+    // state shrinks proportionally relative to this active baseline.
+    // Panel container in FloatingPanelController.swift is sized to match
+    // (64 → 70.4) so shadow padding stays proportional (≈10.5pt each side,
+    // well clear of the .shadow(radius:6, y:3) blur extent).
     private let petalCount = 8
-    private let basePetalLength: CGFloat = 5.6   // was 7
-    private let maxPetalLength: CGFloat = 14.4   // was 18
-    private let petalWidth: CGFloat = 5.6        // was 7
-    private let centerSize: CGFloat = 8          // was 10
-    private let canvasSize: CGFloat = 45         // was 56
+    private let basePetalLength: CGFloat = 6.16  // 5.6 +10%
+    private let maxPetalLength: CGFloat = 15.84  // 14.4 +10%
+    private let petalWidth: CGFloat = 6.16       // 5.6 +10%
+    private let centerSize: CGFloat = 8.8        // 8 +10%
+    private let canvasSize: CGFloat = 49.5       // 45 +10%
     private let petalGap: CGFloat = 0.5
 
     var body: some View {

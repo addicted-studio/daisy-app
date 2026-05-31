@@ -452,6 +452,13 @@ final class CalendarService {
     /// multiplexed `refresh()` populates from BOTH EventKit and
     /// direct Google API. A user with only Google connected (and
     /// Apple Calendar revoked) still sees their next meeting here.
+    /// Shared look-ahead window for "upcoming" calendar entries. The
+    /// menu-bar next-meeting label AND the popover meeting picker BOTH
+    /// read it, so they can never disagree about what's upcoming — the
+    /// bug where the menu bar named an event (8h window) that the picker
+    /// then couldn't select (old 6h window).
+    static let upcomingWindowSec: TimeInterval = 8 * 3600
+
     var nextMeetingShortLabel: String? {
         // Either Apple Calendar permission OR Google OAuth must be
         // live; otherwise `upcomingEvents` is empty/stale.
@@ -460,7 +467,7 @@ final class CalendarService {
         guard hasEventKit || hasGoogle else { return nil }
 
         let now = Date()
-        let cutoff = now.addingTimeInterval(8 * 3600)
+        let cutoff = now.addingTimeInterval(Self.upcomingWindowSec)
         guard let next = upcomingEvents.first(where: {
             $0.startDate > now && $0.startDate <= cutoff
         }) else { return nil }

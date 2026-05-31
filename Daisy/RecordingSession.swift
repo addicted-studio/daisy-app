@@ -1313,12 +1313,40 @@ final class RecordingSession {
             systemAudio.archivedFrameCount > 0
         let hasTranscript = !segments.isEmpty
         if !capturedAnyAudio && !hasTranscript {
-            if let dir = sessionDirectory {
-                try? FileManager.default.removeItem(at: dir)
-                log.info("Stop: no audio and no transcript captured, removed empty session dir")
+            // Nothing usable was captured — and NEITHER branch may delete
+            // a recording silently. This path has erased real recordings
+            // before, and a session the user deliberately started must
+            // never just vanish.
+            if elapsed < 10 {
+                // Genuine accidental tap (Record → immediately Stop).
+                // Remove the husk, but say so — not silent.
+                if let dir = sessionDirectory {
+                    try? FileManager.default.removeItem(at: dir)
+                    log.info("Stop: <10s and nothing captured — removed husk")
+                }
+                ToastCenter.shared.show(
+                    "Recording too short — nothing to save",
+                    style: .info,
+                    duration: .seconds(3)
+                )
+                reset()
+                return
             }
-            reset()
-            return
+            // ≥10s but empty (e.g. the live engine silently produced
+            // nothing in "Don't record audio" mode). KEEP the session and
+            // warn, so it stays visible in the Library and the user can
+            // act — rather than disappearing. Safe to keep: summary
+            // (`willSummarize … && !segments.isEmpty`) and auto-send
+            // (`!segments.isEmpty`) both already skip an empty transcript,
+            // so nothing gets summarised or pushed to Notion on empty — it
+            // just leaves an (empty) transcript.md the user can see.
+            log.warning("Stop: \(self.elapsed, privacy: .public)s elapsed but no audio and no transcript — keeping session and warning (not deleting)")
+            ToastCenter.shared.show(
+                "Nothing was transcribed this session — check your mic and Settings → Transcription. The recording was kept, not discarded",
+                style: .warning,
+                duration: .seconds(8)
+            )
+            // fall through — keep the empty session instead of removing it.
         }
 
         // 2026-05-25 — per-stage timing for the pre-`.finished`
