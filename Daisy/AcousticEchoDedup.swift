@@ -16,9 +16,15 @@
 //
 //    1. Walk `segments` (already sorted by `startedAt`).
 //    2. For each MIC-side segment, search ±2 seconds around its
-//       start time for any SYSTEM-side segment with matching text:
-//         • Normalized Levenshtein similarity > 0.8
-//         • Length ratio within ±20%
+//       start time for any SYSTEM-side segment with matching text,
+//       by EITHER:
+//         • near-equal length (±20%) + Levenshtein similarity > 0.8, OR
+//         • containment — the shorter normalized text (≥12 chars) is a
+//           substring of the longer one. Handles the common case where
+//           one stream emits a whole sentence as a single segment while
+//           the other splits it into 2-3 chunks (the ±20% length gate
+//           alone rejected those, so echoes leaked through — observed on
+//           the 2026-05-31 Billions-through-speakers test).
 //    3. Mark the mic segment as an echo candidate.
 //    4. After the full pass: drop runs of ≥3 consecutive echo
 //       candidates outright (confirmed echo — extremely unlikely
@@ -57,6 +63,13 @@ enum AcousticEchoDedup {
     /// quoting ("ты сказал X") rarely exceeds 0.6 because the user's
     /// surrounding words break the match.
     private static let similarityThreshold: Double = 0.80
+
+    /// Minimum length (normalized chars) of the shorter segment for the
+    /// containment path to fire. Below this, short fillers ("да", "нет",
+    /// "хорошо") would be a substring of almost any longer line. ~12
+    /// chars ≈ 2-3 Russian words. The ≥3-consecutive run rule still
+    /// backstops a false single match.
+    private static let minContainmentLen: Int = 12
 
     /// Minimum length of a "confirmed echo" run. Runs of N or more
     /// consecutive mic segments matching nearby system segments are
@@ -215,15 +228,35 @@ enum AcousticEchoDedup {
     /// the length-ratio gate first (cheap O(1) reject) before
     /// running Levenshtein (O(n*m)).
     private static func isEchoMatch(micText: String, sysText: String) -> Bool {
-        guard !sysText.isEmpty else { return false }
+        guard !sysText.isEmpty, !micText.isEmpty else { return false }
         let micLen = Double(micText.count)
         let sysLen = Double(sysText.count)
+
+        // Path 1 — near-equal length + high similarity. Catches the same
+        // utterance transcribed slightly differently on each stream
+        // ("Нова Медиа" vs "Ново-Медиа") when both streams chunked it
+        // the same way.
         let ratio = abs(micLen - sysLen) / max(micLen, sysLen)
-        guard ratio <= lengthRatioTolerance else { return false }
-        let dist = Double(levenshtein(micText, sysText))
-        let maxLen = max(micLen, sysLen)
-        let similarity = 1.0 - (dist / maxLen)
-        return similarity >= similarityThreshold
+        if ratio <= lengthRatioTolerance {
+            let dist = Double(levenshtein(micText, sysText))
+            let similarity = 1.0 - (dist / max(micLen, sysLen))
+            if similarity >= similarityThreshold { return true }
+        }
+
+        // Path 2 — containment. The common real case: one stream emits
+        // the whole sentence as one segment while the other splits it
+        // into chunks, so each chunk is a substring of the long segment
+        // but the ±20% length gate (Path 1) rejects it. If the shorter
+        // normalized text is substantial (≥ minContainmentLen) and is a
+        // substring of the longer, treat as echo. The ≥3-consecutive run
+        // rule in `filter` still protects an isolated legitimate quote.
+        let (shorter, longer) = micLen <= sysLen
+            ? (micText, sysText)
+            : (sysText, micText)
+        if shorter.count >= minContainmentLen, longer.contains(shorter) {
+            return true
+        }
+        return false
     }
 
     /// Normalize for similarity comparison: lowercase, drop

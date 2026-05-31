@@ -18,13 +18,29 @@
 //  audibly distinct from the longer recording modes; we'll align
 //  on Purr there too if the difference doesn't earn its keep.
 //
-//  Selection:
+//  Selection (2026-05-31 — pared back after the 4-lens A/V review):
 //   • Start (meeting)    → "Purr"   — short, warm, "listening"
 //   • Start (voice note) → "Pop"    — soft accent, neutral
 //   • Start (dictation)  → "Purr"   — same as meeting-start
-//   • Pause              → "Pop"    — soft accent, neutral
-//   • Resume             → "Purr"   — logically same as start
-//   • Stop               → "Glass"  — clear, complete, finished
+//   • Finished           → "Glass"  — clear, complete; fired the instant
+//                                     `.finished` lands so it syncs with the
+//                                     widget's celebration pop
+//   • Failed             → "Sosumi" — distinct, gentle "something's wrong"
+//
+//  Pause / Resume cues were REMOVED: they fired mid-capture (the worst
+//  leak window — on built-in speakers the loopback records them, and on
+//  macOS 26 self-exclusion is off), and the widget colour already carries
+//  the state (gray ↔ orange). The old Stop-click cue was likewise dropped —
+//  it fired BEFORE capture stopped (tailing the recording) and before any
+//  work finished; the "done" signal now lives on `.finished`.
+//  `playPause` / `playResume` / `playStop` are kept below, unused, for
+//  reference / quick revert.
+//
+//  ⚠️ KNOWN GAPS (dev / design): the Start cue can still be captured on
+//  macOS 26 until the SystemAudioCapture self-exclusion split is restored.
+//  And these reused macOS system sounds are placeholders — a small bespoke
+//  palette (bloom / settle / error, one instrument) is the real fix and
+//  needs a sound designer + bundled assets. See the 2026-05-31 review note.
 //
 //  Volume: each NSSound starts at 1.0; we set 0.4 to keep cues
 //  noticeable but not jarring. Recording-app sounds that boom
@@ -49,6 +65,17 @@ enum SoundEffects {
     static func playPause()   { play(named: "Pop") }
     static func playResume()  { play(named: "Purr", fallback: "Pop") }
     static func playStop()    { play(named: "Glass") }
+
+    /// Played the instant the session lands in `.finished` (transcript
+    /// ready, user unblocked) — lands with the widget's celebration pop.
+    /// This is the real "done", replacing the old stop-click cue that
+    /// fired before any work finished AND could tail into the recording.
+    static func playFinished() { play(named: "Glass") }
+
+    /// Played when a recording fails / is lost. Distinct from the success
+    /// cues so "something went wrong" is unmistakable, but not alarming.
+    /// (Provisional system sound — a bespoke error tone is the real fix.)
+    static func playError()    { play(named: "Sosumi", fallback: "Funk") }
 
     private static func play(named name: String, fallback: String? = nil) {
         // `NSSound(named:)` returns nil for unknown names — keep
