@@ -1218,7 +1218,18 @@ final class CoreAudioMicRecorder: MicRecording {
         displayTimer = Timer.scheduledTimer(
             withTimeInterval: Self.spectrumPublishIntervalSec, repeats: true
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.pumpDisplay() }
+            // The timer is scheduled on the MAIN run loop (startDisplayTimer
+            // is @MainActor) ⇒ this block fires on the main thread. Run the
+            // pump SYNCHRONOUSLY via assumeIsolated. Do NOT hop through
+            // `Task { @MainActor }`: that re-queues onto the cooperative
+            // executor, which live large-v3 transcription (4× fallback)
+            // saturates — so the pump starved and the petals stayed frozen
+            // even after c2b9b2b moved it onto a 30 Hz timer (the timer
+            // changed the cadence but not the starving locus). The run-loop
+            // timer source IS serviced even while the cooperative queue is
+            // backed up — same footing as the widget's TimelineView redraw,
+            // which keeps rendering — so the pump now actually lands.
+            MainActor.assumeIsolated { self?.pumpDisplay() }
         }
     }
 
@@ -1226,6 +1237,9 @@ final class CoreAudioMicRecorder: MicRecording {
         displayTimer?.invalidate()
         displayTimer = nil
     }
+
+    /// Diagnostic tick counter for the display pump (debug-only, ~1 Hz log).
+    @ObservationIgnored private var displayPumpDiagTick = 0
 
     /// Copy the most recent render-thread level + spectrum sample into
     /// the Observable surface. No-op once we're no longer recording so a
@@ -1236,6 +1250,14 @@ final class CoreAudioMicRecorder: MicRecording {
         let snap = levelSpectrum.snapshot()
         levelDB = snap.level
         if let bands = snap.bands { spectrumBands = bands }
+        // Debug-only liveness probe (~1 Hz): confirms the run-loop timer is
+        // actually firing under load and what it's publishing. Visible only
+        // with `log … --debug`; never shown to users. Remove once verified.
+        displayPumpDiagTick &+= 1
+        if displayPumpDiagTick % 30 == 0 {
+            let maxBand = snap.bands?.max() ?? -1
+            log.debug("display pump alive: level=\(snap.level, privacy: .public) dBFS, maxBand=\(maxBand, privacy: .public), bandsNil=\(snap.bands == nil, privacy: .public)")
+        }
     }
 
     /// AUHAL input element == 1, output element == 0 (Apple convention).
