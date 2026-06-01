@@ -1162,7 +1162,11 @@ final class RecordingSession {
         diskMonitorTimer = Timer.scheduledTimer(
             withTimeInterval: Self.diskMonitorIntervalSec, repeats: true
         ) { [weak self] _ in
-            Task { @MainActor in self?.checkDiskSpace() }
+            // Rebind to a strong `let` so the Task captures by value —
+            // otherwise Swift 6 flags the captured `weak self` var crossing
+            // the concurrency boundary (same pattern as the auto-stop timers).
+            guard let self else { return }
+            Task { @MainActor in self.checkDiskSpace() }
         }
     }
 
