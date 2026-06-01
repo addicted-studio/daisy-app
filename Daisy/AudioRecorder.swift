@@ -518,6 +518,7 @@ final class AudioRecorder {
            let hwSampleRate = AudioInputDevices.streamFormatSampleRate(for: auDeviceID),
            abs(newFormat.sampleRate - hwSampleRate) > 0.5 {
             log.warning("Format de-sync at resume: AVAudioEngine reports \(newFormat.sampleRate, privacy: .public) Hz, CoreAudio reports \(hwSampleRate, privacy: .public) Hz on device \(auDeviceID, privacy: .public). Attempting full engine rebuild.")
+            log.warning("De-sync diag: \(AudioInputDevices.streamRateDiagnostics(for: auDeviceID), privacy: .public)")
             guard rebuildEngineAndRetry() else {
                 log.error("Engine rebuild on resume failed. Staying paused.")
                 throw DaisyError.audioEngineFailed("Mic device changed and the audio engine couldn't reinitialize. Hit Record to start a new session.")
@@ -799,6 +800,7 @@ final class AudioRecorder {
            let hwSampleRate = AudioInputDevices.streamFormatSampleRate(for: auDeviceID),
            abs(newFormat.sampleRate - hwSampleRate) > 0.5 {
             log.warning("Format de-sync after route change: AVAudioEngine reports \(newFormat.sampleRate, privacy: .public) Hz, CoreAudio reports \(hwSampleRate, privacy: .public) Hz on device \(auDeviceID, privacy: .public). Attempting full engine rebuild.")
+            log.warning("De-sync diag: \(AudioInputDevices.streamRateDiagnostics(for: auDeviceID), privacy: .public)")
             if rebuildEngineAndRetry() {
                 log.info("Recovery via engine rebuild succeeded — recording continues")
                 ToastCenter.shared.show(
@@ -958,6 +960,7 @@ final class AudioRecorder {
            let hwSampleRate = AudioInputDevices.streamFormatSampleRate(for: auDeviceID),
            abs(newFormat.sampleRate - hwSampleRate) > 0.5 {
             log.error("Engine rebuild produced ANOTHER format de-sync: AVE \(newFormat.sampleRate, privacy: .public) Hz vs CoreAudio \(hwSampleRate, privacy: .public) Hz. Auto-recovery exhausted.")
+            log.error("De-sync diag: \(AudioInputDevices.streamRateDiagnostics(for: auDeviceID), privacy: .public) | AVE reports \(newFormat.sampleRate, privacy: .public)Hz/\(newFormat.channelCount, privacy: .public)ch")
             return false
         }
 
