@@ -724,8 +724,24 @@ final class CoreAudioMicRecorder: MicRecording {
         // construction (disposeUnit removes the callback before nil-ing
         // the box).
         let refcon = Unmanaged.passUnretained(ctx).toOpaque()
+        // Literal NON-CAPTURING closure for the C render callback. A
+        // top-level `func` can't be used here when the module defaults to
+        // MainActor isolation (the func becomes implicitly @MainActor and a
+        // @convention(c) pointer can't be formed from an isolated func —
+        // "A C function pointer can only be formed from a reference to a
+        // 'func' or a literal closure"). A literal closure that captures
+        // nothing IS @convention(c)-formable; the RenderContext travels via
+        // the refcon and is recovered with Unmanaged.
         var callbackStruct = AURenderCallbackStruct(
-            inputProc: coreAudioMicInputCallback,
+            inputProc: { inRefCon, ioActionFlags, inTimeStamp, inBusNumber, inNumberFrames, _ in
+                let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
+                return ctx.process(
+                    ioActionFlags: ioActionFlags,
+                    inTimeStamp: inTimeStamp,
+                    inBusNumber: inBusNumber,
+                    inNumberFrames: inNumberFrames
+                )
+            },
             inputProcRefCon: refcon
         )
         let status = AudioUnitSetProperty(
@@ -1365,28 +1381,9 @@ private final class RenderContext: @unchecked Sendable {
 
 // MARK: - C render callback (free function)
 
-/// The AUHAL input render callback. Recovers the `RenderContext` from the
-/// refcon and delegates to `process`. Must be a free C function (no
-/// captured context) — that's why the box pointer travels in the refcon.
-private func coreAudioMicInputCallback(
-    inRefCon: UnsafeMutableRawPointer,
-    ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
-    inTimeStamp: UnsafePointer<AudioTimeStamp>,
-    inBusNumber: UInt32,
-    inNumberFrames: UInt32,
-    ioData: UnsafeMutablePointer<AudioBufferList>?
-) -> OSStatus {
-    // Unretained — the box is alive for as long as the unit (and thus
-    // this callback) can fire; CoreAudioMicRecorder.disposeUnit() removes
-    // the callback before releasing the box.
-    let ctx = Unmanaged<RenderContext>.fromOpaque(inRefCon).takeUnretainedValue()
-    return ctx.process(
-        ioActionFlags: ioActionFlags,
-        inTimeStamp: inTimeStamp,
-        inBusNumber: inBusNumber,
-        inNumberFrames: inNumberFrames
-    )
-}
+// (The AUHAL input render callback is an inline non-capturing literal
+// closure in `installRenderContext` — it must be a literal, not a named
+// func, to form a @convention(c) pointer under default MainActor isolation.)
 
 // MARK: - Cross-thread lock-boxes
 //
