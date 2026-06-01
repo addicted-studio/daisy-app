@@ -382,7 +382,12 @@ final class RecordingSession {
     // `silencePromptsEnabled` without us threading an extra
     // reference through its constructor.
     let settings: AppSettings
-    private let recorder: AudioRecorder
+    /// Microphone recorder. Concrete type chosen at init time behind
+    /// `settings.useCoreAudioMicCapture`: the AVAudioEngine-backed
+    /// `AudioRecorder` (default) or the direct-CoreAudio-AUHAL
+    /// `CoreAudioMicRecorder` (opt-in). Both conform to `MicRecording`,
+    /// so every `recorder.*` call site below is unchanged.
+    private let recorder: any MicRecording
     private let systemAudio: SystemAudioCapture
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Session")
     /// Dedicated logger for auto-stop wire-up. Separate category so
@@ -508,7 +513,15 @@ final class RecordingSession {
         let resolved = localeIdentifier ?? settings.defaultTranscriptionLocale
         let effective = resolved.isEmpty ? "auto" : resolved
         self.localeIdentifier = effective
-        self.recorder = AudioRecorder()
+        // Pick the mic capture backend behind the validation flag. Both
+        // conform to `MicRecording` with an identical public surface, so
+        // nothing else in this file changes. Default OFF →
+        // AVAudioEngine-backed AudioRecorder (the shipping path).
+        if settings.useCoreAudioMicCapture {
+            self.recorder = CoreAudioMicRecorder()
+        } else {
+            self.recorder = AudioRecorder()
+        }
         self.systemAudio = SystemAudioCapture()
         self.micTranscriber = Transcriber(
             localeIdentifier: effective,
