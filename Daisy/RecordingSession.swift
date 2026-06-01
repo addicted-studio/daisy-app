@@ -436,6 +436,21 @@ final class RecordingSession {
     /// How often the silence-gated evaluator re-checks.
     private static let autoStopEvalIntervalSec: TimeInterval = 10
 
+    // ─── Low-disk guard (transcript-only fallback) ───────────────────
+    /// True when this session is transcript-only because of low disk (set
+    /// at start or after a mid-recording switch). Stops the disk monitor
+    /// from firing twice.
+    @ObservationIgnored
+    private var diskTranscriptOnly = false
+    @ObservationIgnored
+    private var diskMonitorTimer: Timer?
+    /// Below this much free space at start → record transcript-only.
+    private static let lowDiskStartThresholdBytes: Int64 = 3 * 1_073_741_824      // 3 GB
+    /// Below this much free space mid-recording → auto-switch to transcript-only.
+    private static let lowDiskCriticalThresholdBytes: Int64 = 1_536 * 1_048_576   // 1.5 GB
+    /// Disk-space poll cadence while recording.
+    private static let diskMonitorIntervalSec: TimeInterval = 45
+
     /// Live tier the active session STARTED with — the restore target once
     /// thermal/low-power pressure clears. Only Full sessions auto-downgrade.
     @ObservationIgnored
@@ -901,9 +916,27 @@ final class RecordingSession {
         // the Storage picker; the trade-off is no crash-recovery
         // (if Daisy goes away mid-meeting, transcript is lost too)
         // and no "re-summarize with a better model" after the fact.
-        let skipAudioArchive = settings.audioRetentionDays == AppSettings.audioRetentionDoNotRecord
+        let skipForRetention = settings.audioRetentionDays == AppSettings.audioRetentionDoNotRecord
+        // Low-disk guard (2026-06-01, Egor's "auto + notify"): if the volume
+        // is below the start threshold, record TRANSCRIPT-ONLY this session —
+        // audio is the heavy part (~0.7 GB/hr) and would fill the disk. Reuses
+        // the same skip-archive path as the "Don't record audio" retention
+        // mode (Whisper still gets full audio via the live stream).
+        let freeAtStart = Self.freeDiskBytes(at: dir)
+        let lowDiskAtStart = !skipForRetention && (freeAtStart ?? .max) < Self.lowDiskStartThresholdBytes
+        diskTranscriptOnly = lowDiskAtStart
+        let skipAudioArchive = skipForRetention || lowDiskAtStart
         let micArchive = skipAudioArchive ? nil : dir?.appendingPathComponent("microphone.caf")
         let systemArchive = skipAudioArchive ? nil : dir?.appendingPathComponent("system_audio.caf")
+        if lowDiskAtStart {
+            let freeGB = Double(freeAtStart ?? 0) / 1_073_741_824
+            ToastCenter.shared.show(
+                String(format: "Low disk space (%.1f GB free) — recording transcript only this session, no audio. Free up space to record audio again.", freeGB),
+                style: .warning,
+                duration: .seconds(6)
+            )
+            log.warning("Low disk at start (\(freeAtStart ?? -1, privacy: .public) bytes free) — transcript-only session")
+        }
 
         let nowStarted = Date()
 
@@ -1005,6 +1038,7 @@ final class RecordingSession {
         // Calendar-bound sessions can opt into auto-stop at end+grace.
         scheduleAutoStopIfNeeded()
         silenceMonitor.start()
+        startDiskMonitor()
     }
 
     // MARK: - Auto-stop (calendar-bound)
@@ -1119,6 +1153,45 @@ final class RecordingSession {
         autoStopWarningTimer?.invalidate()
         autoStopTimer = nil
         autoStopWarningTimer = nil
+    }
+
+    // MARK: - Low-disk guard (auto transcript-only)
+
+    private func startDiskMonitor() {
+        stopDiskMonitor()
+        diskMonitorTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.diskMonitorIntervalSec, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor in self?.checkDiskSpace() }
+        }
+    }
+
+    private func stopDiskMonitor() {
+        diskMonitorTimer?.invalidate()
+        diskMonitorTimer = nil
+    }
+
+    /// Mid-recording low-disk guard. If free space drops below the critical
+    /// floor while we're still archiving audio, auto-switch to transcript-only
+    /// (stop both archives, keep transcribing) + notify — Egor's 2026-06-01
+    /// "auto + notify" choice. Fires once; self-terminates once recording ends.
+    private func checkDiskSpace() {
+        guard status == .recording else { stopDiskMonitor(); return }
+        guard !diskTranscriptOnly,
+              settings.audioRetentionDays != AppSettings.audioRetentionDoNotRecord,
+              let free = Self.freeDiskBytes(at: sessionDirectory),
+              free < Self.lowDiskCriticalThresholdBytes
+        else { return }
+        diskTranscriptOnly = true
+        recorder.stopArchivingKeepTranscribing()
+        systemAudio.stopArchivingKeepTranscribing()
+        let freeGB = Double(free) / 1_073_741_824
+        ToastCenter.shared.show(
+            String(format: "Disk space critically low (%.1f GB) — switched to transcript only. Audio stopped to avoid filling your disk; the transcript keeps recording.", freeGB),
+            style: .warning,
+            duration: .seconds(7)
+        )
+        log.warning("Low disk mid-recording (\(free, privacy: .public) bytes free) — switched to transcript-only")
     }
 
     /// Repeating evaluator (every `autoStopEvalIntervalSec`) for the
@@ -2419,6 +2492,16 @@ final class RecordingSession {
     /// Read on-disk byte count for an archive URL. Returns 0 for
     /// missing file (FileManager throws → treat as nothing on disk).
     /// Synchronous file-system stat — only called once per stream
+    /// Free bytes on the volume backing `url` — "important usage" capacity,
+    /// which counts purgeable space, so we don't drop to transcript-only on a
+    /// disk macOS could free on demand. nil if unqueryable; callers treat nil
+    /// as "plenty".
+    private static func freeDiskBytes(at url: URL?) -> Int64? {
+        guard let url else { return nil }
+        return (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage
+    }
+
     /// per stop(), not in a hot loop.
     private static func archiveBytesOnDisk(_ url: URL?) -> Int64 {
         guard let url else { return 0 }

@@ -258,6 +258,19 @@ final class AudioRecorder {
     }
     @ObservationIgnored
     private let micLiveness = MicLivenessBox()
+
+    /// Render-thread write gate. Lets us stop writing audio to disk
+    /// mid-session (low-disk → transcript-only) WITHOUT tearing down the
+    /// tap — the tap keeps yielding buffers to the transcriber, it just
+    /// skips the on-disk write. Default open; closed by
+    /// `stopArchivingKeepTranscribing()`, reopened on each `start()`.
+    private final class ArchiveGate: @unchecked Sendable {
+        private let lock = OSAllocatedUnfairLock(initialState: true)
+        var isOpen: Bool { lock.withLock { $0 } }
+        func set(_ open: Bool) { lock.withLock { $0 = open } }
+    }
+    @ObservationIgnored
+    private let archiveGate = ArchiveGate()
     /// Repeating MainActor timer that runs the signal-level silence
     /// check while `.recording`. Distinct from `recoveryWatchdog`
     /// (one-shot, arrival-only, armed around route changes).
@@ -402,6 +415,7 @@ final class AudioRecorder {
         writeErrors.reset()
         framesWritten.reset()
         bufferTimestamp.reset()
+        archiveGate.set(true)   // fresh session always starts archiving
         installInputTap(format: format)
 
         engine.prepare()
@@ -460,6 +474,15 @@ final class AudioRecorder {
         spectrumBands = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
         state = .paused
         log.info("AudioRecorder paused after \(self.elapsed, privacy: .public)s")
+    }
+
+    /// Stop writing the audio archive to disk but keep the tap + live
+    /// transcription running (low-disk → transcript-only). Audio written
+    /// so far is kept and finalized at `stop()`; no tap teardown — just
+    /// closes the render-thread write gate so no further bytes hit disk.
+    func stopArchivingKeepTranscribing() {
+        archiveGate.set(false)
+        log.warning("Mic archiving stopped (low disk) — transcription continues, no further audio written")
     }
 
     /// Resume after `pause()`. Re-derives the AUHAL binding + audio
@@ -1243,6 +1266,7 @@ final class AudioRecorder {
         let framesWrittenRef = framesWritten
         let timestampRef = bufferTimestamp
         let livenessRef = micLiveness
+        let gateRef = archiveGate
         // Fresh grace window every time a new audio path starts (start,
         // resume, route-change recovery, engine rebuild) so the silence
         // monitor doesn't trip during the brief no-buffer transition.
@@ -1255,7 +1279,7 @@ final class AudioRecorder {
             // Atomic timestamp mark — read by the MainActor recovery
             // watchdog to detect AUHAL-on-dead-device silent failure.
             timestampRef.mark(Date())
-            if let fileRef {
+            if gateRef.isOpen, let fileRef {
                 do {
                     try fileRef.write(from: buffer)
                     // Only counted on success. Divergence between

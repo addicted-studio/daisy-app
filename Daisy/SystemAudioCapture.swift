@@ -790,6 +790,20 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         log.info("SystemAudio paused")
     }
 
+    /// Stop writing the system-audio archive but keep delivering buffers
+    /// to the transcriber (low-disk → transcript-only). The render
+    /// callback yields to the continuation BEFORE the archive block, so
+    /// nil-ing the URL + writer just skips the on-disk write (and
+    /// finalizes whatever was written so far). Fenced through outputQueue
+    /// like every other writer mutation.
+    func stopArchivingKeepTranscribing() {
+        outputQueue.sync {
+            archiveWriter = nil
+            archiveURL = nil
+        }
+        log.warning("System audio archiving stopped (low disk) — transcription continues")
+    }
+
     /// Resume after `pause()`: build a new SCStream with the same
     /// config and route its output to the existing continuation.
     func resume() async throws {
