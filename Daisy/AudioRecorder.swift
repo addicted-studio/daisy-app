@@ -423,6 +423,15 @@ final class AudioRecorder {
             Task { @MainActor [weak self] in self?.tick() }
         }
         startSilenceMonitor()
+        // Arrival watchdog for the INITIAL start (was only armed in recovery
+        // paths). engine.start() can return success while the mic delivers 0
+        // frames — a wired headset opened at a mis-negotiated rate (the
+        // 2026-06-01 "Kirill" call: base 44100 Hz / 0 frames, real audio only
+        // in part2 at 48000 Hz after a later route change). On no-buffers-in-5s
+        // this escalates to a full engine rebuild (re-resolves device +
+        // format) rather than pausing, so an auto-started meeting doesn't
+        // silently lose the user's voice.
+        armRecoveryWatchdog(escalateToRebuild: true)
 
         log.info("AudioRecorder started")
     }
@@ -1095,14 +1104,14 @@ final class AudioRecorder {
     /// the two arms would falsely satisfy the second check on stale
     /// data. armedAt requires a strictly POST-arm buffer, which is the
     /// only signal that actually proves the new graph is alive.
-    private func armRecoveryWatchdog(deadline: TimeInterval = 5.0) {
+    private func armRecoveryWatchdog(deadline: TimeInterval = 5.0, escalateToRebuild: Bool = false) {
         cancelRecoveryWatchdog()
         recoveryGeneration &+= 1
         let generation = recoveryGeneration
         let armedAt = Date()
         recoveryWatchdog = Timer.scheduledTimer(withTimeInterval: deadline, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.checkRecoveryProgress(armedAt: armedAt, generation: generation)
+                self?.checkRecoveryProgress(armedAt: armedAt, generation: generation, escalateToRebuild: escalateToRebuild)
             }
         }
     }
@@ -1114,7 +1123,7 @@ final class AudioRecorder {
         recoveryGeneration &+= 1
     }
 
-    private func checkRecoveryProgress(armedAt: Date, generation: Int) {
+    private func checkRecoveryProgress(armedAt: Date, generation: Int, escalateToRebuild: Bool = false) {
         // A newer arm/cancel happened after this timer fired (route-change
         // flapping) — act on it and we'd be using a stale armedAt.
         guard generation == recoveryGeneration else {
@@ -1126,7 +1135,24 @@ final class AudioRecorder {
         let current = bufferTimestamp.snapshot()
         // Healthy: at least one buffer arrived strictly after arm time.
         if let c = current, c > armedAt { return }
-        log.error("Recovery watchdog fired — no audio buffers post-arm. Falling to paused.")
+
+        // No buffers post-arm. When this watchdog was armed right after the
+        // INITIAL start() (escalateToRebuild=true), the mic opened on a
+        // device/format that delivers nothing — the wired-headset-at-44100 /
+        // 0-frame case (2026-06-01 "Kirill" call: base file 44100 Hz / 0
+        // frames, audio only landed once a route change rolled part2 at 48
+        // kHz). A full engine rebuild re-resolves the device + format and
+        // rolls a fresh part — far better than pausing an unattended
+        // auto-started meeting and losing the user's voice. rebuildEngineAndRetry
+        // arms its OWN (non-escalating) watchdog, so a second failure falls
+        // to paused — no rebuild loop.
+        if escalateToRebuild {
+            log.error("Recovery watchdog fired at start — no buffers post-arm. Rebuilding engine before pausing.")
+            if rebuildEngineAndRetry() { return }
+            log.error("Start-time rebuild failed — falling to paused.")
+        } else {
+            log.error("Recovery watchdog fired — no audio buffers post-arm. Falling to paused.")
+        }
         fallToPaused()
         ToastCenter.shared.show(
             "Mic stopped delivering audio — recording paused. Hit Resume to retry.",
