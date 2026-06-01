@@ -247,6 +247,39 @@ enum AudioInputDevices {
         return format.mSampleRate
     }
 
+    /// Diagnostic snapshot of a device's sample-rate reporting across
+    /// scopes + nominal, logged at format-de-sync points (2026-06-01).
+    /// Lets us tell a genuine AVAudioEngine-vs-CoreAudio staleness
+    /// de-sync (input stream already == output/nominal, AVE just lags
+    /// behind and catches up after the device settles) from a
+    /// scope/asymmetry artifact (input stream ≠ output stream — a device
+    /// whose mic really runs at a different rate than its speakers).
+    /// Best-effort; unreadable values render as "?".
+    static func streamRateDiagnostics(for id: AudioDeviceID) -> String {
+        func streamRate(_ scope: AudioObjectPropertyScope) -> String {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreamFormat,
+                mScope: scope,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var fmt = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            let st = AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &fmt)
+            return (st == noErr && fmt.mSampleRate > 0) ? String(format: "%.0f", fmt.mSampleRate) : "?"
+        }
+        var nominalAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var nominal: Float64 = 0
+        var nominalSize = UInt32(MemoryLayout<Float64>.size)
+        let nominalStatus = AudioObjectGetPropertyData(id, &nominalAddr, 0, nil, &nominalSize, &nominal)
+        let nominalStr = (nominalStatus == noErr && nominal > 0) ? String(format: "%.0f", nominal) : "?"
+        let name = deviceName(id) ?? "?"
+        return "device \(id) '\(name)': inputStream=\(streamRate(kAudioDevicePropertyScopeInput))Hz, outputStream=\(streamRate(kAudioDevicePropertyScopeOutput))Hz, nominal=\(nominalStr)Hz"
+    }
+
     /// A device qualifies as an "input" if it has at least one
     /// stream on the input scope. Most output-only devices (HDMI
     /// displays, headphones) report zero here.
