@@ -2368,12 +2368,21 @@ final class RecordingSession {
         }
         let bytes = Self.archiveBytesOnDisk(systemArchiveURL)
         let receivedAnything = systemAudio.hasReceivedAudio
+        let receivedAudible = systemAudio.receivedAudibleAudio
         let framesWritten = systemAudio.archivedFrameCount
         let (errCount, _) = systemAudio.archiveWriteErrorsSummary
 
         if !receivedAnything {
             // SCKit never delivered a buffer. Same case the existing
             // silenceMonitor surfaces mid-recording.
+            return .empty
+        }
+        // Buffers arrived but EVERY one was silence (DRM-protected
+        // playback, or the macOS Tahoe all-zero-buffer glitch). The file
+        // can be non-trivial in size — silence still writes frames — but
+        // it holds no remote audio, so report `.empty`, not `.captured`,
+        // and let the frontmatter + post-stop toast tell the truth.
+        if !receivedAudible {
             return .empty
         }
         // Buffer(s) arrived. Now check whether ANY of them landed on
