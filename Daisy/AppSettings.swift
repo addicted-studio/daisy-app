@@ -573,11 +573,15 @@ final class AppSettings {
         // is zero until the user actually starts recording.
         self.captureSystemAudio = defaults.object(forKey: Self.k_captureSystemAudio) as? Bool ?? true
         self.selectedMicDeviceUID = defaults.string(forKey: Self.k_selectedMicDeviceUID) ?? ""
-        // Default OFF — the AVAudioEngine mic path is the shipping
-        // default; the CoreAudio AUHAL path is opt-in for on-device
-        // validation until proven. `object(forKey:) as? Bool ?? false`
-        // preserves an explicit user ON across launches.
-        self.useCoreAudioMicCapture = defaults.object(forKey: Self.k_useCoreAudioMicCapture) as? Bool ?? false
+        // Default ON (since 2026-06-01) — direct CoreAudio AUHAL capture is
+        // the shipping mic path: it opens each device at its NATIVE rate and
+        // sidesteps the AVAudioEngine 44.1k-vs-48k input de-sync that could
+        // drop the mic to 0 frames. Validated on-device (48k built-in + 44.1k
+        // headset, clean capture, real audio + transcript). `as? Bool ?? true`
+        // keeps an explicit user choice (ON or OFF) across launches; only
+        // never-set installs pick up the new default. Turn OFF in Settings to
+        // fall back to the legacy AVAudioEngine recorder.
+        self.useCoreAudioMicCapture = defaults.object(forKey: Self.k_useCoreAudioMicCapture) as? Bool ?? true
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
