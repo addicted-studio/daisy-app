@@ -421,6 +421,12 @@ final class CoreAudioMicRecorder: MicRecording {
         if status != noErr {
             log.error("AudioOutputUnitStop (pause) failed: status \(status, privacy: .public)")
         }
+        // The unit is stopped, so the RT thread won't enqueue more work.
+        // Drain the serial queue so the tail captured right up to the pause
+        // is written + counted (and no queued block runs concurrently with
+        // the MainActor state mutation below). The file stays open — resume
+        // keeps appending — but the in-flight buffers must land first.
+        renderContext?.flush()
         elapsedTimer?.invalidate()
         elapsedTimer = nil
         stopDisplayTimer()
@@ -798,8 +804,23 @@ final class CoreAudioMicRecorder: MicRecording {
             AudioComponentInstanceDispose(unit)
         }
         audioUnit = nil
+        // The unit (and its render callback) is now stopped + uninitialized
+        // + disposed, so the RT thread can no longer fire `process(...)` and
+        // therefore cannot enqueue any new work. Drain the serial queue so
+        // every buffer that DID get enqueued before the stop is fully
+        // written (frames counted) and yielded BEFORE we drop the context's
+        // strong reference to the `AVAudioFile`. This is the choke point that
+        // guarantees:
+        //   • no lost tail — the last enqueued writes run during flush();
+        //   • no write-after-close — the file ref is dropped only after the
+        //     drain, and no block can run after the context is released;
+        //   • on rebuildUnit's part-roll, the OLD part's tail lands before
+        //     its file ref is dropped and the new part is opened.
+        // Safe (no deadlock): teardown is on the MainActor, flush() is a
+        // `sync` barrier, and nothing running ON the queue ever waits on it.
+        renderContext?.flush()
         // Safe to release the box now — the unit (and its callback) is
-        // gone, so no render thread holds the pointer any more.
+        // gone and the queue is drained, so nothing holds the pointer.
         renderContext = nil
     }
 
@@ -972,6 +993,11 @@ final class CoreAudioMicRecorder: MicRecording {
         if let unit = audioUnit {
             AudioOutputUnitStop(unit)
         }
+        // Unit stopped ⇒ no new RT enqueues. Drain the in-flight tail so
+        // the buffers captured before the fault are written + counted and
+        // no queued block races the MainActor state reset below. (The file
+        // stays open; a subsequent resume rebuilds and keeps appending.)
+        renderContext?.flush()
         elapsedTimer?.invalidate()
         elapsedTimer = nil
         stopDisplayTimer()
@@ -1281,10 +1307,33 @@ private final class RenderContext: @unchecked Sendable {
     /// Per-context rate-limit clock for the spectrum/level publish.
     /// Instance-scoped (NOT a type-wide static) so a fresh capture
     /// session always starts with an open gate and two recorders can
-    /// never share/clobber each other's window. Only ever read/written
-    /// on the single render thread, so a plain stored property under
-    /// `@unchecked Sendable` is safe (no concurrent access).
-    var lastSpectrumPublishRefTime: TimeInterval = 0
+    /// never share/clobber each other's window.
+    ///
+    /// CONFINEMENT: read/written ONLY inside `handle(_:)`, which runs
+    /// only on `workQueue`. Never touched from the RT thread or the
+    /// MainActor, so a plain stored property under `@unchecked Sendable`
+    /// is safe (the serial queue gives single-threaded access).
+    private var lastSpectrumPublishRefTime: TimeInterval = 0
+
+    /// Dedicated SERIAL queue that owns all the heavy, non-real-time
+    /// work the RT render callback used to do inline: the `AVAudioFile`
+    /// disk write, the FFT/peak/RMS analysis, the liveness/level publish,
+    /// and the transcriber `continuation.yield`. The RT callback now only
+    /// renders + copies into an owned buffer and hands it here via one
+    /// `async`, so the AUHAL IOWorkLoop is no longer blocked on disk I/O
+    /// or vDSP. SERIAL + FIFO ⇒ buffers are written/yielded in exact
+    /// arrival order (no reordering, no lost-then-late writes).
+    ///
+    /// THREAD-CONFINEMENT: this queue is the *single* owner/writer of the
+    /// non-thread-safe `audioFile`, `analyzer`, and
+    /// `lastSpectrumPublishRefTime`. Nothing else touches them after
+    /// install (the RT thread doesn't; the MainActor only drains via
+    /// `flush()`, a `sync` barrier that cannot overlap an `async` block).
+    /// Uncontended `userInitiated` so it tracks the RT cadence closely.
+    private let workQueue = DispatchQueue(
+        label: "app.essazanov.Daisy.coreaudio.write",
+        qos: .userInitiated
+    )
 
     init(
         audioUnit: AudioComponentInstance,
@@ -1312,10 +1361,19 @@ private final class RenderContext: @unchecked Sendable {
         self.levelSpectrum = levelSpectrum
     }
 
-    /// Pull `inNumberFrames` of input audio via `AudioUnitRender`, wrap
-    /// into an `AVAudioPCMBuffer`, then: yield an `AudioChunk`, write to
-    /// the archive, and feed the spectrum/level (rate-limited). Runs on
-    /// the CoreAudio render thread — keep allocation/locking minimal.
+    /// THE REAL-TIME HOT PATH. Runs on the AUHAL hard real-time render
+    /// thread. It now does ONLY the minimal real-time-critical work:
+    ///   1. allocate an OWNED `AVAudioPCMBuffer`,
+    ///   2. `AudioUnitRender` straight into that buffer's own storage,
+    ///   3. atomically mark arrival (`bufferTimestamp`),
+    ///   4. hand the buffer to the serial `workQueue` via ONE `async`,
+    /// then returns. The disk write, the FFT/level analysis, and the
+    /// transcriber `yield` all moved OFF this thread onto `workQueue`
+    /// (see `handle(_:)`). No disk I/O, no vDSP, no lock fan-out, and no
+    /// `AVAudioFile`/`analyzer` access here any more — which is what
+    /// stops the `HALC_ProxyIOContext::IOWorkLoop: skipping cycle due to
+    /// overload` log: the IOWorkLoop is no longer blocked inside the
+    /// callback waiting on a `write(2)` or a 2048-pt FFT.
     func process(
         ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
         inTimeStamp: UnsafePointer<AudioTimeStamp>,
@@ -1332,8 +1390,12 @@ private final class RenderContext: @unchecked Sendable {
         pcm.frameLength = inNumberFrames
 
         // Render directly into the PCM buffer's mutable AudioBufferList.
-        // `mutableAudioBufferList` exposes the buffer's own channel
-        // pointers; AudioUnitRender fills them in place — no extra copy.
+        // `mutableAudioBufferList` exposes the buffer's OWN channel
+        // pointers; AudioUnitRender fills THEM in place. So `pcm` owns its
+        // samples outright — it does NOT alias the AudioUnit's transient
+        // buffer list (which is only valid for the duration of this
+        // callback). That ownership is exactly what makes it sound to ship
+        // `pcm` to another thread below.
         let abl = pcm.mutableAudioBufferList
         let renderStatus = AudioUnitRender(
             audioUnit,
@@ -1344,17 +1406,52 @@ private final class RenderContext: @unchecked Sendable {
             abl
         )
         guard renderStatus == noErr else {
-            // Don't yield a partial/garbage buffer; just report. A flood
+            // Don't ship a partial/garbage buffer; just report. A flood
             // of these would show up as silence → the silence watchdog
             // pauses the session.
             return renderStatus
         }
 
         // Atomic arrival mark — read by the MainActor recovery watchdog.
+        // Kept INLINE (not on the queue) so the arrival watchdog measures
+        // true device liveness even if the queue briefly backs up.
         bufferTimestamp.mark(Date())
 
-        // Archive write (gated). Same try/accumulate pattern as
-        // AudioRecorder's tap: only count frames that actually landed.
+        // Snapshot the render timestamp into an immutable `AVAudioTime`
+        // NOW: `inTimeStamp` is only valid for the duration of this
+        // callback, so we must capture it before the async hand-off.
+        let avTime = AVAudioTime(audioTimeStamp: inTimeStamp, sampleRate: format.sampleRate)
+
+        // Hand the owned buffer to the serial queue and return. We wrap it
+        // in `AudioChunk` (already `@unchecked Sendable`) — the SAME
+        // wrapper this file uses to ferry a PCM buffer across the
+        // AsyncStream Sendable boundary in `continuation.yield` — so the
+        // capture introduces no new data-race category: the buffer is
+        // produced here, consumed only on `workQueue`, never shared. This
+        // single `async` enqueue is the only per-buffer work left on the
+        // RT thread besides the render + copy itself.
+        let chunk = AudioChunk(pcm: pcm, time: avTime)
+        workQueue.async { [weak self] in
+            self?.handle(chunk)
+        }
+
+        return noErr
+    }
+
+    /// The heavy, NON-real-time work, moved off the RT render thread onto
+    /// `workQueue`. Runs ONLY on that serial queue — so it is the single
+    /// owner of `audioFile`, `analyzer`, and `lastSpectrumPublishRefTime`
+    /// (none of which are thread-safe), with no extra locking needed: the
+    /// serial queue itself is the mutual exclusion. Order is preserved
+    /// (FIFO serial), so writes and transcriber yields stay in exact
+    /// arrival order — no reordering, no lost-then-late buffer.
+    private func handle(_ chunk: AudioChunk) {
+        let pcm = chunk.pcm
+
+        // Archive write (gated), now off the RT thread — this is the
+        // worst former RT offender (it can block on disk I/O). Same
+        // try/accumulate pattern as AudioRecorder's tap: only count frames
+        // that actually landed. `audioFile` is touched ONLY here.
         if archiveGate.value, let file = audioFile {
             do {
                 try file.write(from: pcm)
@@ -1364,34 +1461,21 @@ private final class RenderContext: @unchecked Sendable {
             }
         }
 
-        // Hand the buffer to the transcriber. `AVAudioTime(audioTimeStamp:
-        // sampleRate:)` takes a pointer to the timestamp; `inTimeStamp` is
-        // already an `UnsafePointer<AudioTimeStamp>`, so pass it straight
-        // through (no local copy / inout dance needed).
-        let avTime = AVAudioTime(audioTimeStamp: inTimeStamp, sampleRate: format.sampleRate)
-        continuation?.yield(AudioChunk(pcm: pcm, time: avTime))
+        // Hand the buffer to the transcriber. Moved here so the RT thread
+        // doesn't touch the continuation; serial order means the
+        // transcriber still sees buffers in arrival order. (Yielding after
+        // the continuation is finished — which only happens AFTER this
+        // queue is drained in teardown — is a harmless no-op, so the tail
+        // can never be lost: teardown flushes BEFORE it finishes.)
+        continuation?.yield(chunk)
 
-        // Rate-limited spectrum + level (≤30 Hz). Same cadence as
-        // AudioRecorder.installInputTap, but the result is stashed in a
-        // lock-box and pulled by the recorder's MainActor displayTimer
-        // instead of spawning a `Task { @MainActor }` PER BUFFER.
-        //
-        // WHY NO Task-per-buffer (the bug this fixes):
-        // this runs on the AUHAL HARD REAL-TIME render thread. Creating a
-        // Swift Task here (heap-allocates a job, takes a runtime lock,
-        // enqueues on the global cooperative executor) is both a real-time
-        // violation AND fragile: those detached default-priority Tasks must
-        // win a cooperative-pool worker and then the MainActor before they
-        // can publish. Under the shipping heavy load — WhisperKit large-v3
-        // doing 4 fallback passes, all entered through the @MainActor-
-        // isolated WhisperEngine.transcribe, plus an MCP storm — they are
-        // effectively never serviced, so spectrumBands stayed pinned at its
-        // initial zeros and the daisy petals sat flat (the live transcript
-        // still flowed because that path is the continuation.yield above,
-        // not a MainActor hop). Writing to a lock-box and letting a
-        // run-loop-driven MainActor timer read it decouples the petals from
-        // cooperative-pool starvation and removes Task-creation from the RT
-        // thread (helping the IOWorkLoop overload too).
+        // Rate-limited spectrum + level (≤30 Hz). Same cadence + the same
+        // result-into-a-lock-box / MainActor-displayTimer-pull design as
+        // before (commit c2b9b2b) — the only change is that the FFT and
+        // peak/RMS now run on `workQueue` instead of inline on the RT
+        // thread, removing the 2048-pt vDSP FFT from the IOWorkLoop. The
+        // `analyzer` (stateful attack/decay) and `lastSpectrumPublishRefTime`
+        // are touched ONLY here, so they stay single-threaded.
         let nowRefTime = Date().timeIntervalSinceReferenceDate
         if nowRefTime - lastSpectrumPublishRefTime > CoreAudioMicRecorder.spectrumPublishIntervalSec {
             lastSpectrumPublishRefTime = nowRefTime
@@ -1409,12 +1493,29 @@ private final class RenderContext: @unchecked Sendable {
                 bands = analyzer.bands(from: bufferPtr, sampleRate: sampleRate)
             }
             // Single lock-box write (uncontended OSAllocatedUnfairLock —
-            // the MainActor reader only holds it for a struct copy). No
-            // allocation, no Task, no MainActor hop on the RT thread.
+            // the MainActor reader only holds it for a struct copy).
             levelSpectrum.update(level: peak, bands: bands)
         }
+    }
 
-        return noErr
+    /// Drain the serial queue synchronously: when this returns, EVERY
+    /// buffer already enqueued by `process(...)` has been fully handled —
+    /// its disk write completed and counted, its `yield` delivered. A
+    /// serial queue is FIFO, so a `sync` barrier appended to the tail
+    /// cannot return until all prior blocks have run.
+    ///
+    /// DEADLOCK-SAFE: only ever called from the MainActor teardown paths,
+    /// NEVER from inside a `workQueue` block (and the RT thread never
+    /// calls it either — it only `async`s). No code that runs ON the
+    /// queue ever waits on the queue, so `sync` can't self-deadlock.
+    ///
+    /// The caller MUST have stopped the AudioUnit first (so no further
+    /// `process(...)` can enqueue new work) — otherwise a freshly-arrived
+    /// buffer could land after the drain. All teardown paths do exactly
+    /// that: `AudioOutputUnitStop` (which quiesces the RT thread) precedes
+    /// every `flush()` call.
+    func flush() {
+        workQueue.sync { }
     }
 
     // Level helpers — copied from AudioRecorder (nonisolated statics).
