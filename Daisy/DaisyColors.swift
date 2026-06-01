@@ -70,16 +70,16 @@ extension Color {
     // stays in conversation with the warm-cream surfaces.
 
     static let daisyDictation = Color(
-        // 2026-05-31 — lifted toward systemOrange's perceptual lightness
-        // (L*≈71) and warmed a touch toward heather so dictation no longer
-        // reads DIMMER or colder than its orange/coral siblings on the dark
-        // puck (measured: orange L*≈71, coral ≈62, lilac was ≈54 — a 2.6×
-        // luminance spread that made meetings look "louder"). Was light
-        // 0x8A6BC9 / dark 0xA98EE0. ⚠️ EYEBALL on device — this is the one
-        // colour change the review flagged as needing a live look; revert
-        // to the old hexes if the heather drifts too pale.
-        light: Color(hex: 0xA98AD4),
-        dark:  Color(hex: 0xC0A8E6)
+        // Vivid, bright lilac. 2026-05-31: first lifted toward systemOrange's
+        // L* + warmed toward heather for iso-luminance across the three
+        // recording modes — but that desaturated it into a pale wash that
+        // blended into the warm-cream background (Egor, live build). Pulled
+        // back to a SATURATED + brighter violet so it pops as a clear "ON"
+        // signal on both the dark widget puck and the cream surfaces, while
+        // still reading near the orange/coral siblings in weight.
+        // History: original 0x8A6BC9/0xA98EE0 → pale 0xA98AD4/0xC0A8E6 → this.
+        light: Color(hex: 0x9A6FE0),
+        dark:  Color(hex: 0xB48BF2)
     )
 
     /// Halo / glow companion to `daisyDictation`.
