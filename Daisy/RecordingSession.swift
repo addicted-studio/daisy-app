@@ -513,10 +513,10 @@ final class RecordingSession {
         let resolved = localeIdentifier ?? settings.defaultTranscriptionLocale
         let effective = resolved.isEmpty ? "auto" : resolved
         self.localeIdentifier = effective
-        // Pick the mic capture backend behind the validation flag. Both
-        // conform to `MicRecording` with an identical public surface, so
-        // nothing else in this file changes. Default OFF →
-        // AVAudioEngine-backed AudioRecorder (the shipping path).
+        // Pick the mic capture backend behind the flag. Both conform to
+        // `MicRecording` with an identical public surface, so nothing else in
+        // this file changes. Default ON → direct CoreAudio AUHAL capture (the
+        // shipping path); flip OFF in Settings → legacy AVAudioEngine recorder.
         if settings.useCoreAudioMicCapture {
             self.recorder = CoreAudioMicRecorder()
         } else {
