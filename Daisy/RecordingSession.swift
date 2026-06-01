@@ -413,6 +413,29 @@ final class RecordingSession {
     /// session (no point pestering them every 30s).
     private var autoStopSuppressed: Bool = false
 
+    /// Silence-gated auto-stop state (2026-06-01). Auto-stop no longer
+    /// fires at a fixed endDate+grace; it waits for a quiet stretch past
+    /// the scheduled end (or a hard maximum). `autoStopWarned` latches
+    /// once the 30s warning + pending stop are armed; `autoStopLastAudibleAt`
+    /// is the last time mic OR system audio cleared `autoStopAudibleFloorDB`.
+    private var autoStopWarned: Bool = false
+    private var autoStopLastAudibleAt: Date?
+
+    /// Once past endDate+grace, stop only after this much continuous quiet
+    /// on BOTH mic and system. A live conversation never has this long a
+    /// gap; a finished meeting does.
+    private static let autoStopSilenceToStopSec: TimeInterval = 120
+    /// Absolute backstop: stop unconditionally this long past the scheduled
+    /// end even if audio is still flowing (background music, forgotten
+    /// call), so a left-running session can't record forever.
+    private static let autoStopMaxOverrunSec: TimeInterval = 30 * 60
+    /// Peak-dBFS floor above which mic/system counts as "audible" for
+    /// auto-stop gating. Higher than the −80 dB liveness floor: room tone
+    /// shouldn't keep a finished meeting alive, but speech easily clears it.
+    private static let autoStopAudibleFloorDB: Float = -55
+    /// How often the silence-gated evaluator re-checks.
+    private static let autoStopEvalIntervalSec: TimeInterval = 10
+
     /// Live tier the active session STARTED with — the restore target once
     /// thermal/low-power pressure clears. Only Full sessions auto-downgrade.
     @ObservationIgnored
@@ -993,6 +1016,7 @@ final class RecordingSession {
     private func scheduleAutoStopIfNeeded() {
         cancelAutoStop()
         autoStopSuppressed = false
+        autoStopWarned = false
         guard settings.autoStopFromCalendar else {
             autoStopLog.info("scheduleAutoStop: skipped — autoStopFromCalendar=false")
             return
@@ -1008,40 +1032,27 @@ final class RecordingSession {
             return
         }
         let now = Date()
-        let fireDate = meeting.endDate.addingTimeInterval(TimeInterval(settings.autoStopGraceSec))
-        guard fireDate > now else {
-            autoStopLog.warning("scheduleAutoStop: meeting '\(meeting.title, privacy: .private)' already past its end+grace (endDate=\(meeting.endDate.description, privacy: .public), grace=\(self.settings.autoStopGraceSec, privacy: .public)s) — no timer armed")
+        let hardMax = meeting.endDate.addingTimeInterval(Self.autoStopMaxOverrunSec)
+        guard hardMax > now else {
+            autoStopLog.warning("scheduleAutoStop: meeting '\(meeting.title, privacy: .private)' already past end+maxOverrun (endDate=\(meeting.endDate.description, privacy: .public)) — no timer armed")
             return
         }
 
-        // Warning toast fires up to 30s before the actual stop —
-        // gives the user a chance to Cancel without the stop hitting
-        // mid-sentence. Skip the warning if the entire grace window
-        // is shorter than 30s.
-        let warningLead: TimeInterval = 30
-        let warningDate = fireDate.addingTimeInterval(-warningLead)
-        if warningDate > now {
-            autoStopWarningTimer = Timer.scheduledTimer(
-                withTimeInterval: warningDate.timeIntervalSince(now),
-                repeats: false
-            ) { [weak self] _ in
-                // Rebind to a strong `let` so the Task closure
-                // captures by value — otherwise Swift 6 flags the
-                // outer `weak self` var as a captured mutable
-                // reference crossing concurrency boundaries.
-                guard let self else { return }
-                Task { @MainActor in self.fireAutoStopWarning() }
-            }
-        }
-
+        // Silence-gated auto-stop (replaces the old fixed endDate+grace
+        // one-shot that cut people off mid-sentence — Egor, 2026-06-01:
+        // "стопнул, хотя мы ещё разговаривали"). A repeating evaluator
+        // stops only once there's been `autoStopSilenceToStopSec` of quiet
+        // past endDate+grace, or unconditionally at endDate+maxOverrun.
+        // See evaluateAutoStop().
+        autoStopLastAudibleAt = now
         autoStopTimer = Timer.scheduledTimer(
-            withTimeInterval: fireDate.timeIntervalSince(now),
-            repeats: false
+            withTimeInterval: Self.autoStopEvalIntervalSec,
+            repeats: true
         ) { [weak self] _ in
             guard let self else { return }
-            Task { @MainActor in await self.performAutoStop() }
+            Task { @MainActor in self.evaluateAutoStop() }
         }
-        autoStopLog.info("Auto-stop armed for '\(meeting.title, privacy: .private)' at \(fireDate.description, privacy: .public) (in \(Int(fireDate.timeIntervalSince(now)), privacy: .public)s)")
+        autoStopLog.info("Auto-stop armed (silence-gated) for '\(meeting.title, privacy: .private)': earliest endDate+\(self.settings.autoStopGraceSec, privacy: .public)s then \(Int(Self.autoStopSilenceToStopSec), privacy: .public)s quiet; hard max endDate+\(Int(Self.autoStopMaxOverrunSec), privacy: .public)s")
     }
 
     /// Try to auto-bind a calendar meeting to the current session
@@ -1110,10 +1121,61 @@ final class RecordingSession {
         autoStopWarningTimer = nil
     }
 
-    private func fireAutoStopWarning() {
+    /// Repeating evaluator (every `autoStopEvalIntervalSec`) for the
+    /// silence-gated auto-stop. Stops the session only once it's been
+    /// quiet for `autoStopSilenceToStopSec` past endDate+grace, or
+    /// unconditionally at endDate+maxOverrun. While anyone is still
+    /// talking (mic OR system above the floor), the stop is deferred.
+    private func evaluateAutoStop() {
+        guard status == .recording || status == .paused, !autoStopSuppressed else {
+            cancelAutoStop()
+            return
+        }
+        guard let meeting = boundMeeting else { cancelAutoStop(); return }
+        let now = Date()
+        let earliest = meeting.endDate.addingTimeInterval(TimeInterval(settings.autoStopGraceSec))
+        let hardMax = meeting.endDate.addingTimeInterval(Self.autoStopMaxOverrunSec)
+
+        // Absolute backstop — stop no matter what's still on the line.
+        if now >= hardMax {
+            if !autoStopWarned { armAutoStopWarningAndStop(silence: false) }
+            return
+        }
+
+        // Is anyone still talking? Either stream above the floor counts.
+        let audible = recorder.levelDB > Self.autoStopAudibleFloorDB
+            || systemAudio.peakLevelDB > Self.autoStopAudibleFloorDB
+        if audible {
+            autoStopLastAudibleAt = now
+            // Conversation resumed during a pending stop — call it off.
+            if autoStopWarned {
+                autoStopWarningTimer?.invalidate()
+                autoStopWarningTimer = nil
+                autoStopWarned = false
+                autoStopLog.info("Auto-stop: audio resumed past scheduled end — stop deferred")
+            }
+            return
+        }
+
+        // Silent right now — only consider stopping once past endDate+grace.
+        guard now >= earliest else { return }
+        let silentFor = now.timeIntervalSince(autoStopLastAudibleAt ?? earliest)
+        if silentFor >= Self.autoStopSilenceToStopSec, !autoStopWarned {
+            armAutoStopWarningAndStop(silence: true)
+        }
+    }
+
+    /// Show the 30 s "Keep going" warning and arm the actual stop. Called
+    /// by `evaluateAutoStop` when the quiet/overrun condition is first met.
+    /// "Keep going" cancels auto-stop for the rest of the session.
+    private func armAutoStopWarningAndStop(silence: Bool) {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
+        autoStopWarned = true
+        let msg = silence
+            ? "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds."
+            : "Meeting has run well past its end — Daisy will stop & save in 30 seconds."
         ToastCenter.shared.showAction(
-            "Meeting ended — Daisy will stop & save in 30 seconds.",
+            msg,
             actionLabel: "Keep going",
             style: .warning,
             duration: .seconds(30)
@@ -1122,6 +1184,13 @@ final class RecordingSession {
             self.cancelAutoStop()
             self.autoStopSuppressed = true
             ToastCenter.shared.show("Auto-stop cancelled for this session.", style: .info)
+        }
+        autoStopWarningTimer = Timer.scheduledTimer(
+            withTimeInterval: 30,
+            repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in await self.performAutoStop() }
         }
     }
 
