@@ -125,8 +125,13 @@ final class CoreAudioMicRecorder: MicRecording {
     private(set) var lastError: String?
     private(set) var archivedFileURL: URL?
     /// Normalised 0…1 spectrum bands for the daisy widget's petals.
-    /// Published from the render callback via `Task @MainActor`,
-    /// rate-limited to ~30 Hz — identical contract to AudioRecorder.
+    /// The render thread writes the latest value into `levelSpectrum`
+    /// (a lock-box); a single MainActor display-cadence timer
+    /// (`displayTimer`, ~30 Hz) copies it into this Observable property.
+    /// We deliberately do NOT hop a `Task { @MainActor }` per render
+    /// buffer — see `RenderContext.process` for the why (those detached
+    /// Tasks starve under heavy MainActor/cooperative-pool load, e.g.
+    /// WhisperKit large-v3 4× fallback, leaving the petals frozen).
     private(set) var spectrumBands: [Float] = Array(
         repeating: 0,
         count: SpectrumAnalyzer.bandCount
@@ -163,6 +168,16 @@ final class CoreAudioMicRecorder: MicRecording {
 
     @ObservationIgnored
     private var elapsedTimer: Timer?
+    /// MainActor display-cadence timer (~30 Hz) that pumps the latest
+    /// level + spectrum out of `levelSpectrum` and into the Observable
+    /// `levelDB` / `spectrumBands`. Runs on the main run loop (same
+    /// place the widget's TimelineView is serviced), so it can't be
+    /// starved by a saturated cooperative pool the way the old
+    /// per-buffer `Task { @MainActor }` was. Lifecycle mirrors
+    /// `elapsedTimer`: armed in start()/resume(), torn down in
+    /// pause()/stop().
+    @ObservationIgnored
+    private var displayTimer: Timer?
     @ObservationIgnored
     private var startedAt: Date?
     /// Sum of completed active intervals before the current one — so a
@@ -201,6 +216,14 @@ final class CoreAudioMicRecorder: MicRecording {
     /// `stopArchivingKeepTranscribing()`, reopened on each `start()`.
     @ObservationIgnored
     private let archiveGate = AtomicFlag(initial: true)
+    /// Render-thread → MainActor bridge for the live level + spectrum.
+    /// The render callback writes the latest (rate-limited) value here;
+    /// the MainActor `displayTimer` reads it and publishes to the
+    /// `@Observable levelDB` / `spectrumBands`. This replaces the old
+    /// per-buffer `Task { @MainActor }` hop, which starved under heavy
+    /// MainActor + cooperative-pool load and froze the daisy petals.
+    @ObservationIgnored
+    private let levelSpectrum = LevelSpectrumBox()
 
     // MARK: - Device / route state
 
@@ -328,6 +351,7 @@ final class CoreAudioMicRecorder: MicRecording {
         bufferTimestamp.reset()
         micLiveness.reset(to: Date())
         archiveGate.set(true)
+        levelSpectrum.reset()
 
         // Wire the render context (sets the input callback) BEFORE
         // initialize — the callback reads this box, and the canonical
@@ -372,6 +396,7 @@ final class CoreAudioMicRecorder: MicRecording {
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tick() }
         }
+        startDisplayTimer()
         startSilenceMonitor()
         // Same arrival watchdog AudioRecorder arms at initial start:
         // AudioOutputUnitStart can return success while the device
@@ -398,6 +423,8 @@ final class CoreAudioMicRecorder: MicRecording {
         }
         elapsedTimer?.invalidate()
         elapsedTimer = nil
+        stopDisplayTimer()
+        levelSpectrum.reset()
         if let startedAt {
             accumulatedActiveSec += Date().timeIntervalSince(startedAt)
         }
@@ -440,6 +467,7 @@ final class CoreAudioMicRecorder: MicRecording {
             Task { @MainActor [weak self] in self?.tick() }
         }
         state = .recording
+        startDisplayTimer()
         armRecoveryWatchdog()
         startSilenceMonitor()
         log.info("CoreAudioMicRecorder resumed")
@@ -465,6 +493,8 @@ final class CoreAudioMicRecorder: MicRecording {
         bufferContinuation = nil
         elapsedTimer?.invalidate()
         elapsedTimer = nil
+        stopDisplayTimer()
+        levelSpectrum.reset()
         audioFile = nil  // closes the file (flushes header + frames)
         analyzer.reset()
         spectrumBands = Array(repeating: 0, count: SpectrumAnalyzer.bandCount)
@@ -706,7 +736,6 @@ final class CoreAudioMicRecorder: MicRecording {
         micLiveness.reset(to: Date())
 
         let ctx = RenderContext(
-            owner: self,
             audioUnit: unit,
             format: format,
             continuation: bufferContinuation,
@@ -716,7 +745,8 @@ final class CoreAudioMicRecorder: MicRecording {
             framesWritten: framesWritten,
             bufferTimestamp: bufferTimestamp,
             micLiveness: micLiveness,
-            archiveGate: archiveGate
+            archiveGate: archiveGate,
+            levelSpectrum: levelSpectrum
         )
         renderContext = ctx
 
@@ -944,6 +974,8 @@ final class CoreAudioMicRecorder: MicRecording {
         }
         elapsedTimer?.invalidate()
         elapsedTimer = nil
+        stopDisplayTimer()
+        levelSpectrum.reset()
         if let startedAt {
             accumulatedActiveSec += Date().timeIntervalSince(startedAt)
         }
@@ -1146,16 +1178,38 @@ final class CoreAudioMicRecorder: MicRecording {
         elapsed = accumulatedActiveSec + Date().timeIntervalSince(startedAt)
     }
 
-    /// Receive a rate-limited (≤30 Hz) level + spectrum sample computed
-    /// on the render thread and publish it to the Observable surface.
-    /// Called via `Task { @MainActor [weak owner] }` from `RenderContext.
-    /// process` — the same hop AudioRecorder's tap closure does inline.
-    /// Ignored once we're no longer recording so a late in-flight Task
-    /// doesn't repaint a stopped/paused widget.
-    fileprivate func publishLevel(_ level: Float, bands: [Float]?) {
+    // MARK: - Display pump (render-thread level/spectrum → Observable)
+
+    /// Arm the MainActor display-cadence timer that pulls the latest
+    /// level + spectrum out of `levelSpectrum` and publishes it to the
+    /// Observable `levelDB` / `spectrumBands`. Runs at the same ~30 Hz
+    /// cadence the render thread fills the box (and the widget's
+    /// TimelineView consumes it). Idempotent. See `spectrumBands`'
+    /// doc-comment for why we pull on a run-loop timer instead of
+    /// pushing a `Task { @MainActor }` per render buffer.
+    private func startDisplayTimer() {
+        displayTimer?.invalidate()
+        displayTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.spectrumPublishIntervalSec, repeats: true
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.pumpDisplay() }
+        }
+    }
+
+    private func stopDisplayTimer() {
+        displayTimer?.invalidate()
+        displayTimer = nil
+    }
+
+    /// Copy the most recent render-thread level + spectrum sample into
+    /// the Observable surface. No-op once we're no longer recording so a
+    /// final in-flight tick can't repaint a stopped/paused widget (pause/
+    /// stop/fallToPaused already zero the values + reset the box).
+    private func pumpDisplay() {
         guard state == .recording else { return }
-        levelDB = level
-        if let bands { spectrumBands = bands }
+        let snap = levelSpectrum.snapshot()
+        levelDB = snap.level
+        if let bands = snap.bands { spectrumBands = bands }
     }
 
     /// AUHAL input element == 1, output element == 0 (Apple convention).
@@ -1163,10 +1217,10 @@ final class CoreAudioMicRecorder: MicRecording {
     private static let outputElement: AudioUnitElement = 0
 
     /// 33 ms = ~30 Hz cap on spectrum/level publishes — matches the
-    /// widget's TimelineView. Static so it survives unit rebuilds.
-    /// `nonisolated(unsafe)` because it's read/written only on the single
-    /// render thread inside the C callback path (see RenderContext.process).
-    nonisolated(unsafe) fileprivate static var lastSpectrumPublishRefTime: TimeInterval = 0
+    /// widget's TimelineView and the displayTimer cadence. The per-buffer
+    /// rate-limit clock now lives on `RenderContext` (instance-scoped, RT-
+    /// thread-only) rather than a shared `static var`; this is just the
+    /// interval constant, shared by the render gate and the display pump.
     fileprivate static let spectrumPublishIntervalSec: TimeInterval = 1.0 / 30.0
 
     /// Liveness floor / window — copied verbatim from AudioRecorder so
@@ -1207,13 +1261,6 @@ final class CoreAudioMicRecorder: MicRecording {
 /// same objects AudioRecorder ferries across the same boundary — written
 /// only from the single render thread, never concurrently.
 private final class RenderContext: @unchecked Sendable {
-    /// Weak back-reference to the owning recorder, used ONLY to hop
-    /// level/spectrum to its `@MainActor publishLevel(_:bands:)` — exactly
-    /// the `Task { @MainActor [weak self] }` pattern AudioRecorder's tap
-    /// closure uses inline. Weak so the render thread never extends the
-    /// recorder's lifetime; the hop is a no-op if it's gone.
-    weak var owner: CoreAudioMicRecorder?
-
     let audioUnit: AudioComponentInstance
     let format: AVAudioFormat
     let continuation: AsyncStream<AudioChunk>.Continuation?
@@ -1224,9 +1271,22 @@ private final class RenderContext: @unchecked Sendable {
     let bufferTimestamp: TimestampBox
     let micLiveness: LivenessBox
     let archiveGate: AtomicFlag
+    /// Render-thread → MainActor bridge for the live level + spectrum.
+    /// The callback writes the latest rate-limited sample here; the
+    /// recorder's MainActor `displayTimer` reads it. Replaces the old
+    /// fire-and-forget `Task { @MainActor [weak owner] }` per buffer —
+    /// see `process(...)` and `CoreAudioMicRecorder.spectrumBands`.
+    let levelSpectrum: LevelSpectrumBox
+
+    /// Per-context rate-limit clock for the spectrum/level publish.
+    /// Instance-scoped (NOT a type-wide static) so a fresh capture
+    /// session always starts with an open gate and two recorders can
+    /// never share/clobber each other's window. Only ever read/written
+    /// on the single render thread, so a plain stored property under
+    /// `@unchecked Sendable` is safe (no concurrent access).
+    var lastSpectrumPublishRefTime: TimeInterval = 0
 
     init(
-        owner: CoreAudioMicRecorder,
         audioUnit: AudioComponentInstance,
         format: AVAudioFormat,
         continuation: AsyncStream<AudioChunk>.Continuation?,
@@ -1236,9 +1296,9 @@ private final class RenderContext: @unchecked Sendable {
         framesWritten: FrameCountBox,
         bufferTimestamp: TimestampBox,
         micLiveness: LivenessBox,
-        archiveGate: AtomicFlag
+        archiveGate: AtomicFlag,
+        levelSpectrum: LevelSpectrumBox
     ) {
-        self.owner = owner
         self.audioUnit = audioUnit
         self.format = format
         self.continuation = continuation
@@ -1249,6 +1309,7 @@ private final class RenderContext: @unchecked Sendable {
         self.bufferTimestamp = bufferTimestamp
         self.micLiveness = micLiveness
         self.archiveGate = archiveGate
+        self.levelSpectrum = levelSpectrum
     }
 
     /// Pull `inNumberFrames` of input audio via `AudioUnitRender`, wrap
@@ -1310,11 +1371,30 @@ private final class RenderContext: @unchecked Sendable {
         let avTime = AVAudioTime(audioTimeStamp: inTimeStamp, sampleRate: format.sampleRate)
         continuation?.yield(AudioChunk(pcm: pcm, time: avTime))
 
-        // Rate-limited spectrum + level (≤30 Hz), identical gate to
-        // AudioRecorder.installInputTap.
+        // Rate-limited spectrum + level (≤30 Hz). Same cadence as
+        // AudioRecorder.installInputTap, but the result is stashed in a
+        // lock-box and pulled by the recorder's MainActor displayTimer
+        // instead of spawning a `Task { @MainActor }` PER BUFFER.
+        //
+        // WHY NO Task-per-buffer (the bug this fixes):
+        // this runs on the AUHAL HARD REAL-TIME render thread. Creating a
+        // Swift Task here (heap-allocates a job, takes a runtime lock,
+        // enqueues on the global cooperative executor) is both a real-time
+        // violation AND fragile: those detached default-priority Tasks must
+        // win a cooperative-pool worker and then the MainActor before they
+        // can publish. Under the shipping heavy load — WhisperKit large-v3
+        // doing 4 fallback passes, all entered through the @MainActor-
+        // isolated WhisperEngine.transcribe, plus an MCP storm — they are
+        // effectively never serviced, so spectrumBands stayed pinned at its
+        // initial zeros and the daisy petals sat flat (the live transcript
+        // still flowed because that path is the continuation.yield above,
+        // not a MainActor hop). Writing to a lock-box and letting a
+        // run-loop-driven MainActor timer read it decouples the petals from
+        // cooperative-pool starvation and removes Task-creation from the RT
+        // thread (helping the IOWorkLoop overload too).
         let nowRefTime = Date().timeIntervalSinceReferenceDate
-        if nowRefTime - CoreAudioMicRecorder.lastSpectrumPublishRefTime > CoreAudioMicRecorder.spectrumPublishIntervalSec {
-            CoreAudioMicRecorder.lastSpectrumPublishRefTime = nowRefTime
+        if nowRefTime - lastSpectrumPublishRefTime > CoreAudioMicRecorder.spectrumPublishIntervalSec {
+            lastSpectrumPublishRefTime = nowRefTime
             let peak = Self.peakLevelDB(of: pcm)
             micLiveness.record(
                 rms: Self.rmsLevelDB(of: pcm),
@@ -1328,16 +1408,10 @@ private final class RenderContext: @unchecked Sendable {
                 let bufferPtr = UnsafeBufferPointer(start: ch, count: frames)
                 bands = analyzer.bands(from: bufferPtr, sampleRate: sampleRate)
             }
-            // Hop to MainActor for the Observable publish — same shape as
-            // AudioRecorder's `Task { @MainActor [weak self] in self?.levelDB
-            // = peak; ... }`. `[weak owner]` so a buffer racing teardown
-            // can't pin a stopped recorder; `publishLevel` itself guards on
-            // `state == .recording`.
-            let levelToPublish = peak
-            let bandsToPublish = bands
-            Task { @MainActor [weak owner] in
-                owner?.publishLevel(levelToPublish, bands: bandsToPublish)
-            }
+            // Single lock-box write (uncontended OSAllocatedUnfairLock —
+            // the MainActor reader only holds it for a struct copy). No
+            // allocation, no Task, no MainActor hop on the RT thread.
+            levelSpectrum.update(level: peak, bands: bands)
         }
 
         return noErr
@@ -1441,4 +1515,38 @@ private final class AtomicFlag: @unchecked Sendable {
     init(initial: Bool) { lock = OSAllocatedUnfairLock(initialState: initial) }
     var value: Bool { lock.withLock { $0 } }
     func set(_ v: Bool) { lock.withLock { $0 = v } }
+}
+
+/// Render-thread → MainActor bridge for the live level (dBFS peak) +
+/// normalised spectrum bands that drive the daisy widget. The render
+/// callback writes the latest rate-limited sample; the recorder's
+/// MainActor `displayTimer` reads it and publishes to the Observable
+/// `levelDB` / `spectrumBands`.
+///
+/// This is the piece that DECOUPLES the petals from a saturated
+/// cooperative pool: the old design hopped a `Task { @MainActor }` from
+/// the hard real-time render thread per buffer, and under heavy
+/// MainActor load (WhisperKit large-v3 4× fallback + MCP storm) those
+/// Tasks were starved, so the petals froze while the transcript (which
+/// rides `continuation.yield`, not a MainActor hop) kept flowing.
+///
+/// `bands` is nil until the first FFT lands so the pump leaves the
+/// initial all-zeros array in place rather than briefly clearing it.
+/// The lock is held only for a scalar/array-reference swap on the write
+/// side and a struct copy on the read side — uncontended in practice.
+private final class LevelSpectrumBox: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock<(level: Float, bands: [Float]?)>(
+        initialState: (-160, nil)
+    )
+    /// Render thread: stash the newest sample. `bands` is the analyzer's
+    /// already-smoothed/gated output (passed by value — Array is COW, so
+    /// the MainActor reader gets an immutable snapshot).
+    func update(level: Float, bands: [Float]?) {
+        lock.withLock { state in
+            state.level = level
+            if let bands { state.bands = bands }
+        }
+    }
+    func snapshot() -> (level: Float, bands: [Float]?) { lock.withLock { $0 } }
+    func reset() { lock.withLock { $0 = (-160, nil) } }
 }
