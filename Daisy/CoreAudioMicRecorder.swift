@@ -1394,7 +1394,7 @@ private final class RenderContext: @unchecked Sendable {
 
 /// Accumulates archive-write failures off the render thread; one summary
 /// surfaced at stop().
-final class WriteErrorBox: @unchecked Sendable {
+private final class WriteErrorBox: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<(count: Int, first: (any Error)?)>(initialState: (0, nil))
     func record(_ error: any Error) {
         lock.withLock { state in
@@ -1407,7 +1407,7 @@ final class WriteErrorBox: @unchecked Sendable {
 }
 
 /// Frames that successfully landed on disk.
-final class FrameCountBox: @unchecked Sendable {
+private final class FrameCountBox: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<UInt64>(initialState: 0)
     func add(_ frames: UInt64) { lock.withLock { $0 &+= frames } }
     func snapshot() -> UInt64 { lock.withLock { $0 } }
@@ -1415,7 +1415,7 @@ final class FrameCountBox: @unchecked Sendable {
 }
 
 /// Last-buffer arrival timestamp bridge (render → MainActor watchdog).
-final class TimestampBox: @unchecked Sendable {
+private final class TimestampBox: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<Date?>(initialState: nil)
     func mark(_ at: Date) { lock.withLock { $0 = at } }
     func snapshot() -> Date? { lock.withLock { $0 } }
@@ -1423,7 +1423,7 @@ final class TimestampBox: @unchecked Sendable {
 }
 
 /// Mic signal liveness bridge (render → MainActor silence monitor).
-final class LivenessBox: @unchecked Sendable {
+private final class LivenessBox: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock<(aboveFloorAt: Date?, lastRMS: Float)>(initialState: (nil, -160))
     func record(rms: Float, at: Date, floor: Float) {
         lock.withLock { state in
@@ -1436,7 +1436,7 @@ final class LivenessBox: @unchecked Sendable {
 }
 
 /// Render-thread write gate (transcript-only mode without teardown).
-final class AtomicFlag: @unchecked Sendable {
+private final class AtomicFlag: @unchecked Sendable {
     private let lock: OSAllocatedUnfairLock<Bool>
     init(initial: Bool) { lock = OSAllocatedUnfairLock(initialState: initial) }
     var value: Bool { lock.withLock { $0 } }
