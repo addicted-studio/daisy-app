@@ -30,6 +30,26 @@ final class AppSettings {
     var selectedMicDeviceUID: String {
         didSet { defaults.set(selectedMicDeviceUID, forKey: Self.k_selectedMicDeviceUID) }
     }
+
+    /// When ON, microphone capture uses the direct CoreAudio AUHAL path
+    /// (`CoreAudioMicRecorder`) instead of the AVAudioEngine path
+    /// (`AudioRecorder`). Default OFF — this is the on-device-validation
+    /// flag for the highest-risk subsystem in the app.
+    ///
+    /// WHY IT EXISTS: on macOS 26.5, AVAudioEngine's input AUHAL can get
+    /// stuck in sample-rate-conversion mode after a route change — the
+    /// hardware runs at 48 kHz but `inputNode.outputFormat(forBus:0)`
+    /// stays pinned at a stale 44.1 kHz, and even a full engine rebuild
+    /// doesn't clear it (the stale state is HAL/aggregate-device level).
+    /// The tap then delivers 0 frames or wrong-rate audio → empty
+    /// transcript. CoreAudio reads the device's real rate correctly, so
+    /// the AUHAL recorder owns device + stream-format negotiation
+    /// directly and sidesteps the bug. Flip ON only for testing /
+    /// validation until it's proven on real hardware across route
+    /// changes (AirPods ↔ built-in, USB plug/unplug, pause→switch→resume).
+    var useCoreAudioMicCapture: Bool {
+        didSet { defaults.set(useCoreAudioMicCapture, forKey: Self.k_useCoreAudioMicCapture) }
+    }
     var screenshotsEnabled: Bool {
         didSet { defaults.set(screenshotsEnabled, forKey: Self.k_screenshotsEnabled) }
     }
@@ -553,6 +573,11 @@ final class AppSettings {
         // is zero until the user actually starts recording.
         self.captureSystemAudio = defaults.object(forKey: Self.k_captureSystemAudio) as? Bool ?? true
         self.selectedMicDeviceUID = defaults.string(forKey: Self.k_selectedMicDeviceUID) ?? ""
+        // Default OFF — the AVAudioEngine mic path is the shipping
+        // default; the CoreAudio AUHAL path is opt-in for on-device
+        // validation until proven. `object(forKey:) as? Bool ?? false`
+        // preserves an explicit user ON across launches.
+        self.useCoreAudioMicCapture = defaults.object(forKey: Self.k_useCoreAudioMicCapture) as? Bool ?? false
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
@@ -743,6 +768,7 @@ final class AppSettings {
 
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
+    private static let k_useCoreAudioMicCapture = "daisy.useCoreAudioMicCapture"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_autoSummarize = "daisy.autoSummarize"
