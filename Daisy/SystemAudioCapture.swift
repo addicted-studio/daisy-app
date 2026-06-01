@@ -60,6 +60,25 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// resume — running totals carry across pause/resume).
     private(set) var hasReceivedAudio: Bool = false
 
+    /// Wall-clock time the last AUDIBLE buffer (peak above
+    /// `audibleFloorDB`) arrived. Distinct from `lastSampleAt`: buffers
+    /// can flow at full cadence while every sample is silence/zero —
+    /// the signature of DRM-protected playback or the macOS Tahoe
+    /// all-zero-buffer capture glitch. nil until the first audible buffer.
+    private(set) var lastAudibleSampleAt: Date?
+
+    /// Latches `true` the first time an audible buffer is seen this
+    /// session. If it stays `false` for a whole session while buffers
+    /// ARE arriving, the remote side isn't really being captured (silent
+    /// content) — surfaced both as a live warning and an honest archive
+    /// status (`.empty`, not `.captured`, even though silence writes
+    /// non-zero bytes). Reset on fresh start (not resume).
+    private(set) var receivedAudibleAudio: Bool = false
+
+    /// One-shot latch for the silent-CONTENT warning, separate from
+    /// `silenceWarningFired` (the no-buffers-at-all warning).
+    private var silentContentWarningFired: Bool = false
+
     /// Wall-clock time `start()` flipped state to `.capturing`,
     /// used to compute the "never received any audio" timeout.
     private var captureStartedAt: Date?
@@ -116,6 +135,19 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// compromise — short enough that users learn quickly,
     /// long enough not to fire on transient stream-startup delays.
     private static let silentCaptureTimeoutSec: TimeInterval = 30
+
+    /// Peak-dB floor above which a buffer counts as "audible". Clean
+    /// speech peaks well above this; digital silence / all-zero buffers
+    /// sit at -160. -55 dB cleanly separates real remote audio from
+    /// silence without tripping on quiet passages.
+    private static let audibleFloorDB: Float = -55
+
+    /// Fire the silent-CONTENT warning after this many seconds of
+    /// `.capturing` with buffers arriving but NONE ever audible. Longer
+    /// than `silentCaptureTimeoutSec` because a real meeting can open
+    /// with the remote side quiet for a bit; 120 s of buffers-but-no-
+    /// sound is the DRM / Tahoe-glitch signature, not a quiet room.
+    private static let silentContentTimeoutSec: TimeInterval = 120
 
     private var stream: SCStream?
     /// nonisolated(unsafe) so the audio render callback can yield without
@@ -190,16 +222,12 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
 
     func start(archiveURL: URL? = nil) async throws {
         guard state == .idle || state == .stopped || state == .paused else { return }
-        // Capture the original state at function entry so the
-        // placeholder-creation block (which runs after `state` has
-        // already been flipped to `.capturing`) can still tell
-        // whether this is a fresh start or a resume. Critical:
-        // FileManager.createFile() on a path whose ExtAudioFile is
-        // already open (resume case) detaches the inode and the
-        // archive ends up 0 bytes on disk even though writes keep
-        // succeeding into the orphaned descriptor. Caught 2026-05-28
-        // build 37: 3,645,120 frames "written" with 0 writeErrors,
-        // 0 bytes on disk.
+        // Distinguish a fresh start from a resume: on resume
+        // (state == .paused) we KEEP the already-open archive writer +
+        // running counters so the recording stays one contiguous file
+        // across pause/resume; on a fresh start we adopt the new
+        // archiveURL and zero everything. (No zero-byte placeholder file
+        // is created any more — see the note where it used to be, below.)
         let isFreshStart = (state == .idle || state == .stopped)
         // Only adopt a new archive URL on a fresh start. Resume
         // (state == .paused) keeps the writer that was opened
@@ -216,6 +244,9 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             lastSampleAt = nil
             hasReceivedAudio = false
             silenceWarningFired = false
+            lastAudibleSampleAt = nil
+            receivedAudibleAudio = false
+            silentContentWarningFired = false
             // Truncation-detector counters — fresh start zeros them.
             // Resume keeps them so a mid-session pause/resume doesn't
             // erase the evidence of an earlier write failure cluster.
@@ -243,45 +274,23 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         startSilenceMonitor()
         installOutputDeviceListener()
 
-        // Eager archive placeholder — creates a zero-byte
-        // `system_audio.caf` on disk right at session start. The
-        // lazy-open path in `stream(_:didOutputSampleBuffer:_:)`
-        // will overwrite this with a real AVAudioFile on the FIRST
-        // delivered sample buffer. If SCStream never delivers any
-        // audio (the classic BT-loopback failure mode), the file
-        // stays at zero bytes — making "capture armed but received
-        // nothing" diagnosable from the artifact alone (vs the
-        // pre-fix behaviour where no file at all meant the post-
-        // mortem couldn't tell capture-never-started from capture-
-        // received-nothing).
-        //
-        // GATED on `isFreshStart` — on resume (state == .paused at
-        // entry) `archiveWriter` is still holding an open ExtAudioFile
-        // pointing at `url.path`. Calling `FileManager.createFile()`
-        // on that path detaches the inode the open descriptor is
-        // writing into: writes keep returning success to ARC but
-        // they're streaming into an orphaned block, and the directory
-        // entry stays at the zero-byte placeholder forever. Symptom:
-        // `archiveFramesWritten` shows millions of frames with zero
-        // writeErrors AND the file is 0 bytes on disk. Confirmed
-        // 2026-05-28 build 37 crash log:
-        //     "System audio archive TRUNCATED: 0 bytes on disk,
-        //      3645120 frames written, 0 write errors"
-        // Fix: only stamp the placeholder when we're starting fresh
-        // and `archiveWriter == nil` (the writer hasn't been opened
-        // yet). Resume path keeps the live writer untouched.
-        if isFreshStart, let url = self.archiveURL {
-            let created = FileManager.default.createFile(
-                atPath: url.path,
-                contents: nil,
-                attributes: nil
-            )
-            if created {
-                log.info("System audio archive placeholder created: \(url.lastPathComponent, privacy: .public)")
-            } else {
-                log.error("Failed to create system audio archive placeholder at \(url.path, privacy: .private)")
-            }
-        }
+        // NO eager placeholder file. (Removed 2026-05-31 — root cause of
+        // the recurring 0-byte system_audio.caf.) We used to stamp a
+        // zero-byte file here via `FileManager.createFile` so "armed but
+        // received nothing" was diagnosable from the artifact. But that
+        // placeholder was the bug: on a fresh start it created an inode
+        // that the first-buffer `AVAudioFile(forWriting:)` then opened
+        // over, and writes streamed into a descriptor whose directory
+        // entry stayed at 0 bytes — millions of frames "written", 0 write
+        // errors, 0 bytes on disk (audit 2026-05-31: 562M frames / 0 B,
+        // and the earlier build-37 case). The WORKING microphone path
+        // (AudioRecorder) creates no placeholder — it just opens the
+        // AVAudioFile and writes. We now match it: the lazy-open in
+        // `stream(_:didOutputSampleBuffer:_:)` creates the file fresh on
+        // the first delivered buffer. "Armed but nothing landed" stays
+        // fully diagnosable without a husk file — `hasReceivedAudio`,
+        // `archiveFramesWritten` and the on-disk byte count drive
+        // `RecordingSession.systemAudioArchiveStatus` (.empty / .truncated).
 
         // Bluetooth output detection — known to break SCStream's
         // audio loopback on multiple macOS Tahoe builds. SCK binds
@@ -615,11 +624,14 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         do {
             let newStream = try await buildAndStartSystemAudioStream()
             self.stream = newStream
-            // Reset the silence-warning latch — fresh stream gets a
-            // fresh 30 s timeout to deliver audio.
+            // Reset the silence-warning latches — fresh stream gets a
+            // fresh timeout to deliver audio (and audible audio).
             silenceWarningFired = false
+            silentContentWarningFired = false
             captureStartedAt = Date()
             lastSampleAt = nil
+            lastAudibleSampleAt = nil
+            receivedAudibleAudio = false
             ToastCenter.shared.show(
                 "Output device changed — system audio capture continues.",
                 style: .info
@@ -671,31 +683,55 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// occurrences (a dim system-audio dot in the widget) lives in
     /// the widget refactor (#168) — this is the audible warning.
     private func checkForSilentCapture() {
-        guard state == .capturing, !silenceWarningFired else { return }
-
+        guard state == .capturing else { return }
         let now = Date()
-        let silentDuration: TimeInterval
-        if let lastSampleAt {
-            // We DID get audio at some point — measure gap since
-            // last delivered buffer.
-            silentDuration = now.timeIntervalSince(lastSampleAt)
-        } else if let captureStartedAt {
-            // No buffers since session start — measure age of the
-            // capture itself.
-            silentDuration = now.timeIntervalSince(captureStartedAt)
-        } else {
-            return
+
+        // Path 1 — NO BUFFERS arriving (BT loopback, SCKit Tahoe
+        // no-delivery, denied permission). Warn once per session.
+        if !silenceWarningFired {
+            let silentDuration: TimeInterval
+            if let lastSampleAt {
+                // We DID get buffers at some point — measure gap since
+                // the last delivered one.
+                silentDuration = now.timeIntervalSince(lastSampleAt)
+            } else if let captureStartedAt {
+                // No buffers since session start — measure age of the
+                // capture itself.
+                silentDuration = now.timeIntervalSince(captureStartedAt)
+            } else {
+                silentDuration = 0
+            }
+            if silentDuration >= Self.silentCaptureTimeoutSec {
+                silenceWarningFired = true
+                let neverGotAudio = !hasReceivedAudio
+                let msg = neverGotAudio
+                    ? "System audio capture is on but no sound is reaching Daisy. The remote side won't be recorded — check your output device (Bluetooth headphones can't be captured on macOS)."
+                    : "System audio went silent — the remote side may not be recording anymore. Check your output device."
+                log.warning("Silent SCStream detected after \(Int(silentDuration), privacy: .public)s (hasReceivedAudio=\(self.hasReceivedAudio, privacy: .public))")
+                ToastCenter.shared.show(msg, style: .warning)
+                return
+            }
         }
 
-        guard silentDuration >= Self.silentCaptureTimeoutSec else { return }
-
-        silenceWarningFired = true
-        let neverGotAudio = !hasReceivedAudio
-        let msg = neverGotAudio
-            ? "System audio capture is on but no sound is reaching Daisy. The remote side won't be recorded — check your output device (Bluetooth headphones can't be captured on macOS)."
-            : "System audio went silent — the remote side may not be recording anymore. Check your output device."
-        log.warning("Silent SCStream detected after \(Int(silentDuration), privacy: .public)s (hasReceivedAudio=\(self.hasReceivedAudio, privacy: .public))")
-        ToastCenter.shared.show(msg, style: .warning)
+        // Path 2 — BUFFERS ARE ARRIVING but every sample is silence
+        // (DRM-protected playback, or the macOS Tahoe all-zero-buffer
+        // capture glitch — buffers flow at full cadence, content is pure
+        // zeros, the archive lands a file full of silence). Distinct from
+        // path 1: here `hasReceivedAudio` is true but nothing has ever
+        // crossed `audibleFloorDB`. Warn once, only after enough time
+        // that a merely-quiet remote side wouldn't trip it.
+        if !silentContentWarningFired,
+           hasReceivedAudio,
+           !receivedAudibleAudio,
+           let captureStartedAt,
+           now.timeIntervalSince(captureStartedAt) >= Self.silentContentTimeoutSec {
+            silentContentWarningFired = true
+            log.warning("Silent-content system capture: buffers arriving but nothing audible after \(Int(now.timeIntervalSince(captureStartedAt)), privacy: .public)s")
+            ToastCenter.shared.show(
+                "System audio is being captured but contains no sound — the remote side won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording.",
+                style: .warning
+            )
+        }
     }
 
     func stop() async {
@@ -791,6 +827,10 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
                 self.peakLevelDB = peak
                 self.lastSampleAt = Date()
                 self.hasReceivedAudio = true
+                if peak > Self.audibleFloorDB {
+                    self.lastAudibleSampleAt = Date()
+                    self.receivedAudibleAudio = true
+                }
             }
         }
 
