@@ -1262,6 +1262,23 @@ struct SettingsView: View {
             .labelsHidden()
             .fixedSize()
         }
+
+        // Experimental mic backend (2026-06-01). Routes mic capture through a
+        // direct CoreAudio AUHAL unit instead of AVAudioEngine — fixes the
+        // input-format de-sync (AVAudioEngine stuck at 44.1k while the device
+        // is 48k) that stops recording from picking up the mic on some Macs
+        // (built-in mic, macOS 26). Off by default while it's validated
+        // on-device; the backend is chosen at session creation, so restart
+        // Daisy after toggling.
+        Toggle(isOn: $settings.useCoreAudioMicCapture) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("CoreAudio mic capture (experimental)")
+                Text("Try this if recording isn't picking up your microphone. Restart Daisy after changing.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     private var systemDefaultLabel: String {
