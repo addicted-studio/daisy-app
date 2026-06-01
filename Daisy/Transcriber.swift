@@ -956,6 +956,17 @@ final class Transcriber {
             // Stash centroids so RecordingSession.stop() can write
             // the speakers.json sidecar + match against profiles.
             speakerCentroids = output.centroids
+        } catch is CancellationError {
+            // Benign, by design: the user started a new recording (or reset)
+            // while this session's final pass was mid-Whisper, so
+            // RecordingSession rotated/cancelled summaryTask. NOT a failure —
+            // log as info and DON'T set `lastError` (which previously surfaced
+            // a spurious "failed" state for a session that's actually fine).
+            // The session keeps its live-accumulated segments; only the
+            // full-quality final re-pass was skipped. (If live transcription
+            // was OFF this means the tail is sparse — tracked separately:
+            // a new session shouldn't silently sacrifice the prior final pass.)
+            log.info("Final pass cancelled (new session started mid-pass) — keeping live segments, no error surfaced.")
         } catch {
             log.error("Final transcribe failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
