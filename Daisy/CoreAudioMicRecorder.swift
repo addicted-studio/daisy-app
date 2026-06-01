@@ -1250,13 +1250,14 @@ final class CoreAudioMicRecorder: MicRecording {
         let snap = levelSpectrum.snapshot()
         levelDB = snap.level
         if let bands = snap.bands { spectrumBands = bands }
-        // Debug-only liveness probe (~1 Hz): confirms the run-loop timer is
-        // actually firing under load and what it's publishing. Visible only
-        // with `log … --debug`; never shown to users. Remove once verified.
+        // TEMP liveness probe (~1 Hz, .notice so it PERSISTS for `log show`
+        // — info/debug are not retained by macOS): confirms the run-loop
+        // timer is actually firing under load and what it's publishing.
+        // REMOVE before release.
         displayPumpDiagTick &+= 1
         if displayPumpDiagTick % 30 == 0 {
             let maxBand = snap.bands?.max() ?? -1
-            log.debug("display pump alive: level=\(snap.level, privacy: .public) dBFS, maxBand=\(maxBand, privacy: .public), bandsNil=\(snap.bands == nil, privacy: .public)")
+            log.notice("display pump alive: level=\(snap.level, privacy: .public) dBFS, maxBand=\(maxBand, privacy: .public), bandsNil=\(snap.bands == nil, privacy: .public)")
         }
     }
 
