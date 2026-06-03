@@ -758,7 +758,12 @@ final class AppSettings {
         // feature but needs opt-in. Users who want the headline
         // "Daisy captures every meeting" workflow flip it on in
         // Settings → Capture → Activation.
-        self.autoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? false
+        // Capture into a local too: the auto-start POLICY derivation
+        // below needs this value, but it runs before `self` is fully
+        // initialized (Swift phase 1), where reading `self.autoStart…`
+        // is illegal. Derive from the local instead.
+        let loadedAutoStartOnMeeting = defaults.object(forKey: Self.k_autoStartOnMeeting) as? Bool ?? false
+        self.autoStartOnMeeting = loadedAutoStartOnMeeting
         self.showSessionAfterStop = defaults.object(forKey: Self.k_showSessionAfterStop) as? Bool ?? false
         // Default ON — the prompt is the only safeguard against a
         // session left running for hours by accident. Users who
@@ -849,7 +854,10 @@ final class AppSettings {
         } else {
             self.autoSendNotionFolders = []
         }
-        self.autoStartFromCalendar = defaults.object(forKey: Self.k_autoStartFromCalendar) as? Bool ?? false
+        // Local copy for the policy derivation below (same phase-1
+        // reason as `loadedAutoStartOnMeeting`).
+        let loadedAutoStartFromCalendar = defaults.object(forKey: Self.k_autoStartFromCalendar) as? Bool ?? false
+        self.autoStartFromCalendar = loadedAutoStartFromCalendar
         self.calendarAccessGranted = defaults.bool(forKey: Self.k_calendarAccessGranted)
         // Auto-start policy (1.0.7.9). The two legacy bools above are
         // now derived outputs of this. Migration so existing users see
@@ -875,12 +883,15 @@ final class AppSettings {
            let policy = AutoStartPolicy(rawValue: rawPolicy) {
             self.autoStartPolicy = policy
             hadStoredPolicy = true
-        } else if autoStartOnMeeting || autoStartFromCalendar {
+        } else if loadedAutoStartOnMeeting || loadedAutoStartFromCalendar {
             // Legacy users with at least one detector armed. App-launch
             // alone (calendar off) still maps to Always rather than
             // inventing an "app-only" mode — Selective is explicitly
             // calendar-driven, so it would be the wrong label.
-            self.autoStartPolicy = (!autoStartOnMeeting && autoStartFromCalendar)
+            // NB: read the just-loaded LOCALS, not self.* — this runs in
+            // init phase 1 (not all stored properties assigned yet), so
+            // reading instance properties through self is rejected.
+            self.autoStartPolicy = (!loadedAutoStartOnMeeting && loadedAutoStartFromCalendar)
                 ? .selective
                 : .always
             hadStoredPolicy = false
