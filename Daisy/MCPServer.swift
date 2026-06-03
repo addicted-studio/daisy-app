@@ -69,7 +69,32 @@ final class MCPServer {
     /// EventSource staleness window mcp-remote uses internally.
     /// Bound to the current sseConnection — re-created when a new
     /// SSE stream replaces an old one, torn down on stop().
+    ///
+    /// As of the connection-storm root-cause fix the keepalive does
+    /// MORE than emit a heartbeat: its send-completion now inspects the
+    /// error. A half-open loopback socket accepts the first write into
+    /// the kernel send buffer, but the next write after the peer's RST
+    /// surfaces ECONNRESET/EPIPE in `contentProcessed`. We previously
+    /// discarded that error (`{ _ in }`), so a dead peer left a zombie
+    /// `sseConnection` wired up forever and the next POST's response
+    /// was written into a corpse. Now a failed keepalive write tears
+    /// the connection down, which lets the client reconnect ONCE
+    /// cleanly instead of the server silently wedging.
     @ObservationIgnored private var sseKeepaliveTimer: DispatchSourceTimer?
+
+    /// SSE `retry:` directive (milliseconds) emitted on every stream
+    /// open. The `eventsource` package mcp-remote rides on hardcodes a
+    /// 3000 ms reconnect interval and only ever changes it when the
+    /// server sends a `retry:` field — it has no exponential backoff
+    /// and no jitter of its own. Left unset, ANY churn (a half-open
+    /// socket, a Claude restart, an eviction) turns into a fixed
+    /// 3-per-9-seconds hammer. Emitting a larger floor here converts
+    /// that into a paced reconnect: a genuine reconnect still happens
+    /// promptly enough to feel live, but a pathological loop can no
+    /// longer pile requests on faster than this. 15000 ms matches the
+    /// keepalive cadence — by the time the client would reconnect we've
+    /// either proven the socket alive (heartbeat) or torn it down.
+    private static let sseReconnectFloorMillis = 15_000
 
     /// Per-session UUID issued at `initialize` time. Used to detect
     /// stale reconnects from mcp-remote after a Claude restart — if
@@ -80,24 +105,37 @@ final class MCPServer {
     @ObservationIgnored private var currentSessionID: String?
 
     /// Sliding window of recent SSE-open timestamps for the
-    /// connection-storm circuit breaker. Pruned to the last 30s on
-    /// every open. If we see > 5 opens in 30s, we shut the listener
-    /// down for 5 minutes. Real-world trigger: Claude Desktop's
-    /// mcp-remote reconnect loop wedges on macOS 26.2 and hammers
-    /// our SSE endpoint every 3 seconds, which kept Daisy's runloop
-    /// busy enough that an unrelated SwiftUI concurrency bug
-    /// (swift_task_isCurrentExecutor UAF in DesignLibrary HStack
-    /// during layout cycles) fired predictably during the next
-    /// `start recording` action and crashed the process. Memory
-    /// note: `feedback_tahoe_swiftui_button_assumeisolated_crash`.
-    /// Killing the storm removes the layout-pressure trigger.
+    /// connection-storm circuit breaker. Pruned to the last
+    /// `stormWindow` on every open. The breaker is now a LAST-RESORT
+    /// safety net, not the primary defence — see the root-cause fixes
+    /// in `openSSEStream` (half-open detection + SSE `retry:` directive
+    /// + network-layer disconnect observation). Real-world trigger it
+    /// used to fire on: Claude Desktop's mcp-remote reconnect loop
+    /// wedged on macOS 26.2 and hammered our SSE endpoint every 3
+    /// seconds (the `eventsource` package's hardcoded 3000 ms reconnect
+    /// interval, which we now widen via a `retry:` directive). That
+    /// kept Daisy's runloop busy enough that an unrelated SwiftUI
+    /// concurrency bug (swift_task_isCurrentExecutor UAF in
+    /// DesignLibrary HStack during layout cycles) fired predictably
+    /// during the next `start recording` action and crashed the
+    /// process. Memory note:
+    /// `feedback_tahoe_swiftui_button_assumeisolated_crash`. Removing
+    /// the reconnect-loop removes the layout-pressure trigger at the
+    /// source; the breaker only catches a pathological client we
+    /// haven't anticipated.
     @ObservationIgnored private var recentSSEOpenings: [Date] = []
     @ObservationIgnored private var stormCooldownEndsAt: Date?
 
-    /// Storm thresholds — exceeded = circuit breaker trips.
-    private static let stormWindow: TimeInterval = 30
-    private static let stormThreshold = 5
-    private static let stormCooldown: TimeInterval = 5 * 60
+    /// Storm thresholds — exceeded = circuit breaker trips. Loosened
+    /// now that the root cause (a tight client reconnect loop) is
+    /// fixed: a genuine reconnect after a half-open socket is a single
+    /// clean re-open, and Claude-Desktop restarts produce at most a
+    /// couple of opens. Anything past 20 opens in 60s is therefore a
+    /// client we don't understand, and we respond gently (503 +
+    /// Retry-After) rather than killing the listener.
+    private static let stormWindow: TimeInterval = 60
+    private static let stormThreshold = 20
+    private static let stormCooldown: TimeInterval = 60
 
     private init() {}
 
@@ -182,8 +220,39 @@ final class MCPServer {
     // MARK: - Per-connection handling
 
     private func handleNewConnection(_ connection: NWConnection) {
+        // Observe the network layer so a dropped/failed connection is
+        // noticed proactively instead of only when a keepalive write
+        // happens to fail. This is what lets us detect a half-open or
+        // RST'd SSE socket and tear it down cleanly — the client then
+        // reconnects ONCE rather than the server holding a zombie
+        // stream and the client's EventSource looping against it. We
+        // only act when the connection is the CURRENT sseConnection;
+        // short-lived request/response connections (GET /, POST
+        // /messages) cancel themselves and we simply ignore their
+        // terminal states.
+        connection.stateUpdateHandler = { [weak self] newState in
+            switch newState {
+            case .failed, .cancelled:
+                Task { @MainActor [weak self] in
+                    self?.handleConnectionTerminated(connection)
+                }
+            default:
+                break
+            }
+        }
         connection.start(queue: queue)
         receiveRequest(on: connection, accumulator: Data())
+    }
+
+    /// Called when any accepted connection reaches `.failed`/`.cancelled`.
+    /// If it was the live SSE stream, tear the stream state down so the
+    /// next `GET /sse` is a clean fresh open (not a roll-over against a
+    /// stale reference) and the keepalive timer can't fire into a dead
+    /// socket.
+    private func handleConnectionTerminated(_ connection: NWConnection) {
+        guard sseConnection === connection else { return }
+        log.info("SSE connection terminated (\(self.currentSessionID ?? "nil", privacy: .public)) — clearing stream state; client may reconnect")
+        tearDownSSE()
     }
 
     /// Pull bytes off `connection` until we have a complete HTTP/1.1
@@ -308,19 +377,42 @@ final class MCPServer {
     // MARK: - SSE stream (server → client)
 
     private func openSSEStream(on connection: NWConnection) async {
-        // ── Connection-storm circuit breaker ─────────────────────────
+        // ── Connection-storm circuit breaker (LAST-RESORT) ───────────
         //
-        // Reject the connection at the application layer if we've seen
-        // > stormThreshold opens in stormWindow. NWConnection.cancel()
-        // closes the TCP socket; a well-behaved client interprets that
-        // as "server unavailable", backs off, and stops pile-on.
-        // mcp-remote will keep retrying but at our rate, not its
-        // bugged 3-second cadence. After stormCooldown elapses, the
-        // breaker auto-resets on the next non-storm open.
+        // The primary fix for the reconnect loop lives below (SSE
+        // `retry:` floor, half-open detection on the keepalive, and the
+        // network-layer disconnect observer in handleNewConnection).
+        // This breaker only catches a pathological client those don't
+        // tame. Its RESPONSE has changed: it no longer calls stop().
+        //
+        // Why not stop(): killing the listener makes every subsequent
+        // TCP attempt hit ECONNREFUSED. The `eventsource` runtime
+        // mcp-remote uses treats a refused/failed connection as
+        // `_onFetchError → scheduleReconnect` — i.e. it KEEPS looping at
+        // its reconnect interval. So a 5-minute listener blackout
+        // produced 5 minutes of refused-connection hammering and then
+        // an instant re-storm on re-arm. The cure was feeding the
+        // disease.
+        //
+        // Gentle response instead: answer `GET /sse` with HTTP 503 +
+        // Retry-After and close. A non-200 status drives that same
+        // EventSource into `failConnection → readyState = CLOSED`, which
+        // does NOT schedule a reconnect — the loop stops cleanly. The
+        // listener stays up, so a fresh Claude Desktop launch (or the
+        // user toggling MCP off/on) reconnects immediately rather than
+        // waiting out a cooldown.
         let now = Date()
         if let until = stormCooldownEndsAt, now < until {
-            log.warning("MCP connection-storm cooldown active until \(until, privacy: .public) — rejecting")
-            connection.cancel()
+            let retryAfter = max(1, Int(until.timeIntervalSince(now).rounded(.up)))
+            log.warning("MCP connection-storm cooldown active until \(until, privacy: .public) — replying 503 (Retry-After: \(retryAfter, privacy: .public)s)")
+            Self.write(
+                status: 503,
+                contentType: "text/plain; charset=utf-8",
+                body: "MCP server cooling down after a connection storm. Retry shortly.",
+                on: connection,
+                closeAfter: true,
+                extraHeaders: ["Retry-After: \(retryAfter)"]
+            )
             return
         }
         recentSSEOpenings.append(now)
@@ -328,22 +420,19 @@ final class MCPServer {
         if recentSSEOpenings.count > Self.stormThreshold {
             stormCooldownEndsAt = now.addingTimeInterval(Self.stormCooldown)
             recentSSEOpenings.removeAll()
-            log.error("MCP connection storm: \(Self.stormThreshold, privacy: .public)+ opens in \(Int(Self.stormWindow), privacy: .public)s — tearing down listener for \(Int(Self.stormCooldown), privacy: .public)s. Likely cause: a misbehaving MCP client (e.g. mcp-remote with broken reconnect). Daisy stays usable; restart the app or wait \(Int(Self.stormCooldown / 60), privacy: .public) min to re-enable MCP.")
-            connection.cancel()
-            // Stop the listener entirely so subsequent TCP attempts
-            // hit ECONNREFUSED at the kernel and the client's retry
-            // logic shifts to a real backoff. Schedule re-arm in
-            // stormCooldown.
-            stop()
-            // Re-arm with the same port the user has configured
-            // (defaults.integer returns 0 for missing; fall back to
-            // the same 54321 default AppSettings uses).
-            let storedPort = UserDefaults.standard.integer(forKey: "daisy.mcpServerPort")
-            let restartPort = storedPort > 0 ? storedPort : 54321
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(Self.stormCooldown * 1_000_000_000))
-                self?.start(port: restartPort)
-            }
+            let retryAfter = Int(Self.stormCooldown)
+            log.error("MCP connection storm: \(Self.stormThreshold, privacy: .public)+ opens in \(Int(Self.stormWindow), privacy: .public)s — replying 503 + Retry-After \(retryAfter, privacy: .public)s for \(Int(Self.stormCooldown), privacy: .public)s. Likely cause: a misbehaving MCP client (e.g. mcp-remote with a broken reconnect). Daisy stays usable and the listener stays up; the client should stop its EventSource on the non-200 and reconnect cleanly later.")
+            // Tear down any live stream this storm rolled over so we
+            // don't leak it, then 503 the offending open.
+            tearDownSSE()
+            Self.write(
+                status: 503,
+                contentType: "text/plain; charset=utf-8",
+                body: "MCP server saw a connection storm and is backing off. Retry shortly.",
+                on: connection,
+                closeAfter: true,
+                extraHeaders: ["Retry-After: \(retryAfter)"]
+            )
             return
         }
 
@@ -378,33 +467,98 @@ final class MCPServer {
 
         connection.send(content: Data(headers.utf8), completion: .contentProcessed { _ in })
 
+        // Pace the client's reconnect FIRST. A bare `retry:` line is a
+        // valid SSE field and sets the EventSource reconnection time;
+        // without it the client is pinned to its hardcoded 3000 ms.
+        // Emitting it before the endpoint guarantees it's applied even
+        // if the stream is torn down a beat later. This is THE knob that
+        // turns a 3-second hammer into a paced reconnect.
+        connection.send(
+            content: Data("retry: \(Self.sseReconnectFloorMillis)\r\n\r\n".utf8),
+            completion: .contentProcessed { _ in }
+        )
+
         // Per MCP spec: first event tells the client where to POST.
+        // Idempotent on every (re)connect — a fresh `GET /sse` always
+        // gets the endpoint event, so a reconnect never lands without
+        // knowing where to POST (which would itself make the client
+        // give up and retry).
         sendSSEEvent(name: "endpoint", data: "/messages", on: connection)
 
-        // Arm the keepalive — comment-frame heartbeat every 15s for
-        // the lifetime of THIS connection. The closure captures the
-        // connection weakly so a dropped client can't keep the
-        // server alive; we also re-verify it's still the current
-        // sseConnection on each fire (race against a fresh
-        // openSSEStream replacing us).
+        // Start a receive pump on the SSE socket. We don't expect the
+        // client to send anything on this connection (it POSTs on a
+        // separate one), but reading is how Network.framework surfaces
+        // the peer's FIN: a graceful client close lands here as
+        // `isComplete == true`, and a reset lands as an error. Either
+        // way we tear the stream down immediately rather than waiting
+        // up to one keepalive interval to (maybe) notice. The
+        // stateUpdateHandler set in handleNewConnection then fires and
+        // clears `sseConnection`.
+        receiveAndDiscardSSE(on: connection)
+
+        // Arm the keepalive — comment-frame heartbeat every 15s for the
+        // lifetime of THIS connection. The closure captures the
+        // connection weakly so a dropped client can't keep the server
+        // alive; we also re-verify it's still the current sseConnection
+        // on each fire (race against a fresh openSSEStream replacing
+        // us). Crucially the send-completion now INSPECTS the error: a
+        // half-open loopback socket swallows the first write into the
+        // kernel buffer but fails the next one with ECONNRESET/EPIPE.
+        // On any such failure we tear the connection down so the client
+        // reconnects once cleanly instead of the server nursing a
+        // zombie stream forever (the old `{ _ in }` discarded this and
+        // was the core of the wedge-then-hang bug).
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + 15, repeating: 15)
         let keepaliveBytes = Data(": keepalive\r\n\r\n".utf8)
         timer.setEventHandler { [weak self, weak connection] in
             guard let connection,
                   let strongSelf = self else { return }
-            // Hop to MainActor briefly to compare against
-            // sseConnection. Avoid the hop entirely if the connection
-            // is already cancelled.
+            // Avoid the hop entirely if the connection is already
+            // cancelled.
             if connection.state == .cancelled { return }
             Task { @MainActor in
                 guard strongSelf.sseConnection === connection else { return }
-                connection.send(content: keepaliveBytes, completion: .contentProcessed { _ in })
+                connection.send(content: keepaliveBytes, completion: .contentProcessed { error in
+                    guard error != nil else { return }
+                    // The peer is gone (half-open detected). Cancelling
+                    // drives the stateUpdateHandler → tearDownSSE on the
+                    // MainActor; we don't touch isolated state here.
+                    Task { @MainActor [weak strongSelf, weak connection] in
+                        guard let strongSelf, let connection,
+                              strongSelf.sseConnection === connection else { return }
+                        strongSelf.log.info("SSE keepalive write failed — peer gone; tearing down so client can reconnect cleanly")
+                        connection.cancel()
+                    }
+                })
             }
         }
         timer.resume()
         sseKeepaliveTimer = timer
         log.info("SSE stream opened, session=\(sessionID, privacy: .public)")
+    }
+
+    /// Drain (and discard) anything the client sends on the SSE
+    /// connection. The MCP HTTP+SSE transport never sends client→server
+    /// bytes on this stream — POSTs go to /messages on their own
+    /// connections — so any data here is unexpected and ignored. The
+    /// point of reading at all is detection: `isComplete`/error tells us
+    /// the peer closed, and we tear the stream down at once. Only acts
+    /// on the connection while it is the current SSE stream.
+    private nonisolated func receiveAndDiscardSSE(on connection: NWConnection) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] _, _, isComplete, error in
+            guard let self else { return }
+            if error != nil || isComplete {
+                // Cancelling fires the stateUpdateHandler, which clears
+                // sseConnection on the MainActor if this was the live
+                // stream. Safe to call unconditionally — cancel on an
+                // already-dead connection is a no-op.
+                connection.cancel()
+                return
+            }
+            // Keep draining; we never act on the bytes.
+            self.receiveAndDiscardSSE(on: connection)
+        }
     }
 
     private func sendSSEEvent(name: String? = nil, data: String, on connection: NWConnection) {
@@ -620,17 +774,17 @@ final class MCPServer {
         contentType: String = "text/plain; charset=utf-8",
         body: String,
         on connection: NWConnection,
-        closeAfter: Bool
+        closeAfter: Bool,
+        extraHeaders: [String] = []
     ) {
         let statusLine = "HTTP/1.1 \(status) \(reasonPhrase(for: status))"
         let bodyData = Data(body.utf8)
-        let headers = [
+        let headers = ([
             statusLine,
             "Content-Type: \(contentType)",
             "Content-Length: \(bodyData.count)",
             "Connection: close",
-            "\r\n",
-        ].joined(separator: "\r\n")
+        ] + extraHeaders + ["\r\n"]).joined(separator: "\r\n")
         var response = Data(headers.utf8)
         response.append(bodyData)
         connection.send(content: response, completion: .contentProcessed { _ in
@@ -645,6 +799,7 @@ final class MCPServer {
         case 400: return "Bad Request"
         case 404: return "Not Found"
         case 500: return "Internal Server Error"
+        case 503: return "Service Unavailable"
         default:  return "OK"
         }
     }
