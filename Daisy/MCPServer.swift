@@ -17,7 +17,15 @@
 //    • Single client at a time — if a second SSE client connects,
 //      we drop the previous stream (matches Claude Desktop's
 //      restart-on-config-change behaviour)
-//    • Read-only tools (see MCPTools.swift) — no mutation surface
+//    • Tools (see MCPTools.swift) are READ tools plus a small,
+//      deliberately SAFE set of ACTION (write) tools — regenerate a
+//      summary, rename a session/speaker, route a session to a
+//      configured destination. No DESTRUCTIVE surface: nothing here
+//      can delete a session/audio/transcript, change settings or
+//      credentials, or alter this server's own transport / network
+//      binding. The security posture below (loopback + single-client
+//      + Host/Origin guards) is unchanged by the addition of write
+//      tools — only the tool surface in MCPTools grew.
 //
 //  We hand-roll the HTTP/1.1 parser and SSE framing on top of
 //  Network.framework's NWListener so the build stays free of

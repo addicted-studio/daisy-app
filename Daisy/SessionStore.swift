@@ -351,6 +351,38 @@ final class SessionStore {
             .map(\.key)
     }
 
+    /// Rewrite the session's `title:` frontmatter line and reload the
+    /// store so History rows / the Detail header re-render. Mirrors
+    /// `setTag` exactly (same `upsertFrontmatter` + YAML-quote round
+    /// trip the `title` reader in `parseFrontmatter` already strips).
+    /// No dedicated UI button today — title is otherwise only set at
+    /// record time — but it's the same on-disk field, so editing it
+    /// here is the canonical, fully-reversible mutation. Empty/blank
+    /// titles are rejected by the caller (an empty `title:` would make
+    /// `parseSession` fall back to the folder-name id, which is
+    /// confusing) — this method trusts its input is non-empty.
+    func setTitle(_ title: String, for session: StoredSession) async {
+        guard let url = session.transcriptURL else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            var text = try String(contentsOf: url, encoding: .utf8)
+            // Same quoting as MarkdownExporter.yamlQuote (escape `\`
+            // then `"`), so a title with quotes/colons survives the
+            // YAML round-trip the same way the record-time writer
+            // produces it.
+            let escaped = trimmed
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+            let yamlValue = "\"\(escaped)\""
+            text = Self.upsertFrontmatter(in: text, key: "title", value: yamlValue)
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            await refresh()
+        } catch {
+            log.error("Set title failed: \(error.localizedDescription, privacy: .public)")
+            lastError = error.localizedDescription
+        }
+    }
+
     /// Update the `daisy_tag:` value on a session and reload the
     /// store so the History sidebar selector refreshes. Pass an
     /// empty string to remove the tag (the line itself stays as

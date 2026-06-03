@@ -223,7 +223,7 @@ struct ConnectionsView: View {
                 }
             }
         } footer: {
-            Text("Loopback-only (127.0.0.1), read-only tools — nothing leaves this Mac. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue.")
+            Text("Loopback-only (127.0.0.1) — the server is reachable only from this Mac. Connected clients can read your sessions and take a few safe actions (re-summarize, rename a session or speaker, send a session to a destination you've set up). They can't delete anything or change Daisy's settings. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
