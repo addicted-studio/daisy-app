@@ -50,15 +50,17 @@ struct ConnectionsView: View {
     @State private var selectedSection: ConnectionSection = .autoRouting
     @State private var editingIntegration: MCPIntegration?
     @State private var mcpPortText: String = ""
-    /// Disables the "Add to Claude Desktop" button while the open
-    /// panel + JSON merge are running. Without this a user could
-    /// double-click and end up with two overlapping NSOpenPanels.
+    /// Disables the one-click button while the JSON merge runs. The
+    /// write is fast (a direct, non-sandboxed file write — see
+    /// `ClaudeDesktopConfig`), but guarding against a double-tap that
+    /// fires two overlapping writes keeps the toasts sane.
     @State private var claudeInstallInProgress: Bool = false
-    /// Mirrors `ClaudeDesktopConfig.isInstalled` so the button can
-    /// switch between "Add to Claude Desktop" (first run) and
-    /// "Refresh Claude Desktop config" (after the bookmark is
-    /// stored). Set on appear and after each install run.
-    @State private var claudeBookmarkExists: Bool = false
+    /// Where Daisy's entry currently stands in Claude Desktop's
+    /// config — drives the button copy ("Add" vs "Update port" vs
+    /// "Reinstall"), the Remove affordance, and the not-installed /
+    /// malformed hints. Recomputed on appear, after every write, and
+    /// whenever the live server port changes.
+    @State private var claudeEntryState: ClaudeDesktopConfig.EntryState = .notInstalled
 
     // Google account UI moved to Settings → Permissions → Calendar
     // (build 42, 2026-05-28) — Apple Calendar and Google Calendar are
@@ -92,7 +94,7 @@ struct ConnectionsView: View {
         .background(Color.daisyBgPrimary)
         .onAppear {
             mcpPortText = String(settings.mcpServerPort)
-            claudeBookmarkExists = ClaudeDesktopConfig.isInstalled
+            refreshClaudeEntryState()
             consumePendingSection()
         }
         .onChange(of: nav.pendingConnectionsSection) { _, _ in
@@ -102,8 +104,17 @@ struct ConnectionsView: View {
             mcpPortText = String(new)
             // If the user has already wired Daisy into Claude Desktop,
             // silently rewrite the config so the URL keeps pointing at
-            // the right port.
-            ClaudeDesktopConfig.refreshIfInstalled(port: new)
+            // the right port. Only fires when an entry already exists,
+            // so changing the port never creates a config the user
+            // didn't ask for.
+            ClaudeDesktopConfig.refreshIfInstalled(port: liveServerPort)
+            refreshClaudeEntryState()
+        }
+        // The button copy + status hints key off whether the server is
+        // running and on what port; recompute when the listener state
+        // flips (start / stop / restart on a new port).
+        .onChange(of: mcpServer.state) { _, _ in
+            refreshClaudeEntryState()
         }
         .sheet(item: $editingIntegration) { integration in
             IntegrationEditor(
@@ -184,50 +195,12 @@ struct ConnectionsView: View {
                     .onSubmit { commitMCPPort() }
             }
 
-            // Snippet + install affordance live in the same Section
-            // so the Form draws no inner divider between the local-
-            // server config and the client-side instructions.
-            VStack(alignment: .leading, spacing: 10) {
-                Text(mcpConfigSnippet)
-                    .font(.system(.callout, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-                    )
-
-                HStack(spacing: 8) {
-                    Spacer()
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(mcpConfigSnippet, forType: .string)
-                        ToastCenter.shared.show("MCP config copied", style: .success)
-                    } label: {
-                        Label("Copy snippet", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(Color.daisyTextPrimary)
-
-                    Button {
-                        Task { await installToClaudeDesktop() }
-                    } label: {
-                        Label(
-                            claudeBookmarkExists
-                                ? "Refresh Claude Desktop config"
-                                : "Add to Claude Desktop",
-                            systemImage: "sparkles"
-                        )
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .tint(Color.daisyAccent)
-                    .disabled(claudeInstallInProgress)
-                }
-            }
+            // ── Connect to Claude ─────────────────────────────────
+            // One-click for Claude Desktop + a copy-able command for
+            // Claude Code, both pointed at the LIVE server port. Lives
+            // in the same Section so the Form draws no inner divider
+            // between the local-server config and the client wiring.
+            connectToClaudeBlock
         } header: {
             HStack(spacing: 6) {
                 Text("MCP server")
@@ -250,10 +223,192 @@ struct ConnectionsView: View {
                 }
             }
         } footer: {
-            Text("Default port 54321. Add to Claude Desktop writes the snippet into ~/Library/Application Support/Claude/claude_desktop_config.json. Requires Node.js installed — Claude Desktop runs the snippet through `npx mcp-remote` to bridge SSE into the stdio transport Claude expects. Copy snippet works the same for Cursor / Cline / Continue.")
+            Text("Loopback-only (127.0.0.1), read-only tools — nothing leaves this Mac. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
+    }
+
+    // MARK: - Connect to Claude (Desktop one-click + Code command)
+
+    /// The whole "Connect to Claude" affordance: Claude Desktop
+    /// one-click row, the Claude Code copy-command, and the raw
+    /// snippet for everything else. Disabled / re-worded based on
+    /// whether the server is running and what's already in the config.
+    @ViewBuilder
+    private var connectToClaudeBlock: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Server must be listening for either client to connect.
+            // When it's not, we say so plainly and offer to flip the
+            // toggle rather than letting the user press buttons that
+            // write a config pointing at a dead port.
+            if !isServerRunning {
+                serverOfflineNotice
+            }
+
+            claudeDesktopRow
+            claudeCodeRow
+            rawSnippetDisclosure
+        }
+    }
+
+    @ViewBuilder
+    private var serverOfflineNotice: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Color.daisyWarning)
+                .font(.caption)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Server isn't running")
+                    .font(.callout.weight(.medium))
+                Text("Claude can only connect while Daisy's MCP server is listening. Turn it on, then connect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !settings.mcpServerEnabled {
+                    Button("Turn on MCP server") { settings.mcpServerEnabled = true }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(Color.daisyAccent)
+                        .padding(.top, 2)
+                }
+            }
+            Spacer()
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+        )
+    }
+
+    // MARK: Claude Desktop one-click
+
+    @ViewBuilder
+    private var claudeDesktopRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Claude Desktop")
+                        .font(.callout.weight(.medium))
+                    Text(claudeDesktopHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+
+                // Remove only shows once an entry exists — keeps the
+                // common (first-run) layout to a single button.
+                if claudeEntryIsPresent {
+                    Button(role: .destructive) {
+                        removeFromClaudeDesktop()
+                    } label: {
+                        Label("Remove", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(claudeInstallInProgress)
+                }
+
+                Button {
+                    Task { await installToClaudeDesktop() }
+                } label: {
+                    Label(claudeDesktopButtonTitle, systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+                // Block the write when the server's down (config would
+                // point nowhere) or the file is malformed (we won't
+                // touch it — the user has to fix it by hand first).
+                .disabled(claudeInstallInProgress || !isServerRunning || claudeEntryState == .malformed)
+            }
+
+            if claudeEntryState == .malformed {
+                Text("Your claude_desktop_config.json has invalid JSON, so Daisy won't touch it. Open it, fix the syntax, and try again — or use the snippet below.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.daisyWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: Claude Code command
+
+    @ViewBuilder
+    private var claudeCodeRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Claude Code")
+                .font(.callout.weight(.medium))
+            Text("Run this once in your terminal. Claude Code has native SSE transport, so no `mcp-remote` bridge needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Text(claudeCodeCommand)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                    )
+
+                Button {
+                    copyToPasteboard(claudeCodeCommand, toast: "Claude Code command copied")
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
+                .help("Copy the `claude mcp add` command")
+                .accessibilityLabel("Copy Claude Code command")
+            }
+        }
+    }
+
+    // MARK: Raw snippet (Cursor / Cline / Continue / manual)
+
+    @ViewBuilder
+    private var rawSnippetDisclosure: some View {
+        DisclosureGroup("Other clients (Cursor, Cline, Continue) — raw config") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(mcpConfigSnippet)
+                    .font(.system(.callout, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                    )
+                HStack {
+                    Spacer()
+                    Button {
+                        copyToPasteboard(mcpConfigSnippet, toast: "MCP config copied")
+                    } label: {
+                        Label("Copy snippet", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(Color.daisyTextPrimary)
+                }
+            }
+            .padding(.top, 6)
+        }
+        .font(.callout)
     }
 
     @ViewBuilder
@@ -274,8 +429,69 @@ struct ConnectionsView: View {
         }
     }
 
+    // MARK: - Live port + derived UI state
+
+    /// The port the config / command should point at. Prefer the port
+    /// the listener is ACTUALLY bound to (`.running`/`.starting`) over
+    /// the value in the text field — if the user typed a new port but
+    /// hasn't applied it (server still on the old one), mcp-remote and
+    /// `claude mcp add` must target where the socket really is, not
+    /// where it's about to be. Falls back to the saved setting when
+    /// the server is stopped (so the snippet still shows something
+    /// sensible to copy ahead of turning it on).
+    private var liveServerPort: Int {
+        switch mcpServer.state {
+        case .running(let port), .starting(let port):
+            return port
+        case .stopped, .failed:
+            return settings.mcpServerPort
+        }
+    }
+
+    private var isServerRunning: Bool {
+        if case .running = mcpServer.state { return true }
+        return false
+    }
+
+    /// True when a `daisy` entry exists in the config at all (any
+    /// port). Gates the Remove button.
+    private var claudeEntryIsPresent: Bool {
+        switch claudeEntryState {
+        case .installed, .installedDifferentPort:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private var claudeDesktopButtonTitle: String {
+        switch claudeEntryState {
+        case .installed:
+            return "Reinstall"          // already correct — let them re-write anyway
+        case .installedDifferentPort:
+            return "Update port"        // entry exists but on the wrong port
+        case .notInstalled, .claudeNotInstalled, .malformed:
+            return "Add to Claude Desktop"
+        }
+    }
+
+    private var claudeDesktopHint: String {
+        switch claudeEntryState {
+        case .claudeNotInstalled:
+            return "Claude Desktop doesn't look installed. Daisy can still write the config — it'll be picked up next time Claude launches."
+        case .notInstalled:
+            return "Writes the entry into Claude's config. Restart Claude Desktop afterwards to load Daisy's tools."
+        case .installed:
+            return "Installed and pointing at port \(liveServerPort). Restart Claude Desktop if you haven't since adding it."
+        case .installedDifferentPort(let existing):
+            return "Installed, but pointing at \(existing) instead of port \(liveServerPort). Update it, then restart Claude Desktop."
+        case .malformed:
+            return "Can't read Claude's config — see below."
+        }
+    }
+
     private var mcpConfigSnippet: String {
-        let port = settings.mcpServerPort
+        let port = liveServerPort
         // Claude Desktop config schema requires stdio transport
         // (`command` + `args`), not raw URL. `npx -y mcp-remote`
         // proxies a remote SSE/HTTP MCP into the stdio shape
@@ -304,6 +520,24 @@ struct ConnectionsView: View {
         """
     }
 
+    /// Claude Code command. Claude Code ships a native SSE transport,
+    /// so we register the loopback SSE endpoint directly with
+    /// `--transport sse` — no `mcp-remote` bridge, no extra flags. The
+    /// port is the LIVE one (see `liveServerPort`).
+    private var claudeCodeCommand: String {
+        "claude mcp add --transport sse daisy http://127.0.0.1:\(liveServerPort)/sse"
+    }
+
+    private func copyToPasteboard(_ string: String, toast: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(string, forType: .string)
+        ToastCenter.shared.show(toast, style: .success)
+    }
+
+    private func refreshClaudeEntryState() {
+        claudeEntryState = ClaudeDesktopConfig.entryState(port: liveServerPort)
+    }
+
     private func commitMCPPort() {
         let trimmed = mcpPortText.trimmingCharacters(in: .whitespaces)
         if let p = Int(trimmed), p > 0, p <= 65535 {
@@ -316,17 +550,38 @@ struct ConnectionsView: View {
 
     private func installToClaudeDesktop() async {
         claudeInstallInProgress = true
-        let result = ClaudeDesktopConfig.install(port: settings.mcpServerPort)
+        // Write the LIVE port — matches the snippet / command the user
+        // sees right above the button.
+        let result = ClaudeDesktopConfig.install(port: liveServerPort)
         claudeInstallInProgress = false
-        claudeBookmarkExists = ClaudeDesktopConfig.isInstalled
+        refreshClaudeEntryState()
         switch result {
         case .installed:
             ToastCenter.shared.show(
                 "Added to Claude Desktop — restart Claude to load Daisy.",
                 style: .success
             )
-        case .cancelled:
-            break
+        case .failed(let message):
+            ToastCenter.shared.show(
+                "Couldn't update Claude config: \(message)",
+                style: .warning
+            )
+        }
+    }
+
+    private func removeFromClaudeDesktop() {
+        claudeInstallInProgress = true
+        let result = ClaudeDesktopConfig.remove()
+        claudeInstallInProgress = false
+        refreshClaudeEntryState()
+        switch result {
+        case .removed:
+            ToastCenter.shared.show(
+                "Removed from Claude Desktop — restart Claude to drop Daisy.",
+                style: .success
+            )
+        case .notPresent:
+            ToastCenter.shared.show("No Daisy entry to remove.", style: .info)
         case .failed(let message):
             ToastCenter.shared.show(
                 "Couldn't update Claude config: \(message)",

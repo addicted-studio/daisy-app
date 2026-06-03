@@ -4,15 +4,36 @@
 //
 //  One-click installer that drops Daisy's MCP server entry into
 //  Claude Desktop's `claude_desktop_config.json`, so users don't have
-//  to copy-paste JSON and hunt down the file path. First call asks
-//  for permission via NSOpenPanel (Claude's config lives outside
-//  Daisy's sandbox container at `~/Library/Application Support/
-//  Claude/`); subsequent calls reuse a stored security-scoped
-//  bookmark for silent re-writes when the port changes.
+//  to copy-paste JSON and hunt down the file path.
 //
-//  Merge logic preserves any other `mcpServers` entries the user
-//  already has (Cursor, custom local servers, etc.) — we only
-//  insert/refresh our own `daisy` key.
+//  ─── Why a DIRECT write (no NSOpenPanel) ──────────────────────────
+//  Daisy is NOT sandboxed (ENABLE_APP_SANDBOX = NO in build settings —
+//  dictation needs system-wide CGEvent.post(⌘V) into arbitrary
+//  frontmost processes, which is incompatible with App Sandbox; see
+//  Daisy.entitlements). A non-sandboxed app has full filesystem access
+//  under the user's permissions, so we can write straight to
+//  `~/Library/Application Support/Claude/claude_desktop_config.json`,
+//  creating the `Claude` directory and the file if they don't exist.
+//
+//  This is what makes the button a genuine ONE click. Earlier builds
+//  routed through an NSOpenPanel + security-scoped bookmark (the
+//  sandboxed pattern) — that added two clicks and a file dialog for no
+//  benefit on a non-sandboxed app, so it was removed. (If Daisy ever
+//  re-enables the sandbox, this file is where the bookmark dance would
+//  come back.)
+//
+//  ─── Safety guarantees ────────────────────────────────────────────
+//   • Merge, never clobber. We read the existing JSON, preserve every
+//     other top-level key AND every other `mcpServers` entry (Cursor,
+//     custom local servers, …), and only insert/refresh/remove our own
+//     `daisy` key.
+//   • Refuse to touch malformed JSON. If the file exists but isn't a
+//     JSON object (hand-written garbage, half-saved edit), we throw
+//     instead of overwriting — the user keeps their file and gets an
+//     actionable error.
+//   • Atomic write. `Data.write(options: .atomic)` writes to a temp
+//     file and renames, so a crash mid-write can't leave a truncated
+//     config.
 //
 
 import Foundation
@@ -22,119 +43,220 @@ import os
 @MainActor
 enum ClaudeDesktopConfig {
     private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "ClaudeDesktopConfig")
-    private static let bookmarkKey = "daisy.claudeDesktopConfigBookmark"
-    private static let defaultFileName = "claude_desktop_config.json"
+
+    // MARK: - Result / state types
 
     enum InstallResult {
         case installed(URL)
-        case cancelled
         case failed(String)
     }
 
-    /// Whether the user has previously granted access to Claude's
-    /// config file. UI uses this to flip button copy from "Add to
-    /// Claude Desktop" → "Refresh Claude Desktop config" once the
-    /// bookmark exists.
+    enum RemoveResult {
+        case removed
+        case notPresent
+        case failed(String)
+    }
+
+    /// Where the `daisy` entry stands relative to the live server port.
+    /// Drives the button copy + secondary actions in ConnectionsView.
+    enum EntryState: Equatable {
+        /// Claude Desktop's config dir doesn't exist and the app isn't
+        /// found — almost certainly Claude Desktop isn't installed.
+        case claudeNotInstalled
+        /// Claude looks installed but there's no `daisy` entry yet.
+        case notInstalled
+        /// A `daisy` entry exists and already points at this exact port.
+        case installed
+        /// A `daisy` entry exists but points at a different port (user
+        /// changed the port after installing) — offer to refresh.
+        case installedDifferentPort(existingURL: String)
+        /// The config file is present but not parseable as a JSON
+        /// object — we must not write to it. UI surfaces a "fix it
+        /// yourself" hint and disables the one-click button.
+        case malformed
+    }
+
+    // MARK: - Paths
+
+    /// `~/Library/Application Support/Claude/`
+    static var claudeSupportDirectory: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+            .appendingPathComponent("Claude", isDirectory: true)
+    }
+
+    /// `~/Library/Application Support/Claude/claude_desktop_config.json`
+    static var configFileURL: URL {
+        claudeSupportDirectory.appendingPathComponent("claude_desktop_config.json", isDirectory: false)
+    }
+
+    // MARK: - Detection
+
+    /// Best-effort "is Claude Desktop on this Mac" check. The signal
+    /// that actually matters for writing the config is the support
+    /// directory existing (Claude creates it on first launch); we also
+    /// probe for the app bundle so a freshly-installed-but-never-opened
+    /// Claude still reads as installed. We deliberately don't hard-fail
+    /// on this — `install()` will create the directory regardless, so a
+    /// false "not installed" never blocks the write, it only changes
+    /// the hint copy.
+    static var claudeDesktopLooksInstalled: Bool {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: claudeSupportDirectory.path, isDirectory: &isDir), isDir.boolValue {
+            return true
+        }
+        // Secondary: the app bundle. Bundle id has been
+        // `com.anthropic.claudefordesktop`; fall back to a Spotlight-
+        // free check of the conventional install path so we don't
+        // depend on one exact identifier.
+        let ws = NSWorkspace.shared
+        if ws.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") != nil {
+            return true
+        }
+        if fm.fileExists(atPath: "/Applications/Claude.app") {
+            return true
+        }
+        return false
+    }
+
+    /// Whether a `daisy` entry currently exists in the config file
+    /// (regardless of which port it targets). Cheap convenience for the
+    /// "Remove" affordance's enabled-state; richer info via
+    /// `entryState(port:)`.
     static var isInstalled: Bool {
-        UserDefaults.standard.data(forKey: bookmarkKey) != nil
+        switch entryState(port: nil) {
+        case .installed, .installedDifferentPort:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Inspect the on-disk config and report where the `daisy` entry
+    /// stands relative to `port`. Pass `nil` to skip the port match
+    /// (treats any existing `daisy` entry as `.installed`). Never
+    /// mutates anything.
+    static func entryState(port: Int?) -> EntryState {
+        let fm = FileManager.default
+
+        guard fm.fileExists(atPath: configFileURL.path) else {
+            return claudeDesktopLooksInstalled ? .notInstalled : .claudeNotInstalled
+        }
+        guard let data = try? Data(contentsOf: configFileURL), !data.isEmpty else {
+            // Empty / unreadable file — treat as "no entry yet". A
+            // zero-byte file is safe to overwrite with a fresh object.
+            return .notInstalled
+        }
+        guard
+            let parsed = try? JSONSerialization.jsonObject(with: data, options: []),
+            let root = parsed as? [String: Any]
+        else {
+            return .malformed
+        }
+        guard
+            let mcpServers = root["mcpServers"] as? [String: Any],
+            let daisy = mcpServers["daisy"] as? [String: Any]
+        else {
+            return .notInstalled
+        }
+
+        guard let port else { return .installed }
+
+        // Compare the embedded SSE URL against the port we'd write.
+        // The URL is the last positional element in `args` that starts
+        // with http; robust to flag re-ordering.
+        let args = (daisy["args"] as? [String]) ?? []
+        let existingURL = args.first { $0.hasPrefix("http://") || $0.hasPrefix("https://") }
+        let wanted = daisySSEURL(port: port)
+        if let existingURL, existingURL == wanted {
+            return .installed
+        }
+        return .installedDifferentPort(existingURL: existingURL ?? "(unknown)")
     }
 
     // MARK: - Install / refresh
 
-    /// Insert or refresh the `daisy` entry in Claude Desktop's
-    /// config file. Uses the stored bookmark for silent writes; on
-    /// first call (or if the bookmark went stale) prompts the user
-    /// via NSOpenPanel.
+    /// Insert or refresh the `daisy` entry, pointing it at `port`.
+    /// Creates the Claude support directory and config file if missing.
+    /// Direct write — no panel, no bookmark (see header).
+    @discardableResult
     static func install(port: Int) -> InstallResult {
-        // Silent path — stored bookmark available.
-        if let resolved = resolveBookmark() {
-            let acquired = resolved.startAccessingSecurityScopedResource()
-            defer { if acquired { resolved.stopAccessingSecurityScopedResource() } }
-            do {
-                try mergeAndWrite(daisyURL: daisySSEURL(port: port), at: resolved)
-                log.info("Refreshed Daisy entry in \(resolved.path, privacy: .private)")
-                return .installed(resolved)
-            } catch {
-                // Bookmark resolved but write failed — probably the
-                // user moved or deleted the file. Forget the
-                // bookmark and fall through to the panel.
-                log.warning("Silent write failed (\(error.localizedDescription, privacy: .public)) — re-prompting")
-                forgetBookmark()
-            }
-        }
-
-        // First-run path — ask the user.
-        guard let picked = promptForConfigFile() else {
-            return .cancelled
-        }
-        let acquired = picked.startAccessingSecurityScopedResource()
-        defer { if acquired { picked.stopAccessingSecurityScopedResource() } }
+        let fm = FileManager.default
+        let dir = claudeSupportDirectory
 
         do {
-            try mergeAndWrite(daisyURL: daisySSEURL(port: port), at: picked)
-            storeBookmark(for: picked)
-            log.info("Installed Daisy entry into \(picked.path, privacy: .private)")
-            return .installed(picked)
+            if !fm.fileExists(atPath: dir.path) {
+                try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                log.info("Created Claude support dir at \(dir.path, privacy: .private)")
+            }
+            try mergeAndWrite(daisyURL: daisySSEURL(port: port), at: configFileURL)
+            log.info("Wrote Daisy entry into \(self.configFileURL.path, privacy: .private)")
+            return .installed(configFileURL)
         } catch {
+            log.warning("Install failed: \(error.localizedDescription, privacy: .public)")
             return .failed(error.localizedDescription)
         }
     }
 
-    /// Silent refresh — used by Settings when the port changes
-    /// without the user pressing the button. No-op if no bookmark
-    /// is stored. Doesn't surface errors; if the silent write fails
-    /// the user will still see the next manual press behave the
-    /// same way it always did.
+    /// Silent refresh — used when the port changes without the user
+    /// pressing the button. No-op unless a `daisy` entry already
+    /// exists, so we never create a config the user didn't ask for.
+    /// Swallows errors (e.g. the user made the file malformed since
+    /// install) — the next manual press surfaces them properly.
     static func refreshIfInstalled(port: Int) {
         guard isInstalled else { return }
         _ = install(port: port)
     }
 
-    /// Wipe the stored bookmark — next install will re-prompt.
-    /// Exposed for the unit-test seam and for any future
-    /// "Disconnect Claude" UI.
-    static func forgetBookmark() {
-        UserDefaults.standard.removeObject(forKey: bookmarkKey)
-    }
-
-    // MARK: - Panel
-
-    private static func promptForConfigFile() -> URL? {
-        let panel = NSOpenPanel()
-        panel.title = "Add Daisy to Claude Desktop"
-        panel.message = "Select Claude Desktop's `claude_desktop_config.json`. If the file doesn't exist yet, pick the Claude folder and Daisy will create it."
-        panel.prompt = "Add to Claude Desktop"
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.showsHiddenFiles = false
-        // Default landing spot — sandboxed NSOpenPanel still honours
-        // this hint, the user just clicks through the dialog.
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        panel.directoryURL = home
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("Claude", isDirectory: true)
-
-        let response = panel.runModal()
-        guard response == .OK, let url = panel.url else { return nil }
-
-        // If the user picked a folder (e.g. the Claude support dir
-        // because the config file doesn't exist yet), append the
-        // canonical filename so we end up with a real file URL to
-        // bookmark and write to.
-        let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-        return isDir ? url.appendingPathComponent(defaultFileName, isDirectory: false) : url
+    /// Remove the `daisy` entry, preserving every other server + key.
+    /// No-op (returns `.notPresent`) if there's nothing to remove.
+    @discardableResult
+    static func remove() -> RemoveResult {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: configFileURL.path),
+              let data = try? Data(contentsOf: configFileURL),
+              !data.isEmpty else {
+            return .notPresent
+        }
+        do {
+            let parsed = try JSONSerialization.jsonObject(with: data, options: [])
+            guard var root = parsed as? [String: Any] else {
+                throw configError("Existing config isn't a JSON object — refusing to edit it.")
+            }
+            guard var mcpServers = root["mcpServers"] as? [String: Any],
+                  mcpServers["daisy"] != nil else {
+                return .notPresent
+            }
+            mcpServers.removeValue(forKey: "daisy")
+            // Drop the mcpServers object entirely if it's now empty, so
+            // we don't leave a stray `"mcpServers": {}` behind.
+            if mcpServers.isEmpty {
+                root.removeValue(forKey: "mcpServers")
+            } else {
+                root["mcpServers"] = mcpServers
+            }
+            let out = try JSONSerialization.data(
+                withJSONObject: root,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+            try out.write(to: configFileURL, options: [.atomic])
+            log.info("Removed Daisy entry from \(self.configFileURL.path, privacy: .private)")
+            return .removed
+        } catch let nsError as NSError where nsError.domain == "ClaudeDesktopConfig" {
+            return .failed(nsError.localizedDescription)
+        } catch {
+            return .failed(error.localizedDescription)
+        }
     }
 
     // MARK: - JSON merge
 
-    /// Read existing JSON (if any), merge `mcpServers.daisy = {url}`,
+    /// Read existing JSON (if any), merge `mcpServers.daisy = {…}`,
     /// write back atomically. Refuses to overwrite a file whose
-    /// contents aren't a JSON object — that almost certainly means
-    /// the user has hand-written garbage and we'd silently destroy
-    /// it.
+    /// contents aren't a JSON object — that almost certainly means the
+    /// user has hand-written something we'd silently destroy.
     private static func mergeAndWrite(daisyURL: String, at url: URL) throws {
         let fm = FileManager.default
 
@@ -162,10 +284,10 @@ enum ClaudeDesktopConfig {
         // Preserve every other mcpServers entry — only mutate ours.
         //
         // Claude Desktop's current MCP config schema requires stdio
-        // transport (`command` + `args`), not the URL-based SSE
-        // shape SDKs accept. Bridge through `mcp-remote` (npm
-        // package, auto-fetched by `npx -y`), which wraps a remote
-        // SSE/HTTP MCP server into a stdio transport Claude accepts.
+        // transport (`command` + `args`), not the URL-based SSE shape
+        // SDKs accept. Bridge through `mcp-remote` (npm package,
+        // auto-fetched by `npx -y`), which wraps a remote SSE/HTTP MCP
+        // server into a stdio transport Claude accepts.
         //
         // Two flag tweaks were needed in 1.0.5.3 after a real-world
         // pass-through stalled mid-session:
@@ -176,7 +298,7 @@ enum ClaudeDesktopConfig {
         //     loopback HTTP (127.0.0.1) needs explicit permission.
         //
         // Requires Node.js on the user's machine — surfaced in the
-        // settings footer so non-devs know to install it first.
+        // Connections footer so non-devs know to install it first.
         var mcpServers = root["mcpServers"] as? [String: Any] ?? [:]
         mcpServers["daisy"] = [
             "command": "npx",
@@ -185,9 +307,9 @@ enum ClaudeDesktopConfig {
         ]
         root["mcpServers"] = mcpServers
 
-        // .sortedKeys keeps diffs stable when the user has the
-        // file under git/Time Machine. .prettyPrinted because the
-        // user is going to open this file at some point.
+        // .sortedKeys keeps diffs stable when the user has the file
+        // under git / Time Machine. .prettyPrinted because the user is
+        // going to open this file at some point.
         let out = try JSONSerialization.data(
             withJSONObject: root,
             options: [.prettyPrinted, .sortedKeys]
@@ -205,40 +327,5 @@ enum ClaudeDesktopConfig {
 
     private static func daisySSEURL(port: Int) -> String {
         "http://127.0.0.1:\(port)/sse"
-    }
-
-    // MARK: - Bookmark plumbing
-
-    private static func resolveBookmark() -> URL? {
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
-        var isStale = false
-        do {
-            let url = try URL(
-                resolvingBookmarkData: data,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if isStale {
-                storeBookmark(for: url)
-            }
-            return url
-        } catch {
-            log.warning("Couldn't resolve Claude config bookmark: \(error.localizedDescription, privacy: .public)")
-            return nil
-        }
-    }
-
-    private static func storeBookmark(for url: URL) {
-        do {
-            let data = try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            UserDefaults.standard.set(data, forKey: bookmarkKey)
-        } catch {
-            log.error("Couldn't store Claude config bookmark: \(error.localizedDescription, privacy: .public)")
-        }
     }
 }
