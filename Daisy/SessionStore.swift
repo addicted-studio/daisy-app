@@ -577,6 +577,7 @@ final class SessionStore {
         var folderSlug = "inbox"
         var tag = ""
         var attendees: [String] = []
+        var attendeeEmails: [String] = []
         var linkedEventTitle: String?
         var speakerMap: [String: String] = [:]
         var systemAudioStatus: String?
@@ -585,6 +586,7 @@ final class SessionStore {
             folderSlug = parsedFm.folder ?? "inbox"
             tag = parsedFm.tag ?? ""
             attendees = parsedFm.attendees
+            attendeeEmails = parsedFm.attendeeEmails
             linkedEventTitle = parsedFm.linkedEventTitle
             speakerMap = parsedFm.speakerMap
             systemAudioStatus = parsedFm.systemAudioStatus
@@ -619,6 +621,7 @@ final class SessionStore {
             folderSlug: folderSlug,
             tag: tag,
             meetingAttendees: attendees,
+            meetingAttendeeEmails: attendeeEmails,
             linkedEventTitle: linkedEventTitle,
             speakerMap: speakerMap,
             speakerCentroidIDs: centroidIDs,
@@ -713,6 +716,14 @@ struct StoredSession: Identifiable, Sendable {
     /// Attendees captured from the bound EKEvent when this session
     /// was started from the calendar. Empty otherwise.
     let meetingAttendees: [String]
+    /// Attendee email addresses from the bound calendar event
+    /// (`daisy_event_emails` frontmatter, 1.0.7.10). Lowercased +
+    /// deduped at capture time. Empty for manual recordings or events
+    /// with no invitee emails. Used by the speaker-match flow to
+    /// resolve a calendar attendee to a known `SpeakerProfile` by
+    /// email, and by SessionDetailView to attach an email to a profile
+    /// when the user names a speaker after the matching attendee.
+    let meetingAttendeeEmails: [String]
     /// Title of the calendar event this session was bound to at
     /// start time (e.g. "Customer call · Maria — Acme"). Nil for
     /// manual recordings with no calendar binding. Used by the
@@ -774,6 +785,10 @@ nonisolated private struct ParsedFrontmatter {
     var folder: String?
     var tag: String?
     var attendees: [String] = []
+    /// Attendee emails parsed from `daisy_event_emails`. Parallel to
+    /// `attendees` (names) but a separate identity key. Empty when the
+    /// session predates 1.0.7.10 or had no event emails.
+    var attendeeEmails: [String] = []
     /// Title of the calendar event this session was bound to at
     /// start time, if any. Used by SessionDetailView to label the
     /// attendee picker so the user can verify "these are attendees
@@ -829,6 +844,8 @@ nonisolated private func parseFrontmatter(in markdown: String) -> ParsedFrontmat
             if parsed.tag == nil { parsed.tag = valueRaw }
         case "daisy_event_attendees":
             parsed.attendees = parseYAMLArray(valueRaw)
+        case "daisy_event_emails":
+            parsed.attendeeEmails = parseYAMLArray(valueRaw)
         case "daisy_event_title":
             // YAML-quoted via MarkdownExporter.yamlQuote; strip the
             // surrounding double quotes for display.

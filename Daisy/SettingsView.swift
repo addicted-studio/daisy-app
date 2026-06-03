@@ -1518,10 +1518,34 @@ struct SettingsView: View {
                     .foregroundStyle(.tertiary)
             }
 
+            // Speaker matching — how aggressively Daisy applies a
+            // known speaker (by voice fingerprint and/or calendar
+            // attendee email) to a new recording. Default Automatic
+            // (the behaviour every build before 1.0.7.10 had), with
+            // Suggest + Off as new opt-in modes. Sits above the
+            // profile list because it governs how that list is USED.
+            Section {
+                Picker(selection: $settings.speakerMatchMode) {
+                    ForEach(SpeakerMatchMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                } label: {
+                    Text("Match known speakers")
+                }
+                .pickerStyle(.radioGroup)
+                Text(speakerMatchModeHelp)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Speaker matching")
+            }
+
             // Known speakers — persistent voice profiles store. Lets
             // the user inspect what biometric derivatives Daisy has
-            // saved, forget individual profiles, or wipe the whole
-            // store. This is a privacy-required surface — without it
+            // saved, edit a person's emails/notes, forget individual
+            // profiles, or wipe the whole store. This is a privacy-
+            // required surface — without it
             // there's no way to delete enrollment data short of
             // resetting the app container.
             Section {
@@ -1529,7 +1553,7 @@ struct SettingsView: View {
             } header: {
                 Text("Known speakers")
             } footer: {
-                Text("After you name a speaker in a transcript (e.g. \"Alex\"), Daisy stores a short voice fingerprint locally and auto-labels them in future recordings. Fingerprints never leave your Mac. Forget anytime.")
+                Text("After you name a speaker in a transcript (e.g. \"Alex\"), Daisy stores a short voice fingerprint locally and auto-labels them in future recordings. Open a speaker to add their email (so calendar invites match them too) or notes. Fingerprints never leave your Mac. Forget anytime.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -1587,6 +1611,38 @@ struct SettingsView: View {
     /// the view; no need to retain elsewhere.
     @Bindable private var speakerStore = SpeakerProfileStore.shared
 
+    /// Profile the user tapped to inspect / edit. Drives the speaker
+    /// detail sheet (emails, notes, "appears in"). nil = no sheet.
+    /// We key off the UUID rather than holding the value type so the
+    /// sheet always reads the freshest profile from the store after
+    /// an edit, and so a Forget from inside the sheet can dismiss
+    /// cleanly without a dangling stale copy. Wrapped in a tiny
+    /// Identifiable box because UUID isn't Identifiable on its own and
+    /// `.sheet(item:)` needs Identifiable (we avoid an app-wide
+    /// `extension UUID: Identifiable`, which would risk a conflict).
+    @State private var editingSpeaker: EditingSpeaker?
+
+    /// Identifiable wrapper for the speaker-detail sheet's `item:`
+    /// binding. `id` IS the profile UUID.
+    private struct EditingSpeaker: Identifiable {
+        let id: UUID
+    }
+
+    /// Per-mode explainer under the speaker-match picker. Mirrors the
+    /// `autoStartPolicyHelp` idiom (one sentence per mode, Daisy's
+    /// plain voice). DEFAULT is Automatic — preserve the long-standing
+    /// behaviour, so its copy reads as "the normal thing".
+    private var speakerMatchModeHelp: String {
+        switch settings.speakerMatchMode {
+        case .automatic:
+            return "Daisy labels a recognized person automatically as soon as a recording finishes — by their voice, or by their email if the meeting came from your calendar. This is the default."
+        case .suggest:
+            return "Daisy recognizes the person but waits — it shows the name as a suggestion in the recording's “Name the speakers” card, and you confirm before it's applied."
+        case .off:
+            return "Daisy never auto-labels across meetings. Speakers stay “Remote A / B” until you name them by hand. Voice fingerprints are still saved when you name someone, so you can switch this back on later."
+        }
+    }
+
     /// Lists every known speaker profile in most-recently-seen order
     /// with per-row "Forget" + a global "Forget all" button. Hides
     /// gracefully when no profiles exist so first-time users don't
@@ -1607,18 +1663,34 @@ struct SettingsView: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(profiles) { profile in
+                    // Whole row is a button into the detail sheet
+                    // (emails / notes / appears-in). Forget stays a
+                    // distinct trailing button so a mis-tap can't
+                    // delete a profile — it's the only destructive
+                    // action and it keeps its own hit target.
                     HStack(spacing: 10) {
-                        Image(systemName: "person.fill")
-                            .foregroundStyle(Color.daisyAccent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.name)
-                                .font(.callout.weight(.medium))
-                            Text(speakerProfileSummary(profile))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
+                        Button {
+                            editingSpeaker = EditingSpeaker(id: profile.id)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "person.fill")
+                                    .foregroundStyle(Color.daisyAccent)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(profile.name)
+                                        .font(.callout.weight(.medium))
+                                    Text(speakerProfileSummary(profile))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .monospacedDigit()
+                                }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
                         }
-                        Spacer()
+                        .buttonStyle(.plain)
                         Button("Forget") {
                             speakerStore.forget(profile.id)
                         }
@@ -1636,6 +1708,9 @@ struct SettingsView: View {
                     .controlSize(.small)
                     .tint(Color.daisyError)
                 }
+            }
+            .sheet(item: $editingSpeaker) { item in
+                SpeakerDetailSheet(profileID: item.id)
             }
         }
     }

@@ -2135,23 +2135,115 @@ final class RecordingSession {
         guard !centroids.isEmpty else { return }
 
         let store = SpeakerProfileStore.shared
+        let mode = settings.speakerMatchMode
+
+        // ── 1. Voice fingerprint matching ────────────────────────────
+        // Unchanged engine: each detected cluster centroid is looked up
+        // in SpeakerProfileStore by cosine similarity. `matched` is the
+        // candidate label→name set; whether it's APPLIED depends on the
+        // match mode (below). `matchedProfileIDs` lets the email pass
+        // avoid double-counting a profile already found by voice.
+        // `source` records HOW each label matched for the Suggest UI.
         var matched: [String: String] = [:]
-        for (speakerID, embedding) in centroids {
-            if let profile = store.findMatch(for: embedding) {
-                matched[speakerID] = profile.name
-                store.recordMatch(profileID: profile.id)
-                // profile.name is PII — speakers the user has named
-                // by hand ("John", "Maria"). Speaker ID (Remote A, B,
-                // …) stays public, the name does not.
-                log.info("Auto-matched \(speakerID, privacy: .public) → \(profile.name, privacy: .private)")
+        var source: [String: String] = [:]
+        var matchedProfileIDs: Set<UUID> = []
+        // `.off` skips recognition entirely — no cross-meeting auto-
+        // match. We still fall through to write speakers.json so manual
+        // naming + a later switch back to Automatic/Suggest both work.
+        if mode != .off {
+            for (speakerID, embedding) in centroids {
+                if let profile = store.findMatch(for: embedding) {
+                    matched[speakerID] = profile.name
+                    source[speakerID] = "voice"
+                    matchedProfileIDs.insert(profile.id)
+                    // profile.name is PII — speakers the user has named
+                    // by hand ("John", "Maria"). Speaker ID (Remote A,
+                    // B, …) stays public, the name does not.
+                    log.info("Voice-matched \(speakerID, privacy: .public) → \(profile.name, privacy: .private)")
+                }
+            }
+
+            // ── 2. Calendar-attendee email matching ──────────────────
+            // When the session is bound to a calendar event, resolve the
+            // event's attendee emails to known profiles. Email is a
+            // STABLE identity key (voice timbre drifts with mic / cold /
+            // speakerphone), so this catches a known person whose voice
+            // didn't cluster-match this time. We can only safely assign
+            // an email-identified profile to a SPECIFIC transcript label
+            // when there's exactly one unmatched remote label and the
+            // email resolves to exactly one not-yet-matched profile —
+            // otherwise we'd be guessing which voice is whom. The
+            // narrower (but correct) cases still reinforce recency via
+            // recordMatch and feed the Suggest sidecar.
+            if let emails = boundMeeting?.attendeeEmails, !emails.isEmpty {
+                var emailProfiles: [SpeakerProfile] = []
+                var seenIDs = Set<UUID>()
+                for email in emails {
+                    if let p = store.findByEmail(email), seenIDs.insert(p.id).inserted {
+                        emailProfiles.append(p)
+                    }
+                }
+                // Profiles found by email that voice DIDN'T already pin
+                // to a label. These are the ones we might assign/suggest.
+                let unpinned = emailProfiles.filter { !matchedProfileIDs.contains($0.id) }
+                // Remote labels with no name yet.
+                let unmatchedLabels = centroids.keys.filter { matched[$0] == nil }.sorted()
+                if unpinned.count == 1, unmatchedLabels.count == 1 {
+                    // Unambiguous: one known invitee, one nameless voice.
+                    let label = unmatchedLabels[0]
+                    let profile = unpinned[0]
+                    matched[label] = profile.name
+                    source[label] = "email"
+                    matchedProfileIDs.insert(profile.id)
+                    log.info("Email-matched \(label, privacy: .public) → (calendar attendee)")
+                } else if !unpinned.isEmpty {
+                    // Ambiguous mapping (multiple known invitees and/or
+                    // multiple nameless voices). Don't assign a specific
+                    // label — but still note the recognition so recency
+                    // bumps. The Suggest UI surfaces these as floating
+                    // "known attendee on this call" hints the user can
+                    // drop onto any row. We log count only (names PII).
+                    log.info("Email-identified \(unpinned.count, privacy: .public) attendee profile(s); ambiguous label mapping, not auto-assigning")
+                }
+                // Reinforce recency for EVERY email-identified profile,
+                // whether or not it got pinned to a label — the person
+                // was demonstrably on the call.
+                for p in emailProfiles { store.recordMatch(profileID: p.id) }
+            }
+
+            // Recency bump for voice-only matches (email matches already
+            // bumped above). Skip ids that were email-pinned to avoid a
+            // double bump on the same profile.
+            for (label, _) in matched where source[label] == "voice" {
+                if let embedding = centroids[label],
+                   let profile = store.findMatch(for: embedding),
+                   !emailBumped(profile.id, boundMeeting?.attendeeEmails, store) {
+                    store.recordMatch(profileID: profile.id)
+                }
             }
         }
-        initialSpeakerMap = matched
 
-        // Persist sidecar regardless of whether matches happened —
-        // even an unmatched session needs centroids on disk so the
-        // user can name them later and we'll know which embedding
-        // to associate with the new profile.
+        // ── 3. Apply per match mode ──────────────────────────────────
+        switch mode {
+        case .automatic:
+            // Today's behaviour: matches land in the transcript's
+            // speaker map immediately (MarkdownExporter embeds them).
+            initialSpeakerMap = matched
+        case .suggest:
+            // Don't apply — surface as confirmable suggestions. The
+            // transcript ships with raw Remote A/B/C; the detail view's
+            // Name-the-speakers card reads the suggestions sidecar and
+            // offers a one-tap Confirm per row.
+            initialSpeakerMap = [:]
+            writeSuggestionsSidecar(byLabel: matched, source: source)
+        case .off:
+            initialSpeakerMap = [:]
+        }
+
+        // Persist centroids sidecar regardless of mode / whether matches
+        // happened — even an unmatched session needs centroids on disk
+        // so the user can name speakers later and we'll know which
+        // embedding to associate with the new profile.
         guard let dir = sessionDirectory else { return }
         let url = dir.appendingPathComponent("speakers.json")
         do {
@@ -2161,6 +2253,40 @@ final class RecordingSession {
             try data.write(to: url, options: [.atomic])
         } catch {
             log.error("Failed to write speakers.json: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// True if `id` belongs to a profile that the email pass already
+    /// bumped this stop (i.e. its email is among the bound event's
+    /// attendee emails). Prevents a double recordMatch when a profile
+    /// is matched by BOTH voice and email in the same session.
+    private func emailBumped(_ id: UUID, _ emails: [String]?, _ store: SpeakerProfileStore) -> Bool {
+        guard let emails, !emails.isEmpty else { return false }
+        for email in emails {
+            if let p = store.findByEmail(email), p.id == id { return true }
+        }
+        return false
+    }
+
+    /// Write the `speaker_suggestions.json` sidecar (Suggest mode only)
+    /// and surface a non-blocking toast pointing the user to History to
+    /// review. No sidecar / toast when there's nothing to suggest.
+    private func writeSuggestionsSidecar(byLabel: [String: String], source: [String: String]) {
+        guard !byLabel.isEmpty, let dir = sessionDirectory else { return }
+        let url = dir.appendingPathComponent("speaker_suggestions.json")
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(SpeakerSuggestionsFile(byLabel: byLabel, source: source))
+            try data.write(to: url, options: [.atomic])
+            let n = byLabel.count
+            ToastCenter.shared.show(
+                "Daisy recognized \(n) speaker\(n == 1 ? "" : "s") · review in History",
+                style: .info
+            )
+            log.info("Wrote \(n, privacy: .public) speaker suggestion(s) for review")
+        } catch {
+            log.error("Failed to write speaker_suggestions.json: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -2421,12 +2547,14 @@ final class RecordingSession {
             tag: tag,
             meetingAttendees: [],
             // In-memory builder (post-stop MCP auto-send + manual
-            // Send-to snapshot) — the bound calendar event title
-            // is available off the live RecordingSession, but the
-            // function is `static` and doesn't carry it through.
-            // Passing nil is the safe default; SessionStore.refresh
-            // will re-read frontmatter on the next library scan and
-            // pick up the title from disk.
+            // Send-to snapshot) — the bound calendar event title +
+            // attendees/emails are available off the live
+            // RecordingSession, but the function is `static` and
+            // doesn't carry them through. Passing empty/nil is the
+            // safe default; SessionStore.refresh will re-read
+            // frontmatter on the next library scan and pick up the
+            // event metadata from disk.
+            meetingAttendeeEmails: [],
             linkedEventTitle: nil,
             speakerMap: [:],
             speakerCentroidIDs: centroidIDs,

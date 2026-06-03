@@ -57,6 +57,18 @@ enum MarkdownExporter {
                 let quoted = meeting.attendees.map(yamlQuote).joined(separator: ", ")
                 lines.append("daisy_event_attendees: [\(quoted)]")
             }
+            // Attendee emails (1.0.7.10) — persisted so the post-stop
+            // speaker-match pass and the SessionDetailView rename flow
+            // can intersect them against SpeakerProfile.emails to
+            // identify a speaker by their calendar invite, in addition
+            // to the voice fingerprint. Separate key from the display
+            // names because they're a different cardinality + identity
+            // (an email is a stable key, a display name is fuzzy).
+            // Already lowercased/deduped by CalendarService.
+            if !meeting.attendeeEmails.isEmpty {
+                let quoted = meeting.attendeeEmails.map(yamlQuote).joined(separator: ", ")
+                lines.append("daisy_event_emails: [\(quoted)]")
+            }
         }
         // daisy_speaker_map — always written when there's diarization
         // available (regardless of calendar binding). Pre-populated
