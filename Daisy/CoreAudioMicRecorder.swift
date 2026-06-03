@@ -28,10 +28,10 @@
 //  input render callback. No shared engine, no hidden SRC, no stale
 //  cached format to flush.
 //
-//  This ships behind `AppSettings.useCoreAudioMicCapture` (default
-//  OFF) for on-device validation first — see the integration notes at
-//  the bottom of this file and the `MicRecording` protocol that lets
-//  `RecordingSession` swap implementations without touching call sites.
+//  This is the sole microphone-capture backend. (It originally shipped
+//  behind `AppSettings.useCoreAudioMicCapture` alongside a legacy
+//  AVAudioEngine recorder; that flag and the `AudioRecorder` fallback
+//  were removed once CoreAudio capture was validated as the default.)
 //
 //  REFERENCES
 //  ----------
@@ -52,59 +52,54 @@ import AudioToolbox
 import Observation
 import os
 
-// MARK: - Shared protocol
+// MARK: - Shared audio types
 
-/// The public surface `RecordingSession` depends on for microphone
-/// capture. Both `AudioRecorder` (AVAudioEngine) and
-/// `CoreAudioMicRecorder` (direct AUHAL) conform, so the session can
-/// pick an implementation at init time behind a setting flag without
-/// any call-site changing. Every member here is exactly what
-/// `RecordingSession` reads off `recorder.*` today (verified against
-/// RecordingSession.swift: elapsed, levelDB, spectrumBands,
-/// archivedParts, buffers, start, stop, pause, resume,
-/// stopArchivingKeepTranscribing, archivedFrameCount,
-/// archiveWriteErrorsSummary, archivedFileURL, reset).
+/// Ferry an `AVAudioPCMBuffer` across actor boundaries. Buffers handed
+/// downstream are not mutated after they're yielded, so this is safe in
+/// practice. `nonisolated` overrides the file-level MainActor default so
+/// it can be constructed/destructured from any context (the CoreAudio
+/// render thread, the ScreenCaptureKit output queue, etc.).
 ///
-/// MainActor-isolated to match both conformers (`@Observable @MainActor`).
-@MainActor
-protocol MicRecording: AnyObject {
-    // Observable, UI-facing state.
-    var levelDB: Float { get }
-    var elapsed: TimeInterval { get }
-    var spectrumBands: [Float] { get }
-    var archivedFileURL: URL? { get }
-    var archivedParts: [URL] { get }
-
-    // Truthful disk-write accounting (post-stop audit in RecordingSession).
-    var archivedFrameCount: UInt64 { get }
-    var archiveWriteErrorsSummary: (count: Int, first: (any Error)?) { get }
-
-    /// Subscribe to PCM buffers. MUST be read BEFORE `start()` so the
-    /// continuation is installed before audio begins flowing.
-    var buffers: AsyncStream<AudioChunk> { get }
-
-    func start(archiveURL: URL?, preferredDeviceUID: String?) throws
-    func pause()
-    func resume() throws
-    func stop()
-    func reset()
-
-    /// Stop writing the on-disk archive but keep yielding buffers to the
-    /// transcriber (low-disk → transcript-only).
-    func stopArchivingKeepTranscribing()
+/// Used by `CoreAudioMicRecorder`, `SystemAudioCapture`, and `Transcriber`.
+/// (Originally declared in the now-removed `AudioRecorder.swift`; moved
+/// here when that legacy AVAudioEngine backend was deleted.)
+nonisolated struct AudioChunk: @unchecked Sendable {
+    let pcm: AVAudioPCMBuffer
+    let time: AVAudioTime
 }
 
-// AudioRecorder already matches this surface exactly — declare the
-// conformance from here so we don't edit AudioRecorder.swift. (Its
-// `start` has default args; the protocol requirement is still satisfied
-// because a method with defaults fulfills a no-default requirement.)
-extension AudioRecorder: MicRecording {}
+/// Errors surfaced by the audio-capture subsystem (mic + system audio).
+/// `nonisolated` so it can be thrown/inspected off the MainActor.
+/// Shared by `CoreAudioMicRecorder` and `SystemAudioCapture`. (Originally
+/// declared in the now-removed `AudioRecorder.swift`.)
+nonisolated enum DaisyError: LocalizedError {
+    case noMicrophone
+    case speechUnauthorized
+    case onDeviceUnsupported(locale: String)
+    case recognitionFailed(String)
+    case audioEngineFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .noMicrophone:
+            return "No microphone input is available."
+        case .speechUnauthorized:
+            return "Speech recognition permission was denied. Grant it in System Settings → Privacy & Security → Speech Recognition."
+        case .onDeviceUnsupported(let locale):
+            return "On-device speech recognition is not available for \(locale). Try a different language."
+        case .recognitionFailed(let msg):
+            return "Recognition failed: \(msg)"
+        case .audioEngineFailed(let msg):
+            return "Audio engine failed: \(msg)"
+        }
+    }
+}
 
 // MARK: - CoreAudioMicRecorder
 
 @Observable
 @MainActor
-final class CoreAudioMicRecorder: MicRecording {
+final class CoreAudioMicRecorder {
     enum RecordingState: Equatable {
         case idle
         case recording

@@ -382,12 +382,13 @@ final class RecordingSession {
     // `silencePromptsEnabled` without us threading an extra
     // reference through its constructor.
     let settings: AppSettings
-    /// Microphone recorder. Concrete type chosen at init time behind
-    /// `settings.useCoreAudioMicCapture`: the AVAudioEngine-backed
-    /// `AudioRecorder` (default) or the direct-CoreAudio-AUHAL
-    /// `CoreAudioMicRecorder` (opt-in). Both conform to `MicRecording`,
-    /// so every `recorder.*` call site below is unchanged.
-    private let recorder: any MicRecording
+    /// Microphone recorder — direct CoreAudio AUHAL capture. Stored as
+    /// the concrete type (not an existential) so SwiftUI Observation
+    /// tracks its `levelDB` / `spectrumBands` through the concrete
+    /// `@Observable` class. (Previously selectable against a legacy
+    /// AVAudioEngine `AudioRecorder` behind `useCoreAudioMicCapture`;
+    /// that flag and backend were removed once CoreAudio was validated.)
+    private let recorder: CoreAudioMicRecorder
     private let systemAudio: SystemAudioCapture
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Session")
     /// Dedicated logger for auto-stop wire-up. Separate category so
@@ -513,15 +514,11 @@ final class RecordingSession {
         let resolved = localeIdentifier ?? settings.defaultTranscriptionLocale
         let effective = resolved.isEmpty ? "auto" : resolved
         self.localeIdentifier = effective
-        // Pick the mic capture backend behind the flag. Both conform to
-        // `MicRecording` with an identical public surface, so nothing else in
-        // this file changes. Default ON → direct CoreAudio AUHAL capture (the
-        // shipping path); flip OFF in Settings → legacy AVAudioEngine recorder.
-        if settings.useCoreAudioMicCapture {
-            self.recorder = CoreAudioMicRecorder()
-        } else {
-            self.recorder = AudioRecorder()
-        }
+        // Direct CoreAudio AUHAL mic capture — the sole capture backend.
+        // (The legacy AVAudioEngine `AudioRecorder` and the
+        // `useCoreAudioMicCapture` switch were removed once CoreAudio was
+        // validated as the default.)
+        self.recorder = CoreAudioMicRecorder()
         self.systemAudio = SystemAudioCapture()
         self.micTranscriber = Transcriber(
             localeIdentifier: effective,
@@ -2502,8 +2499,8 @@ final class RecordingSession {
     /// truncated. A few transient errors (disk pressure, momentary
     /// device handover) are tolerable; >25 means systemic failure
     /// and the file is almost certainly partial. Matches the toast
-    /// threshold AudioRecorder already uses for its post-stop
-    /// summary (AudioRecorder.swift `if errCount > 25`).
+    /// threshold the recorder uses for its post-stop summary
+    /// (CoreAudioMicRecorder.stop() `if errCount > 25`).
     private static let archiveWriteErrorTolerance: Int = 25
 
     /// Read on-disk byte count for an archive URL. Returns 0 for
