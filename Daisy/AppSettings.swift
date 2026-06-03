@@ -337,6 +337,31 @@ final class AppSettings {
         didSet { defaults.set(userDisplayName, forKey: Self.k_userDisplayName) }
     }
 
+    /// How cross-meeting speaker recognition behaves once Daisy has a
+    /// known speaker (voice fingerprint and/or email) that matches a
+    /// new session. Three modes (Talat-parity, 1.0.7.10):
+    ///   • `.automatic` (DEFAULT) — apply the match silently, pre-
+    ///     filling the transcript's speaker map. This is the behaviour
+    ///     of every build before 1.0.7.10, kept as default so existing
+    ///     users see NO change (Talat itself defaults to Suggest, but
+    ///     we don't silently downgrade an experience people already
+    ///     rely on).
+    ///   • `.suggest` — compute the match but DON'T apply it; surface
+    ///     it as a confirmable suggestion (post-stop notification +
+    ///     a Confirm affordance in the session's Name-the-speakers
+    ///     card) so the user approves before names land in the
+    ///     transcript.
+    ///   • `.off` — no cross-meeting auto-match at all; speakers stay
+    ///     "Remote A/B/C" until the user names them by hand. The
+    ///     voice fingerprint is still persisted on manual naming
+    ///     (so turning this back on later works), just never auto-
+    ///     applied. Per-session `speakers.json` is written regardless.
+    /// Note: this gates the AUTO-LABEL step only. The underlying voice-
+    /// match engine (`SpeakerProfileStore.findMatch`) is unchanged.
+    var speakerMatchMode: SpeakerMatchMode {
+        didSet { defaults.set(speakerMatchMode.rawValue, forKey: Self.k_speakerMatchMode) }
+    }
+
     /// Days to keep raw audio (.caf) files for finished sessions.
     /// Tag conventions:
     ///   • `audioRetentionDeleteAfterTranscription` (-1) — fresh-
@@ -769,6 +794,16 @@ final class AppSettings {
         self.suppressAcousticEcho = defaults.object(forKey: Self.k_suppressAcousticEcho) as? Bool ?? true
         self.globalReclusterAfterStop = defaults.object(forKey: Self.k_globalReclusterAfterStop) as? Bool ?? true
         self.userDisplayName = (defaults.string(forKey: Self.k_userDisplayName) ?? "")
+        // Speaker match mode — default `.automatic` so existing users
+        // (no stored value) keep the silent auto-label behaviour Daisy
+        // has always had. Only an explicit user choice moves it off
+        // Automatic. See `speakerMatchMode` doc for the three modes.
+        if let rawMode = defaults.string(forKey: Self.k_speakerMatchMode),
+           let mode = SpeakerMatchMode(rawValue: rawMode) {
+            self.speakerMatchMode = mode
+        } else {
+            self.speakerMatchMode = .automatic
+        }
         // 24-hour retention is the new default for fresh installs
         // (1.0.6.9+). Raw audio dominates Daisy's disk footprint
         // (~50-150 MB / hour) and an unbounded default bit a
@@ -965,6 +1000,7 @@ final class AppSettings {
     private static let k_suppressAcousticEcho = "daisy.suppressAcousticEcho"
     private static let k_globalReclusterAfterStop = "daisy.globalReclusterAfterStop"
     private static let k_userDisplayName = "daisy.userDisplayName"
+    private static let k_speakerMatchMode = "daisy.speakerMatchMode"
     private static let k_audioRetentionDays = "daisy.audioRetentionDays"
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
@@ -1020,6 +1056,41 @@ enum AutoStartPolicy: String, CaseIterable, Identifiable, Sendable {
         case .selective: return "Selective"
         case .prompt:    return "Prompt"
         case .manual:    return "Manual"
+        }
+    }
+}
+
+// MARK: - SpeakerMatchMode
+
+/// How aggressively Daisy applies a recognized speaker (by voice
+/// fingerprint and/or calendar-attendee email) to a new recording.
+/// Modelled on Talat's Settings → Speakers match control. `rawValue`
+/// is the stable string persisted in `AppSettings.speakerMatchMode`.
+///
+/// The recognition itself (cosine match in `SpeakerProfileStore` +
+/// email intersection) is unchanged across modes — the mode only
+/// decides what to DO with a hit: apply it, suggest it, or ignore it.
+/// See `AppSettings.speakerMatchMode` for the per-mode behaviour.
+enum SpeakerMatchMode: String, CaseIterable, Identifiable, Sendable {
+    /// No cross-meeting auto-match. Speakers stay Remote A/B/C until
+    /// named by hand. Voice fingerprints are still persisted on manual
+    /// naming so re-enabling later works.
+    case off
+    /// Recognize, but surface as a confirmable suggestion rather than
+    /// applying it. The user approves before names enter the transcript.
+    case suggest
+    /// Apply the match silently (pre-fills the transcript speaker map).
+    /// Daisy's behaviour in every build before 1.0.7.10 — the default.
+    case automatic
+
+    nonisolated var id: String { rawValue }
+
+    /// Label for the segmented control.
+    nonisolated var displayName: String {
+        switch self {
+        case .off:       return "Off"
+        case .suggest:   return "Suggest"
+        case .automatic: return "Automatic"
         }
     }
 }

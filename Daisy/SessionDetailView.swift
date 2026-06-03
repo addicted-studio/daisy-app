@@ -37,6 +37,12 @@ struct SessionDetailView: View {
 
     @State private var isRunningAction = false
     @State private var confirmDelete = false
+    /// Bumped whenever a Suggest-mode suggestion is confirmed or
+    /// dismissed so the Name-the-speakers card re-reads the
+    /// `speaker_suggestions.json` sidecar from disk (it's not in the
+    /// observable SessionStore — it's a per-session file). Cheap: the
+    /// sidecar is a handful of bytes and only re-read on the tick.
+    @State private var suggestionRefreshTick = 0
     /// Local draft for the tag field in the header. Mirrors
     /// `session.tag` and commits to disk on blur / Enter — same
     /// save-on-blur idiom the title editor below uses.
@@ -947,8 +953,17 @@ struct SessionDetailView: View {
                         attendeeSourceEventTitle: session.linkedEventTitle,
                         segmentCount: info.count,
                         hasCentroid: info.hasCentroid,
+                        // Suggest-mode candidate for this label, if Daisy
+                        // recognized it but (per the match mode) left it
+                        // for the user to confirm. nil in Automatic/Off
+                        // or when this label wasn't recognized.
+                        suggestion: speakerSuggestions[info.id],
+                        suggestionSource: speakerSuggestionSources[info.id],
                         onCommit: { name in
                             Task { await applyMapping(speakerID: info.id, name: name) }
+                        },
+                        onDismissSuggestion: {
+                            Task { await dismissSuggestion(speakerID: info.id) }
                         }
                     )
                 }
@@ -1043,10 +1058,95 @@ struct SessionDetailView: View {
         // Skipped on "unmap" (name == nil) — we don't delete
         // profiles on clear, only on the explicit "Forget" action
         // in Settings → Speakers.
-        guard let name, !name.isEmpty else { return }
-        guard let centroids = loadSpeakerCentroids() else { return }
-        guard let embedding = centroids[speakerID], !embedding.isEmpty else { return }
-        SpeakerProfileStore.shared.upsert(name: name, embedding: embedding)
+        guard let name, !name.isEmpty else {
+            // A clear also resolves any pending suggestion for this row.
+            pruneSuggestion(for: speakerID)
+            return
+        }
+        guard let centroids = loadSpeakerCentroids() else {
+            pruneSuggestion(for: speakerID)
+            return
+        }
+        guard let embedding = centroids[speakerID], !embedding.isEmpty else {
+            pruneSuggestion(for: speakerID)
+            return
+        }
+        let profile = SpeakerProfileStore.shared.upsert(name: name, embedding: embedding)
+
+        // Calendar-attendee email attach — when this session is bound
+        // to an event with EXACTLY ONE attendee email (the 1:1-meeting
+        // case, which is where "match this attendee to this voice" is
+        // unambiguous), attach that email to the profile the user just
+        // named. Future calendar meetings with the same invitee then
+        // auto-match this speaker by email even if the voice timbre
+        // drifts. We deliberately DON'T guess on multi-attendee events
+        // — index alignment between the deduped names + emails arrays
+        // isn't reliable; the speaker detail editor in Settings is the
+        // explicit path for those.
+        if session.meetingAttendeeEmails.count == 1 {
+            SpeakerProfileStore.shared.addEmail(session.meetingAttendeeEmails[0], to: profile.id)
+        }
+
+        // Naming a speaker resolves its Suggest-mode suggestion.
+        pruneSuggestion(for: speakerID)
+    }
+
+    // MARK: - Suggest-mode suggestions
+
+    /// Parsed `speaker_suggestions.json` for this session (Suggest
+    /// mode only). Re-read whenever `suggestionRefreshTick` changes.
+    /// Empty/absent for Automatic + Off sessions. Filtered to labels
+    /// the user hasn't already named, so a confirmed row's chip
+    /// disappears even before the sidecar prune lands.
+    private var speakerSuggestions: [String: String] {
+        _ = suggestionRefreshTick  // re-evaluate on tick
+        guard let file = loadSpeakerSuggestions() else { return [:] }
+        return file.byLabel.filter { session.speakerMap[$0.key] == nil }
+    }
+
+    /// Parallel "how was this matched" map (label → "voice"/"email"/…)
+    /// for the suggestion chips' caption.
+    private var speakerSuggestionSources: [String: String] {
+        _ = suggestionRefreshTick
+        guard let file = loadSpeakerSuggestions() else { return [:] }
+        return file.source
+    }
+
+    private func loadSpeakerSuggestions() -> SpeakerSuggestionsFile? {
+        let url = session.directoryURL.appendingPathComponent("speaker_suggestions.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(SpeakerSuggestionsFile.self, from: data)
+    }
+
+    /// User dismissed a suggestion without naming the speaker. Drop it
+    /// from the sidecar so it doesn't reappear; leave the label
+    /// unnamed (Remote X).
+    private func dismissSuggestion(speakerID: String) async {
+        pruneSuggestion(for: speakerID)
+    }
+
+    /// Remove one label's entry from the suggestions sidecar (on
+    /// confirm or dismiss). Deletes the file once empty so a session
+    /// with no pending suggestions carries no sidecar. Bumps the tick
+    /// so the UI re-reads.
+    private func pruneSuggestion(for speakerID: String) {
+        let url = session.directoryURL.appendingPathComponent("speaker_suggestions.json")
+        defer { suggestionRefreshTick &+= 1 }
+        guard var file = loadSpeakerSuggestions() else { return }
+        file.byLabel.removeValue(forKey: speakerID)
+        file.source.removeValue(forKey: speakerID)
+        if file.byLabel.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
+        if let data = try? {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            return try enc.encode(file)
+        }() {
+            try? data.write(to: url, options: [.atomic])
+        }
     }
 
     /// Read `speakers.json` from the session's directory. Returns
@@ -1670,7 +1770,19 @@ private struct SpeakerNameRow: View {
     /// THIS session's display, but no fingerprint will auto-match
     /// future sessions. UX: subtle "session only" caption.
     let hasCentroid: Bool
+    /// Suggest-mode candidate name Daisy recognized for this label but
+    /// didn't auto-apply (match mode = Suggest). nil in Automatic/Off
+    /// or when this label wasn't recognized. When non-nil AND the row
+    /// is still unnamed, a "Suggested: <name>" affordance with a
+    /// Confirm checkmark renders inline.
+    let suggestion: String?
+    /// Why Daisy matched ("voice" / "email" / "voice+email") — shown
+    /// as a subtle caption on the suggestion chip so the user gauges
+    /// confidence. nil hides the qualifier.
+    let suggestionSource: String?
     let onCommit: (String?) -> Void
+    /// User dismissed the suggestion without naming the speaker.
+    let onDismissSuggestion: () -> Void
 
     @State private var draft: String
     @FocusState private var focused: Bool
@@ -1682,7 +1794,10 @@ private struct SpeakerNameRow: View {
         attendeeSourceEventTitle: String?,
         segmentCount: Int,
         hasCentroid: Bool,
-        onCommit: @escaping (String?) -> Void
+        suggestion: String? = nil,
+        suggestionSource: String? = nil,
+        onCommit: @escaping (String?) -> Void,
+        onDismissSuggestion: @escaping () -> Void = {}
     ) {
         self.speakerID = speakerID
         self.currentName = currentName
@@ -1690,7 +1805,10 @@ private struct SpeakerNameRow: View {
         self.attendeeSourceEventTitle = attendeeSourceEventTitle
         self.segmentCount = segmentCount
         self.hasCentroid = hasCentroid
+        self.suggestion = suggestion
+        self.suggestionSource = suggestionSource
         self.onCommit = onCommit
+        self.onDismissSuggestion = onDismissSuggestion
         self._draft = State(initialValue: currentName)
     }
 
@@ -1705,22 +1823,37 @@ private struct SpeakerNameRow: View {
         // trailing edge of the same field, replacing the captionLine
         // entirely. Net result: tighter one-line rows, no left
         // gutter wasted on a label that just echoed the speakerID.
-        HStack(spacing: 8) {
-            speakerField
-            // Suggestions menu — present only when the session has
-            // calendar attendees. Quick-fill from the bound event,
-            // still allows free-text in the field next to it.
-            // 2026-05-26 — top of menu shows the source event title
-            // (disabled header item) so the user can visually verify
-            // "these are attendees from THIS event". Tester saw what
-            // looked like emails from a different meeting; root
-            // cause was the wrong event bound at session-start with
-            // no on-screen indicator.
-            if !attendeeSuggestions.isEmpty {
-                Menu {
-                    if let eventTitle = attendeeSourceEventTitle,
-                       !eventTitle.isEmpty {
-                        Section("From: \(eventTitle)") {
+        //
+        // 2026-06-03 — wrapped in a VStack so a Suggest-mode chip can
+        // render UNDER the field when Daisy recognized this voice but
+        // (match mode = Suggest) left it for the user to confirm. The
+        // chip only appears while the row is still unnamed; confirming
+        // or naming the row by hand resolves it.
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                speakerField
+                // Suggestions menu — present only when the session has
+                // calendar attendees. Quick-fill from the bound event,
+                // still allows free-text in the field next to it.
+                // 2026-05-26 — top of menu shows the source event title
+                // (disabled header item) so the user can visually verify
+                // "these are attendees from THIS event". Tester saw what
+                // looked like emails from a different meeting; root
+                // cause was the wrong event bound at session-start with
+                // no on-screen indicator.
+                if !attendeeSuggestions.isEmpty {
+                    Menu {
+                        if let eventTitle = attendeeSourceEventTitle,
+                           !eventTitle.isEmpty {
+                            Section("From: \(eventTitle)") {
+                                ForEach(attendeeSuggestions, id: \.self) { name in
+                                    Button(name) {
+                                        draft = name
+                                        commit()
+                                    }
+                                }
+                            }
+                        } else {
                             ForEach(attendeeSuggestions, id: \.self) { name in
                                 Button(name) {
                                     draft = name
@@ -1728,28 +1861,88 @@ private struct SpeakerNameRow: View {
                                 }
                             }
                         }
-                    } else {
-                        ForEach(attendeeSuggestions, id: \.self) { name in
-                            Button(name) {
-                                draft = name
-                                commit()
-                            }
-                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help(
+                        attendeeSourceEventTitle
+                            .map { "Pick from attendees of \"\($0)\"" }
+                            ?? "Pick from event attendees"
+                    )
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help(
-                    attendeeSourceEventTitle
-                        .map { "Pick from attendees of \"\($0)\"" }
-                        ?? "Pick from event attendees"
-                )
             }
+            suggestionChip
+        }
+    }
+
+    /// Suggest-mode confirm affordance. Renders only when Daisy
+    /// recognized a name for this label (`suggestion != nil`) AND the
+    /// row is still unnamed — once the user confirms or types their
+    /// own name, `currentName` is non-empty and the chip drops away.
+    /// Confirm fills the field with the suggested name and commits
+    /// (which persists the mapping AND prunes the sidecar via the
+    /// parent's `onCommit` → `applyMapping`); Dismiss drops the
+    /// suggestion without naming the row.
+    @ViewBuilder
+    private var suggestionChip: some View {
+        if let suggestion, !suggestion.isEmpty, currentName.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.caption2)
+                    .foregroundStyle(Color.daisyAccent)
+                (
+                    Text("Suggested: ").foregroundStyle(.secondary)
+                    + Text(suggestion).foregroundStyle(Color.daisyTextPrimary).fontWeight(.medium)
+                )
+                .font(.caption)
+                if let qualifier = suggestionSourceLabel {
+                    Text(qualifier)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 4)
+                Button {
+                    draft = suggestion
+                    commit()
+                } label: {
+                    Label("Confirm", systemImage: "checkmark")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.medium))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.mini)
+                .tint(Color.daisyAccent)
+                Button {
+                    onDismissSuggestion()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.mini)
+                .foregroundStyle(.secondary)
+                .help("Dismiss this suggestion — the speaker stays unnamed.")
+            }
+            .padding(.leading, 2)
+            .transition(.opacity)
+        }
+    }
+
+    /// Human label for the match source caption on the suggestion
+    /// chip ("heard" / "calendar" / "heard + calendar"). nil hides
+    /// the qualifier. Keeps internal source keys ("voice"/"email")
+    /// out of the UI copy.
+    private var suggestionSourceLabel: String? {
+        switch suggestionSource {
+        case "voice":       return "· heard"
+        case "email":       return "· calendar"
+        case "voice+email": return "· heard + calendar"
+        default:            return nil
         }
     }
 

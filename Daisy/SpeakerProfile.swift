@@ -38,13 +38,37 @@ struct SpeakerProfile: Codable, Identifiable, Sendable, Hashable {
     /// load-bearing vs one-offs.
     var sessionCount: Int
 
+    // ── CRM fields (1.0.7.10, Talat parity) ──────────────────────
+    // All three are ADDITIVE and migration-safe: the custom
+    // `init(from:)` below uses `decodeIfPresent`, so profiles saved
+    // before this field set existed (which have none of these keys
+    // in their JSON) still decode — they get the empty defaults.
+    // No version-stamp / migration pass needed; absence == default.
+
+    /// Email addresses associated with this person. Used to match
+    /// calendar attendees → this speaker: when a session is bound to
+    /// a calendar event, Daisy intersects the event's attendee emails
+    /// (`DaisyMeeting.attendeeEmails`) with this list to identify and
+    /// auto-label the speaker, IN ADDITION to the voice fingerprint.
+    /// Lowercased + trimmed on write (see SpeakerProfileStore). One
+    /// person can have several (work + personal). Empty by default.
+    var emails: [String]
+
+    /// Free-form context the user types about this person — role,
+    /// company, "met at WWDC", "always joins late", whatever. Never
+    /// fed to matching; purely a human note surfaced in the speaker
+    /// detail UI and (future) optionally in summaries. Empty default.
+    var notes: String
+
     init(
         id: UUID = UUID(),
         name: String,
         embedding: [Float],
         createdAt: Date = Date(),
         lastSeenAt: Date = Date(),
-        sessionCount: Int = 1
+        sessionCount: Int = 1,
+        emails: [String] = [],
+        notes: String = ""
     ) {
         self.id = id
         self.name = name
@@ -52,6 +76,38 @@ struct SpeakerProfile: Codable, Identifiable, Sendable, Hashable {
         self.createdAt = createdAt
         self.lastSeenAt = lastSeenAt
         self.sessionCount = sessionCount
+        self.emails = emails
+        self.notes = notes
+    }
+
+    // MARK: - Migration-safe decoding
+    //
+    // Hand-rolled `init(from:)` so that profiles written by any prior
+    // build decode cleanly. The original schema had only id / name /
+    // embedding / createdAt / lastSeenAt / sessionCount; a JSON file
+    // from that era has NO `emails` or `notes` key. With the
+    // synthesised Decodable, a missing key for a non-optional stored
+    // property is a hard decode error — every old profile would throw
+    // and the store's `try? decoder.decode(...)` would silently drop
+    // it ("Skipped malformed profile"), wiping the user's enrolled
+    // speaker DB on first launch after update. `decodeIfPresent` with
+    // a default makes the new keys optional ON THE WIRE while keeping
+    // them non-optional in memory. The legacy six keys stay `decode`
+    // (required) — any file that lacks THOSE was already unreadable
+    // before this change, so behaviour there is unchanged.
+    //
+    // Encoding stays synthesised: new writes always include all keys.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.embedding = try c.decode([Float].self, forKey: .embedding)
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.lastSeenAt = try c.decode(Date.self, forKey: .lastSeenAt)
+        self.sessionCount = try c.decode(Int.self, forKey: .sessionCount)
+        // New, optional-on-disk fields — absent in pre-1.0.7.10 files.
+        self.emails = try c.decodeIfPresent([String].self, forKey: .emails) ?? []
+        self.notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
     }
 }
 
@@ -74,6 +130,31 @@ struct SpeakerProfile: Codable, Identifiable, Sendable, Hashable {
 /// container with no shared mutable state, so opting out is safe.
 nonisolated struct SpeakerCentroidsFile: Codable, Sendable {
     let centroids: [String: [Float]]
+}
+
+/// Sidecar written ONLY in `Suggest` speaker-match mode. Holds the
+/// speaker labels Daisy recognized (by voice fingerprint and/or
+/// calendar-attendee email) but did NOT auto-apply — the user
+/// confirms them in the session's Name-the-speakers card before the
+/// names enter the transcript. In `Automatic` mode the matches go
+/// straight into the transcript's `daisy_speaker_map` and no
+/// suggestions sidecar is written; in `Off` mode there are no matches
+/// to suggest.
+///
+/// File layout: `<session-dir>/speaker_suggestions.json`. Deleted by
+/// the detail view once every suggestion has been confirmed or
+/// dismissed, so a session with no pending suggestions has no sidecar.
+///
+/// `byLabel` maps transcript speaker label ("A", "B", …) → the
+/// suggested display name. `source` is a parallel map label → why we
+/// matched ("voice" / "email" / "voice+email"), surfaced as a subtle
+/// caption so the user knows how confident the match is.
+///
+/// `nonisolated` for the same reason as `SpeakerCentroidsFile` — pure
+/// data container decoded off the main actor.
+nonisolated struct SpeakerSuggestionsFile: Codable, Sendable {
+    var byLabel: [String: String]
+    var source: [String: String]
 }
 
 /// Cosine similarity between two L2-normalized vectors. Since both

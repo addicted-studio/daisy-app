@@ -125,6 +125,50 @@ final class SpeakerProfileStore {
         write(profile)
     }
 
+    // MARK: - Email matching (calendar attendees)
+
+    /// Normalize an email for storage + comparison: lowercased,
+    /// whitespace-trimmed. Mirrors `CalendarService.projectAttendeeEmails`
+    /// so the two sides compare apples-to-apples. Returns nil for
+    /// anything that doesn't look like an address (no `@`, empty).
+    nonisolated static func normalizeEmail(_ raw: String) -> String? {
+        let n = raw.lowercased().trimmingCharacters(in: .whitespaces)
+        guard n.contains("@"), !n.isEmpty else { return nil }
+        return n
+    }
+
+    /// Find the profile owning a given email address, if any. Used by
+    /// the calendar-attendee match path: a session bound to an event
+    /// hands us the attendee emails, and we resolve each to a known
+    /// speaker. Exact (normalized) match — we don't fuzzy-match
+    /// addresses. First hit wins; emails are expected unique across
+    /// profiles (the upsert path dedupes on assignment, but a manual
+    /// edit could in theory duplicate — deterministic order via the
+    /// sorted-by-recent view keeps the winner stable).
+    func findByEmail(_ rawEmail: String) -> SpeakerProfile? {
+        ensureLoaded()
+        guard let needle = Self.normalizeEmail(rawEmail) else { return nil }
+        return profilesByRecent.first { $0.emails.contains(needle) }
+    }
+
+    /// Add one email to a profile (idempotent, normalized). Called when
+    /// the user maps a speaker to a calendar attendee whose email is
+    /// known — we attach that email so the SAME person auto-matches by
+    /// email on their next calendar meeting even if the voice timbre
+    /// shifts (different mic, cold, speakerphone). No-op if the email
+    /// is already on the profile or is malformed.
+    func addEmail(_ rawEmail: String, to id: UUID) {
+        ensureLoaded()
+        guard var profile = profiles[id],
+              let email = Self.normalizeEmail(rawEmail),
+              !profile.emails.contains(email) else { return }
+        profile.emails.append(email)
+        profiles[id] = profile
+        write(profile)
+        // Email is PII — keep .private. Profile ID stays .public.
+        log.info("Attached email to profile \(id, privacy: .public)")
+    }
+
     // MARK: - Create / update
 
     /// Save or update a profile. Called by SessionDetailView when
@@ -181,6 +225,35 @@ final class SpeakerProfileStore {
         write(new)
         log.info("Created profile for \(trimmed, privacy: .private)")
         return new
+    }
+
+    // MARK: - Metadata edit (detail UI)
+
+    /// Replace a profile's editable CRM metadata — display name,
+    /// email list, free-form notes — from the speaker detail/edit
+    /// surface in Settings. Leaves the voice `embedding`, `createdAt`,
+    /// `lastSeenAt`, and `sessionCount` untouched (those are owned by
+    /// the matching engine, not user-editable). Emails are normalized
+    /// + de-duplicated here so the store stays the single point of
+    /// truth for email hygiene; blank entries (from an empty editor
+    /// row) are dropped. No-op for an unknown id.
+    func updateMetadata(id: UUID, name: String, emails: [String], notes: String) {
+        ensureLoaded()
+        guard var profile = profiles[id] else { return }
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        if !trimmedName.isEmpty { profile.name = trimmedName }
+        // Normalize + dedupe while preserving the user's input order.
+        var seen = Set<String>()
+        var cleaned: [String] = []
+        for raw in emails {
+            guard let e = Self.normalizeEmail(raw) else { continue }
+            if seen.insert(e).inserted { cleaned.append(e) }
+        }
+        profile.emails = cleaned
+        profile.notes = notes
+        profiles[id] = profile
+        write(profile)
+        log.info("Updated metadata for profile \(id, privacy: .public)")
     }
 
     // MARK: - Forget
