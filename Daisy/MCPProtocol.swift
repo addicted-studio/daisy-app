@@ -200,7 +200,14 @@ nonisolated struct MCPToolCallParams: Codable, Sendable {
 
 /// `tools/call` result. MCP returns content as an array of blocks
 /// (text / image / resource). We only emit text blocks.
-nonisolated struct MCPToolCallResult: Codable, Sendable {
+///
+/// Conforms to `Error` so it can double as the failure type of the
+/// internal `Result<StoredSession, MCPToolCallResult>` helpers in
+/// MCPTools (e.g. `resolveSession`), where a tool returns the
+/// `.error(_:)` block directly to the agent instead of throwing.
+/// `Error` is a marker protocol with no requirements, so this adds
+/// no behaviour — it only unlocks that usage.
+nonisolated struct MCPToolCallResult: Codable, Sendable, Error {
     let content: [MCPContentBlock]
     let isError: Bool?
 
