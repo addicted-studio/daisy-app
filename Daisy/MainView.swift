@@ -280,89 +280,17 @@ struct MainView: View {
         .onChange(of: nav.section) { _, new in
             if sidebarSelection != new { sidebarSelection = new }
         }
-        // Reactive re-wiring when the user changes the hotkey or
-        // flips auto-start in Settings. Initial wiring is done in
-        // DaisyApp.init via the same ServiceWiring helpers so the
-        // two call sites can't drift apart.
-        .onChange(of: settings.recordHotkey) { _, _ in
-            ServiceWiring.applyAllHotkeys(settings: settings, session: session)
-        }
-        .onChange(of: settings.voiceNoteHotkey) { _, _ in
-            ServiceWiring.applyAllHotkeys(settings: settings, session: session)
-        }
-        .onChange(of: settings.dictationHotkey) { _, _ in
-            ServiceWiring.applyAllHotkeys(settings: settings, session: session)
-        }
-        // Granola-style auto-open: when a session finishes and the
-        // user opted in via `settings.showSessionAfterStop`, jump
-        // to History and deep-link to the just-recorded row.
-        // RecordingSession.stop() does a synchronous
-        // SessionStore.refresh() before flipping to .finished, so
-        // by the time this handler fires the row is in the list
-        // and LibraryView's pending-selection handler can land on it.
-        .onChange(of: session.status) { _, new in
-            if case .finished = new,
-               settings.showSessionAfterStop,
-               let id = session.sessionDirectory?.lastPathComponent {
-                AppNavigation.shared.openInLibrary(id)
-            }
-        }
-        // Auto-start policy (Always / Selective / Prompt / Manual) is
-        // the single user-facing control; its didSet writes through to
-        // autoStartOnMeeting / autoStartFromCalendar / autoStartPromptMode.
-        // Re-wire BOTH detectors when the policy changes so the app-launch
-        // detector picks up the new prompt-mode + enabled state and the
-        // calendar service picks up its new enabled state.
-        .onChange(of: settings.autoStartPolicy) { _, _ in
-            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
-            ServiceWiring.applyCalendar(settings: settings, session: session)
-        }
-        .onChange(of: settings.autoStartOnMeeting) { _, _ in
-            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
-        }
-        .onChange(of: settings.autoStartPromptMode) { _, _ in
-            // Prompt-mode flip re-arms the app-launch detector closure
-            // (start vs. ask). Calendar path reads the flag live in
-            // startFromMeeting, so it needs no re-wire.
-            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
-        }
-        .onChange(of: settings.recordingDetectionDelaySec) { _, _ in
-            // Debounce window is captured at detector start() — re-arm.
-            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
-        }
-        .onChange(of: settings.autoStartFromCalendar) { _, _ in
-            ServiceWiring.applyCalendar(settings: settings, session: session)
-        }
-        // When EventKit's authorisation status flips (typically via
-        // the system prompt fired from Home's Connect button or from
-        // Settings), mirror it into AppSettings and re-apply the
-        // wiring with the proper auto-start handler.
-        .onChange(of: CalendarService.shared.authorizationStatus) { _, status in
-            let granted = (status == .fullAccess)
-            if settings.calendarAccessGranted != granted {
-                settings.calendarAccessGranted = granted
-            }
-            ServiceWiring.applyCalendar(settings: settings, session: session)
-        }
-        // Mirror Google Calendar OAuth connect/disconnect — when
-        // user signs in/out via Settings, re-run CalendarService
-        // wiring so its poll timer + meeting-start handler reflect
-        // the new source state (start when newly available, stop
-        // when both EventKit and Google are gone).
-        .onChange(of: GoogleAccountStore.shared.isConnected) { _, _ in
-            ServiceWiring.applyCalendar(settings: settings, session: session)
-        }
-        .onChange(of: settings.mcpServerEnabled) { _, _ in
-            ServiceWiring.applyMCPServer(settings: settings)
-        }
-        .onChange(of: settings.mcpServerPort) { _, _ in
-            // Re-apply when the port changes, but only if the server
-            // is currently enabled — otherwise editing the port
-            // shouldn't side-effect a stopped server.
-            if settings.mcpServerEnabled {
-                ServiceWiring.applyMCPServer(settings: settings)
-            }
-        }
+        // Reactive service re-wiring, lifted out of `body` into
+        // ViewModifiers. Inline, this was 14 chained `.onChange`
+        // handlers stacked on the toolbar/sheet/styling chain, which
+        // tripped the Swift type-checker's complexity limit ("unable
+        // to type-check this expression in reasonable time") once the
+        // auto-start policy added five more. Each modifier below is its
+        // own type-check scope. Initial wiring still runs in
+        // DaisyApp.init via the same ServiceWiring helpers.
+        .modifier(HotkeyStopWiring(settings: settings, session: session))
+        .modifier(AutoStartWiring(settings: settings, session: session))
+        .modifier(CalendarServerWiring(settings: settings, session: session))
     }
 
     // MARK: Sidebar
@@ -657,5 +585,94 @@ private struct SystemAudioStatusPill: View {
             Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
         )
         .help(message)
+    }
+}
+
+
+// MARK: - Service re-wiring modifiers
+//
+// The reactive ServiceWiring re-application that used to live as a long
+// `.onChange` chain on `MainView.body`, split across three ViewModifiers
+// purely to stay within the Swift type-checker's expression-complexity
+// budget. Behaviour is identical to the former inline chain; only the
+// grouping is new. Plain `let` (not @Bindable) is enough — Observation
+// tracks the `settings.*` reads inside each `.onChange(of:)`.
+
+private struct HotkeyStopWiring: ViewModifier {
+    let settings: AppSettings
+    let session: RecordingSession
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: settings.recordHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
+            .onChange(of: settings.voiceNoteHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
+            .onChange(of: settings.dictationHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
+            // Granola-style auto-open: jump to History on the freshly
+            // finished session when the user opted in.
+            .onChange(of: session.status) { _, new in
+                if case .finished = new,
+                   settings.showSessionAfterStop,
+                   let id = session.sessionDirectory?.lastPathComponent {
+                    AppNavigation.shared.openInLibrary(id)
+                }
+            }
+    }
+}
+
+private struct AutoStartWiring: ViewModifier {
+    let settings: AppSettings
+    let session: RecordingSession
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: settings.autoStartPolicy) { _, _ in
+                ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+                ServiceWiring.applyCalendar(settings: settings, session: session)
+            }
+            .onChange(of: settings.autoStartOnMeeting) { _, _ in
+                ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+            }
+            .onChange(of: settings.autoStartPromptMode) { _, _ in
+                ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+            }
+            .onChange(of: settings.recordingDetectionDelaySec) { _, _ in
+                ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+            }
+            .onChange(of: settings.autoStartFromCalendar) { _, _ in
+                ServiceWiring.applyCalendar(settings: settings, session: session)
+            }
+    }
+}
+
+private struct CalendarServerWiring: ViewModifier {
+    let settings: AppSettings
+    let session: RecordingSession
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: CalendarService.shared.authorizationStatus) { _, status in
+                let granted = (status == .fullAccess)
+                if settings.calendarAccessGranted != granted {
+                    settings.calendarAccessGranted = granted
+                }
+                ServiceWiring.applyCalendar(settings: settings, session: session)
+            }
+            .onChange(of: GoogleAccountStore.shared.isConnected) { _, _ in
+                ServiceWiring.applyCalendar(settings: settings, session: session)
+            }
+            .onChange(of: settings.mcpServerEnabled) { _, _ in
+                ServiceWiring.applyMCPServer(settings: settings)
+            }
+            .onChange(of: settings.mcpServerPort) { _, _ in
+                if settings.mcpServerEnabled {
+                    ServiceWiring.applyMCPServer(settings: settings)
+                }
+            }
     }
 }
