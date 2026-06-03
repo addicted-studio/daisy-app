@@ -38,6 +38,11 @@ struct SpeakerDetailSheet: View {
     /// as SettingsView's `@Bindable private var speakerStore`.
     @Bindable private var store = SpeakerProfileStore.shared
 
+    /// Observed for the "Appears in" history — the recordings where
+    /// this person has been named. In-memory + observable, so the
+    /// list reacts if the library refreshes while the sheet is open.
+    @Bindable private var sessionStore = SessionStore.shared
+
     // ── Editable drafts ──────────────────────────────────────────
     // Seeded once from the store snapshot at init (the Settings list
     // that opened this sheet already triggered `ensureLoaded`, so the
@@ -78,6 +83,12 @@ struct SpeakerDetailSheet: View {
         }
         .frame(minWidth: 460, idealWidth: 500, minHeight: 440)
         .background(Color.daisyBgPrimary)
+        .task {
+            // Safety net for "opened Settings before the Library" —
+            // the library normally refreshes at launch, so this is a
+            // no-op in the common case.
+            if sessionStore.sessions.isEmpty { await sessionStore.refresh() }
+        }
     }
 
     // MARK: - Form
@@ -113,7 +124,75 @@ struct SpeakerDetailSheet: View {
 
             Divider()
 
+            appearsInBlock
+
+            Divider()
+
             statsBlock
+        }
+    }
+
+    /// Recordings where this person has been named — Daisy's CRM
+    /// history for the speaker. Matched by NAME against each session's
+    /// applied speaker map (the only persisted link; sessions don't
+    /// store the profile UUID). Caveat: renaming the profile won't
+    /// retro-match older recordings that still carry the old name.
+    /// Tapping a row saves any pending edits, then jumps to that
+    /// recording in the Library.
+    @ViewBuilder
+    private var appearsInBlock: some View {
+        let items = appearsIn
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("Appears in")
+                    .font(.callout.weight(.medium))
+                Spacer()
+                if !items.isEmpty {
+                    Text(items.count == 1 ? "1 recording" : "\(items.count) recordings")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            if items.isEmpty {
+                Text("Not named in any saved recording yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(items.prefix(appearsInLimit)) { session in
+                    Button {
+                        openSession(session)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "waveform")
+                                .font(.caption)
+                                .foregroundStyle(Color.daisyAccent)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(session.title.isEmpty ? "Untitled recording" : session.title)
+                                    .font(.callout)
+                                    .foregroundStyle(Color.daisyTextPrimary)
+                                    .lineLimit(1)
+                                Text(appearsInCaption(session))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if items.count > appearsInLimit {
+                    let extra = items.count - appearsInLimit
+                    Text("+ \(extra) earlier \(extra == 1 ? "recording" : "recordings")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
     }
 
@@ -241,6 +320,49 @@ struct SpeakerDetailSheet: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(40)
+    }
+
+    // MARK: - Appears-in helpers
+
+    /// Cap on rows rendered inline; the rest collapse to a "+ N
+    /// earlier" line so a chatty speaker doesn't make an endless sheet.
+    private let appearsInLimit = 12
+
+    /// Sessions whose applied speaker map names this profile, newest
+    /// first. Uses the SAVED profile name (not the in-progress draft)
+    /// since that's what historical recordings actually contain.
+    private var appearsIn: [StoredSession] {
+        guard let profile = store.profiles[profileID] else { return [] }
+        let name = profile.name.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return [] }
+        return sessionStore.sessions
+            .filter { session in
+                session.speakerMap.values.contains {
+                    $0.caseInsensitiveCompare(name) == .orderedSame
+                }
+            }
+            .sorted { $0.startedAt > $1.startedAt }
+    }
+
+    private func appearsInCaption(_ session: StoredSession) -> String {
+        var parts: [String] = [relative(session.startedAt)]
+        let tag = session.tag.trimmingCharacters(in: .whitespaces)
+        if !tag.isEmpty { parts.append(tag) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Persist pending metadata edits, then deep-link to the recording
+    /// in the Library. We save first so tapping a history row never
+    /// silently drops an in-progress name / email / notes edit.
+    private func openSession(_ session: StoredSession) {
+        store.updateMetadata(
+            id: profileID,
+            name: name,
+            emails: emailRows.map(\.value),
+            notes: notes
+        )
+        AppNavigation.shared.openInLibrary(session.id)
+        dismiss()
     }
 
     // MARK: - Helpers
