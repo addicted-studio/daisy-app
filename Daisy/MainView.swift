@@ -307,8 +307,28 @@ struct MainView: View {
                 AppNavigation.shared.openInLibrary(id)
             }
         }
-        .onChange(of: settings.autoStartOnMeeting) { _, enabled in
-            ServiceWiring.applyMeetingAutoStart(enabled: enabled, session: session)
+        // Auto-start policy (Always / Selective / Prompt / Manual) is
+        // the single user-facing control; its didSet writes through to
+        // autoStartOnMeeting / autoStartFromCalendar / autoStartPromptMode.
+        // Re-wire BOTH detectors when the policy changes so the app-launch
+        // detector picks up the new prompt-mode + enabled state and the
+        // calendar service picks up its new enabled state.
+        .onChange(of: settings.autoStartPolicy) { _, _ in
+            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+            ServiceWiring.applyCalendar(settings: settings, session: session)
+        }
+        .onChange(of: settings.autoStartOnMeeting) { _, _ in
+            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+        }
+        .onChange(of: settings.autoStartPromptMode) { _, _ in
+            // Prompt-mode flip re-arms the app-launch detector closure
+            // (start vs. ask). Calendar path reads the flag live in
+            // startFromMeeting, so it needs no re-wire.
+            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+        }
+        .onChange(of: settings.recordingDetectionDelaySec) { _, _ in
+            // Debounce window is captured at detector start() — re-arm.
+            ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
         }
         .onChange(of: settings.autoStartFromCalendar) { _, _ in
             ServiceWiring.applyCalendar(settings: settings, session: session)

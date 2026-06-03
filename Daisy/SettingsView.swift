@@ -1062,35 +1062,63 @@ struct SettingsView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            // ── Group 3b: Meetings ────────────────────────────
-            // One block for everything about how meetings start /
-            // stop / surface. Pre-1.0.5.5 this was three separate
-            // sections (Auto-start, After Stop, Calendar) — same
-            // mental model, fragmented across the form. Unified
-            // under a single "Meetings" header now.
-            //
-            // Auto-start trigger from meeting-app launch is the only
-            // path that doesn't need calendar access — kept at the
-            // top so it doesn't grey out with the calendar gate.
+            // ── Group 3a: Auto-start ──────────────────────────
+            // Talat-parity 4-mode policy (1.0.7.9), replacing the old
+            // pair of independent "Start when a meeting app opens" /
+            // "Start at the scheduled meeting time" toggles. Daisy
+            // detects calls two ways — a meeting app launching (Zoom /
+            // Teams / Webex / Telegram / Discord) and a calendar event
+            // with a Zoom/Meet/Teams/Webex link beginning — and this
+            // single control decides what to do when it does.
             Section {
-                Toggle(isOn: $settings.autoStartOnMeeting) {
-                    Text("Start when a meeting app opens")
-                    Text("Begins recording when Zoom, Teams, Webex, Telegram or Discord launches. Apps already open when Daisy starts are left alone.")
+                Picker("When Daisy detects a call", selection: $settings.autoStartPolicy) {
+                    ForEach(AutoStartPolicy.allCases) { policy in
+                        Text(policy.displayName).tag(policy)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                // Per-mode explainer so the segmented control's one-word
+                // labels are unambiguous. Mirrors Talat's wording in
+                // Daisy's voice.
+                Text(autoStartPolicyHelp)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Detection delay (debounce) — only meaningful when a
+                // detector is actually armed (any mode except Manual).
+                if settings.autoStartPolicy != .manual {
+                    Stepper(value: $settings.recordingDetectionDelaySec, in: 0...10, step: 0.5) {
+                        HStack {
+                            Text("Detection delay")
+                            Spacer(minLength: 8)
+                            Text(String(format: "%.1f s", settings.recordingDetectionDelaySec))
+                                .monospaced()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("How long Daisy waits after a meeting app opens before responding, so a momentary launch (or an app relaunching itself) doesn't kick off a recording. Doesn't affect calendar-timed starts.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-
-                Toggle(isOn: $settings.autoStartFromCalendar) {
-                    Text("Start at the scheduled meeting time")
-                    Text("Reads your calendar, finds events with a Zoom/Meet/Teams/Webex link, starts recording when they begin. Up to 2 min late is fine.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            } header: {
+                Text("Auto-start")
+            } footer: {
+                if !hasAnyCalendarSource && settings.autoStartPolicy == .selective {
+                    Text("Selective records only calendar meetings, which needs calendar access in Settings → Permissions. Until then nothing will auto-start.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
-                .disabled(!hasAnyCalendarSource)
+            }
 
+            // ── Group 3b: Meetings ────────────────────────────
+            // Everything else about how meetings stop / surface.
+            // Auto-start moved into its own section above (1.0.7.9).
+            Section {
                 Toggle(isOn: $settings.autoStopFromCalendar) {
-                    Text("Stop when the event ends")
-                    Text("Daisy hits Stop & save at the event's end time plus a grace period. A toast 30 s before lets you keep going.")
+                    Text("Stop when the meeting wraps up")
+                    Text("After a calendar event's end time, Daisy waits a grace period and then stops once the call has gone quiet — so a meeting that runs over isn't cut off mid-sentence. A toast 30 s before lets you keep going.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1109,6 +1137,10 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.menu)
                     .disabled(!hasAnyCalendarSource)
+
+                    Text("How long after the scheduled end Daisy waits before it can stop. Also the rejoin window: leave and come back inside it and the two stretches are saved as one recording.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Toggle(isOn: $settings.menuBarShowsNextMeeting) {
@@ -1293,6 +1325,22 @@ struct SettingsView: View {
     /// Permissions tab reads, so the two surfaces can't diverge.
     private var hasAnyCalendarSource: Bool {
         systemPermissions.calendar == .granted || googleAccount.isConnected
+    }
+
+    /// Per-mode explainer under the auto-start segmented control.
+    /// Mirrors Talat's Always / Selective / Prompt / Manual wording in
+    /// Daisy's voice.
+    private var autoStartPolicyHelp: String {
+        switch settings.autoStartPolicy {
+        case .always:
+            return "Records every call automatically — when a meeting app (Zoom, Teams, Webex, Telegram, Discord) opens, or a calendar meeting begins."
+        case .selective:
+            return "Records only your scheduled meetings — calendar events with a Zoom/Meet/Teams/Webex link. Opening a meeting app for an unscheduled call won't start a recording."
+        case .prompt:
+            return "Detects calls the same way, but asks first — you get a “Record this call?” notification with Record / Ignore."
+        case .manual:
+            return "Never starts on its own. You begin every recording with the Record button or your hotkey."
+        }
     }
 
     // MARK: - Transcription (Whisper)

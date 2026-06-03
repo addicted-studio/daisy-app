@@ -32,6 +32,8 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // 1.0.5: calendar-driven lifecycle banners.
         AutoStartNotification.register()
         AutoStopNotification.register()
+        // 1.0.7.9: Prompt-mode "record this call?" ask.
+        AutoStartPromptNotification.register()
 
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
@@ -126,6 +128,16 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
                 NotificationCenter.default.post(
                     name: AutoStartNotification.stopRequested, object: nil
                 )
+            case AutoStartPromptNotification.actionRecord:
+                // Prompt mode: user said yes — start the pending trigger.
+                NotificationCenter.default.post(
+                    name: AutoStartPromptNotification.recordRequested, object: nil
+                )
+            case AutoStartPromptNotification.actionIgnore:
+                // Prompt mode: user said no — drop the pending trigger.
+                NotificationCenter.default.post(
+                    name: AutoStartPromptNotification.ignoreRequested, object: nil
+                )
             default:
                 // Tap on the banner body of a silence-prompt category —
                 // treat as "Not yet" so the silence clock resets.
@@ -136,6 +148,13 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
                 if cat == SilencePromptNotification.categoryID {
                     NotificationCenter.default.post(
                         name: SilencePromptNotification.snoozeRequested, object: nil
+                    )
+                } else if cat == AutoStartPromptNotification.categoryID {
+                    // Body tap on the "record this call?" banner with no
+                    // explicit action — treat as Ignore so the pending
+                    // trigger doesn't linger.
+                    NotificationCenter.default.post(
+                        name: AutoStartPromptNotification.ignoreRequested, object: nil
                     )
                 }
             }

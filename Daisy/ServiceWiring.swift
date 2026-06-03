@@ -77,7 +77,11 @@ enum ServiceWiring {
 
     /// Enable or disable foreground-app meeting auto-detection
     /// (NSWorkspace-based — fires when Zoom / Teams / Meet etc. is
-    /// launched).
+    /// launched). `enabled` is the derived `settings.autoStartOnMeeting`
+    /// substrate flag (ON for Always / Prompt, OFF for Selective /
+    /// Manual). The detector debounces by `recordingDetectionDelaySec`,
+    /// and when `autoStartPromptMode` is on it asks before recording
+    /// instead of starting directly.
     ///
     /// We deliberately do NOT call `session.start()` when a session
     /// is already recording or paused. Previously the call slipped
@@ -92,23 +96,33 @@ enum ServiceWiring {
     /// bundle ID, not a `DaisyMeeting`, so we have no idea if it's
     /// a "different" meeting from what's already being recorded.
     /// Surfacing rather than acting is the right move.
-    static func applyMeetingAutoStart(enabled: Bool, session: RecordingSession) {
-        if enabled {
-            MeetingDetector.shared.start { [weak session] appName in
-                Task { @MainActor in
-                    guard let session else { return }
-                    if session.status == .recording || session.status == .paused {
-                        ToastCenter.shared.show(
-                            "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one.",
-                            style: .info
-                        )
-                        return
-                    }
-                    await session.start()
-                }
-            }
-        } else {
+    static func applyMeetingAutoStart(settings: AppSettings, session: RecordingSession) {
+        guard settings.autoStartOnMeeting else {
             MeetingDetector.shared.stop()
+            return
+        }
+        let promptMode = settings.autoStartPromptMode
+        MeetingDetector.shared.start(
+            detectionDelaySec: settings.recordingDetectionDelaySec
+        ) { [weak session] bundleID in
+            Task { @MainActor in
+                guard let session else { return }
+                let appName = MeetingDetector.displayName(for: bundleID)
+                if promptMode {
+                    // Prompt policy: ask before recording (handles the
+                    // already-recording case internally with a toast).
+                    session.promptToStartFromAppLaunch(appName: appName)
+                    return
+                }
+                if session.status == .recording || session.status == .paused {
+                    ToastCenter.shared.show(
+                        "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one.",
+                        style: .info
+                    )
+                    return
+                }
+                await session.start()
+            }
         }
     }
 
@@ -155,7 +169,7 @@ enum ServiceWiring {
     /// Convenience for full initial wiring at launch.
     static func applyAll(settings: AppSettings, session: RecordingSession) {
         applyAllHotkeys(settings: settings, session: session)
-        applyMeetingAutoStart(enabled: settings.autoStartOnMeeting, session: session)
+        applyMeetingAutoStart(settings: settings, session: session)
         applyCalendar(settings: settings, session: session)
         applyMCPServer(settings: settings)
     }
