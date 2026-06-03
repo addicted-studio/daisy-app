@@ -121,9 +121,90 @@ final class AppSettings {
 
     /// When ON, Daisy auto-starts a recording the moment one of the
     /// known meeting apps (Zoom / Teams / Telegram / etc.) launches.
+    ///
+    /// As of 1.0.7.9 this is no longer a directly user-facing toggle —
+    /// it's a derived wiring flag written through by `autoStartPolicy`'s
+    /// `didSet`. The Settings UI exposes the 4-mode policy instead; this
+    /// bool (and `autoStartFromCalendar`) remain the substrate that
+    /// `ServiceWiring.applyMeetingAutoStart` / `applyCalendar` and the
+    /// MainView `.onChange` re-wiring read, so the existing detection
+    /// plumbing keeps working untouched. Kept persisted so a downgrade
+    /// to a pre-policy build still finds a sane value.
     var autoStartOnMeeting: Bool {
         didSet { defaults.set(autoStartOnMeeting, forKey: Self.k_autoStartOnMeeting) }
     }
+
+    /// Granular auto-start policy (Talat-parity), the single user-facing
+    /// control in Settings → Meetings. Supersedes the old pair of
+    /// independent "Start when a meeting app opens" / "Start at the
+    /// scheduled meeting time" toggles with one segmented control:
+    ///
+    ///   • **Always**    — auto-record every detected call (both the
+    ///     NSWorkspace app-launch detector AND the calendar detector
+    ///     fire, and each starts recording immediately).
+    ///   • **Selective** — auto-record only calendar-synced meetings
+    ///     (events that carry a Zoom/Meet/Teams/Webex link). The
+    ///     app-launch detector is suppressed, so opening Zoom for a
+    ///     personal call you didn't schedule won't be captured. This is
+    ///     the simplest sensible "allowlist" that fits Daisy — the
+    ///     calendar IS the allowlist. (A per-app allowlist was judged
+    ///     too heavy for this surface; noted in the 1.0.7.9 work.)
+    ///   • **Prompt**    — detect the call and ASK first via a macOS
+    ///     banner with Record / Ignore actions, instead of starting
+    ///     silently. Applies to BOTH detectors.
+    ///   • **Manual**    — never auto-start; only the Record button /
+    ///     hotkey starts a session.
+    ///
+    /// `didSet` writes through to the legacy `autoStartOnMeeting` /
+    /// `autoStartFromCalendar` substrate flags + the `autoStartPromptMode`
+    /// flag, so all existing wiring (`ServiceWiring`, the MainView
+    /// `.onChange` handlers, `CalendarService.tick`) keeps functioning
+    /// with no structural change. The mapping:
+    ///   Always    → app-launch ON,  calendar ON,  prompt OFF
+    ///   Selective → app-launch OFF, calendar ON,  prompt OFF
+    ///   Prompt    → app-launch ON,  calendar ON,  prompt ON
+    ///   Manual    → app-launch OFF, calendar OFF, prompt OFF
+    var autoStartPolicy: AutoStartPolicy {
+        didSet {
+            defaults.set(autoStartPolicy.rawValue, forKey: Self.k_autoStartPolicy)
+            applyAutoStartPolicyToSubstrate()
+        }
+    }
+
+    /// Derived from `autoStartPolicy` (set ON only when policy is
+    /// `.prompt`). When true, the detection paths — calendar
+    /// (`RecordingSession.startFromMeeting`) and app-launch
+    /// (`ServiceWiring.applyMeetingAutoStart`) — surface a Record /
+    /// Ignore banner instead of starting the recording directly. Stored
+    /// so a process restart preserves the choice without re-deriving
+    /// (the policy `didSet` also keeps it in sync).
+    var autoStartPromptMode: Bool {
+        didSet { defaults.set(autoStartPromptMode, forKey: Self.k_autoStartPromptMode) }
+    }
+
+    /// Debounce window, in seconds, before Daisy acts on detected
+    /// meeting activity (an app launch). Talat calls this the
+    /// "detection delay". A brief Zoom open-then-close, or a meeting app
+    /// relaunching itself during an update, shouldn't kick off a
+    /// recording — we wait this long and only start if the trigger is
+    /// still valid (app still running, no session already live).
+    /// Default 1.0s — long enough to swallow a momentary blip, short
+    /// enough that a real "join the call" feels instant. Applies to the
+    /// NSWorkspace app-launch path; the calendar path is already
+    /// debounced by its 15s poll + fire window so it doesn't use this.
+    var recordingDetectionDelaySec: Double {
+        didSet { defaults.set(recordingDetectionDelaySec, forKey: Self.k_recordingDetectionDelaySec) }
+    }
+
+    /// Transient (not persisted): true iff `autoStartPolicy` was loaded
+    /// from an explicit stored value at init, vs. derived from the
+    /// legacy bools. Gates the one-shot end-of-init substrate reconcile
+    /// so we only let the policy overwrite the bools when the user has
+    /// actually adopted the new control — never on the legacy path,
+    /// where flipping a bool would change behaviour (e.g. an app-launch-
+    /// only legacy user must NOT get calendar auto-start turned on).
+    @ObservationIgnored
+    private var didLoadStoredAutoStartPolicy: Bool = false
 
     /// When ON, finishing a session (Stop) automatically opens the
     /// just-recorded session in History so the transcript is visible
@@ -449,9 +530,28 @@ final class AppSettings {
         didSet { defaults.set(autoStopFromCalendar, forKey: Self.k_autoStopFromCalendar) }
     }
 
-    /// Seconds past the calendar event's end before the auto-stop
-    /// fires (default 300 = 5 min). Picked to cover the usual
-    /// "wrap up, say goodbye, hop off" tail.
+    /// Auto-stop grace period, in seconds. Two roles, one number:
+    ///
+    ///   1. **Earliest-stop offset** — the silence-gated auto-stop
+    ///      (`RecordingSession.evaluateAutoStop`) won't even consider
+    ///      stopping until `meeting.endDate + autoStopGraceSec`, and
+    ///      then only after a further quiet stretch. So this is the
+    ///      "wrap up, say goodbye, hop off" tail past a calendar event.
+    ///   2. **Rejoin / merge window** (Talat's "grace period") — if you
+    ///      leave a call and rejoin within this window the conversation
+    ///      keeps flowing, so the silence gate never trips and the two
+    ///      back-to-back stretches are captured as ONE recording rather
+    ///      than two. Because the gate is silence-driven (not a fixed
+    ///      timer), a longer grace simply widens the rejoin tolerance;
+    ///      it does not, by itself, force a stop.
+    ///
+    /// Default 300 = 5 min. Talat exposes values as low as 1s, but for
+    /// Daisy that's unsafe: with a 1s grace a 2-second pause to switch
+    /// speakers could clip the tail of a live meeting, and the #48
+    /// premature-stop class of bug lives exactly here. 5 min is the
+    /// conservative default that covers a normal hop-off without risking
+    /// a mid-meeting cut; the picker still offers shorter values for
+    /// users who want them.
     var autoStopGraceSec: Int {
         didSet { defaults.set(autoStopGraceSec, forKey: Self.k_autoStopGraceSec) }
     }
@@ -540,6 +640,35 @@ final class AppSettings {
         } catch {
             Self.log.error("Keychain write failed for \(label, privacy: .public): \(error.localizedDescription, privacy: .public)")
             ToastCenter.shared.show("Couldn’t save \(label) — try again.", style: .error)
+        }
+    }
+
+    /// Project `autoStartPolicy` onto the three substrate flags the
+    /// detection plumbing actually reads. Kept as a single method so
+    /// the init-time derivation and the runtime `didSet` can't drift.
+    /// Assigning the bools fires THEIR `didSet` (persistence) and, at
+    /// runtime, the MainView `.onChange(of:)` re-wiring — exactly the
+    /// path the old two-toggle UI used, so no extra wiring is needed.
+    private func applyAutoStartPolicyToSubstrate() {
+        switch autoStartPolicy {
+        case .always:
+            if autoStartOnMeeting != true { autoStartOnMeeting = true }
+            if autoStartFromCalendar != true { autoStartFromCalendar = true }
+            if autoStartPromptMode != false { autoStartPromptMode = false }
+        case .selective:
+            // Calendar-synced meetings only — app-launch detector off.
+            if autoStartOnMeeting != false { autoStartOnMeeting = false }
+            if autoStartFromCalendar != true { autoStartFromCalendar = true }
+            if autoStartPromptMode != false { autoStartPromptMode = false }
+        case .prompt:
+            // Both detectors armed, but they ask before recording.
+            if autoStartOnMeeting != true { autoStartOnMeeting = true }
+            if autoStartFromCalendar != true { autoStartFromCalendar = true }
+            if autoStartPromptMode != true { autoStartPromptMode = true }
+        case .manual:
+            if autoStartOnMeeting != false { autoStartOnMeeting = false }
+            if autoStartFromCalendar != false { autoStartFromCalendar = false }
+            if autoStartPromptMode != false { autoStartPromptMode = false }
         }
     }
 
@@ -687,6 +816,50 @@ final class AppSettings {
         }
         self.autoStartFromCalendar = defaults.object(forKey: Self.k_autoStartFromCalendar) as? Bool ?? false
         self.calendarAccessGranted = defaults.bool(forKey: Self.k_calendarAccessGranted)
+        // Auto-start policy (1.0.7.9). The two legacy bools above are
+        // now derived outputs of this. Migration so existing users see
+        // ZERO behavioural change:
+        //   • A previously-saved policy wins (user already moved to the
+        //     new control).
+        //   • Otherwise derive from the legacy bools that were just
+        //     loaded — whatever the old two-toggle UI left us:
+        //        app-launch ON, calendar ON  → .always
+        //        app-launch OFF, calendar ON → .selective
+        //        app-launch ON, calendar OFF → .always (app-launch was
+        //          the headline "capture every meeting" path; treat the
+        //          presence of ANY auto-start as Always so we never
+        //          silently DOWNGRADE a user who had a detector armed)
+        //        both OFF                     → .manual (the fresh-install
+        //          default, since both bools default OFF)
+        // The fresh-install default is therefore .manual — identical to
+        // today's clean install (both toggles off). `autoStartPromptMode`
+        // had no equivalent before, so it can only come from an explicit
+        // .prompt policy; default false.
+        let hadStoredPolicy: Bool
+        if let rawPolicy = defaults.string(forKey: Self.k_autoStartPolicy),
+           let policy = AutoStartPolicy(rawValue: rawPolicy) {
+            self.autoStartPolicy = policy
+            hadStoredPolicy = true
+        } else if autoStartOnMeeting || autoStartFromCalendar {
+            // Legacy users with at least one detector armed. App-launch
+            // alone (calendar off) still maps to Always rather than
+            // inventing an "app-only" mode — Selective is explicitly
+            // calendar-driven, so it would be the wrong label.
+            self.autoStartPolicy = (!autoStartOnMeeting && autoStartFromCalendar)
+                ? .selective
+                : .always
+            hadStoredPolicy = false
+        } else {
+            self.autoStartPolicy = .manual
+            hadStoredPolicy = false
+        }
+        self.didLoadStoredAutoStartPolicy = hadStoredPolicy
+        self.autoStartPromptMode = defaults.object(forKey: Self.k_autoStartPromptMode) as? Bool ?? false
+        // Talat-parity detection delay. Default 1.0s (matches Talat's
+        // own default) — enough to swallow a momentary app blip without
+        // making a real "join" feel laggy.
+        let storedDelay = defaults.object(forKey: Self.k_recordingDetectionDelaySec) as? Double
+        self.recordingDetectionDelaySec = storedDelay ?? 1.0
         // Default ON: `object(forKey:)` returns nil for unset keys, so
         // `as? Bool ?? true` picks up explicit user choices (true OR
         // false) and falls through to true only on a clean install.
@@ -716,6 +889,22 @@ final class AppSettings {
         self.notionParentID = KeychainStore.get(account: SecretKey.notionParentID) ?? ""
         self.anthropicAPIKey = KeychainStore.get(account: SecretKey.anthropicAPIKey) ?? ""
         self.openaiAPIKey = KeychainStore.get(account: SecretKey.openaiAPIKey) ?? ""
+
+        // Reconcile substrate to the policy ONCE at launch — but ONLY
+        // when the policy came from an explicit stored value. `didSet`
+        // doesn't fire during init, so if a previously-saved policy
+        // disagrees with the stored bools (user round-tripped through an
+        // older build that flipped a bool directly), the policy is
+        // authoritative and we re-derive the bools from it. On the LEGACY
+        // path (no stored policy) we skip this: the policy was derived
+        // FROM the bools, so they already agree, and reconciling could
+        // change behaviour (an app-launch-only user → .always would
+        // otherwise gain calendar auto-start). Safe to run before wiring:
+        // ServiceWiring.applyAll runs later in DaisyApp.init off the
+        // now-consistent values.
+        if didLoadStoredAutoStartPolicy {
+            applyAutoStartPolicyToSubstrate()
+        }
     }
 
     var hasNotionCredentials: Bool {
@@ -763,6 +952,9 @@ final class AppSettings {
     private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
     private static let k_dictationHotkey = "daisy.dictationHotkey"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
+    private static let k_autoStartPolicy = "daisy.autoStartPolicy"
+    private static let k_autoStartPromptMode = "daisy.autoStartPromptMode"
+    private static let k_recordingDetectionDelaySec = "daisy.recordingDetectionDelaySec"
     private static let k_silencePromptsEnabled = "daisy.silencePromptsEnabled"
     private static let k_notifyOnAutoStart = "daisy.notifyOnAutoStart"
     private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
@@ -794,6 +986,42 @@ final class AppSettings {
     private static let k_mcpSummarizerURL = "daisy.mcpSummarizer.url"
     private static let k_mcpSummarizerToolName = "daisy.mcpSummarizer.toolName"
     private static let k_mcpSummarizerArgsTemplate = "daisy.mcpSummarizer.argsTemplate"
+}
+
+// MARK: - AutoStartPolicy
+
+/// How aggressively Daisy auto-records detected calls. Modelled on
+/// Talat's Settings → Recordings auto-start control. `rawValue` is the
+/// stable string persisted in `AppSettings.autoStartPolicy`.
+///
+/// Detection itself (NSWorkspace app-launch + calendar-event) is
+/// unchanged — the policy only decides what to DO when a call is
+/// detected. See `AppSettings.autoStartPolicy` for the full mapping
+/// onto the substrate flags.
+enum AutoStartPolicy: String, CaseIterable, Identifiable, Sendable {
+    /// Auto-record every detected call (app-launch + calendar), starting
+    /// immediately and silently.
+    case always
+    /// Auto-record only calendar-synced meetings (events with a
+    /// Zoom/Meet/Teams/Webex link). App-launch detection is suppressed.
+    case selective
+    /// Detect the call but ASK first (Record / Ignore banner) before
+    /// recording. Applies to both detectors.
+    case prompt
+    /// Never auto-start — only the Record button / hotkey.
+    case manual
+
+    nonisolated var id: String { rawValue }
+
+    /// Short label for the segmented control.
+    nonisolated var displayName: String {
+        switch self {
+        case .always:    return "Always"
+        case .selective: return "Selective"
+        case .prompt:    return "Prompt"
+        case .manual:    return "Manual"
+        }
+    }
 }
 
 // MARK: - SummaryLanguage

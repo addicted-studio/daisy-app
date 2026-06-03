@@ -503,6 +503,19 @@ final class RecordingSession {
     @ObservationIgnored
     private var pendingFolderHint: SessionFolder?
 
+    /// What a `.prompt`-mode "Record" tap should start. Set by
+    /// `promptToStartFromMeeting` / `promptToStartFromAppLaunch` when
+    /// they surface the ask; consumed by the `recordRequested` handler.
+    /// Held (not acted on) so the banner's yes/no decides whether the
+    /// recording happens at all. A fresh trigger replaces an unanswered
+    /// older one — only the most recent detected call is offered.
+    enum PendingAutoStartTrigger {
+        case calendar(DaisyMeeting)
+        case appLaunch(String)   // pretty app name, for the banner subject
+    }
+    @ObservationIgnored
+    private var pendingAutoStartTrigger: PendingAutoStartTrigger?
+
     init(settings: AppSettings, localeIdentifier: String? = nil) {
         self.settings = settings
         // Caller can override (used by tests), otherwise pull the
@@ -595,6 +608,34 @@ final class RecordingSession {
                 guard self.status == .recording || self.status == .paused else { return }
                 self.log.info("Auto-start banner Stop & save tapped — stopping session")
                 await self.stop()
+            }
+        }
+
+        // Prompt-mode (policy = .prompt): the "Record this call?" banner's
+        // Record / Ignore taps come back over the same Foundation bus.
+        // Record consumes the pending trigger and starts it; Ignore drops
+        // it. Same singleton-lifetime ownership as the observer above.
+        NotificationCenter.default.addObserver(
+            forName: AutoStartPromptNotification.recordRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.consumePendingAutoStartTrigger()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: AutoStartPromptNotification.ignoreRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if self.pendingAutoStartTrigger != nil {
+                    self.log.info("Auto-start prompt ignored — dropping pending trigger")
+                }
+                self.pendingAutoStartTrigger = nil
             }
         }
     }
@@ -705,6 +746,33 @@ final class RecordingSession {
     /// the fresh session, which is what actually wires up auto-stop.
     func startFromMeeting(_ meeting: DaisyMeeting) async {
         // Same event re-fired — no-op rather than stamping title/
+        // binding on top of an already-running session. Checked BEFORE
+        // the policy gate so a 15s calendar re-tick during an active
+        // recording never re-prompts.
+        if (status == .recording || status == .paused),
+           boundMeeting?.localID == meeting.localID {
+            return
+        }
+
+        // Prompt mode (policy = .prompt): don't start (or rotate) yet —
+        // surface the "Record this call?" ask and let the user's tap
+        // drive `performStartFromMeeting` via consumePendingAutoStartTrigger.
+        // Applies whether idle or already recording a different meeting:
+        // we never silently rotate in Prompt mode.
+        if settings.autoStartPromptMode {
+            promptToStartFromMeeting(meeting)
+            return
+        }
+
+        await performStartFromMeeting(meeting)
+    }
+
+    /// The actual calendar-bound start (and back-to-back rotation),
+    /// bypassing the policy gate. Called directly by `startFromMeeting`
+    /// in Always/Selective modes, and by `consumePendingAutoStartTrigger`
+    /// when the user taps Record in Prompt mode.
+    private func performStartFromMeeting(_ meeting: DaisyMeeting) async {
+        // Same event re-fired — no-op rather than stamping title/
         // binding on top of an already-running session.
         if (status == .recording || status == .paused),
            boundMeeting?.localID == meeting.localID {
@@ -765,6 +833,55 @@ final class RecordingSession {
         // toggle in Settings → General → Notifications.
         if settings.notifyOnAutoStart {
             AutoStartNotification.post(meetingTitle: meeting.title)
+        }
+    }
+
+    // MARK: - Auto-start prompt (policy = .prompt)
+
+    /// Stash a calendar meeting as the pending trigger and surface the
+    /// "Record this call?" ask. The actual start happens only if the
+    /// user taps Record (→ `consumePendingAutoStartTrigger`).
+    private func promptToStartFromMeeting(_ meeting: DaisyMeeting) {
+        pendingAutoStartTrigger = .calendar(meeting)
+        log.info("Auto-start prompt: asking to record calendar meeting '\(meeting.title, privacy: .private)'")
+        AutoStartPromptNotification.post(subject: meeting.title)
+    }
+
+    /// Entry point for the NSWorkspace app-launch detector when policy
+    /// is `.prompt`. Stash the app name as the pending trigger and ask.
+    /// A generic (non-calendar) start runs on Record.
+    func promptToStartFromAppLaunch(appName: String) {
+        // If we're already recording, an app launch shouldn't prompt —
+        // mirrors the non-prompt app-launch path which just toasts.
+        guard status == .idle || status == .finished || isFailed else {
+            ToastCenter.shared.show(
+                "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one.",
+                style: .info
+            )
+            return
+        }
+        pendingAutoStartTrigger = .appLaunch(appName)
+        log.info("Auto-start prompt: asking to record after \(appName, privacy: .public) launch")
+        AutoStartPromptNotification.post(subject: appName)
+    }
+
+    /// User tapped "Record" on the prompt — start whatever was pending.
+    /// No-op (with a cancel of any stray banner) if the trigger is gone
+    /// or we're somehow already recording, so a stale tap can't double-
+    /// start or rotate unexpectedly.
+    private func consumePendingAutoStartTrigger() async {
+        AutoStartPromptNotification.cancel()
+        guard let trigger = pendingAutoStartTrigger else { return }
+        pendingAutoStartTrigger = nil
+        switch trigger {
+        case .calendar(let meeting):
+            // Re-use the full calendar path (binding, auto-stop arming,
+            // back-to-back rotation) — just bypassing the prompt gate.
+            await performStartFromMeeting(meeting)
+        case .appLaunch:
+            // Generic start, same as the Always/Selective app-launch path.
+            guard status == .idle || status == .finished || isFailed else { return }
+            await start()
         }
     }
 
@@ -2421,6 +2538,10 @@ final class RecordingSession {
         folder = .inbox
         tag = ""
         currentMode = .meeting
+        // Drop any unanswered Prompt-mode trigger + retract its banner —
+        // starting/resetting supersedes a pending ask.
+        pendingAutoStartTrigger = nil
+        AutoStartPromptNotification.cancel()
         status = .idle
     }
 
