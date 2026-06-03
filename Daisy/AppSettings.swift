@@ -23,33 +23,14 @@ final class AppSettings {
     /// to follow the macOS system default (the legacy v1.0 behaviour).
     /// We store UID rather than `AudioDeviceID` because UID is stable
     /// across reboots and reconnects; `AudioDeviceID` is not.
-    /// `AudioRecorder` resolves UID → live `AudioDeviceID` at every
-    /// recording start, and silently falls back to system default if
-    /// the saved device is gone (unplugged headset, removed USB
+    /// `CoreAudioMicRecorder` resolves UID → live `AudioDeviceID` at
+    /// every recording start, and silently falls back to system default
+    /// if the saved device is gone (unplugged headset, removed USB
     /// interface, etc.).
     var selectedMicDeviceUID: String {
         didSet { defaults.set(selectedMicDeviceUID, forKey: Self.k_selectedMicDeviceUID) }
     }
 
-    /// When ON, microphone capture uses the direct CoreAudio AUHAL path
-    /// (`CoreAudioMicRecorder`) instead of the AVAudioEngine path
-    /// (`AudioRecorder`). Default OFF — this is the on-device-validation
-    /// flag for the highest-risk subsystem in the app.
-    ///
-    /// WHY IT EXISTS: on macOS 26.5, AVAudioEngine's input AUHAL can get
-    /// stuck in sample-rate-conversion mode after a route change — the
-    /// hardware runs at 48 kHz but `inputNode.outputFormat(forBus:0)`
-    /// stays pinned at a stale 44.1 kHz, and even a full engine rebuild
-    /// doesn't clear it (the stale state is HAL/aggregate-device level).
-    /// The tap then delivers 0 frames or wrong-rate audio → empty
-    /// transcript. CoreAudio reads the device's real rate correctly, so
-    /// the AUHAL recorder owns device + stream-format negotiation
-    /// directly and sidesteps the bug. Flip ON only for testing /
-    /// validation until it's proven on real hardware across route
-    /// changes (AirPods ↔ built-in, USB plug/unplug, pause→switch→resume).
-    var useCoreAudioMicCapture: Bool {
-        didSet { defaults.set(useCoreAudioMicCapture, forKey: Self.k_useCoreAudioMicCapture) }
-    }
     var screenshotsEnabled: Bool {
         didSet { defaults.set(screenshotsEnabled, forKey: Self.k_screenshotsEnabled) }
     }
@@ -573,15 +554,6 @@ final class AppSettings {
         // is zero until the user actually starts recording.
         self.captureSystemAudio = defaults.object(forKey: Self.k_captureSystemAudio) as? Bool ?? true
         self.selectedMicDeviceUID = defaults.string(forKey: Self.k_selectedMicDeviceUID) ?? ""
-        // Default ON (since 2026-06-01) — direct CoreAudio AUHAL capture is
-        // the shipping mic path: it opens each device at its NATIVE rate and
-        // sidesteps the AVAudioEngine 44.1k-vs-48k input de-sync that could
-        // drop the mic to 0 frames. Validated on-device (48k built-in + 44.1k
-        // headset, clean capture, real audio + transcript). `as? Bool ?? true`
-        // keeps an explicit user choice (ON or OFF) across launches; only
-        // never-set installs pick up the new default. Turn OFF in Settings to
-        // fall back to the legacy AVAudioEngine recorder.
-        self.useCoreAudioMicCapture = defaults.object(forKey: Self.k_useCoreAudioMicCapture) as? Bool ?? true
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
@@ -772,7 +744,6 @@ final class AppSettings {
 
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
-    private static let k_useCoreAudioMicCapture = "daisy.useCoreAudioMicCapture"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_autoSummarize = "daisy.autoSummarize"
