@@ -39,6 +39,19 @@ final class SessionStore {
     /// written and the matching `StoredSession` has been reloaded.
     private(set) var sessionsGenerating: Set<String> = []
 
+    /// Folder name of the session CURRENTLY being recorded — set by
+    /// `RecordingSession` at start. The husk-cleanup in `refresh()` must
+    /// NEVER delete this folder: a live recording has audio but no
+    /// `transcript.md` yet (it's written only at Stop), so it matches the
+    /// "audioOnly husk" shape and — once past the 5-min age guard — would
+    /// otherwise be classified `.orphan` and DELETED mid-recording by any
+    /// `refresh()` that fires during a long session (an MCP query via
+    /// `MCPTools.resolveSession`, opening the Library, etc.). Confirmed
+    /// data-loss path 2026-06-04 (22-min meeting nuked → 0-byte archives).
+    /// Overwritten on the next start; no explicit clearing needed (a
+    /// finalized folder has transcript.md, so it's `.valid`, not a husk).
+    var activeRecordingDirName: String?
+
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "SessionStore")
     @ObservationIgnored
@@ -146,6 +159,15 @@ final class SessionStore {
         // items in Finder's Trash UI anyway — the stub has zero
         // user-recoverable content, so straight delete is correct.
         for url in orphansToTrash {
+            // NEVER delete the live recording's folder. Mid-session it has
+            // audio but no transcript.md yet, so it matches the audioOnly
+            // husk shape past the 5-min age guard — deleting it here
+            // orphans the open .caf descriptors (0-byte archives) and
+            // breaks the post-stop transcript write. See activeRecordingDirName.
+            if let active = activeRecordingDirName, url.lastPathComponent == active {
+                log.info("Skipped husk-cleanup of the in-progress recording: \(url.lastPathComponent, privacy: .public)")
+                continue
+            }
             try? FileManager.default.removeItem(at: url)
             log.info("Removed orphan session: \(url.lastPathComponent, privacy: .public)")
         }
