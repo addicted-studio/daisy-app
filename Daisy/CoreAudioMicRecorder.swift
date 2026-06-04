@@ -1233,9 +1233,6 @@ final class CoreAudioMicRecorder {
         displayTimer = nil
     }
 
-    /// Diagnostic tick counter for the display pump (debug-only, ~1 Hz log).
-    @ObservationIgnored private var displayPumpDiagTick = 0
-
     /// Copy the most recent render-thread level + spectrum sample into
     /// the Observable surface. No-op once we're no longer recording so a
     /// final in-flight tick can't repaint a stopped/paused widget (pause/
@@ -1245,15 +1242,6 @@ final class CoreAudioMicRecorder {
         let snap = levelSpectrum.snapshot()
         levelDB = snap.level
         if let bands = snap.bands { spectrumBands = bands }
-        // TEMP liveness probe (~1 Hz, .notice so it PERSISTS for `log show`
-        // — info/debug are not retained by macOS): confirms the run-loop
-        // timer is actually firing under load and what it's publishing.
-        // REMOVE before release.
-        displayPumpDiagTick &+= 1
-        if displayPumpDiagTick % 30 == 0 {
-            let maxBand = snap.bands?.max() ?? -1
-            log.notice("display pump alive: level=\(snap.level, privacy: .public) dBFS, maxBand=\(maxBand, privacy: .public), bandsNil=\(snap.bands == nil, privacy: .public)")
-        }
     }
 
     /// AUHAL input element == 1, output element == 0 (Apple convention).
