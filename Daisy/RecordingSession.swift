@@ -1956,6 +1956,16 @@ final class RecordingSession {
         // committedSegments + speakerCentroids on the same instance.
         let finalPassState = signposter.beginInterval("final_pass", id: signposter.makeSignpostID())
         let t_final = Date()
+        // EXPERIMENTAL (opt-in, off by default): pin the remote diarizer to
+        // the calendar attendee count (minus you) for this final pass.
+        // numClusters is a hard constraint and the invite list is a noisy
+        // proxy (no-shows / uninvited / one person on two devices), so only
+        // for calendar-bound sessions with a sane count. See AppSettings.
+        if settings.diarizeUseAttendeeCountHint,
+           let attendees = boundMeeting?.attendees,
+           attendees.count >= 2 {
+            systemTranscriber.speakerCountHint = max(1, attendees.count - 1)
+        }
         async let micFinal: Void = micTranscriber.runFinalPass()
         async let sysFinal: Void = systemTranscriber.runFinalPass()
         _ = await (micFinal, sysFinal)

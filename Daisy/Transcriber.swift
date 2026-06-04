@@ -259,6 +259,13 @@ final class Transcriber {
     /// Empty for `.microphone` transcribers (no diarization runs).
     private(set) var speakerCentroids: [String: [Float]] = [:]
 
+    /// EXPERIMENTAL (opt-in). Set by RecordingSession before the final
+    /// pass when the session is calendar-bound and
+    /// `settings.diarizeUseAttendeeCountHint` is on: pins the final
+    /// diarization to this remote-speaker count (attendees − you) instead
+    /// of auto-detecting. nil ⇒ auto (default). System-audio path only.
+    var speakerCountHint: Int?
+
     private var sessionStartedAt: Date?
     private var bucketIDs: [Int: UUID] = [:]
 
@@ -880,7 +887,7 @@ final class Transcriber {
         // match this session's speakers against the SpeakerProfileStore.
         async let diarizationOutput: DiarizationOutput =
             diarizationEnabled
-                ? DiarizationEngine.shared.diarizeFull(samples: samples)
+                ? DiarizationEngine.shared.diarizeFull(samples: samples, numSpeakers: speakerCountHint)
                 : DiarizationOutput(spans: [], centroids: [:])
 
         do {

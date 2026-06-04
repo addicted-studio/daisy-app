@@ -73,6 +73,10 @@ final class DiarizationEngine {
     /// load is async (downloads / decompresses the CoreML models on
     /// first run) so we lazy-initialise it on first call.
     private var manager: DiarizerManager?
+    /// Cached model bundle so a per-session "hinted" manager (pinned to a
+    /// known speaker count) can be spun up without re-downloading. Set in
+    /// `ensureLoaded`; read only on the opt-in attendee-count-hint path.
+    private var models: DiarizerModels?
     #endif
 
     private init() {}
@@ -86,6 +90,7 @@ final class DiarizationEngine {
             // One-time download of the CoreML diarization bundle from
             // HuggingFace (cached in app container after first run).
             let models = try await DiarizerModels.downloadIfNeeded()
+            self.models = models   // cache for the optional speaker-count-hint path
             // Default config — numClusters = -1 means "auto-detect
             // number of speakers" (typically 2-4 for our use case).
             // Tune `clusteringThreshold` upward if it over-splits
@@ -131,7 +136,7 @@ final class DiarizationEngine {
     /// speaker. FluidAudio's `DiarizationResult.speakerDatabase`
     /// sometimes provides this directly; when it doesn't we compute
     /// it ourselves from `segments[i].embedding`.
-    func diarizeFull(samples: [Float]) async -> DiarizationOutput {
+    func diarizeFull(samples: [Float], numSpeakers: Int? = nil) async -> DiarizationOutput {
         guard samples.count > 16_000 * 3 else {
             return DiarizationOutput(spans: [], centroids: [:])
         }
@@ -142,8 +147,30 @@ final class DiarizationEngine {
             return DiarizationOutput(spans: [], centroids: [:])
         }
 
+        // EXPERIMENTAL speaker-count hint (opt-in, off by default): when a
+        // trusted count is supplied (calendar attendees − you), run a
+        // throwaway manager pinned to numClusters = count instead of the
+        // shared auto-detect (-1) manager. numClusters is a HARD constraint,
+        // so a wrong count can hurt — gated in AppSettings. `nil` ⇒ this
+        // path is skipped and behaviour is byte-identical to before.
+        let activeManager: DiarizerManager
+        if let n = numSpeakers, n > 0, let models {
+            let hintedConfig = DiarizerConfig(
+                clusteringThreshold: 0.7,
+                minSpeechDuration: 1.0,
+                minSilenceGap: 0.5,
+                numClusters: n
+            )
+            let hinted = DiarizerManager(config: hintedConfig)
+            hinted.initialize(models: models)
+            activeManager = hinted
+            log.info("Diarizing with attendee-count hint: numClusters=\(n, privacy: .public)")
+        } else {
+            activeManager = manager
+        }
+
         do {
-            let result = try manager.performCompleteDiarization(samples)
+            let result = try activeManager.performCompleteDiarization(samples)
             // 1. Relabel Speaker_1 / Speaker_3 / ... → A / B / C
             //    using first-appearance order. Keep a parallel
             //    mapping from raw → relabelled so we can apply the

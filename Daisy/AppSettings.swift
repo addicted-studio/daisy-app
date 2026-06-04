@@ -293,6 +293,17 @@ final class AppSettings {
         didSet { defaults.set(diarizeRemoteSpeakers, forKey: Self.k_diarizeRemoteSpeakers) }
     }
 
+    /// EXPERIMENTAL (default OFF). When ON and a recording is bound to a
+    /// calendar event, Daisy pins the remote diarizer to the attendee
+    /// count (minus you) as a hard `numClusters` hint instead of auto-
+    /// detect. Can sharpen diarization when the invite is accurate, but a
+    /// wrong count (no-shows, uninvited joiners, one person on two devices)
+    /// can make it worse — hence opt-in, pending on-device A/B. No UI
+    /// toggle yet; flip via defaults for testing.
+    var diarizeUseAttendeeCountHint: Bool {
+        didSet { defaults.set(diarizeUseAttendeeCountHint, forKey: Self.k_diarizeUseAttendeeCountHint) }
+    }
+
     /// Post-merge dedup pass for acoustic loopback. When ON (default),
     /// after both mic and system transcribers finish, the merge step
     /// walks every mic-side segment and drops it if a system-side
@@ -796,6 +807,7 @@ final class AppSettings {
         // prior implicit behavior; the other two are post-processing
         // passes that only run when the conditions trigger).
         self.diarizeRemoteSpeakers = defaults.object(forKey: Self.k_diarizeRemoteSpeakers) as? Bool ?? true
+        self.diarizeUseAttendeeCountHint = defaults.object(forKey: Self.k_diarizeUseAttendeeCountHint) as? Bool ?? false
         self.suppressAcousticEcho = defaults.object(forKey: Self.k_suppressAcousticEcho) as? Bool ?? true
         self.globalReclusterAfterStop = defaults.object(forKey: Self.k_globalReclusterAfterStop) as? Bool ?? true
         self.userDisplayName = (defaults.string(forKey: Self.k_userDisplayName) ?? "")
@@ -1008,6 +1020,7 @@ final class AppSettings {
     private static let k_liveTranscriptionEnabled = "daisy.liveTranscriptionEnabled"
     private static let k_liveTranscriptionTier = "daisy.liveTranscriptionTier"
     private static let k_diarizeRemoteSpeakers = "daisy.diarizeRemoteSpeakers"
+    private static let k_diarizeUseAttendeeCountHint = "daisy.diarizeUseAttendeeCountHint"
     private static let k_suppressAcousticEcho = "daisy.suppressAcousticEcho"
     private static let k_globalReclusterAfterStop = "daisy.globalReclusterAfterStop"
     private static let k_userDisplayName = "daisy.userDisplayName"
