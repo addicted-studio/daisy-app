@@ -34,8 +34,12 @@ final class SpectrumAnalyzer: @unchecked Sendable {
     private let fft: vDSP.FFT<DSPSplitComplex>
     private let window: [Float]
 
-    // Pre-allocated working buffers — the render thread never hits the heap.
-    private var pcm:        [Float]
+    // Pre-allocated working buffers — no per-call heap allocation.
+    /// Rolling history of the most-recent `fftN` mono samples. PERSISTS
+    /// across calls — it's the FFT window itself, not per-call scratch.
+    /// See `bands(from:)` step 1 for why a single callback buffer isn't
+    /// enough under CoreAudio's small IO slices.
+    private var history:    [Float]
     private var windowed:   [Float]
     private var realIn:     [Float]
     private var imagIn:     [Float]
@@ -79,7 +83,7 @@ final class SpectrumAnalyzer: @unchecked Sendable {
             count: n,
             isHalfWindow: false
         )
-        pcm        = Array(repeating: 0, count: n)
+        history    = Array(repeating: 0, count: n)
         windowed   = Array(repeating: 0, count: n)
         realIn     = Array(repeating: 0, count: half)
         imagIn     = Array(repeating: 0, count: half)
@@ -99,8 +103,8 @@ final class SpectrumAnalyzer: @unchecked Sendable {
     /// chance of priority-inverting against the render thread's
     /// internal locks during malloc slow paths). The buffer's
     /// backing memory is borrowed for the duration of this call
-    /// only — we copy what we need into our pre-allocated `pcm`
-    /// scratch space immediately.
+    /// only — we copy what we need into our pre-allocated rolling
+    /// `history` window immediately.
     func bands(from samples: UnsafeBufferPointer<Float>, sampleRate: Double) -> [Float] {
         lock.lock()
         defer { lock.unlock() }
@@ -108,21 +112,34 @@ final class SpectrumAnalyzer: @unchecked Sendable {
         let n = Self.fftN
         let half = n / 2
 
-        // 1. Pad / truncate input into the working buffer. Take the
-        //    TRAILING `n` samples (suffix of the input buffer); for
-        //    shorter inputs the tail is zero-padded. Matches the
-        //    pre-1.0.3 layout exactly so the Hann window + FFT
-        //    output are unchanged.
-        for i in 0..<n { pcm[i] = 0 }
+        // 1. Append the incoming samples into the rolling history window
+        //    so the FFT runs on the most-recent `n` samples, NOT just this
+        //    one callback's buffer. CoreAudio (AUHAL) hands us small IO
+        //    slices — typically 512 frames — whereas the old AVAudioEngine
+        //    tap delivered ~n-sized buffers, so zero-padding a single
+        //    buffer USED to be fine. A lone 512-sample slice zero-padded to
+        //    2048 lands under the RISING edge of the Hann window (near-zero
+        //    weights) → magnitudes collapse below the dB floor → every band
+        //    reads 0 → the gate never opens → the widget petals sit frozen
+        //    at baseline. A rolling window fixes this for ANY IO buffer
+        //    size; a buffer ≥ n still just takes the trailing n, so the
+        //    legacy large-buffer path is unchanged.
         let total = samples.count
-        let copyCount = min(total, n)
-        let srcStart = total - copyCount   // negative-safe via min above
-        for i in 0..<copyCount {
-            pcm[i] = samples[srcStart + i]
+        if total >= n {
+            let srcStart = total - n
+            for i in 0..<n { history[i] = samples[srcStart + i] }
+        } else if total > 0 {
+            // Slide the window left by `total` (drop the oldest), then
+            // append the new samples at the tail. Forward copy is safe:
+            // each read index (i + total) is always ahead of its write (i).
+            let keep = n - total
+            for i in 0..<keep { history[i] = history[i + total] }
+            for i in 0..<total { history[keep + i] = samples[i] }
         }
+        // total == 0 (shouldn't happen) leaves the window untouched.
 
-        // 2. Hann window.
-        vDSP.multiply(pcm, window, result: &windowed)
+        // 2. Hann window over the rolling history.
+        vDSP.multiply(history, window, result: &windowed)
 
         // 3. Pack windowed reals into split-complex form.
         windowed.withUnsafeBufferPointer { winPtr in
@@ -221,6 +238,9 @@ final class SpectrumAnalyzer: @unchecked Sendable {
     func reset() {
         lock.lock()
         defer { lock.unlock() }
+        // Clear the rolling window too so a new recording doesn't FFT the
+        // tail of the previous one for the first few frames.
+        for i in 0..<Self.fftN { history[i] = 0 }
         for i in 0..<Self.bandCount {
             smoothed[i] = 0
         }
