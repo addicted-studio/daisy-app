@@ -1032,6 +1032,13 @@ final class RecordingSession {
         }
         sessionDirectory = dir
 
+        // Tell SessionStore which folder is live so its husk-cleanup never
+        // deletes this in-progress recording: until Stop writes transcript.md,
+        // the folder is "audio, no transcript" and (past the 5-min age guard)
+        // would be classified .orphan and deleted by any refresh() that fires
+        // mid-session (MCP query, Library open) — orphaning the .caf to 0 bytes.
+        SessionStore.shared.activeRecordingDirName = dir?.lastPathComponent
+
         // Pattern (d) per the 2026-05-28 competitor research:
         // when audioRetentionDays == audioRetentionDoNotRecord (-2),
         // skip the on-disk .caf archives entirely. AVAudioFile is
