@@ -511,19 +511,14 @@ private struct SystemAudioStatusPill: View {
     }
 
     /// Screen Recording permission denied — recording continues with
-    /// mic only. Tap opens System Settings → Privacy → Screen
-    /// Recording so the user can flip the toggle without leaving
-    /// the recording flow.
-    ///
-    /// 2026-05-25 — joined the unified banner family (cinnamon
-    /// daisyAccent 0.20/0.20 chip, icon also daisyAccent — warning
-    /// semantic lives in the glyph and the "Fix" trailing label).
-    /// Pre-sync used daisyWarning gold; gold pill in the sidebar
-    /// next to the cinnamon affordances above broke the cream
-    /// rhythm. Text now allows 2 lines so "Only your voice — Screen
-    /// Recording is off" doesn't truncate to "Scr..." in the
-    /// constrained sidebar width (Egor flagged 2026-05-25). Vertical
-    /// pad 10 gives the second line of caption breathing room.
+    /// mic only. The WHOLE pill is the tap target (opens System
+    /// Settings → Privacy → Screen Recording); there is no separate
+    /// "Fix" button. At the sidebar's ~200pt width the label plus a
+    /// trailing CTA clipped to "Screen Recording is…", so the copy is
+    /// now compact and the affordance is the pill itself (Egor,
+    /// 2026-06-04). Cinnamon daisyAccent 0.20/0.20 chip; the warning
+    /// reads from the glyph + the "click to fix" hint, full detail in
+    /// the hover tooltip.
     private var deniedPill: some View {
         Button {
             ScreenRecordingPermission.openSystemSettings()
@@ -532,15 +527,12 @@ private struct SystemAudioStatusPill: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.caption2)
                     .foregroundStyle(Color.daisyAccent)
-                Text("Only your voice — Screen Recording is off")
+                Text("Only your voice — click to fix")
                     .font(.caption)
                     .foregroundStyle(Color.daisyTextPrimary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                Text("Fix")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.daisyAccent)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -550,6 +542,7 @@ private struct SystemAudioStatusPill: View {
             .overlay(
                 Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
             )
+            .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
         .help("Daisy needs Screen Recording permission to capture the other side of meetings. Click to open System Settings.")
