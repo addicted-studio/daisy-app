@@ -121,10 +121,16 @@ struct SelectableTextView: NSViewRepresentable {
         // rounded background.
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container)
-        // Small bottom buffer absorbs sub-pixel rounding between
-        // the layout manager's float math and SwiftUI's integer
-        // pixel grid — without it a long transcript can still
-        // clip its last glyph row by a fractional pixel.
-        return CGSize(width: width, height: ceil(used.height) + 2)
+        // Pad by a FULL line height (was +2). On macOS 26 the TK1
+        // `usedRect` can under-report the trailing line fragment by ~one
+        // row, so NSTextView draws one line past the height SwiftUI gives
+        // the parent CollapsibleBlock → the last transcript line spilled
+        // below the card's rounded background (Egor, 2026-06-04). A full
+        // line of slack guarantees the card always covers the drawn text;
+        // worst case it's one row of bottom breathing room — harmless in a
+        // reader. (Proper long-term fix: measure via TextKit 2
+        // `usageBoundsForTextContainer`; deferred — needs on-device check.)
+        let lineHeight = layoutManager.defaultLineHeight(for: font)
+        return CGSize(width: width, height: ceil(used.height) + ceil(lineHeight))
     }
 }
