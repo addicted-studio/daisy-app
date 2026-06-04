@@ -212,6 +212,10 @@ final class Transcriber {
     private var samplesDropped: Int = 0
 
     private var converter: AudioConverter?
+    /// Input format the live `converter` was built for. The mic format can
+    /// change mid-session (a route change to e.g. a 44.1 kHz wired headset);
+    /// when it does we rebuild the converter. See `ingest(_:)`.
+    private var converterInput: AVAudioFormat?
     private var allSamples: [Float] = []
 
     // MARK: - Tasks / timers
@@ -343,6 +347,7 @@ final class Transcriber {
         samplesDropped = 0
         bucketIDs.removeAll()
         converter = nil
+        converterInput = nil
         liveTier = tier
 
         consumerTask = Task { @MainActor [weak self] in
@@ -606,6 +611,7 @@ final class Transcriber {
         bucketIDs.removeAll()
         speakerCentroids.removeAll()
         converter = nil
+        converterInput = nil
         isRunning = false
         lastError = nil
         sessionStartedAt = nil
@@ -615,8 +621,17 @@ final class Transcriber {
     // MARK: - Audio ingestion
 
     private func ingest(_ chunk: AudioChunk) {
-        if converter == nil {
-            converter = AudioConverter(inputFormat: chunk.pcm.format)
+        // Rebuild the resampler if the mic's input format changed mid-
+        // session. AudioConverter is pinned to the format it was built
+        // with; after a route change to a different sample rate (e.g. a
+        // 44.1 kHz wired headset) feeding it the new buffers produced
+        // garbage/empty output — live transcription silently froze even
+        // though capture, the archive roll, and the petals kept going.
+        // Mirrors the guard AppleSpeechLiveEngine.convert() already uses.
+        let inFormat = chunk.pcm.format
+        if converter == nil || converterInput != inFormat {
+            converter = AudioConverter(inputFormat: inFormat)
+            converterInput = inFormat
         }
         guard let conv = converter,
               let samples = conv.convert(chunk.pcm),
