@@ -77,6 +77,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            systemAudioBanner
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     summaryCard
@@ -292,6 +293,23 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .help("Close this window — recording keeps running; reopen from the menu bar")
+    }
+
+    /// Error-only system-audio banner for the popover ("toolbar"): shows
+    /// when the other side isn't actually being captured (Screen Recording
+    /// denied, or no audio reaching Daisy). The main-window sidebar shows
+    /// the full pill incl. the green "both sides" state; here we keep it to
+    /// errors only so the popover stays clean.
+    @ViewBuilder
+    private var systemAudioBanner: some View {
+        switch session.systemAudioStatus {
+        case .denied, .failed:
+            SystemAudioStatusPill(session: session)
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+        default:
+            EmptyView()
+        }
     }
 
     private var header: some View {

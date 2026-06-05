@@ -35,7 +35,19 @@ struct SessionDetailView: View {
         SessionStore.shared.sessionsGenerating.contains(initialSession.id)
     }
 
+    /// True while the summary is being (re)generated — the post-Stop
+    /// auto-summary OR a manual Re-summarize. Drives the inline progress
+    /// banner + dims the stale summary. Excludes the follow-up draft (that
+    /// keeps the summary visible and shows its own spinner instead).
+    private var isResummarizing: Bool {
+        isSummaryGenerating || (isRunningAction && !isDraftingFollowUp)
+    }
+
     @State private var isRunningAction = false
+    /// Set only while `draftFollowUp()` runs, so the Follow-up section can
+    /// show a "Drafting follow-up…" spinner without firing the summary-
+    /// level re-summarize banner.
+    @State private var isDraftingFollowUp = false
     @State private var confirmDelete = false
     /// Bumped whenever a Suggest-mode suggestion is confirmed or
     /// dismissed so the Name-the-speakers card re-reads the
@@ -136,14 +148,14 @@ struct SessionDetailView: View {
                             //      прогресса что что-то запустилось".
                             //  (c) Stable: !isSummaryGenerating,
                             //      summary != nil → plain summary.
-                            if isSummaryGenerating && session.summary != nil {
+                            if isResummarizing && session.summary != nil {
                                 resummarizingBanner
                             }
                             if let summary = session.summary {
                                 summarySection(summary)
-                                    .opacity(isSummaryGenerating ? 0.45 : 1.0)
-                                    .animation(.easeInOut(duration: 0.2), value: isSummaryGenerating)
-                            } else if isSummaryGenerating {
+                                    .opacity(isResummarizing ? 0.45 : 1.0)
+                                    .animation(.easeInOut(duration: 0.2), value: isResummarizing)
+                            } else if isResummarizing {
                                 summarySkeletonSection
                             }
                             if session.hasScreenshots { screenshotsSection }
@@ -532,7 +544,7 @@ struct SessionDetailView: View {
         HStack(spacing: 10) {
             ProgressView()
                 .controlSize(.small)
-            Text("Re-summarizing locally…")
+            Text("Re-summarizing…")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
@@ -605,25 +617,31 @@ struct SessionDetailView: View {
             granolaStyleSummary(summary)
         }
 
-        if !summary.clientFollowUp.isEmpty {
-            mdSection(title: summaryLabels(for: summary).followUp) {
-                // ZStack instead of HStack: HStack with a sibling Button
-                // alongside the Text was eating mouse hit-events over
-                // the text area on macOS 26 — tester couldn't select +
-                // ⌘C the follow-up despite .textSelection(.enabled).
-                // ZStack with the button anchored top-trailing leaves
-                // the Text occupying the full content width with
-                // unobstructed selection, while the copy affordance
-                // sits in the corner where it's still discoverable.
+        mdSection(title: summaryLabels(for: summary).followUp) {
+            if isDraftingFollowUp {
+                // Drafting in flight — visible spinner so the user sees the
+                // click registered (previously only a toast fired, which
+                // Egor flagged as "не хватает прогресса для фолоапа").
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Drafting follow-up…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if !summary.clientFollowUp.isEmpty {
+                // ZStack (not HStack): a sibling Button alongside the Text
+                // ate mouse hit-events over the text on macOS 26 (tester
+                // couldn't select + ⌘C). ZStack with the button anchored
+                // top-trailing leaves the Text full-width for unobstructed
+                // selection, copy affordance in the corner.
                 ZStack(alignment: .topTrailing) {
                     Text(summary.clientFollowUp)
                         .font(.body)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        // Padding-right reserves the corner for the
-                        // copy button so it doesn't sit on top of
-                        // text on long-line wraps.
                         .padding(.trailing, 28)
                     Button {
                         NSPasteboard.general.clearContents()
@@ -636,23 +654,10 @@ struct SessionDetailView: View {
                     .foregroundStyle(.secondary)
                     .help("Copy the draft message")
                 }
-            }
-        } else {
-            // 2026-05-26 — pre-fix the follow-up section vanished
-            // silently when the LLM judged the conversation as
-            // internal-only and returned an empty `clientFollowUp`.
-            // Egor flagged it on a Billions S01E05 recording where
-            // the model correctly skipped (no real external party in
-            // a TV episode), but the missing section looked like a
-            // bug. Empty-state plaque tells the user the model made
-            // a deliberate decision AND gives them a one-click way
-            // to re-roll if they think the judgment was wrong (e.g.
-            // a sales call the model misread as a team sync).
-            // English copy is consistent with the rest of Daisy's
-            // visible UI — section title stays localized via
-            // summaryLabels so it groups visually with the section
-            // even though the body copy is EN.
-            mdSection(title: summaryLabels(for: summary).followUp) {
+            } else {
+                // Empty: the model judged the conversation internal — surface
+                // that decision + a one-click re-roll instead of a silently
+                // missing section.
                 followUpEmptyStatePlaque
             }
         }
@@ -911,6 +916,10 @@ struct SessionDetailView: View {
             } else {
                 SelectableTextView(mappedTranscriptText)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Defense-in-depth: even if the NSTextView ever mis-
+                    // measures a line's width again, clip to the card so a
+                    // tail can never paint outside the rounded container.
+                    .clipped()
             }
         }
     }
@@ -1341,6 +1350,7 @@ struct SessionDetailView: View {
             return
         }
         isRunningAction = true
+        isDraftingFollowUp = true
         ToastCenter.shared.show(
             "Drafting follow-up via \(Summarizer.shared.providerKind.shortName)…",
             style: .info
@@ -1387,6 +1397,7 @@ struct SessionDetailView: View {
         } else {
             ToastCenter.shared.show("No response from the model", style: .error)
         }
+        isDraftingFollowUp = false
         isRunningAction = false
     }
 

@@ -67,6 +67,9 @@ struct SettingsView: View {
     /// the UI re-reads the freshly-shrunk cache.
     @State private var cachedModelsCount: Int = 0
     @State private var cachedModelsBytes: Int64 = 0
+    /// True when "Remove unused" has something to free: >1 Whisper variant,
+    /// or a Parakeet model on disk that dictation isn't currently using.
+    @State private var hasUnusedModels = false
     @State private var cacheRefreshTick: Int = 0
 
     /// On-disk size of all known `.caf` audio archives across
@@ -1348,75 +1351,84 @@ struct SettingsView: View {
 
     private var transcriptionTab: some View {
         Form {
+            // One "Transcription" block, two rows. Friendly names (no model
+            // IDs / engine vendor names), no helper captions, no separate
+            // status rows or buttons — each row's status (and model download
+            // progress) rides as a badge next to its label. Meetings (+
+            // voice notes) always use the Whisper model on row 1; dictation
+            // picks its engine on row 2 (Default = Whisper, reusing that
+            // model; Faster = on-device Parakeet, ~600 MB once).
             Section {
-                Picker("Model", selection: $whisper.modelID) {
+                Picker(selection: $whisper.modelID) {
                     ForEach(WhisperEngine.availableModels, id: \.id) { model in
-                        Text("\(model.label) · \(model.sizeMB) MB")
-                            .tag(model.id)
+                        let size = model.sizeMB >= 1000
+                            ? String(format: "%.1f GB", Double(model.sizeMB) / 1000.0)
+                            : "\(model.sizeMB) MB"
+                        let name = model.id == WhisperEngine.defaultModelID
+                            ? "Default" : "Highest Accuracy"
+                        Text("\(name) (\(size))").tag(model.id)
+                    }
+                } label: {
+                    transcriptionRowLabel(
+                        "Meeting model",
+                        state: whisperBadgeState,
+                        message: whisperShortStatus
+                    )
+                }
+                .pickerStyle(.menu)
+
+                Picker(selection: $settings.dictationUseParakeet) {
+                    Text("Default (Included)").tag(false)
+                    Text("Faster (600 MB)").tag(true)
+                } label: {
+                    transcriptionRowLabel(
+                        "Dictation engine",
+                        state: dictationBadgeState,
+                        message: dictationShortStatus
+                    )
+                }
+                .pickerStyle(.menu)
+                // Selecting "Faster" (or reopening Settings while it's
+                // already chosen) kicks the Parakeet download so its badge
+                // shows progress — no separate button; the badge IS the
+                // download indicator.
+                .onChange(of: settings.dictationUseParakeet) { _, useParakeet in
+                    if useParakeet { Task { await ParakeetEngine.shared.ensureLoaded() } }
+                }
+                .onAppear {
+                    if settings.dictationUseParakeet, !parakeet.isReady {
+                        Task { await ParakeetEngine.shared.ensureLoaded() }
+                    }
+                }
+
+                // One transcription language for everything (meetings,
+                // voice notes, dictation). Per-mode overrides were removed
+                // 2026-06-05 — nobody set them separately, and the recorder
+                // header still offers a per-session override. Pinning a
+                // language kills auto-detect drift (e.g. a Russian opener
+                // mis-decoded as French). Voice-note / dictation locale
+                // fields stay in the model defaulting to "inherit", so this
+                // single pick drives all three modes.
+                Picker("Language", selection: $settings.defaultTranscriptionLocale) {
+                    ForEach(Transcriber.availableLocales, id: \.id) { locale in
+                        Text(locale.label).tag(locale.id)
                     }
                 }
                 .pickerStyle(.menu)
 
-                // Status row inline with the picker — mirrors the
-                // Summary section's "Available · Refresh" layout so
-                // both transcription + summary preferences feel
-                // identical structurally. Pre-1.0.5.5 Model status
-                // lived in its own Section below Language, which
-                // visually divorced "what model" from "is it ready".
-                HStack(spacing: 8) {
-                    StatusBadge(state: whisperBadgeState, message: whisperStatusText)
-                    Spacer()
-                    Button("Reload") { Task { await whisper.reload() } }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(Color.daisyTextPrimary)
-                        .disabled(isWhisperLoading)
-                }
-                whisperStatusBody
-
-                Text("Whisper runs on-device. Bigger models handle accents and multilingual meetings better, at the cost of disk and a bit of speed. First time you pick a model, Daisy downloads it from Hugging Face.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Model")
-            }
-
-            // Dictation engine — Whisper (default) or the experimental
-            // on-device Parakeet TDT v3 (FluidAudio). Dictation ONLY;
-            // meetings always use Whisper. Bound to the live setting, so
-            // switching takes effect on the next dictation without a
-            // restart. The badge + Download button + progress bar make the
-            // ~600 MB first-run fetch visible (it used to be a hidden
-            // `defaults write` flag with zero feedback).
-            Section {
-                Picker("Engine", selection: $settings.dictationUseParakeet) {
-                    Text("Whisper (default)").tag(false)
-                    Text("Parakeet — faster, experimental").tag(true)
+                // Live-transcript tier — how the toolbar transcript updates
+                // during a meeting. Plain names: Default (was "Lite") is the
+                // sensible default; Full is heavier; Off transcribes once on
+                // Stop. The final saved transcript is always full quality,
+                // and dictation always runs live regardless of this.
+                Picker("Live transcript", selection: $settings.liveTranscriptionTier) {
+                    Text("Off").tag(LiveTranscriptionTier.off)
+                    Text("Default").tag(LiveTranscriptionTier.lite)
+                    Text("Full (uses more memory)").tag(LiveTranscriptionTier.full)
                 }
                 .pickerStyle(.menu)
-
-                if settings.dictationUseParakeet {
-                    HStack(spacing: 8) {
-                        StatusBadge(state: parakeetBadgeState, message: parakeetStatusText)
-                        Spacer()
-                        if !parakeet.isReady {
-                            Button(isParakeetLoading ? "Downloading…" : "Download") {
-                                Task { await ParakeetEngine.shared.ensureLoaded() }
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .tint(Color.daisyTextPrimary)
-                            .disabled(isParakeetLoading)
-                        }
-                    }
-                    parakeetStatusBody
-                }
-
-                Text("Dictation only. Parakeet (Parakeet-TDT v3, on-device) is a faster streaming model covering 25 European languages incl. Russian. First time you switch to it, Daisy downloads ~600 MB from Hugging Face. Meetings always use Whisper; if Parakeet can't run, dictation falls back to Whisper automatically.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             } header: {
-                Text("Dictation engine")
+                Text("Transcription")
             }
 
             // Diarization above Language in 1.0.6: it's a structural
@@ -1499,50 +1511,6 @@ struct SettingsView: View {
                 Text("Diarization")
             }
 
-            Section {
-                Picker(selection: $settings.liveTranscriptionTier) {
-                    Text("Full — best live quality, heaviest").tag(LiveTranscriptionTier.full)
-                    Text("Lite — lighter live, every ~3.5s").tag(LiveTranscriptionTier.lite)
-                    Text("Off — transcribe once on Stop").tag(LiveTranscriptionTier.off)
-                } label: {
-                    Text("Show transcript live during meeting")
-                }
-                .pickerStyle(.radioGroup)
-                Text("Lite trims the live decode (fewer ANE workers, greedy sampling, no temperature fallbacks) and runs every ~3.5s instead of 2s — much lighter on long meetings, with a slightly rougher live preview. Off runs Whisper as a single pass on Stop: the toolbar transcript stays empty until then, but pause/resume stays instant on 1h+ sessions and the daisy widget never stutters. The final transcript on Stop is always full quality regardless of this setting, and dictation always uses live.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Live transcription")
-            }
-
-            Section {
-                Picker("Meetings (default)", selection: $settings.defaultTranscriptionLocale) {
-                    ForEach(Transcriber.availableLocales, id: \.id) { locale in
-                        Text(locale.label).tag(locale.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                Picker("Voice notes", selection: $settings.voiceNoteLocale) {
-                    Text("Same as meetings").tag("")
-                    ForEach(Transcriber.availableLocales, id: \.id) { locale in
-                        Text(locale.label).tag(locale.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                Picker("Dictation", selection: $settings.dictationLocale) {
-                    Text("Same as meetings").tag("")
-                    ForEach(Transcriber.availableLocales, id: \.id) { locale in
-                        Text(locale.label).tag(locale.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                Text("Pick a specific language to kill the kind of language drift that produces hallucinated phrases in another tongue. Voice notes and dictation inherit the Meetings default unless you set them explicitly — useful if you record meetings in English but dictate personal notes in Russian. Per-session override is still available in the recorder header.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Language")
-            }
-
             // Model status was its own Section here in 1.0.5.4 —
             // 1.0.5.5 inlined the badge + Reload into the Model
             // section above for parity with Summary's layout.
@@ -1550,11 +1518,7 @@ struct SettingsView: View {
             Section {
                 modelsCacheRow
             } header: {
-                Text("Cache")
-            } footer: {
-                Text("Switching to a different model downloads it alongside the previous one — old files aren't deleted automatically so a downgrade is instant. Use Remove unused to free disk space.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Text("Models")
             }
 
             // Speaker matching — how aggressively Daisy applies a
@@ -1599,11 +1563,19 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .task(id: cacheRefreshTick) {
-            // Refresh on tab open + after any cleanup. Detached so
-            // a slow FileManager scan never blocks the form's
-            // first paint.
-            cachedModelsCount = await Task.detached { WhisperEngine.cachedModels().count }.value
-            cachedModelsBytes = await Task.detached { WhisperEngine.totalCacheSizeBytes() }.value
+            // Refresh on tab open + after any cleanup. Detached so a slow
+            // FileManager scan never blocks the form's first paint. Counts
+            // BOTH the Whisper models and the dictation engine (Parakeet)
+            // model on disk.
+            let w = await Task.detached {
+                (WhisperEngine.cachedModels().count, WhisperEngine.totalCacheSizeBytes())
+            }.value
+            let p = await Task.detached {
+                (ParakeetEngine.cachedModelCount(), ParakeetEngine.cachedModelBytes())
+            }.value
+            cachedModelsCount = w.0 + p.0
+            cachedModelsBytes = w.1 + p.1
+            hasUnusedModels = (w.0 > 1) || (p.0 > 0 && !settings.dictationUseParakeet)
         }
     }
 
@@ -1614,17 +1586,17 @@ struct SettingsView: View {
     @ViewBuilder
     private var modelsCacheRow: some View {
         HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Models on disk")
-                Text("\(cachedModelsCount) \(cachedModelsCount == 1 ? "model" : "models") · \(formattedCacheSize)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
+            Text("\(cachedModelsCount) \(cachedModelsCount == 1 ? "model" : "models") · \(formattedCacheSize)")
+                .monospacedDigit()
             Spacer()
             Button("Remove unused") {
                 Task {
-                    let freed = await whisper.removeUnusedModels()
+                    var freed = await whisper.removeUnusedModels()
+                    // The Parakeet model is "unused" when dictation isn't
+                    // set to it — free it too.
+                    if !settings.dictationUseParakeet {
+                        freed += ParakeetEngine.removeCachedModel()
+                    }
                     cacheRefreshTick &+= 1
                     if freed > 0 {
                         ToastCenter.shared.show(
@@ -1637,7 +1609,7 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .tint(Color.daisyTextPrimary)
-            .disabled(cachedModelsCount <= 1 || isWhisperLoading)
+            .disabled(!hasUnusedModels || isWhisperLoading)
         }
     }
 
@@ -1772,35 +1744,25 @@ struct SettingsView: View {
         }
     }
 
-    private var whisperStatusText: String {
+    /// Compact per-row status — a short word/percent for the badge that
+    /// sits next to the "Meeting model" label (also the download indicator).
+    /// `nil` when ready or not-yet-loaded → the badge shows just its icon.
+    private var whisperShortStatus: String? {
         switch whisper.state {
-        case .ready: return "Ready"
-        case .downloading(let p): return "Downloading \(Int(p * 100))%"
-        case .loading: return "Loading model…"
+        case .downloading(let p): return "\(Int(p * 100))%"
+        case .loading: return "Loading"
         case .failed: return "Failed"
-        case .notLoaded: return "Not loaded"
+        case .ready, .notLoaded: return nil
         }
     }
 
+    /// Row label = title + a status badge (which doubles as the model-
+    /// download indicator). Shared by both Transcription rows.
     @ViewBuilder
-    private var whisperStatusBody: some View {
-        switch whisper.state {
-        case .downloading(let p):
-            VStack(alignment: .leading, spacing: 6) {
-                ProgressView(value: p)
-                    .progressViewStyle(.linear)
-                Text("\(Int(p * 100))% of model downloaded — keep the app open until it finishes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        case .loading(let status):
-            Text(status).font(.caption).foregroundStyle(.secondary)
-        case .failed(let msg):
-            Text(msg).font(.caption).foregroundStyle(.secondary)
-        case .ready:
-            Text("Model: \(whisper.modelID)").font(.caption).foregroundStyle(.secondary)
-        case .notLoaded:
-            EmptyView()
+    private func transcriptionRowLabel(_ title: String, state: StatusBadge.State, message: String?) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+            StatusBadge(state: state, message: message)
         }
     }
 
@@ -1822,41 +1784,23 @@ struct SettingsView: View {
         }
     }
 
-    private var parakeetStatusText: String {
+    private var parakeetShortStatus: String? {
         switch parakeet.state {
-        case .ready: return "Ready"
-        case .downloading(let p): return "Downloading \(Int(p * 100))%"
-        case .loading: return "Preparing…"
+        case .downloading(let p): return "\(Int(p * 100))%"
+        case .loading: return "Loading"
         case .failed: return "Failed"
-        case .notLoaded: return "Not downloaded"
+        case .ready, .notLoaded: return nil
         }
     }
 
-    @ViewBuilder
-    private var parakeetStatusBody: some View {
-        switch parakeet.state {
-        case .downloading(let p):
-            VStack(alignment: .leading, spacing: 6) {
-                ProgressView(value: p).progressViewStyle(.linear)
-                Text("\(Int(p * 100))% — ~600 MB the first time; keep the app open until it finishes.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        case .loading:
-            Text("Preparing the model…").font(.caption).foregroundStyle(.secondary)
-        case .failed(let msg):
-            Text(msg).font(.caption).foregroundStyle(.secondary)
-        case .ready:
-            Text("Parakeet TDT v3 ready — dictation uses it now.").font(.caption).foregroundStyle(.secondary)
-        case .notLoaded:
-            Text("Loads on your first dictation, or click Download to fetch it now.").font(.caption).foregroundStyle(.secondary)
-        }
+    /// The dictation row's badge follows whichever engine is selected:
+    /// Whisper → the Whisper model's state; Parakeet → Parakeet's.
+    private var dictationBadgeState: StatusBadge.State {
+        settings.dictationUseParakeet ? parakeetBadgeState : whisperBadgeState
     }
 
-    private var isParakeetLoading: Bool {
-        switch parakeet.state {
-        case .downloading, .loading: return true
-        default: return false
-        }
+    private var dictationShortStatus: String? {
+        settings.dictationUseParakeet ? parakeetShortStatus : whisperShortStatus
     }
 
     // MARK: - Summary Provider
@@ -1892,20 +1836,6 @@ struct SettingsView: View {
 
                 providerInlineRows
 
-                // Status row — inline so the user sees
-                // "this provider, with these creds, is reachable"
-                // without scrolling.
-                HStack(spacing: 8) {
-                    StatusBadge(state: summarizerBadgeState, message: summarizerStatusText)
-                    Spacer()
-                    Button("Refresh") {
-                        Task { await summarizer.refreshAvailability() }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(Color.daisyTextPrimary)
-                }
-
                 // Test row — final action in the block. Apple
                 // Intelligence has nothing to validate remotely so
                 // we skip it for that provider.
@@ -1922,7 +1852,19 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("Provider")
+                // Status (and its Refresh) ride at the header level, right-
+                // aligned — same idea as the Transcription badges.
+                HStack(spacing: 8) {
+                    Text("Provider")
+                    Spacer()
+                    StatusBadge(state: summarizerBadgeState, message: summarizerStatusText)
+                    Button("Refresh") {
+                        Task { await summarizer.refreshAvailability() }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(Color.daisyTextPrimary)
+                }
             } footer: {
                 Text(summarySectionFooter)
                     .font(.caption2)
@@ -1947,28 +1889,18 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                Text("The summary will always be written in this language, even if the meeting itself was in another. Handy when you record in one language and send the follow-up in another.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Summary language")
-            }
 
-            Section {
                 Toggle(isOn: $settings.autoSummarize) {
                     Text("Summarize when recording stops")
-                    Text("Runs the selected provider on the transcript the moment you stop — meeting overview, next actions, and a follow-up draft for clients or partners.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 .disabled(!summarizerAvailable)
                 if !summarizerAvailable {
-                    Text("Provider isn’t ready yet — set it up in the section above first.")
+                    Text("Provider isn’t ready yet — set it up above first.")
                         .font(.caption)
                         .foregroundStyle(Color.daisyWarning)
                 }
             } header: {
-                Text("Auto-summary")
+                Text("Summary")
             }
         }
         .formStyle(.grouped)

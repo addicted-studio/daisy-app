@@ -460,7 +460,7 @@ struct MainView: View {
 ///
 /// `.disabled` and `.pending` render nothing — the user either
 /// turned system audio off on purpose, or recording hasn't started.
-private struct SystemAudioStatusPill: View {
+struct SystemAudioStatusPill: View {
     @Bindable var session: RecordingSession
 
     var body: some View {
