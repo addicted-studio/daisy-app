@@ -34,7 +34,7 @@ import FluidAudio
 final class ParakeetEngine {
     enum LoadState: Equatable {
         case notLoaded
-        case downloading
+        case downloading(progress: Double)
         case loading
         case ready
         case failed(String)
@@ -87,11 +87,25 @@ final class ParakeetEngine {
     #if canImport(FluidAudio)
     private func performLoad() async {
         if case .ready = state, manager != nil { return }
-        state = .downloading
+        state = .downloading(progress: 0)
+        log.info("Parakeet: downloading/loading v3 (int8)…")
         do {
             // v3 = multilingual (incl. RU/UK). Default encoder precision is
-            // int8; models cache on disk after the first download.
-            let models = try await AsrModels.downloadAndLoad(version: .v3)
+            // int8; models cache on disk after the first download. The
+            // progress handler is @Sendable + called off-main, so hop back
+            // to MainActor to update observable state (drives the Settings
+            // download bar). fractionCompleted spans download→compile 0…1.
+            let models = try await AsrModels.downloadAndLoad(
+                version: .v3,
+                progressHandler: { progress in
+                    let fraction = progress.fractionCompleted
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if case .ready = self.state { return }
+                        self.state = .downloading(progress: fraction)
+                    }
+                }
+            )
             state = .loading
             // init(config:models:) wires the models in synchronously — the
             // actor reports `isAvailable == true` immediately after.
