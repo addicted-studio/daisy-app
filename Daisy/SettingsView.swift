@@ -16,6 +16,7 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     @Bindable var whisper = WhisperEngine.shared
+    @Bindable var parakeet = ParakeetEngine.shared
     @Bindable var summarizer = Summarizer.shared
     // Calendar source state — needed by the General-tab Calendar
     // section (autoStart / autoStop / menu-bar next-meeting toggles).
@@ -1380,6 +1381,44 @@ struct SettingsView: View {
                 Text("Model")
             }
 
+            // Dictation engine — Whisper (default) or the experimental
+            // on-device Parakeet TDT v3 (FluidAudio). Dictation ONLY;
+            // meetings always use Whisper. Bound to the live setting, so
+            // switching takes effect on the next dictation without a
+            // restart. The badge + Download button + progress bar make the
+            // ~600 MB first-run fetch visible (it used to be a hidden
+            // `defaults write` flag with zero feedback).
+            Section {
+                Picker("Engine", selection: $settings.dictationUseParakeet) {
+                    Text("Whisper (default)").tag(false)
+                    Text("Parakeet — faster, experimental").tag(true)
+                }
+                .pickerStyle(.menu)
+
+                if settings.dictationUseParakeet {
+                    HStack(spacing: 8) {
+                        StatusBadge(state: parakeetBadgeState, message: parakeetStatusText)
+                        Spacer()
+                        if !parakeet.isReady {
+                            Button(isParakeetLoading ? "Downloading…" : "Download") {
+                                Task { await ParakeetEngine.shared.ensureLoaded() }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(Color.daisyTextPrimary)
+                            .disabled(isParakeetLoading)
+                        }
+                    }
+                    parakeetStatusBody
+                }
+
+                Text("Dictation only. Parakeet (Parakeet-TDT v3, on-device) is a faster streaming model covering 25 European languages incl. Russian. First time you switch to it, Daisy downloads ~600 MB from Hugging Face. Meetings always use Whisper; if Parakeet can't run, dictation falls back to Whisper automatically.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Dictation engine")
+            }
+
             // Diarization above Language in 1.0.6: it's a structural
             // "how is the audio interpreted" choice, same family as
             // Model — Language is downstream content-level. Sized
@@ -1768,6 +1807,54 @@ struct SettingsView: View {
     private var isWhisperLoading: Bool {
         switch whisper.state {
         case .loading, .downloading: return true
+        default: return false
+        }
+    }
+
+    // MARK: - Dictation engine (Parakeet)
+
+    private var parakeetBadgeState: StatusBadge.State {
+        switch parakeet.state {
+        case .ready:                 return .ok
+        case .downloading, .loading: return .busy
+        case .failed:                return .err
+        case .notLoaded:             return .idle
+        }
+    }
+
+    private var parakeetStatusText: String {
+        switch parakeet.state {
+        case .ready: return "Ready"
+        case .downloading(let p): return "Downloading \(Int(p * 100))%"
+        case .loading: return "Preparing…"
+        case .failed: return "Failed"
+        case .notLoaded: return "Not downloaded"
+        }
+    }
+
+    @ViewBuilder
+    private var parakeetStatusBody: some View {
+        switch parakeet.state {
+        case .downloading(let p):
+            VStack(alignment: .leading, spacing: 6) {
+                ProgressView(value: p).progressViewStyle(.linear)
+                Text("\(Int(p * 100))% — ~600 MB the first time; keep the app open until it finishes.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        case .loading:
+            Text("Preparing the model…").font(.caption).foregroundStyle(.secondary)
+        case .failed(let msg):
+            Text(msg).font(.caption).foregroundStyle(.secondary)
+        case .ready:
+            Text("Parakeet TDT v3 ready — dictation uses it now.").font(.caption).foregroundStyle(.secondary)
+        case .notLoaded:
+            Text("Loads on your first dictation, or click Download to fetch it now.").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var isParakeetLoading: Bool {
+        switch parakeet.state {
+        case .downloading, .loading: return true
         default: return false
         }
     }
