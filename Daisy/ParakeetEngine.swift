@@ -135,6 +135,75 @@ final class ParakeetEngine {
         throw ParakeetEngineError.notReady
         #endif
     }
+
+    // MARK: - On-disk cache (Settings → Transcription → Storage)
+
+    #if canImport(FluidAudio)
+    /// Bytes used by the Parakeet model on disk (0 if never downloaded).
+    nonisolated static func cachedModelBytes() -> Int64 {
+        fluidAudioParakeetDirs().reduce(0) { $0 + directorySize(at: $1) }
+    }
+
+    /// Number of cached Parakeet model folders (usually 0 or 1).
+    nonisolated static func cachedModelCount() -> Int {
+        fluidAudioParakeetDirs().count
+    }
+
+    /// Delete the cached Parakeet model(s) and drop the live engine so a
+    /// future enable re-downloads. Returns freed bytes. Only the
+    /// "parakeet" folders are touched — diarization / VAD models share the
+    /// same FluidAudio cache root and must be left alone.
+    @MainActor
+    static func removeCachedModel() -> Int64 {
+        var freed: Int64 = 0
+        for dir in fluidAudioParakeetDirs() {
+            let size = directorySize(at: dir)
+            if (try? FileManager.default.removeItem(at: dir)) != nil { freed += size }
+        }
+        if freed > 0 {
+            shared.manager = nil
+            shared.state = .notLoaded
+        }
+        return freed
+    }
+
+    /// Parakeet folders under `~/Library/Application Support/FluidAudio/
+    /// Models/` (FluidAudio's cache root — see DownloadUtils.clearAll-
+    /// ModelCaches). Name-matched so we never touch the diarization / VAD
+    /// models in the same root.
+    private nonisolated static func fluidAudioParakeetDirs() -> [URL] {
+        let fm = FileManager.default
+        guard let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return [] }
+        let root = appSupport
+            .appendingPathComponent("FluidAudio", isDirectory: true)
+            .appendingPathComponent("Models", isDirectory: true)
+        guard let entries = try? fm.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.isDirectoryKey]
+        ) else { return [] }
+        return entries.filter { url in
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            return isDir && url.lastPathComponent.lowercased().contains("parakeet")
+        }
+    }
+
+    private nonisolated static func directorySize(at url: URL) -> Int64 {
+        let fm = FileManager.default
+        guard let en = fm.enumerator(
+            at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let f as URL in en {
+            let v = try? f.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            if v?.isRegularFile == true, let s = v?.fileSize { total += Int64(s) }
+        }
+        return total
+    }
+    #else
+    nonisolated static func cachedModelBytes() -> Int64 { 0 }
+    nonisolated static func cachedModelCount() -> Int { 0 }
+    @MainActor static func removeCachedModel() -> Int64 { 0 }
+    #endif
 }
 
 nonisolated enum ParakeetEngineError: LocalizedError {

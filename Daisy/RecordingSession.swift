@@ -370,6 +370,15 @@ final class RecordingSession {
         if systemAudioDeniedThisSession { return .denied }
         switch systemAudio.state {
         case .capturing, .starting, .paused:
+            // SCStream is "running" but the silence monitor may have found
+            // it's delivering NO usable audio (no buffers, or all silence —
+            // denied permission, Bluetooth output, DRM, the Tahoe zero-
+            // buffer glitch). Surface that as a failure so the user sees the
+            // other side isn't actually being recorded, instead of a falsely
+            // reassuring "capturing".
+            if systemAudio.isSilentCaptureDetected {
+                return .failed(systemAudio.lastError ?? "No audio is reaching Daisy from the other side")
+            }
             return .capturing
         case .idle, .stopped:
             return .failed(systemAudio.lastError ?? "Capture stopped unexpectedly")

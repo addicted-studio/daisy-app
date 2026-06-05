@@ -36,6 +36,26 @@ struct SelectableTextView: NSViewRepresentable {
         self.font = font
     }
 
+    /// Build the display string. The transcript body is markdown whose only
+    /// inline markup is `**bold**` around the `[time · speaker]` labels
+    /// (see MarkdownExporter). We render those as real bold and DROP the
+    /// `**` markers, preserving every newline — so the in-app transcript
+    /// reads cleanly instead of showing literal asterisks, while the on-disk
+    /// .md and the Copy button keep the markdown form. Implementation: split
+    /// on `**` and bold the odd-index pieces (the exporter always emits
+    /// balanced pairs, so the marker count is even and parity is stable).
+    /// `enumerated()` indices come before the empty-skip, so parity holds.
+    private func attributedText() -> NSAttributedString {
+        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        let normal: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
+        let bold: [NSAttributedString.Key: Any] = [.font: boldFont, .foregroundColor: NSColor.labelColor]
+        let result = NSMutableAttributedString()
+        for (i, part) in text.components(separatedBy: "**").enumerated() where !part.isEmpty {
+            result.append(NSAttributedString(string: part, attributes: i.isMultiple(of: 2) ? normal : bold))
+        }
+        return result
+    }
+
     func makeNSView(context: Context) -> NSTextView {
         let tv = NSTextView()
         tv.isEditable = false
@@ -60,6 +80,19 @@ struct SelectableTextView: NSViewRepresentable {
         // whatever container the view sits in (matches SwiftUI Text
         // baseline, no surprise indent).
         tv.textContainer?.lineFragmentPadding = 0
+        // CRITICAL — horizontal-spill fix (2026-06-05). AppKit defaults
+        // `widthTracksTextView` to TRUE, which forces the text container's
+        // width to equal the NSTextView's *frame* width and SILENTLY
+        // ignores the `containerSize.width` we compute in `sizeThatFits`.
+        // On macOS 26 the frame width lags the SwiftUI-proposed width by a
+        // layout pass, so the text wrapped to a stale/too-wide frame and
+        // each line's tail drew past the card's right edge in the Library
+        // transcript (the long-standing "text spills out of the container"
+        // bug). FALSE makes our manual `containerSize.width` authoritative,
+        // so the text wraps to exactly the width we derive from the SwiftUI
+        // proposal — never wider than the card. (Past fixes only touched
+        // the height path, which is why this kept coming back.)
+        tv.textContainer?.widthTracksTextView = false
         // Tall vertical container — sized for real on layout pass via
         // sizeThatFits below. Width gets pinned by the SwiftUI layout.
         tv.textContainer?.containerSize = NSSize(
@@ -71,26 +104,25 @@ struct SelectableTextView: NSViewRepresentable {
         // SwiftUI Text has no equivalent.
         tv.usesFindBar = true
         tv.isIncrementalSearchingEnabled = true
-        // Inserts via setString so updateNSView can diff against
-        // the current value cheaply.
-        tv.string = text
+        // Bold the `**…**` labels (markers stripped) — see attributedText().
+        tv.textStorage?.setAttributedString(attributedText())
         return tv
     }
 
     func updateNSView(_ nsView: NSTextView, context: Context) {
-        if nsView.string != text {
-            nsView.string = text
-            // Force layout-manager flush so the next sizeThatFits
-            // call reads a fresh usedRect (otherwise a transcript
-            // that grew mid-session — e.g. live append — could
-            // measure against stale glyph ranges and underflow).
+        // Compare against the rendered (marker-stripped) plain text so we
+        // only rebuild when content or font actually changed.
+        let renderedPlain = text.replacingOccurrences(of: "**", with: "")
+        if nsView.string != renderedPlain || nsView.font != font {
+            nsView.font = font
+            nsView.textStorage?.setAttributedString(attributedText())
+            // Force layout-manager flush so the next sizeThatFits call reads
+            // a fresh usedRect (otherwise a transcript that grew mid-session
+            // — e.g. live append — could measure against stale glyph ranges
+            // and underflow).
             if let lm = nsView.layoutManager, let tc = nsView.textContainer {
                 lm.ensureLayout(for: tc)
             }
-            nsView.invalidateIntrinsicContentSize()
-        }
-        if nsView.font != font {
-            nsView.font = font
             nsView.invalidateIntrinsicContentSize()
         }
     }

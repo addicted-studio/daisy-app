@@ -9,8 +9,9 @@
 //  • Recording / Finished / Failed / Idle — petals are amplitude-driven
 //    (FFT bands, mirrored across petals for symmetric blooming).
 //  • Preparing / Stopping / Summarizing — a "shimmer" sweep rotates
-//    around the daisy; petals are uniform mid-length, opacity follows
-//    the sweep. Pure black-and-white during summarizing.
+//    around the daisy while the petals gently "breathe" (a soft per-
+//    petal length wave); opacity follows the sweep. Pure black-and-
+//    white during summarizing.
 //
 
 import SwiftUI
@@ -110,7 +111,7 @@ struct DaisyWidget: View {
                 ForEach(0..<petalCount, id: \.self) { i in
                     let petalAngle = Double(i) * 360.0 / Double(petalCount)
                     Petal(
-                        amplitude: amplitudeFor(petalIndex: i, bands: bands, status: status, mode: mode),
+                        amplitude: amplitudeFor(petalIndex: i, bands: bands, status: status, mode: mode, date: context.date),
                         angleDegrees: petalAngle,
                         color: petalColor(petalAngle: petalAngle, sweep: sweep, status: status),
                         width: petalWidth,
@@ -323,7 +324,8 @@ struct DaisyWidget: View {
         petalIndex: Int,
         bands: [Float],
         status: RecordingSession.Status,
-        mode: RecordingSession.RecordingMode
+        mode: RecordingSession.RecordingMode,
+        date: Date
     ) -> Float {
         switch status {
         case .recording:
@@ -351,7 +353,16 @@ struct DaisyWidget: View {
             }
             return max(0.12, min(1.0, bands[bandIndex] * gain))
         case .preparing, .stopping, .summarizing:
-            return 0.60
+            // Gentle "breathing": each petal eases its length in/out on a
+            // slow sine, offset by petal index so a soft wave travels
+            // around the ring — reads as a living flower, not 8 static
+            // spokes. Reduce Motion → a calm fixed mid-length (no pulsing).
+            if reduceMotion { return 0.55 }
+            let t = date.timeIntervalSinceReferenceDate
+            let cycle = 2.4   // seconds per full breath
+            let phase = t * (2 * Double.pi / cycle)
+                + Double(petalIndex) * (2 * Double.pi / Double(petalCount))
+            return Float(0.52 + 0.13 * sin(phase))
         case .paused:
             // Paused reads as "held" — petals settled, not animating
             // with the (now-zero) spectrum bands.
@@ -423,6 +434,18 @@ struct DaisyWidget: View {
         mode: RecordingSession.RecordingMode,
         summaryGen: RecordingSession.SummaryGenerationState
     ) -> Color {
+        // System-audio failure during a live meeting → RED core, so the
+        // user sees at a glance the other side isn't being captured
+        // (Screen Recording denied / no audio reaching Daisy). Takes
+        // priority over the normal recording hue while capturing.
+        if status == .recording || status == .paused {
+            switch session.systemAudioStatus {
+            case .denied, .failed:
+                return .daisyError
+            default:
+                break
+            }
+        }
         // "Summary cooking" indicator — when status is .finished but
         // the post-Stop detached task is still running summarize +
         // autoSend, fade the centre to amber and pulse the opacity
@@ -563,53 +586,41 @@ struct DaisyWidget: View {
     }
 }
 
-// MARK: - Teardrop petal shape (drop / leaf form)
+// MARK: - Daisy petal shape (traced from the brand logomark)
 
-/// Petal pointing "up" in unrotated form. Rounded apex at the top, max
-/// width slightly below the apex (the "shoulder"), tapers smoothly down
-/// to a small rounded root cap. Cubic Beziers with horizontal tangents
-/// at the apex — no "mushroom" silhouette.
-struct TeardropShape: Shape {
+/// Single petal traced VERBATIM from the brand logomark
+/// (`daisy_logo.svg` → `lib/daisyPetals.ts` on the web; same shape as
+/// the favicon / app icon / in-app DaisyMark). We use the "Top" cardinal
+/// petal — it's symmetric left-right, so it rotates cleanly into all 8
+/// positions and can be length-scaled per petal (audio bloom + loader
+/// breathing), which the asymmetric per-direction logo paths can't.
+///
+/// Native space is the petal's bounding box inside the 41×41 logo:
+/// x∈[18,23], y∈[4.36792,14.4453], apex (tip) at the top, rounded base at
+/// the bottom. `p(_:_:)` affine-maps that box into `rect`, so the petal
+/// fills whatever width/length the widget asks for, tip pointing outward
+/// from the centre (matches `Petal`'s offset/rotate). Replaces the old
+/// generic teardrop, which read as a flat "lozenge"/"sausage" when the
+/// loader drew all eight at one length.
+struct DaisyPetalShape: Shape {
     func path(in rect: CGRect) -> Path {
+        // Logo-native bounding box of the "Top" petal.
+        let bx: CGFloat = 18, bw: CGFloat = 5
+        let by: CGFloat = 4.36792, bh: CGFloat = 10.07738
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(
+                x: rect.minX + (x - bx) / bw * rect.width,
+                y: rect.minY + (y - by) / bh * rect.height
+            )
+        }
         var path = Path()
-        let w = rect.width
-        let h = rect.height
-
-        let apexY: CGFloat = 0
-        let rootR = w * 0.20
-        let rootCenterY = h - rootR
-        let apexPull = w * 0.42
-        let shoulderX = w * 0.94
-        let shoulderY = h * 0.32
-        let waistPull = w * 0.04
-
-        path.move(to: CGPoint(x: w / 2, y: apexY))
-
-        path.addCurve(
-            to: CGPoint(x: w / 2 + rootR, y: rootCenterY),
-            control1: CGPoint(x: w / 2 + apexPull, y: apexY),
-            control2: CGPoint(x: shoulderX, y: shoulderY)
-        )
-
-        path.addQuadCurve(
-            to: CGPoint(x: w / 2 + rootR, y: rootCenterY + 0.1),
-            control: CGPoint(x: w / 2 + rootR - waistPull, y: rootCenterY)
-        )
-
-        path.addArc(
-            center: CGPoint(x: w / 2, y: rootCenterY),
-            radius: rootR,
-            startAngle: .degrees(0),
-            endAngle: .degrees(180),
-            clockwise: false
-        )
-
-        path.addCurve(
-            to: CGPoint(x: w / 2, y: apexY),
-            control1: CGPoint(x: w - shoulderX, y: shoulderY),
-            control2: CGPoint(x: w / 2 - apexPull, y: apexY)
-        )
-
+        path.move(to: p(18, 7.38827))
+        path.addCurve(to: p(19.32, 4.36792), control1: p(18, 5.69685), control2: p(18.6726, 4.82008))
+        path.addCurve(to: p(21.68, 4.36792), control1: p(20.0225, 3.87736), control2: p(20.9775, 3.87736))
+        path.addCurve(to: p(23, 7.38827), control1: p(22.3274, 4.82008), control2: p(23, 5.69685))
+        path.addCurve(to: p(21.2918, 14.4453), control1: p(23, 9.7848), control2: p(22.0998, 12.5378))
+        path.addCurve(to: p(19.7082, 14.4453), control1: p(20.9785, 15.1849), control2: p(20.0215, 15.1849))
+        path.addCurve(to: p(18, 7.38827), control1: p(18.9002, 12.5378), control2: p(18, 9.7848))
         path.closeSubpath()
         return path
     }
@@ -631,7 +642,7 @@ private struct Petal: View, Equatable {
         let length = baseLength + (maxLength - baseLength) * CGFloat(amplitude)
         let offsetY = -(centerSize / 2 + length / 2 + gap)
 
-        TeardropShape()
+        DaisyPetalShape()
             .fill(color)
             .frame(width: width, height: length)
             .offset(y: offsetY)

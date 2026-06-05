@@ -88,6 +88,15 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// instead of every 5 s. Reset on `start()`.
     private var silenceWarningFired: Bool = false
 
+    /// True once the silence monitor has decided the system stream isn't
+    /// delivering usable audio — either NO buffers at all (path 1) or
+    /// buffers that are all-silence (path 2). Drives `systemAudioStatus`
+    /// so the UI (status banner + widget core) can surface "the other side
+    /// isn't being recorded" instead of a falsely-reassuring "capturing".
+    var isSilentCaptureDetected: Bool {
+        silenceWarningFired || silentContentWarningFired
+    }
+
     /// MainActor timer that polls `lastSampleAt` while `state ==
     /// .capturing`. Cheap (5 s cadence, no audio touched). Killed
     /// in `pause()`/`stop()`.
@@ -754,7 +763,14 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             return
         }
         do { try await s.stopCapture() }
-        catch { log.error("Stop error: \(error.localizedDescription, privacy: .public)") }
+        catch {
+            // Benign: the stream was already stopped or never fully started
+            // (e.g. Screen Recording denied → SCStream never ran), so there
+            // is nothing to stop. Log at info, not error — the real "is the
+            // other side captured?" signal lives in `systemAudioStatus` /
+            // the silence monitor, not in this teardown.
+            log.info("SystemAudio stop: nothing to stop (\(error.localizedDescription, privacy: .public))")
+        }
         stream = nil
         bufferContinuation?.finish()
         bufferContinuation = nil
