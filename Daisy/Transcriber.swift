@@ -218,6 +218,11 @@ final class Transcriber {
     private var converterInput: AVAudioFormat?
     private var allSamples: [Float] = []
 
+    /// Read-only snapshot of the captured 16 kHz mono mic samples for the
+    /// current session. Used by the Parakeet dictation path to transcribe
+    /// the whole buffer directly, skipping the Whisper final pass.
+    var capturedSamples: [Float] { allSamples }
+
     // MARK: - Tasks / timers
 
     private var consumerTask: Task<Void, Never>?

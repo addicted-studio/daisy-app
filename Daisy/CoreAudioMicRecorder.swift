@@ -835,7 +835,22 @@ final class CoreAudioMicRecorder {
         if !uid.isEmpty {
             log.warning("Saved mic UID \(uid, privacy: .public) not connected — falling back to system default")
         }
-        return AudioInputDevices.systemDefaultInputID()
+        // Unpinned: take the system default — UNLESS it's a Bluetooth mic,
+        // in which case prefer a non-BT input. A BT headset used for OUTPUT
+        // (the call / a video) drags the default INPUT onto its SCO mic,
+        // which delivers pure silence while the headset is playing audio
+        // (A2DP↔SCO conflict) → the mic silence watchdog then pauses the
+        // recording and the user's speech is lost. This is the same trap
+        // the route-change guard avoids mid-session, now avoided at START
+        // too. A pinned BT device is still honoured above (explicit choice).
+        let defaultID = AudioInputDevices.systemDefaultInputID()
+        if defaultID != 0,
+           AudioInputDevices.isBluetooth(defaultID),
+           let nonBT = AudioInputDevices.firstNonBluetoothInputID() {
+            log.info("Default input is Bluetooth — capturing from non-BT input \(nonBT, privacy: .public) to avoid SCO-mic silence")
+            return nonBT
+        }
+        return defaultID
     }
 
     // MARK: - Route-change recovery

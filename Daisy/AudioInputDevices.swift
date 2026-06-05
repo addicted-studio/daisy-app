@@ -83,6 +83,23 @@ enum AudioInputDevices {
         return nil
     }
 
+    /// Best NON-Bluetooth input device, or nil if every input is BT.
+    /// A Bluetooth headset used for OUTPUT drags the default INPUT onto
+    /// its SCO mic, which delivers pure silence while the headset is
+    /// playing audio (A2DP↔SCO can't run simultaneously). When we're not
+    /// pinned to a specific device we avoid that mic and prefer the
+    /// built-in. Prefers the built-in mic; else the first wired/USB input.
+    static func firstNonBluetoothInputID() -> AudioDeviceID? {
+        let ids = allDeviceIDs().filter { hasInputStreams($0) && !isBluetooth($0) }
+        guard !ids.isEmpty else { return nil }
+        if let builtIn = ids.first(where: {
+            (deviceUID($0) ?? "").contains("BuiltInMicrophone")
+        }) {
+            return builtIn
+        }
+        return ids.first
+    }
+
     /// Stable UID for a live `AudioDeviceID`, or nil if CoreAudio can't
     /// resolve it. The inverse of `deviceID(forUID:)`. `AudioRecorder`
     /// uses this to remember — by stable identity, not the session-local

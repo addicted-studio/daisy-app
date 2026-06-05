@@ -1352,20 +1352,24 @@ struct SessionDetailView: View {
             summaryLanguageOverride: AppSettings.currentSummaryLanguage
         )
 
-        let result = await Summarizer.shared.summarize(
-            transcript: session.transcriptText,
-            title: session.title,
-            localeHint: localeHint
-        )
+        // Force the model to draft a follow-up even if it judges the
+        // meeting internal — clicking this button IS the explicit request.
+        let result = await SummaryPrompt.$forceFollowUp.withValue(true) {
+            await Summarizer.shared.summarize(
+                transcript: session.transcriptText,
+                title: session.title,
+                localeHint: localeHint
+            )
+        }
 
         if let fresh = result {
             let trimmedFollowUp = fresh.clientFollowUp
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedFollowUp.isEmpty {
-                // Model again chose to skip — keep the existing
-                // (empty) follow-up; tell the user explicitly.
+                // Forced and still empty — the model ignored the directive
+                // (rare). Keep the existing follow-up; tell the user.
                 ToastCenter.shared.show(
-                    "Model still judged this conversation as internal — no follow-up drafted.",
+                    "Couldn't draft a follow-up for this one — try Re-summarize.",
                     style: .warning
                 )
             } else {

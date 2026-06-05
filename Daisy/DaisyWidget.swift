@@ -64,20 +64,20 @@ struct DaisyWidget: View {
     }
 
     // Geometry: build 45 shrank everything 20% (×0.8 off the original
-    // 7/18/7/10/56); then +10% per request → net ×0.88 of original.
-    // Petal/center/canvas scale together to preserve proportions;
-    // `passiveScale` still applies on top, so passive (idle/finished)
-    // state shrinks proportionally relative to this active baseline.
-    // Panel container in FloatingPanelController.swift is sized to match
-    // (64 → 70.4) so shadow padding stays proportional (≈10.5pt each side,
-    // well clear of the .shadow(radius:6, y:3) blur extent).
+    // 7/18/7/10/56); then +10% per request; then −15% per request
+    // (2026-06-05) → net ×0.748 of original. Petal/center/canvas scale
+    // together to preserve proportions; `passiveScale` still applies on
+    // top, so passive (idle/finished) shrinks proportionally relative to
+    // this active baseline. Panel container in FloatingPanelController.swift
+    // is sized to match (70.4 → 59.84, same ×0.85) so shadow padding stays
+    // proportional, well clear of the .shadow(radius:6, y:3) blur extent.
     private let petalCount = 8
-    private let basePetalLength: CGFloat = 6.16  // 5.6 +10%
-    private let maxPetalLength: CGFloat = 15.84  // 14.4 +10%
-    private let petalWidth: CGFloat = 6.16       // 5.6 +10%
-    private let centerSize: CGFloat = 8.8        // 8 +10%
-    private let canvasSize: CGFloat = 49.5       // 45 +10%
-    private let petalGap: CGFloat = 0.5
+    private let basePetalLength: CGFloat = 5.236  // was 6.16, −15%
+    private let maxPetalLength: CGFloat = 13.464  // was 15.84, −15%
+    private let petalWidth: CGFloat = 5.236       // was 6.16, −15%
+    private let centerSize: CGFloat = 7.48        // was 8.8, −15%
+    private let canvasSize: CGFloat = 42.075      // was 49.5, −15%
+    private let petalGap: CGFloat = 0.425         // was 0.5, −15%
 
     var body: some View {
         // One TimelineView wraps everything so the view tree is stable

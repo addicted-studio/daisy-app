@@ -34,6 +34,9 @@ struct DaisyApp: App {
 
         let s = AppSettings()
         let sess = RecordingSession(settings: s)
+        // Weak handle for the Quit-during-recording save path
+        // (DaisyAppDelegate.applicationShouldTerminate).
+        RecordingSession.current = sess
         _settings = State(wrappedValue: s)
         _session = State(wrappedValue: sess)
         _floatingPanel = State(wrappedValue: FloatingPanelController(session: sess, settings: s))

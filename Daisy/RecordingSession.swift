@@ -516,6 +516,13 @@ final class RecordingSession {
     @ObservationIgnored
     private var pendingAutoStartTrigger: PendingAutoStartTrigger?
 
+    /// Weak app-wide handle to the live session, set by `DaisyApp.init`.
+    /// Lets the terminate handler (DaisyAppDelegate.applicationShouldTerminate)
+    /// confirm + finalize an in-progress recording on Quit without plumbing
+    /// the instance through the NSApplicationDelegateAdaptor. Weak so the
+    /// app's `@State` reference remains the owner.
+    static weak var current: RecordingSession?
+
     init(settings: AppSettings, localeIdentifier: String? = nil) {
         self.settings = settings
         // Caller can override (used by tests), otherwise pull the
@@ -697,6 +704,12 @@ final class RecordingSession {
         switch status {
         case .idle, .finished, .failed:
             pendingMode = .dictation
+            if settings.dictationUseParakeet {
+                // Warm the Parakeet model during the hold so release→paste
+                // isn't blocked on a cold load. (First-ever use still pays a
+                // one-time ~600 MB download.)
+                Task { await ParakeetEngine.shared.ensureLoaded() }
+            }
             await start()
         case .recording, .paused:
             ToastCenter.shared.show(
@@ -1741,9 +1754,22 @@ final class RecordingSession {
         // `finalizePostStop` task after `.finished` flips — that path
         // still applies, just below.
         if currentMode == .dictation {
-            await micTranscriber.runFinalPass()
-            let transcriptText = fullTranscriptText
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let transcriptText: String
+            if settings.dictationUseParakeet,
+               let parakeetText = try? await ParakeetEngine.shared.transcribe(
+                   samples: micTranscriber.capturedSamples),
+               !parakeetText.isEmpty {
+                // Parakeet path (FluidAudio) — transcribe the captured mic
+                // buffer directly, skipping the Whisper final pass.
+                transcriptText = parakeetText
+            } else {
+                // Whisper path — default, and the automatic fallback when
+                // Parakeet is off, errored, or produced nothing (e.g. a
+                // sub-0.3 s clip FluidAudio rejects).
+                await micTranscriber.runFinalPass()
+                transcriptText = fullTranscriptText
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             DictationPaste.shared.handle(transcript: transcriptText)
             if let dir = sessionDirectory {
                 try? FileManager.default.removeItem(at: dir)

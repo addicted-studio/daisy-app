@@ -144,6 +144,15 @@ enum SummaryProviderError: LocalizedError {
 // MARK: - Shared prompt
 
 enum SummaryPrompt {
+    /// When set, the prompt is told to ALWAYS draft a clientFollowUp —
+    /// even for a meeting that looks purely internal. Set by the
+    /// "Draft follow-up" button (an explicit user request) via
+    /// `SummaryPrompt.$forceFollowUp.withValue(true) { … }`. Task-local
+    /// so it threads through the facade → provider → systemInstructions
+    /// call chain without changing the SummaryProviding protocol (which
+    /// can't carry default args) or all six provider signatures.
+    @TaskLocal static var forceFollowUp: Bool = false
+
     static func systemInstructions(localeHint: String?) -> String {
         // `lang` is the language NAME used inside the prompt body.
         // `langExplicit` is true only when the user picked a specific
@@ -189,6 +198,19 @@ enum SummaryPrompt {
             topDirective = ""
         }
 
+        // The clientFollowUp gate: normally the model may return an empty
+        // follow-up for a purely internal meeting. When the user clicks
+        // "Draft follow-up" (forceFollowUp), override that — always draft.
+        let followUpGate: String
+        let followUpConstraint: String
+        if SummaryPrompt.forceFollowUp {
+            followUpGate = "The user has EXPLICITLY requested a follow-up for THIS meeting — you MUST write a non-empty clientFollowUp and MUST NOT return an empty string, even if the conversation looks like a purely internal team sync. If there is no external counterparty, write it as a concise recap / next-steps message the host could send to the other participants or their own team."
+            followUpConstraint = "ALWAYS draft a clientFollowUp — it must be non-empty (the user explicitly requested a follow-up for this meeting)."
+        } else {
+            followUpGate = "Only return an empty string if the meeting was a purely internal team sync with NO external party — a customer call, vendor pitch, partner alignment, contractor onboarding, or any conversation where one side represents a different organization counts as external and you MUST draft the follow-up."
+            followUpConstraint = "Empty clientFollowUp only for purely internal team meetings — when in doubt, draft one."
+        }
+
         return topDirective + """
         You write structured notes from meeting transcripts for a busy
         founder. The transcript may contain partial sentences,
@@ -220,7 +242,7 @@ enum SummaryPrompt {
           "actionItems": [
             "Imperative next step. If the transcript identifies the owner (someone said 'I'll send the X' or another participant assigned it to them), prefix with the owner's name or role and a colon: 'Maria: send the contract by Thursday'. Otherwise just the imperative."
           ],
-          "clientFollowUp": "Ready-to-send follow-up message a client / vendor / partner could receive. Second person, polite-professional, 80-180 words. STRUCTURE AS 2-4 SHORT PARAGRAPHS SEPARATED BY A BLANK LINE (\\n\\n). Suggested shape: (1) one-line opener acknowledging the meeting / thanks for time; (2) short paragraph recapping what was discussed / agreed; (3) explicit next concrete step(s) with owner and timeline; (4) optional one-line sign-off only if it adds something (a question, an offer to follow up). Do NOT cram everything into one wall of text — short paragraphs are the whole point. Only return an empty string if the meeting was a purely internal team sync with NO external party — a customer call, vendor pitch, partner alignment, contractor onboarding, or any conversation where one side represents a different organization counts as external and you MUST draft the follow-up."
+          "clientFollowUp": "Ready-to-send follow-up message a client / vendor / partner could receive. Second person, polite-professional, 80-180 words. STRUCTURE AS 2-4 SHORT PARAGRAPHS SEPARATED BY A BLANK LINE (\\n\\n). Suggested shape: (1) one-line opener acknowledging the meeting / thanks for time; (2) short paragraph recapping what was discussed / agreed; (3) explicit next concrete step(s) with owner and timeline; (4) optional one-line sign-off only if it adds something (a question, an offer to follow up). Do NOT cram everything into one wall of text — short paragraphs are the whole point. \(followUpGate)"
         }
 
         Constraints:
@@ -240,8 +262,7 @@ enum SummaryPrompt {
             is so short (<30 seconds of substantive content) that an
             outline would be padding; in that case put the gist in
             `summary` and leave `sections: []`.
-          - Empty clientFollowUp only for purely internal team
-            meetings — when in doubt, draft one.
+          - \(followUpConstraint)
 
         Polarity / framing rules:
           - DON'T flip the polarity of an answer. If the customer
