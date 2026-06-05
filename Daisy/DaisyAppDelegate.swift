@@ -88,6 +88,49 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         false
     }
 
+    /// Guard Quit against an in-progress recording. If the user quits
+    /// (⌘Q, menu, or the widget's "Quit Daisy") while capture is live,
+    /// confirm first — and on confirm, finalize the session so the audio
+    /// archive + transcript-so-far are saved before the process exits.
+    /// Without this, `NSApp.terminate` kills the process immediately and
+    /// the in-progress recording is lost.
+    ///
+    /// Note: this is the QUIT path only. Closing the main window does not
+    /// reach here — Daisy keeps running in the menu bar / floating widget
+    /// (see `applicationShouldTerminateAfterLastWindowClosed`).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let session = RecordingSession.current,
+              session.status == .recording || session.status == .paused else {
+            return .terminateNow
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Daisy is still recording"
+        alert.informativeText =
+            "Quit and save this recording? Daisy will finalize the audio and transcript captured so far."
+        alert.addButton(withTitle: "Save & Quit")   // .alertFirstButtonReturn
+        alert.addButton(withTitle: "Cancel")         // .alertSecondButtonReturn
+
+        // Bring Daisy forward so the modal isn't lost behind other apps
+        // (the user is likely in another window when they hit ⌘Q).
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return .terminateCancel
+        }
+
+        // Defer termination until the session has persisted the audio
+        // archive + transcript.md. `stop()` writes those synchronously and
+        // kicks the summary off detached; the summary won't finish before
+        // we exit, but the recording is saved and re-summarizable from the
+        // Library on next launch.
+        Task { @MainActor in
+            await session.stop()
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     // MARK: - UNUserNotificationCenterDelegate
 
     /// Show the banner even when Daisy is the frontmost app — by

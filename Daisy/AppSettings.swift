@@ -82,6 +82,18 @@ final class AppSettings {
         didSet { defaults.set(dictationLocale, forKey: Self.k_dictationLocale) }
     }
 
+    /// EXPERIMENTAL: use Parakeet (FluidAudio, on-device) instead of
+    /// Whisper for the DICTATION final pass. Streaming transducer on the
+    /// Neural Engine — much lower decode latency; multilingual incl. RU.
+    /// Default off — ships dark for A/B. Flip via:
+    ///   defaults write app.essazanov.Daisy daisy.dictationUseParakeet -bool YES
+    /// First enable triggers a one-time ~600 MB model download. Falls back
+    /// to Whisper automatically on error / empty / very short clips. See
+    /// research note 2026-06-04-dictation-latency-optimization.
+    var dictationUseParakeet: Bool {
+        didSet { defaults.set(dictationUseParakeet, forKey: Self.k_dictationUseParakeet) }
+    }
+
     /// Global meeting-recorder hotkey (mode = .meeting). `.none`
     /// disables. Stored in UserDefaults as JSON (struct, not enum
     /// any more). This is the original Daisy hotkey from 1.0.x.
@@ -737,6 +749,8 @@ final class AppSettings {
         // pinned dictation/voice-note explicitly.
         self.voiceNoteLocale = defaults.string(forKey: Self.k_voiceNoteLocale) ?? ""
         self.dictationLocale = defaults.string(forKey: Self.k_dictationLocale) ?? ""
+        // Defaults to false (Whisper) when the key is absent.
+        self.dictationUseParakeet = defaults.bool(forKey: Self.k_dictationUseParakeet)
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will
@@ -1006,6 +1020,7 @@ final class AppSettings {
     private static let k_defaultTranscriptionLocale = "daisy.defaultTranscriptionLocale"
     private static let k_voiceNoteLocale = "daisy.voiceNoteLocale"
     private static let k_dictationLocale = "daisy.dictationLocale"
+    private static let k_dictationUseParakeet = "daisy.dictationUseParakeet"
     private static let k_recordHotkey = "daisy.recordHotkey"
     private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
     private static let k_dictationHotkey = "daisy.dictationHotkey"
