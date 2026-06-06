@@ -10,10 +10,11 @@
 //  will cover that case by reacting to scheduled meeting events
 //  rather than process launches.
 //
-//  The detector also debounces — if Zoom is already running when
-//  Daisy starts, we DON'T auto-start (we treat that as "the user is
-//  already in a meeting they don't want recorded"). Only NEW launches
-//  during Daisy's lifetime trigger auto-start.
+//  Only NEW launches during Daisy's lifetime trigger auto-start: if
+//  Zoom is already running when Daisy starts we DON'T auto-start (the
+//  user is treated as already in a meeting they didn't ask to record).
+//  NSWorkspace's didLaunchApplicationNotification gives us that for
+//  free — it only fires for launches after the observer is installed.
 //
 
 import AppKit
@@ -47,26 +48,18 @@ final class MeetingDetector {
 
     private var observer: NSObjectProtocol?
     private var onMeetingStart: ((String) -> Void)?
-    /// Debounce window before acting on a launch (Talat's "detection
-    /// delay"). Captured from `AppSettings.recordingDetectionDelaySec`
-    /// at `start()` time.
-    private var detectionDelaySec: Double = 1.0
-    /// In-flight debounce tasks keyed by bundle id, so we can cancel a
-    /// pending fire if the app quits during the delay window and avoid
-    /// stacking duplicates if the same app fires several launch
-    /// notifications in quick succession.
-    private var pendingFires: [String: Task<Void, Never>] = [:]
 
     private init() {}
 
     /// Begin watching for meeting-app launches. Replaces any existing
-    /// observer. `detectionDelaySec` is the debounce before the callback
-    /// fires — after a launch we wait this long and only proceed if the
-    /// app is STILL running (swallows a brief open-then-close blip, an
-    /// app self-relaunch during an update, etc.).
-    func start(detectionDelaySec: Double = 1.0, onMeetingStart: @escaping (String) -> Void) {
+    /// observer. Fires the callback immediately when a known meeting app
+    /// launches — no debounce (the old user-tunable "detection delay" was
+    /// removed in 1.0.7.16; a rare false start is undone via the
+    /// "Recording started · Stop & save" banner). Only NEW launches during
+    /// Daisy's lifetime trigger it — `didLaunchApplicationNotification`
+    /// never fires for apps already running when the observer is installed.
+    func start(onMeetingStart: @escaping (String) -> Void) {
         stop()
-        self.detectionDelaySec = max(0, detectionDelaySec)
         self.onMeetingStart = onMeetingStart
         observer = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didLaunchApplicationNotification,
@@ -83,33 +76,9 @@ final class MeetingDetector {
             // queue but the closure capture context isn't isolated.
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.scheduleFire(bundleID: bundleID, pid: app.processIdentifier)
+                self.lastDetected = bundleID
+                self.onMeetingStart?(bundleID)
             }
-        }
-    }
-
-    /// Debounced fire. Waits `detectionDelaySec`, then confirms the app
-    /// (matched by pid) is still running before invoking the callback.
-    /// A second launch notification for the same bundle id while one is
-    /// pending replaces it (no stacking).
-    private func scheduleFire(bundleID: String, pid: pid_t) {
-        pendingFires[bundleID]?.cancel()
-        let delay = detectionDelaySec
-        pendingFires[bundleID] = Task { @MainActor [weak self] in
-            if delay > 0 {
-                try? await Task.sleep(for: .seconds(delay))
-            }
-            guard !Task.isCancelled, let self else { return }
-            self.pendingFires[bundleID] = nil
-            // Still running? A momentary blip (open → immediate quit)
-            // won't survive the delay. Match on pid so an app that
-            // quit-and-relaunched isn't mistaken for the original.
-            let stillRunning = NSRunningApplication
-                .runningApplications(withBundleIdentifier: bundleID)
-                .contains { $0.processIdentifier == pid && !$0.isTerminated }
-            guard stillRunning else { return }
-            self.lastDetected = bundleID
-            self.onMeetingStart?(bundleID)
         }
     }
 
@@ -119,8 +88,6 @@ final class MeetingDetector {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             self.observer = nil
         }
-        for (_, task) in pendingFires { task.cancel() }
-        pendingFires.removeAll()
         onMeetingStart = nil
     }
 

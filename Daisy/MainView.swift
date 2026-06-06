@@ -75,6 +75,10 @@ enum SettingsTab: String, Hashable, Sendable {
     /// to the top-level Connections destination and what remained
     /// drifted toward "general app preferences" — hence the rename.
     case general
+    /// Recording behavior — input device, hotkeys, meeting auto-record,
+    /// and Daisy's on-screen presence (menu bar + floating widget).
+    /// Split out of the overloaded General tab in 1.0.7.16.
+    case recording
     case transcription
     case summary
     /// System privacy permissions Daisy interacts with — Microphone,
@@ -91,11 +95,13 @@ enum SettingsTab: String, Hashable, Sendable {
 ///
 /// Calendar dropped in 1.0.4 — EventKit permission moved to
 /// Settings → Permissions and behaviour toggles to Settings →
-/// General. Notion dropped in 1.0.5 — destination of the same
-/// class as the sessions folder, so it lives in Settings → General
-/// → Storage now (inline DisclosureGroup for advanced fields).
-/// Google Calendar OAuth UI is dormant pre-verification; when it
-/// returns it'll come back as its own case here.
+/// General. Notion briefly lived in Settings → General → Storage
+/// (1.0.5) but came back to Connections in 1.0.7.16 — it's an
+/// outbound send-to destination, so it renders as a "Notion" Section
+/// at the top of the Auto-routing tab rather than getting its own
+/// `ConnectionSection` case. Google Calendar OAuth UI is dormant
+/// pre-verification; when it returns it'll come back as its own case
+/// here.
 enum ConnectionSection: String, Hashable, Sendable {
     case mcpServer
     case autoRouting
@@ -632,9 +638,6 @@ private struct AutoStartWiring: ViewModifier {
                 ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
             }
             .onChange(of: settings.autoStartPromptMode) { _, _ in
-                ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
-            }
-            .onChange(of: settings.recordingDetectionDelaySec) { _, _ in
                 ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
             }
             .onChange(of: settings.autoStartFromCalendar) { _, _ in

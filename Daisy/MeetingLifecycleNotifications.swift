@@ -200,7 +200,7 @@ enum AutoStartPromptNotification {
     /// Toast-based equivalent of the banner for the notifications-denied
     /// case. "Record" runs the same broadcast the banner action would.
     static func postToastFallback(subject: String) {
-        let label = subject.isEmpty ? "a call" : subject
+        let label = subject.isEmpty ? "a meeting" : subject
         ToastCenter.shared.showAction(
             "Detected \(label) — record it?",
             actionLabel: "Record",
@@ -222,9 +222,9 @@ enum AutoStartPromptNotification {
 
     private static func addRequest(subject: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Record this call?"
+        content.title = "Record this meeting?"
         content.body = subject.isEmpty
-            ? "Daisy detected a call. Record it?"
+            ? "Daisy detected a meeting. Record it?"
             : "Daisy detected \"\(subject)\". Record it?"
         content.sound = .default
         content.categoryIdentifier = categoryID

@@ -175,8 +175,8 @@ struct RecordCapsule: View {
         switch session.status {
         case .recording:    return "Pause (Space)"
         case .paused:       return "Resume (Space)"
-        case .idle:         return "Record a new session (Space)"
-        case .finished:     return "Record another session (Space)"
+        case .idle:         return "Start a new recording (Space)"
+        case .finished:     return "Record again (Space)"
         case .failed:       return "Try recording again"
         default:            return ""
         }

@@ -110,6 +110,12 @@ final class CalendarService {
     private var storeChangeObserver: NSObjectProtocol?
     private var pollTimer: Timer?
     private var firedEventIDs: Set<String> = []
+    /// Events with a precise one-shot start timer armed but not yet
+    /// fired. Prevents a poll tick from arming the same event twice.
+    private var scheduledEventIDs: Set<String> = []
+    /// Live one-shot start timers keyed by event localID, so they can
+    /// be invalidated on stop()/disable.
+    private var fireTimers: [String: Timer] = [:]
 
     private var onMeetingStart: ((DaisyMeeting) -> Void)?
     private var lookaheadHours: Int = 24
@@ -292,6 +298,9 @@ final class CalendarService {
         }
         pollTimer?.invalidate()
         pollTimer = nil
+        for t in fireTimers.values { t.invalidate() }
+        fireTimers.removeAll()
+        scheduledEventIDs.removeAll()
         onMeetingStart = nil
         upcomingMeetings = []
         upcomingEvents = []
@@ -414,28 +423,102 @@ final class CalendarService {
 
     // MARK: - "Meeting starting now" tick
 
+    /// Lead time before a meeting's scheduled start at which Daisy
+    /// begins recording. Small and fixed so the recording reliably
+    /// catches the opening words without a long pre-roll of dead air.
+    private static let autoStartLeadSec: TimeInterval = 5
+    /// How far ahead of the precise fire moment a poll tick will arm
+    /// the one-shot timer. Must be ≥ the 15s poll interval so no
+    /// meeting can slip between two consecutive ticks unarmed.
+    private static let autoStartArmHorizonSec: TimeInterval = 20
+    /// Don't auto-start a meeting whose scheduled start is already
+    /// more than this far in the past (app launched/woke too late).
+    private static let autoStartLateGraceSec: TimeInterval = 120
+
     private func tick() {
-        guard autoStartEnabled, let onMeetingStart else { return }
+        guard autoStartEnabled, onMeetingStart != nil else { return }
 
         let now = Date()
         for meeting in upcomingMeetings {
-            guard !firedEventIDs.contains(meeting.localID) else { continue }
-            let delta = meeting.startDate.timeIntervalSince(now)
-            // Fire window: from -120s (caught running 2 min late) to
-            // +30s (about to start). Past 2 min late, the user gets a
-            // separate UI banner — see notes in research log — but we
-            // don't surface that here, only fire the silent auto-
-            // record path.
-            if delta <= 30 && delta >= -120 {
-                firedEventIDs.insert(meeting.localID)
-                onMeetingStart(meeting)
+            let id = meeting.localID
+            guard !firedEventIDs.contains(id), !scheduledEventIDs.contains(id)
+            else { continue }
+
+            // Precise fire moment: a few seconds before the calendar
+            // start, so the recording reliably catches the opening.
+            let target = meeting.startDate
+                .addingTimeInterval(-Self.autoStartLeadSec)
+            let untilTarget = target.timeIntervalSince(now)
+
+            if untilTarget <= 0 {
+                // Target already reached → fire immediately as a
+                // catch-up (app launched or woke mid-window), unless
+                // we're absurdly late (>2 min past the scheduled
+                // start), in which case suppress so a stale event
+                // can't auto-record on a later tick.
+                if meeting.startDate.timeIntervalSince(now)
+                    >= -Self.autoStartLateGraceSec {
+                    fireMeeting(meeting)
+                } else {
+                    firedEventIDs.insert(id)
+                }
+            } else if untilTarget <= Self.autoStartArmHorizonSec {
+                // Arm a precise one-shot timer for the exact moment,
+                // so the start lands at startDate − lead to the second
+                // rather than being quantized to the 15s poll.
+                scheduledEventIDs.insert(id)
+                let timer = Timer(fire: target, interval: 0,
+                                  repeats: false) { [weak self] t in
+                    t.invalidate()
+                    Task { @MainActor [weak self] in
+                        self?.firePrescheduled(id)
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                fireTimers[id] = timer
             }
+            // else: too far out; a closer tick will arm it.
         }
+    }
+
+    /// Fire a meeting whose precise timer has elapsed. Re-validates
+    /// against the live upcoming list — the event may have moved or
+    /// been cancelled between arming and firing.
+    private func firePrescheduled(_ id: String) {
+        fireTimers[id] = nil
+        scheduledEventIDs.remove(id)
+        guard autoStartEnabled, !firedEventIDs.contains(id) else { return }
+        guard let meeting = upcomingMeetings.first(where: { $0.localID == id })
+        else { return }
+        // If the event was pushed well into the future after arming,
+        // don't fire now — a later tick will re-arm at the new time.
+        if meeting.startDate.timeIntervalSinceNow
+            > Self.autoStartArmHorizonSec { return }
+        fireMeeting(meeting)
+    }
+
+    /// Common fire path: mark fired, drop any pending timer, invoke
+    /// the auto-record callback.
+    private func fireMeeting(_ meeting: DaisyMeeting) {
+        let id = meeting.localID
+        firedEventIDs.insert(id)
+        scheduledEventIDs.remove(id)
+        fireTimers[id]?.invalidate()
+        fireTimers[id] = nil
+        onMeetingStart?(meeting)
     }
 
     // MARK: - Hot-reconfigure (no need to stop/start)
 
-    func setAutoStart(_ enabled: Bool) { autoStartEnabled = enabled }
+    func setAutoStart(_ enabled: Bool) {
+        autoStartEnabled = enabled
+        guard !enabled else { return }
+        // Disabling: tear down any armed start timers so a meeting
+        // can't auto-record after the user turned auto-start off.
+        for t in fireTimers.values { t.invalidate() }
+        fireTimers.removeAll()
+        scheduledEventIDs.removeAll()
+    }
 
     // MARK: - Menu-bar label for next event
 

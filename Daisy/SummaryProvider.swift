@@ -124,7 +124,7 @@ enum SummaryProviderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey(let p):
-            return "\(p): API key is missing. Open Settings → Summary Provider to add it."
+            return "\(p): API key is missing. Open Settings → Summary to add it."
         case .invalidResponse(let p):
             return "\(p): unexpected response from the API."
         case .httpError(let p, let code, let body):

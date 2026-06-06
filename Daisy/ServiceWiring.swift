@@ -79,9 +79,9 @@ enum ServiceWiring {
     /// (NSWorkspace-based — fires when Zoom / Teams / Meet etc. is
     /// launched). `enabled` is the derived `settings.autoStartOnMeeting`
     /// substrate flag (ON for Always / Prompt, OFF for Selective /
-    /// Manual). The detector debounces by `recordingDetectionDelaySec`,
-    /// and when `autoStartPromptMode` is on it asks before recording
-    /// instead of starting directly.
+    /// Manual). The detector fires immediately on a known app's launch;
+    /// when `autoStartPromptMode` is on it asks before recording instead
+    /// of starting directly.
     ///
     /// We deliberately do NOT call `session.start()` when a session
     /// is already recording or paused. Previously the call slipped
@@ -102,9 +102,7 @@ enum ServiceWiring {
             return
         }
         let promptMode = settings.autoStartPromptMode
-        MeetingDetector.shared.start(
-            detectionDelaySec: settings.recordingDetectionDelaySec
-        ) { [weak session] bundleID in
+        MeetingDetector.shared.start { [weak session] bundleID in
             Task { @MainActor in
                 guard let session else { return }
                 let appName = MeetingDetector.displayName(for: bundleID)

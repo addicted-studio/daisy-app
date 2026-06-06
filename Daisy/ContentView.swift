@@ -368,7 +368,7 @@ struct ContentView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Finish the session: run the final transcribe, save markdown, and (if enabled) summarize.")
+        .help("Finish the recording: run the final transcribe, save markdown, and (if enabled) summarize.")
     }
 
     /// Calendar pull-down — lets the user bind this session to an
@@ -1072,7 +1072,7 @@ struct ContentView: View {
 
             Divider()
 
-            Button("New session", role: .destructive) {
+            Button("New recording", role: .destructive) {
                 session.reset()
                 selectedMeeting = nil
                 lastNotionURL = nil
