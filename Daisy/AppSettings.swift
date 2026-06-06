@@ -194,20 +194,6 @@ final class AppSettings {
         didSet { defaults.set(autoStartPromptMode, forKey: Self.k_autoStartPromptMode) }
     }
 
-    /// Debounce window, in seconds, before Daisy acts on detected
-    /// meeting activity (an app launch). Talat calls this the
-    /// "detection delay". A brief Zoom open-then-close, or a meeting app
-    /// relaunching itself during an update, shouldn't kick off a
-    /// recording — we wait this long and only start if the trigger is
-    /// still valid (app still running, no session already live).
-    /// Default 1.0s — long enough to swallow a momentary blip, short
-    /// enough that a real "join the call" feels instant. Applies to the
-    /// NSWorkspace app-launch path; the calendar path is already
-    /// debounced by its 15s poll + fire window so it doesn't use this.
-    var recordingDetectionDelaySec: Double {
-        didSet { defaults.set(recordingDetectionDelaySec, forKey: Self.k_recordingDetectionDelaySec) }
-    }
-
     /// Transient (not persisted): true iff `autoStartPolicy` was loaded
     /// from an explicit stored value at init, vs. derived from the
     /// legacy bools. Gates the one-shot end-of-init substrate reconcile
@@ -927,11 +913,6 @@ final class AppSettings {
         }
         self.didLoadStoredAutoStartPolicy = hadStoredPolicy
         self.autoStartPromptMode = defaults.object(forKey: Self.k_autoStartPromptMode) as? Bool ?? false
-        // Talat-parity detection delay. Default 1.0s (matches Talat's
-        // own default) — enough to swallow a momentary app blip without
-        // making a real "join" feel laggy.
-        let storedDelay = defaults.object(forKey: Self.k_recordingDetectionDelaySec) as? Double
-        self.recordingDetectionDelaySec = storedDelay ?? 1.0
         // Default ON: `object(forKey:)` returns nil for unset keys, so
         // `as? Bool ?? true` picks up explicit user choices (true OR
         // false) and falls through to true only on a clean install.
@@ -1027,7 +1008,6 @@ final class AppSettings {
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
     private static let k_autoStartPolicy = "daisy.autoStartPolicy"
     private static let k_autoStartPromptMode = "daisy.autoStartPromptMode"
-    private static let k_recordingDetectionDelaySec = "daisy.recordingDetectionDelaySec"
     private static let k_silencePromptsEnabled = "daisy.silencePromptsEnabled"
     private static let k_notifyOnAutoStart = "daisy.notifyOnAutoStart"
     private static let k_notifyOnAutoStop = "daisy.notifyOnAutoStop"
@@ -1088,13 +1068,15 @@ enum AutoStartPolicy: String, CaseIterable, Identifiable, Sendable {
 
     nonisolated var id: String { rawValue }
 
-    /// Short label for the segmented control.
+    /// Short label for the auto-start selector (the pop-up menu in
+    /// Settings → Auto-start). Plain-language names — what Daisy records,
+    /// not the internal policy word.
     nonisolated var displayName: String {
         switch self {
-        case .always:    return "Always"
-        case .selective: return "Selective"
-        case .prompt:    return "Prompt"
-        case .manual:    return "Manual"
+        case .always:    return "All meetings"
+        case .selective: return "Meetings with a link"
+        case .prompt:    return "Ask me first"
+        case .manual:    return "Off"
         }
     }
 }

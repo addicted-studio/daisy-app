@@ -106,7 +106,9 @@ struct DaisyWidget: View {
 
             ZStack {
                 Circle()
-                    .fill(Color(red: 0.07, green: 0.07, blue: 0.085))
+                    // Widget backing disc — #1C1A17 (warm near-black,
+                    // matches Daisy's dark surface; was a cooler #121216).
+                    .fill(Color(red: 28.0 / 255, green: 26.0 / 255, blue: 23.0 / 255))
 
                 ForEach(0..<petalCount, id: \.self) { i in
                     let petalAngle = Double(i) * 360.0 / Double(petalCount)

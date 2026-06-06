@@ -36,24 +36,101 @@ struct SelectableTextView: NSViewRepresentable {
         self.font = font
     }
 
-    /// Build the display string. The transcript body is markdown whose only
-    /// inline markup is `**bold**` around the `[time · speaker]` labels
-    /// (see MarkdownExporter). We render those as real bold and DROP the
-    /// `**` markers, preserving every newline — so the in-app transcript
-    /// reads cleanly instead of showing literal asterisks, while the on-disk
-    /// .md and the Copy button keep the markdown form. Implementation: split
-    /// on `**` and bold the odd-index pieces (the exporter always emits
-    /// balanced pairs, so the marker count is even and parity is stable).
-    /// `enumerated()` indices come before the empty-skip, so parity holds.
+    /// Build the display string. The transcript body is lightweight markdown
+    /// (see MarkdownExporter): document-level `#`/`##`/`###` headings, `>`
+    /// block-quotes, and inline `**bold**` around the `[time · speaker]`
+    /// labels. We render headings as larger bold text, block-quotes in a
+    /// secondary colour, and the inline `**…**` as real bold — DROPPING every
+    /// marker so the in-app transcript reads like a formatted document
+    /// instead of showing literal `#`, `>` and `*` characters. The on-disk
+    /// .md and the Copy button keep the raw markdown form.
+    ///
+    /// Done line-by-line: the heading/quote prefix is matched per line, and
+    /// `**` parity is evaluated WITHIN each line (the exporter emits balanced
+    /// pairs per line, so the odd-index pieces are the bold ones). Fonts are
+    /// computed once up front, not per line.
     private func attributedText() -> NSAttributedString {
-        let boldFont = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
-        let normal: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.labelColor]
-        let bold: [NSAttributedString.Key: Any] = [.font: boldFont, .foregroundColor: NSColor.labelColor]
+        let bodyBold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        func sized(_ scale: CGFloat) -> NSFont {
+            NSFont(descriptor: bodyBold.fontDescriptor, size: font.pointSize * scale) ?? bodyBold
+        }
+        let h1 = sized(1.5), h2 = sized(1.28), h3 = sized(1.13)
+
         let result = NSMutableAttributedString()
-        for (i, part) in text.components(separatedBy: "**").enumerated() where !part.isEmpty {
-            result.append(NSAttributedString(string: part, attributes: i.isMultiple(of: 2) ? normal : bold))
+        let lines = text.components(separatedBy: "\n")
+        for (idx, rawLine) in lines.enumerated() {
+            var content = rawLine
+            var lineFont = font
+            var lineBoldFont = bodyBold
+            var wholeLineBold = false
+            var color = NSColor.labelColor
+
+            // Line-level markdown: strip the marker, style the whole line.
+            // Longer prefixes are tested first so `##` doesn't match as `#`.
+            if content.hasPrefix("### ") {
+                content = String(content.dropFirst(4)); lineFont = h3; lineBoldFont = h3; wholeLineBold = true
+            } else if content.hasPrefix("## ") {
+                content = String(content.dropFirst(3)); lineFont = h2; lineBoldFont = h2; wholeLineBold = true
+            } else if content.hasPrefix("# ") {
+                content = String(content.dropFirst(2)); lineFont = h1; lineBoldFont = h1; wholeLineBold = true
+            } else if content.hasPrefix("> ") {
+                content = String(content.dropFirst(2)); color = .secondaryLabelColor
+            } else if content == ">" {
+                content = ""; color = .secondaryLabelColor
+            } else {
+                // Bullets / checkboxes / images (present when the body
+                // carries an AI summary or screenshots). Transcript lines
+                // start with "[time · speaker]" and pass through untouched.
+                content = Self.renderListMarkers(content)
+            }
+
+            let normalAttrs: [NSAttributedString.Key: Any] = [.font: lineFont, .foregroundColor: color]
+            let boldAttrs: [NSAttributedString.Key: Any] = [.font: lineBoldFont, .foregroundColor: color]
+            for (i, seg) in content.components(separatedBy: "**").enumerated() where !seg.isEmpty {
+                let useBold = wholeLineBold || !i.isMultiple(of: 2)
+                result.append(NSAttributedString(string: seg, attributes: useBold ? boldAttrs : normalAttrs))
+            }
+            // Re-insert the newline between lines (base font keeps inter-line
+            // spacing uniform even after a large heading).
+            if idx < lines.count - 1 {
+                result.append(NSAttributedString(string: "\n", attributes: [.font: font]))
+            }
         }
         return result
+    }
+
+    /// Convert markdown list/image markers to glyphs, preserving indentation:
+    /// `- [ ] x`→`☐ x`, `- [x] x`→`☑ x`, `- x`→`• x`, `![alt](url)`→`🖼 alt`.
+    /// Any other line is returned unchanged. Inline `**bold**` is applied by
+    /// the caller afterwards. (The on-disk .md keeps the raw markers.)
+    private static func renderListMarkers(_ line: String) -> String {
+        let spaceCount = line.prefix(while: { $0 == " " }).count
+        let indent = String(repeating: " ", count: spaceCount)
+        let rest = String(line.dropFirst(spaceCount))
+        if rest.hasPrefix("- ") {
+            let item = String(rest.dropFirst(2))
+            if item.hasPrefix("[ ] ") { return indent + "☐ " + String(item.dropFirst(4)) }
+            if item.hasPrefix("[x] ") || item.hasPrefix("[X] ") { return indent + "☑ " + String(item.dropFirst(4)) }
+            return indent + "• " + item
+        }
+        if rest.hasPrefix("!["), let bracket = rest.firstIndex(of: "]") {
+            let alt = String(rest[rest.index(rest.startIndex, offsetBy: 2)..<bracket])
+            return indent + (alt.isEmpty ? "🖼" : "🖼 " + alt)
+        }
+        return line
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    /// Remembers the last source text + font actually rendered, so
+    /// `updateNSView` rebuilds only on a real change. We deliberately do NOT
+    /// gate on `nsView.string`/`nsView.font`: once the text storage holds
+    /// mixed fonts (headings + body), AppKit's `NSTextView.font` getter
+    /// returns nil, which would never equal the base `font` and force a full
+    /// attributed rebuild on every layout pass of a long transcript.
+    final class Coordinator {
+        var lastText: String?
+        var lastFont: NSFont?
     }
 
     func makeNSView(context: Context) -> NSTextView {
@@ -104,27 +181,31 @@ struct SelectableTextView: NSViewRepresentable {
         // SwiftUI Text has no equivalent.
         tv.usesFindBar = true
         tv.isIncrementalSearchingEnabled = true
-        // Bold the `**…**` labels (markers stripped) — see attributedText().
+        // Render markdown (headings/quotes/bold, markers stripped) — see
+        // attributedText(). Record what we rendered for the update gate.
         tv.textStorage?.setAttributedString(attributedText())
+        context.coordinator.lastText = text
+        context.coordinator.lastFont = font
         return tv
     }
 
     func updateNSView(_ nsView: NSTextView, context: Context) {
-        // Compare against the rendered (marker-stripped) plain text so we
-        // only rebuild when content or font actually changed.
-        let renderedPlain = text.replacingOccurrences(of: "**", with: "")
-        if nsView.string != renderedPlain || nsView.font != font {
-            nsView.font = font
-            nsView.textStorage?.setAttributedString(attributedText())
-            // Force layout-manager flush so the next sizeThatFits call reads
-            // a fresh usedRect (otherwise a transcript that grew mid-session
-            // — e.g. live append — could measure against stale glyph ranges
-            // and underflow).
-            if let lm = nsView.layoutManager, let tc = nsView.textContainer {
-                lm.ensureLayout(for: tc)
-            }
-            nsView.invalidateIntrinsicContentSize()
+        // Rebuild only when the SOURCE text or font actually changed — see
+        // Coordinator for why we don't compare nsView.string/font.
+        guard context.coordinator.lastText != text
+            || context.coordinator.lastFont != font else { return }
+        context.coordinator.lastText = text
+        context.coordinator.lastFont = font
+        nsView.font = font
+        nsView.textStorage?.setAttributedString(attributedText())
+        // Force layout-manager flush so the next sizeThatFits call reads
+        // a fresh usedRect (otherwise a transcript that grew mid-session
+        // — e.g. live append — could measure against stale glyph ranges
+        // and underflow).
+        if let lm = nsView.layoutManager, let tc = nsView.textContainer {
+            lm.ensureLayout(for: tc)
         }
+        nsView.invalidateIntrinsicContentSize()
     }
 
     /// Intrinsic sizing — tell SwiftUI how tall to make us for a given

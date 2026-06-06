@@ -30,20 +30,15 @@ struct SettingsView: View {
     @Bindable private var googleAccount = GoogleAccountStore.shared
 
     @State private var summaryTestResult: TestResult = .idle
-    @State private var notionTestResult: TestResult = .idle
-    /// Drives the modal sheet that holds the secret / parent-id /
-    /// parent-type / Test connection fields. Pre-1.0.5.4 this lived
-    /// inside a DisclosureGroup inline in the Storage section, which
-    /// pushed the rest of the form down and left a visible empty
-    /// row when collapsed. Sheet keeps the row compact.
-    @State private var showingNotionSettings = false
-
-    enum TestResult: Equatable {
-        case idle
-        case testing
-        case success(String)
-        case failure(String)
-    }
+    // Notion destination config (token / parent / auto-send / Test
+    // connection) moved to the top-level Connections page →
+    // Auto-routing tab in 1.0.7.16 — it's an external send-to
+    // destination, the same class as the MCP integrations that
+    // already live there, not local recorder behaviour. Its @State
+    // (notionTestResult / showingNotionSettings), views, and helpers
+    // now live in ConnectionsView. The shared `TestResult` enum was
+    // hoisted to file scope (bottom of this file) so both this view's
+    // Summary test and Connections' Notion test can reference it.
 
     /// Last summary produced by Test summary — drives the preview
     /// block that shows up after a successful run. Cleared on each
@@ -116,7 +111,12 @@ struct SettingsView: View {
                 // drifted into general-prefs territory and the label
                 // followed. Mic icon stays — most rows are still
                 // audio-recording-adjacent.
-                .tabItem { Label("General", systemImage: "mic") }
+                .tabItem { Label("General", systemImage: "gearshape") }
+                .scrollContentBackground(.hidden)
+
+            recordingTab
+                .tag(SettingsTab.recording)
+                .tabItem { Label("Recording", systemImage: "mic") }
                 .scrollContentBackground(.hidden)
 
             transcriptionTab
@@ -354,7 +354,7 @@ struct SettingsView: View {
         // the same Form. Cleaner without them.
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Sessions folder")
+                Text("Recordings folder")
                     .font(.callout.weight(.medium))
                 Text(storageDisplayPath)
                     .font(.caption)
@@ -395,24 +395,6 @@ struct SettingsView: View {
     private var storageDisplayPath: String {
         SessionsFolder.userFolderDisplayPath()
             ?? SessionsFolder.defaultContainerLabel
-    }
-
-    /// Caption under "Delete audio after" — flips wording per option
-    /// so the user reads the right justification for whichever mode
-    /// they've chosen. "After transcription" needs a different
-    /// sentence than "24 hours" (no time-based framing makes sense).
-    /// All variants honor the no-trailing-period brand rule.
-    private var retentionCaptionText: String {
-        switch settings.audioRetentionDays {
-        case AppSettings.audioRetentionDoNotRecord:
-            return "Audio never touches your disk. Daisy transcribes from the live mic stream and discards each buffer as soon as it's been through Whisper. Strongest privacy posture — but if Daisy crashes mid-meeting, the transcript is lost too, and you can't re-run transcription with a better model later. Transcripts, summaries and screenshots still save normally"
-        case AppSettings.audioRetentionDeleteAfterTranscription:
-            return "Audio deletes as soon as the transcript and summary are written. Transcripts, summaries and screenshots stay forever — audio is the heavy part"
-        case 0:
-            return "Daisy never deletes audio. Transcripts, summaries and screenshots also stay forever"
-        default:
-            return "Daisy deletes the audio recording once a session is this old. Transcripts, summaries and screenshots stay forever — audio is the heavy part"
-        }
     }
 
     // MARK: - Notion destination (under Storage)
@@ -547,325 +529,19 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private var notionDestinationRow: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text("Notion")
-                        .font(.callout.weight(.medium))
-                    notionStatusBadge
-                }
-                Text(notionRowCaption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-            // Gear opens the modal with secret / parent-id / parent-
-            // type / Test connection. Pre-1.0.5.4 those lived in an
-            // inline DisclosureGroup, which pushed Storage section
-            // down and left a visible empty row when collapsed.
-            Button {
-                showingNotionSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.borderless)
-            .help("Notion settings")
-            Toggle("", isOn: $settings.autoSendNotion)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(!settings.hasNotionCredentials || settings.lastNotionTestPassedAt == nil)
-                .help(notionToggleHelp)
-        }
-        .sheet(isPresented: $showingNotionSettings) {
-            notionSettingsSheet
-                .frame(minWidth: 520, minHeight: 460)
-        }
-
-        // Folder filter — appears when auto-send is on, so a power
-        // user can scope auto-push to e.g. "Work" folder and keep
-        // personal voice notes off Notion.
-        if settings.autoSendNotion {
-            folderFilterPicker(
-                title: "Only from folders",
-                selection: Binding(
-                    get: { settings.autoSendNotionFolders },
-                    set: { settings.autoSendNotionFolders = $0 }
-                )
-            )
-        }
-    }
-
-    /// Modal sheet with the full Notion configuration — secret,
-    /// parent id, parent type, Test connection. Replaced the prior
-    /// inline DisclosureGroup in 1.0.5.4. Keeps the Storage section
-    /// tight and pushes the field wall out of the main settings
-    /// scroll, which matches what users expect from a macOS sheet.
-    @ViewBuilder
-    private var notionSettingsSheet: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.text")
-                            .foregroundStyle(.secondary)
-                            .font(.title3)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Notion")
-                                .font(.headline)
-                            Text("Send finished sessions into a Notion page or database.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        notionStatusBadge
-                    }
-
-                    LabeledContent {
-                        SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
-                            .textFieldStyle(.roundedBorder)
-                            .labelsHidden()
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity)
-                    } label: {
-                        labelWithCaption("Integration secret",
-                                         caption: "Paste your Notion integration secret.")
-                    }
-
-                    LabeledContent {
-                        TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
-                            .textFieldStyle(.roundedBorder)
-                            .labelsHidden()
-                            .multilineTextAlignment(.leading)
-                            .frame(maxWidth: .infinity)
-                    } label: {
-                        labelWithCaption("Parent ID",
-                                         caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
-                    }
-
-                    LabeledContent {
-                        // pickerStyle(.menu) instead of .segmented:
-                        // macOS 26.2 ships an Apple-side UAF in the Swift
-                        // concurrency ↔ AppKit bridge that crashes any
-                        // SwiftUI Picker(.segmented) on layout (it routes
-                        // through SystemSegmentedControl, an NSSegmentedControl
-                        // wrapper — same UAF family as the NavigationSplitView
-                        // sidebar toggle we removed in build 33). 2 options
-                        // fit the menu naturally in this LabeledContent
-                        // trailing slot. Restore .segmented post-26.x once
-                        // Apple ships the fix.
-                        Picker("", selection: $settings.notionParentKind) {
-                            Text("Page").tag("page")
-                            Text("Database").tag("database")
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .fixedSize()
-                    } label: {
-                        labelWithCaption("Parent type",
-                                         caption: "Page — Daisy adds the session as a child page underneath. Database — adds a row (title column must be named \"Name\").")
-                    }
-
-                    HStack {
-                        notionTestStatusView
-                        Spacer()
-                        Button("Test connection") {
-                            Task { await testNotion() }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color.daisyAccent)
-                        .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
-                    }
-
-                    Text("Make an internal integration at notion.so/profile/integrations, then share the parent page or database with it. Test creates a probe page you can delete.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(20)
-            }
-            Divider()
-            HStack {
-                Spacer()
-                Button("Done") {
-                    showingNotionSettings = false
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(16)
-        }
-        .background(Color.daisyBgPrimary)
-    }
-
-    /// Right-of-title badge — same vocabulary as the old section
-    /// header in Connections so returning users recognise the state.
-    @ViewBuilder
-    private var notionStatusBadge: some View {
-        if settings.hasNotionCredentials && settings.lastNotionTestPassedAt != nil {
-            Text("Connected")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(Color.daisySuccess)
-        } else if settings.hasNotionCredentials {
-            Text("Needs test")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(Color.daisyWarning)
-        }
-    }
-
-    /// Caption text under the Notion title — flips depending on
-    /// config state. Three meaningful states: unconfigured (call to
-    /// action), configured-but-untested (warning to test first),
-    /// configured-and-tested (passive confirmation).
-    private var notionRowCaption: String {
-        // 2026-05-25 — UX copy pass found that two of these strings
-        // referenced "below", which was true when the Notion deep
-        // config lived in a DisclosureGroup right under this row.
-        // The 1.0.5.4 move pulled that config into a modal sheet
-        // opened from a gear button on the same row, so "below"
-        // became factually wrong — there is no longer anything
-        // below to configure. Rewritten to point at the gear, and
-        // verb-aligned across the three states ("send" vs the old
-        // mixed "push" / "pushes").
-        if !settings.hasNotionCredentials {
-            return "Send finished sessions to Notion as a child page or a database row. Set it up in the gear."
-        }
-        if settings.lastNotionTestPassedAt == nil {
-            return "Run Test connection in the gear first — auto-send only turns on once it passes."
-        }
-        return "Sends each session to Notion the moment you stop recording."
-    }
-
-    private var notionToggleHelp: String {
-        if !settings.hasNotionCredentials {
-            return "Open Notion settings in the gear first."
-        }
-        if settings.lastNotionTestPassedAt == nil {
-            return "Run Test connection before enabling auto-send."
-        }
-        return "Auto-send finished sessions to Notion."
-    }
-
-    @ViewBuilder
-    private var notionTestStatusView: some View {
-        switch notionTestResult {
-        case .idle:             StatusBadge(state: .idle)
-        case .testing:          StatusBadge(state: .busy)
-        case .success(let m):   StatusBadge(state: .ok, message: m)
-        case .failure(let m):   StatusBadge(state: .err, message: m)
-        }
-    }
-
-    private func testNotion() async {
-        notionTestResult = .testing
-        let probe = MeetingExportData(
-            title: "Daisy — Connection test",
-            summary: nil,
-            transcriptChunks: ["This page was created by Daisy as a connection test. You can safely delete it."],
-            durationSeconds: 0,
-            locale: "en",
-            startedAt: Date()
-        )
-        do {
-            let url = try await NotionExporter.shared.createMeetingPage(probe)
-            notionTestResult = .success("Test page created in Notion.")
-            // Mark proven-working — the auto-send toggle's enabled
-            // gate flips only after this timestamp exists.
-            settings.lastNotionTestPassedAt = Date()
-            NSWorkspace.shared.open(url)
-        } catch {
-            notionTestResult = .failure("Couldn't reach Notion — \(error.localizedDescription)")
-        }
-    }
-
-    /// Folder-filter picker for "Only from folders" — visible only
-    /// when auto-send is ON. Multi-select via Menu so the row stays
-    /// compact regardless of how many folders the user has.
-    @ViewBuilder
-    private func folderFilterPicker(
-        title: String,
-        selection: Binding<Set<String>>
-    ) -> some View {
-        let folders = FolderStore.shared.allFolders
-        Menu {
-            Button {
-                selection.wrappedValue = []
-            } label: {
-                if selection.wrappedValue.isEmpty {
-                    Label("All folders", systemImage: "checkmark")
-                } else {
-                    Text("All folders")
-                }
-            }
-            Divider()
-            ForEach(folders) { folder in
-                Button {
-                    var current = selection.wrappedValue
-                    if current.contains(folder.slug) {
-                        current.remove(folder.slug)
-                    } else {
-                        current.insert(folder.slug)
-                    }
-                    selection.wrappedValue = current
-                } label: {
-                    if selection.wrappedValue.contains(folder.slug) {
-                        Label(folder.name, systemImage: "checkmark")
-                    } else {
-                        Text(folder.name)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                Text(title)
-                Text("·")
-                    .foregroundStyle(.tertiary)
-                Text(folderFilterSummary(selection.wrappedValue, allFolders: folders))
-                    .foregroundStyle(.secondary)
-            }
-            .font(.callout)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    private func folderFilterSummary(_ slugs: Set<String>, allFolders: [SessionFolder]) -> String {
-        if slugs.isEmpty { return "All folders" }
-        let names = allFolders.filter { slugs.contains($0.slug) }.map(\.name)
-        if names.count == 1 { return names[0] }
-        if names.count <= 3 { return names.joined(separator: ", ") }
-        return "\(names.count) folders"
-    }
-
-    /// Label + caption stacked vertically in the LEADING column of
-    /// a `LabeledContent` row. Keeps the input alone in the
-    /// trailing column — which (1) lets every trailing field share
-    /// the same width regardless of caption length, and (2) lets a
-    /// segmented Picker stay on the same row as its label instead
-    /// of falling into Form's two-line fallback.
-    @ViewBuilder
-    private func labelWithCaption(_ title: String, caption: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-            Text(caption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    // Integrations (Notion + MCP destinations + default-destination
-    // picker) and the MCP server tab live in the `Connections`
-    // sidebar destination — see ConnectionsView.swift. The helpers
-    // that supported them (testNotion, integrationRow, mcpStatusRow,
-    // folderFilterPicker, autoSendNotionCaption, …) live alongside
-    // them there. Calendar behaviour toggles came back to Settings →
-    // General in 1.0.4, sitting next to the auto-start trigger they
-    // conceptually neighbour; the EventKit grant + status badge are
-    // in Settings → Permissions.
+    // Notion destination (row + auto-send toggle + folder filter +
+    // the credentials/parent/Test-connection sheet) moved to the
+    // top-level Connections page → Auto-routing tab in 1.0.7.16 —
+    // it's an external send-to destination, the same class as the MCP
+    // integrations already there, not local recorder behaviour. The
+    // views (notionDestinationRow / notionSettingsSheet /
+    // notionStatusBadge / notionTestStatusView), copy (notionRowCaption
+    // / notionToggleHelp), the testNotion() probe, and the
+    // folder-filter + labelWithCaption helpers that only Notion used
+    // now live in ConnectionsView. Calendar behaviour toggles came
+    // back to Settings → General in 1.0.4, sitting next to the
+    // auto-start trigger they conceptually neighbour; the EventKit
+    // grant + status badge are in Settings → Permissions.
 
     // MARK: - General
 
@@ -907,95 +583,31 @@ struct SettingsView: View {
                 Text("Profile")
             }
 
-            // ── Group 1: Audio & devices ──────────────────────
-            // What's coming in and what cues the user hears.
-            // Mic picker + system-audio toggle + sound cues fit
-            // under one mental model ("audio I/O of the recorder").
-            Section {
-                micPickerRow
-                Toggle(isOn: $settings.captureSystemAudio) {
-                    Text("Capture system audio")
-                    Text("Records the other side of meetings (Zoom, Meet, Telegram). macOS will ask for Screen & System Audio Recording permission the first time.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Toggle(isOn: $settings.recordingSoundsEnabled) {
-                    Text("Play sound on start, pause, and stop")
-                    Text("Quiet macOS system sounds (Tink / Pop / Glass) on recording transitions. Volume tuned so the cue doesn't get picked up by your own mic.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Audio & devices")
-            }
+            // (Audio/mic, Shortcuts, Meetings, and the floating widget
+            // moved to the new "Recording" tab in 1.0.7.16. General is now
+            // app-level prefs: Profile, Storage, Privacy, Notifications.)
 
-            // ── Group 2: Storage ──────────────────────────────
-            // Two destinations live side-by-side: the on-disk folder
-            // (Daisy/Sessions) and an optional Notion push. They're
-            // the same logical category ("where finished meetings
-            // go") so keeping them in one Section is the right
-            // mental model. Notion's deep config (secret + parent ID
-            // + test) hides in a DisclosureGroup so the row isn't
-            // overwhelming for users who'll never wire Notion up.
+            // ── Group 2: Storage / Privacy ────────────────────
+            // Split (1.0.7.16) from one "Storage" section that conflated
+            // three things: where files live, the retention/privacy
+            // choice, and the optional Notion export.
             Section {
                 storageRow
-                // 2026-05-25 footer rewrite — old "Older recordings
-                // stay where they were" got misread by testers as
-                // "old recordings will be deleted." New phrasing
-                // makes the future-vs-already-recorded split
-                // explicit, and tightens the inventory list at the
-                // same time.
-                Text("Future recordings land in a `Daisy/Sessions` folder here — audio, transcripts, summaries and screenshots together. Anything you've already recorded stays where it is.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                clearAudioCacheRow
+            } header: {
+                Text("Storage")
+            }
 
-                // Retention picker — wrapped in the same HStack +
-                // leading-icon shape as `storageRow` /
-                // `clearAudioCacheRow` / `notionDestinationRow`.
-                // Pre-2026-05-25 this used a stock `Picker(label:
-                // VStack(...))` with no leading icon, which broke
-                // the row rhythm in this Section (folder icon /
-                // [nothing] / trash icon / doc icon). Now every
-                // row carries an 18pt leading icon, the section
-                // reads as one cohesive list. Icon
-                // `clock.arrow.circlepath` is the SF Symbols
-                // vocabulary for retention / TTL / auto-erase —
-                // the same glyph macOS Mail uses for its
-                // auto-erase preference.
-                //
-                // Caption also rewrites — old version leaked the
-                // `.caf` filename (engineering noise users don't
-                // care about). New version names what changes on
-                // disk without the implementation detail.
+            Section {
+                // Retention / privacy posture. "Don't record audio" is the
+                // strongest stance; the rest are a time-to-live. Per-session
+                // purge fires from RecordingSession.finalizePostStop; the
+                // time options are swept by AudioRetentionSweep.
                 HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Delete audio after")
-                            .font(.callout.weight(.medium))
-                        Text(retentionCaptionText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text("Delete audio after")
+                        .font(.callout.weight(.medium))
                     Spacer()
-                    // 2026-05-25 — added "After transcription" as the
-                    // first option (tag = sentinel -1). New-install
-                    // default per AppSettings. Per-session purge fires
-                    // from RecordingSession.finalizePostStop once the
-                    // pipeline is done with the audio — no timer
-                    // involved. Existing "24h / 7d / 30d / Forever"
-                    // options preserved so power users (legal,
-                    // journalists, anyone who re-summarizes from
-                    // audio later) keep the same control they had.
                     Picker("", selection: $settings.audioRetentionDays) {
-                        // Don't record at all — strongest privacy
-                        // posture, pattern (d) from the 2026-05-28
-                        // competitor audit. Whisper still works
-                        // (live in-memory PCM stream), the on-disk
-                        // .caf archive is just skipped. Trade-off:
-                        // no crash recovery, no re-transcription
-                        // later. Aimed at users in regulated
-                        // environments and the "I just want
-                        // notes, not recordings" majority.
                         Text("Don't record audio")
                             .tag(AppSettings.audioRetentionDoNotRecord)
                         Text("After transcription")
@@ -1009,242 +621,155 @@ struct SettingsView: View {
                     .pickerStyle(.menu)
                     .fixedSize()
                     .onChange(of: settings.audioRetentionDays) { _, new in
-                        // Apply immediately so the user sees disk freed
-                        // without waiting for next launch. -1 is a
-                        // per-session mode (kicks in on the next
-                        // finished session); runIfNeeded no-ops it
-                        // safely — past sessions aren't surprise-
-                        // deleted, the user can hit Clear if they
-                        // want a hard reset.
                         AudioRetentionSweep.runIfNeeded(retentionDays: new)
                     }
                 }
-
-                clearAudioCacheRow
-
-                // Dropped explicit Divider() that used to sit
-                // between clearAudioCacheRow and notionDestinationRow
-                // — Form's native row separators are enough, and the
-                // extra divider was reading as an "empty content gap"
-                // visually (Egor flagged 2026-05-25). Once we split
-                // this Section into "Sessions folder" / "Send to"
-                // (post-launch refactor) the separator becomes a
-                // proper Section gap automatically.
-
-                notionDestinationRow
             } header: {
-                Text("Storage")
+                Text("Privacy")
             }
 
-            // ── Group 3a: Shortcuts ───────────────────────────
-            // Three independent hotkeys — one per recording mode.
-            // Each row offers BOTH the recorder ("Press keys…")
-            // and a preset Menu — the preset is the only way to
-            // bind Fn / 🌐 globe, F-keys without conflicts, etc.
-            // without fighting macOS event delivery quirks.
-            Section {
-                shortcutRow(
-                    title: "Record a meeting",
-                    caption: "Tap once to start, tap again to pause / resume.",
-                    binding: $settings.recordHotkey
-                )
-                shortcutRow(
-                    title: "Voice note",
-                    caption: "Tap once to start, tap again to stop. Saves into Notes, no LLM summary.",
-                    binding: $settings.voiceNoteHotkey
-                )
-                shortcutRow(
-                    title: "Dictation (hold)",
-                    caption: "Hold to talk, release to paste. Needs Accessibility permission.",
-                    binding: $settings.dictationHotkey
-                )
-            } header: {
-                Text("Shortcuts")
-            } footer: {
-                Text("Combos must include ⌘ / ⌃ / ⌥, a bare function key (F1–F20), or the globe Fn key.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
+            // (Notion "Send to" moved to the Connections page in 1.0.7.16
+            // — it's an external destination, not local storage. Shortcuts
+            // and Meetings moved to the new "Recording" tab.)
 
-            // ── Group 3a: Auto-start ──────────────────────────
-            // Talat-parity 4-mode policy (1.0.7.9), replacing the old
-            // pair of independent "Start when a meeting app opens" /
-            // "Start at the scheduled meeting time" toggles. Daisy
-            // detects calls two ways — a meeting app launching (Zoom /
-            // Teams / Webex / Telegram / Discord) and a calendar event
-            // with a Zoom/Meet/Teams/Webex link beginning — and this
-            // single control decides what to do when it does.
-            Section {
-                Picker("When Daisy detects a call", selection: $settings.autoStartPolicy) {
-                    ForEach(AutoStartPolicy.allCases) { policy in
-                        Text(policy.displayName).tag(policy)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                // Per-mode explainer so the segmented control's one-word
-                // labels are unambiguous. Mirrors Talat's wording in
-                // Daisy's voice.
-                Text(autoStartPolicyHelp)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                // Detection delay (debounce) — only meaningful when a
-                // detector is actually armed (any mode except Manual).
-                if settings.autoStartPolicy != .manual {
-                    Stepper(value: $settings.recordingDetectionDelaySec, in: 0...10, step: 0.5) {
-                        HStack {
-                            Text("Detection delay")
-                            Spacer(minLength: 8)
-                            Text(String(format: "%.1f s", settings.recordingDetectionDelaySec))
-                                .monospaced()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Text("How long Daisy waits after a meeting app opens before responding, so a momentary launch (or an app relaunching itself) doesn't kick off a recording. Doesn't affect calendar-timed starts.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Auto-start")
-            } footer: {
-                if !hasAnyCalendarSource && settings.autoStartPolicy == .selective {
-                    Text("Selective records only calendar meetings, which needs calendar access in Settings → Permissions. Until then nothing will auto-start.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            // ── Group 3b: Meetings ────────────────────────────
-            // Everything else about how meetings stop / surface.
-            // Auto-start moved into its own section above (1.0.7.9).
-            Section {
-                Toggle(isOn: $settings.autoStopFromCalendar) {
-                    Text("Stop when the meeting wraps up")
-                    Text("After a calendar event's end time, Daisy waits a grace period and then stops once the call has gone quiet — so a meeting that runs over isn't cut off mid-sentence. A toast 30 s before lets you keep going.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .disabled(!hasAnyCalendarSource)
-
-                if settings.autoStopFromCalendar {
-                    Picker("Grace period", selection: $settings.autoStopGraceSec) {
-                        Text("On the dot").tag(0)
-                        Text("1 min").tag(60)
-                        Text("2 min").tag(120)
-                        Text("5 min").tag(300)
-                        Text("10 min").tag(600)
-                        Text("15 min").tag(900)
-                        Text("30 min").tag(1800)
-                        Text("1 hour").tag(3600)
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(!hasAnyCalendarSource)
-
-                    Text("How long after the scheduled end Daisy waits before it can stop. Also the rejoin window: leave and come back inside it and the two stretches are saved as one recording.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle(isOn: $settings.menuBarShowsNextMeeting) {
-                    Text("Show next meeting in the menu bar")
-                    Text("Adds the next event's time + title (\"14:30 · Q3 Review\") next to Daisy's menu-bar icon. Hidden during recording so the active session stays the focus.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .disabled(!hasAnyCalendarSource)
-
-                Toggle(isOn: $settings.showSessionAfterStop) {
-                    Text("Open the session window when recording stops")
-                    Text("Switches to History and shows the just-recorded session the moment you stop. The transcript is visible immediately; the summary fades in as soon as the LLM finishes (usually 15–30 seconds).")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Meetings")
-            } footer: {
-                if !hasAnyCalendarSource {
-                    Text("Calendar-based toggles need access in Settings → Permissions. Daisy reads via macOS EventKit, which picks up iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else {
-                    Text("Calendar source: macOS EventKit — picks up iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            // ── Group 4: While recording ──────────────────────
-            // What Daisy does and surfaces during a session beyond
-            // notifications. Floating widget visibility, screenshots.
-            // (Notifications were pulled out into their own Section
-            // in 1.0.5 so the user can per-toggle the three banner
-            // classes from one place.)
-            Section {
-                Toggle(isOn: $settings.floatingWidgetEnabled) {
-                    Text("Show floating recorder on top of other windows")
-                    Text("Small mark above your apps while recording. Tap to pause; right-click for Stop & save.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle(isOn: $settings.screenshotsEnabled) {
-                    Text("Capture screenshots periodically")
-                    Text("Useful for tracking shared screens or slides. Saved alongside the transcript.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                if settings.screenshotsEnabled {
-                    Stepper(value: $settings.screenshotIntervalSec, in: 15...600, step: 15) {
-                        HStack {
-                            Text("Every")
-                            Text("\(settings.screenshotIntervalSec) s")
-                                .monospaced()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            } header: {
-                Text("While recording")
-            }
-
-            // ── Group 5: Notifications ────────────────────────
+            // ── Notifications ─────────────────────────────────
             // Per-class toggles for every macOS banner Daisy posts.
             // Surface the user can flip individual notifications off
             // without affecting the rest — common case is "I want
             // auto-start confirmation but the silence prompt feels
             // nannying", or vice versa.
             Section {
+                // Sound cues on start/pause/stop. Moved here from "Audio &
+                // devices" in 1.0.7.16 (the only audio cue, fits with the
+                // notification toggles).
+                Toggle("Notification sounds", isOn: $settings.recordingSoundsEnabled)
+
                 Toggle(isOn: $settings.notifyOnAutoStart) {
                     Text("Recording started")
-                    Text("Banner when a calendar event auto-starts Daisy. Includes a Stop & save action if you didn't want that meeting tracked.")
+                    Text("When a meeting auto-starts, with a Stop & save action.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Toggle(isOn: $settings.notifyOnAutoStop) {
                     Text("Meeting ended — saved")
-                    Text("Confirmation banner when the calendar event ends and Daisy auto-stops + saves the recording.")
+                    Text("When a meeting auto-stops and saves.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Toggle(isOn: $settings.silencePromptsEnabled) {
                     Text("Long silence")
-                    Text("After 3 min of silence (or 5 min on pause) Daisy asks whether to keep going. Includes Stop & save / Keep recording actions.")
+                    Text("After a long quiet stretch, asks whether to keep going.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Notifications")
-            } footer: {
-                Text("macOS-level banners. You can also tune Daisy's notification style in System Settings → Notifications → Daisy.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
 
             // Auto-summary lives in the Summary tab — it sits next
             // to the provider config it depends on.
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: - Recording tab (split out of General, 1.0.7.16)
+
+    private var recordingTab: some View {
+        recordingTabForm
+            .task { refreshMicDevices() }
+    }
+
+    private var recordingTabForm: some View {
+        Form {
+            // ── Audio input ───────────────────────────────────
+            Section {
+                micPickerRow
+            } header: {
+                Text("Audio")
+            }
+
+            // ── Shortcuts ─────────────────────────────────────
+            // One hotkey per recording mode. Each row offers the
+            // recorder ("Press keys…") AND a preset Menu — the preset is
+            // the only reliable way to bind Fn / 🌐 / F-keys on macOS.
+            Section {
+                shortcutRow(
+                    title: "Record a meeting",
+                    caption: "Tap once to start, tap again to pause / resume",
+                    binding: $settings.recordHotkey
+                )
+                shortcutRow(
+                    title: "Voice note",
+                    caption: "Tap once to start, tap again to stop",
+                    binding: $settings.voiceNoteHotkey
+                )
+                shortcutRow(
+                    title: "Dictation",
+                    caption: "Hold to talk, release to paste",
+                    binding: $settings.dictationHotkey
+                )
+            } header: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Shortcuts")
+                    Text("Combos must include ⌘ / ⌃ / ⌥, a bare function key (F1–F20), or the globe Fn key.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .textCase(nil)
+                }
+            }
+
+            // ── Meetings ──────────────────────────────────────
+            Section {
+                Picker("Auto-record", selection: $settings.autoStartPolicy) {
+                    ForEach(AutoStartPolicy.allCases) { policy in
+                        Text(policy.displayName).tag(policy)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Toggle("Record the other side", isOn: $settings.captureSystemAudio)
+
+                // Applies to every recording (not just meetings) → ungated,
+                // above the calendar-only row.
+                Toggle("Open the session window when recording stops", isOn: $settings.showSessionAfterStop)
+
+                // Calendar-only. Merged on/off + grace: -1 → off, 0 → stop
+                // at the scheduled end, 300 → 5 min after (the grace also
+                // doubles as the rejoin window).
+                Picker("Stop when the meeting ends", selection: autoStopSelection) {
+                    Text("Off").tag(-1)
+                    Text("At the scheduled end").tag(0)
+                    Text("5 minutes after").tag(300)
+                }
+                .pickerStyle(.menu)
+                .disabled(!hasAnyCalendarSource)
+            } header: {
+                Text("Meetings")
+            } footer: {
+                if !hasAnyCalendarSource {
+                    Text("Calendar-based options need access in Settings → Permissions. Daisy reads via macOS Calendar — iCloud, Exchange, and any Google accounts you've added to Calendar.app.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            // ── Menu bar & widget ─────────────────────────────
+            // Daisy's on-screen presence. (Floating widget moved here from
+            // "Audio & devices"; "Show next meeting" from "Meetings" — both
+            // are about how visible Daisy is, not audio I/O.)
+            Section {
+                Toggle("Floating widget", isOn: $settings.floatingWidgetEnabled)
+                Toggle("Show next meeting in the menu bar", isOn: $settings.menuBarShowsNextMeeting)
+                    .disabled(!hasAnyCalendarSource)
+            } header: {
+                Text("Menu bar & widget")
+            } footer: {
+                if !hasAnyCalendarSource {
+                    Text("Showing the next meeting needs calendar access in Settings → Permissions.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
         }
         .formStyle(.grouped)
     }
@@ -1331,20 +856,25 @@ struct SettingsView: View {
         systemPermissions.calendar == .granted || googleAccount.isConnected
     }
 
-    /// Per-mode explainer under the auto-start segmented control.
-    /// Mirrors Talat's Always / Selective / Prompt / Manual wording in
-    /// Daisy's voice.
-    private var autoStartPolicyHelp: String {
-        switch settings.autoStartPolicy {
-        case .always:
-            return "Records every call automatically — when a meeting app (Zoom, Teams, Webex, Telegram, Discord) opens, or a calendar meeting begins."
-        case .selective:
-            return "Records only your scheduled meetings — calendar events with a Zoom/Meet/Teams/Webex link. Opening a meeting app for an unscheduled call won't start a recording."
-        case .prompt:
-            return "Detects calls the same way, but asks first — you get a “Record this call?” notification with Record / Ignore."
-        case .manual:
-            return "Never starts on its own. You begin every recording with the Record button or your hotkey."
-        }
+    /// One selector standing in for the old auto-stop toggle + grace
+    /// picker. -1 = off; otherwise on, with the value as the grace (also
+    /// the rejoin window). A stored grace that isn't one of the offered
+    /// options shows as "5 minutes after" until the user re-picks.
+    private var autoStopSelection: Binding<Int> {
+        Binding(
+            get: {
+                guard settings.autoStopFromCalendar else { return -1 }
+                return settings.autoStopGraceSec == 0 ? 0 : 300
+            },
+            set: { newValue in
+                if newValue < 0 {
+                    settings.autoStopFromCalendar = false
+                } else {
+                    settings.autoStopFromCalendar = true
+                    settings.autoStopGraceSec = newValue
+                }
+            }
+        )
     }
 
     // MARK: - Transcription (Whisper)
@@ -1365,8 +895,8 @@ struct SettingsView: View {
                             ? String(format: "%.1f GB", Double(model.sizeMB) / 1000.0)
                             : "\(model.sizeMB) MB"
                         let name = model.id == WhisperEngine.defaultModelID
-                            ? "Default" : "Highest Accuracy"
-                        Text("\(name) (\(size))").tag(model.id)
+                            ? "Standard" : "Most accurate"
+                        Text("\(name) · \(size)").tag(model.id)
                     }
                 } label: {
                     transcriptionRowLabel(
@@ -1378,8 +908,8 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
 
                 Picker(selection: $settings.dictationUseParakeet) {
-                    Text("Default (Included)").tag(false)
-                    Text("Faster (600 MB)").tag(true)
+                    Text("Standard").tag(false)
+                    Text("Faster · 600 MB").tag(true)
                 } label: {
                     transcriptionRowLabel(
                         "Dictation engine",
@@ -1394,6 +924,16 @@ struct SettingsView: View {
                 // download indicator.
                 .onChange(of: settings.dictationUseParakeet) { _, useParakeet in
                     if useParakeet { Task { await ParakeetEngine.shared.ensureLoaded() } }
+                    // Re-scan models on disk now so the "Models" row and
+                    // "Remove unused" reflect the new engine immediately
+                    // (the Parakeet model becomes used/unused right away),
+                    // instead of only after the next Settings open.
+                    cacheRefreshTick &+= 1
+                }
+                .onChange(of: parakeet.isReady) { _, _ in
+                    // Parakeet finished downloading/loading → refresh the
+                    // models size + count without waiting for a reopen.
+                    cacheRefreshTick &+= 1
                 }
                 .onAppear {
                     if settings.dictationUseParakeet, !parakeet.isReady {
@@ -1423,8 +963,8 @@ struct SettingsView: View {
                 // and dictation always runs live regardless of this.
                 Picker("Live transcript", selection: $settings.liveTranscriptionTier) {
                     Text("Off").tag(LiveTranscriptionTier.off)
-                    Text("Default").tag(LiveTranscriptionTier.lite)
-                    Text("Full (uses more memory)").tag(LiveTranscriptionTier.full)
+                    Text("Standard").tag(LiveTranscriptionTier.lite)
+                    Text("Full · uses more memory").tag(LiveTranscriptionTier.full)
                 }
                 .pickerStyle(.menu)
             } header: {
@@ -1463,19 +1003,15 @@ struct SettingsView: View {
                 // The option names alone are self-explanatory; no
                 // example-name parenthesis either — they overloaded
                 // the row with internal-jargon proper nouns.
-                // pickerStyle(.radioGroup) instead of .inline:
-                // macOS 26.2 ships an Apple-side UAF in the Swift
-                // concurrency ↔ AppKit bridge that crashes SwiftUI
-                // Picker(.inline) on macOS — .inline routes through
-                // SystemSegmentedControl (NSSegmentedControl wrapper),
-                // same UAF family as the NavigationSplitView sidebar
-                // toggle we removed in build 33. Reproduced on build 36
-                // when the user hit start → silent recording → restart
-                // and the picker re-laid out mid-cycle. .radioGroup uses
-                // real NSButtons (NOT NSCell-backed), which is the only
-                // discrete-select macOS picker style not on any 26.x UAF
-                // stack. Visual change: stacked radios instead of a
-                // segmented row — actually reads more "settings" anyway.
+                // pickerStyle(.menu): dropdowns (NSPopUpButton), matching
+                // every other picker in this form (1.0.7.16 — was
+                // .radioGroup). DO NOT switch these to .inline / .segmented:
+                // that routes through NSSegmentedControl, which hits a macOS
+                // 26.2 use-after-free in the Swift-concurrency↔AppKit bridge
+                // and crashes when the picker re-lays-out mid-cycle (repro'd
+                // build 36: start → silent recording → restart). Both .menu
+                // (popup) and .radioGroup (real NSButtons) are off that UAF
+                // stack; we use .menu for form consistency.
                 //
                 // Labels renamed 2026-05-28 from "Split"/"Two sides" to
                 // "Per speaker"/"Me vs. others" because the original
@@ -1487,62 +1023,50 @@ struct SettingsView: View {
                 Picker(selection: $settings.diarizeRemoteSpeakers) {
                     Text("Per speaker")
                         .tag(true)
-                    Text("Me vs. others")
+                    Text("Me and others")
                         .tag(false)
                 } label: {
                     Text("Speakers in transcript")
                 }
-                .pickerStyle(.radioGroup)
+                .pickerStyle(.menu)
 
-                Toggle(isOn: $settings.diarizeMicrophone) {
-                    Text("Diarize microphone too")
-                    Text("Splits voices in your mic into Speaker A / B instead of one \"Me\". Use when remote people are heard through your speakers")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Toggle(isOn: $settings.suppressAcousticEcho) {
-                    Text("Suppress acoustic echo")
-                    Text("Drops mic-side lines that look like echoes of the remote audio (happens when you play meetings through speakers instead of headphones). Sequential matches in a 2-second window — single quoted lines are kept")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Diarization")
-            }
-
-            // Model status was its own Section here in 1.0.5.4 —
-            // 1.0.5.5 inlined the badge + Reload into the Model
-            // section above for parity with Summary's layout.
-
-            Section {
-                modelsCacheRow
-            } header: {
-                Text("Models")
-            }
-
-            // Speaker matching — how aggressively Daisy applies a
-            // known speaker (by voice fingerprint and/or calendar
-            // attendee email) to a new recording. Default Automatic
-            // (the behaviour every build before 1.0.7.10 had), with
-            // Suggest + Off as new opt-in modes. Sits above the
-            // profile list because it governs how that list is USED.
-            Section {
+                // Moved in from the old "Speaker matching" section (merged
+                // 1.0.7.16). Same .menu style as the rest of the form.
                 Picker(selection: $settings.speakerMatchMode) {
                     ForEach(SpeakerMatchMode.allCases) { mode in
                         Text(mode.displayName).tag(mode)
                     }
                 } label: {
-                    Text("Match known speakers")
+                    Text("Name known people")
                 }
-                .pickerStyle(.radioGroup)
+                .pickerStyle(.menu)
                 Text(speakerMatchModeHelp)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Toggle(isOn: $settings.diarizeMicrophone) {
+                    Text("Split voices in my mic")
+                    Text("When other people are heard through your speakers, label them separately instead of all as “Me.”")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Toggle(isOn: $settings.suppressAcousticEcho) {
+                    Text("Remove echo from my mic")
+                    Text("Drops lines your mic catches as an echo when a meeting plays through your speakers instead of headphones.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             } header: {
-                Text("Speaker matching")
+                Text("Speakers")
             }
+
+            // "Match known speakers" moved into the merged "Speakers"
+            // section above (1.0.7.16) as "Name known people".
+            // "Models" cache section moved BELOW "Known speakers"
+            // (1.0.7.16) — it's disk maintenance, was splitting the two
+            // speaker sections.
 
             // Known speakers — persistent voice profiles store. Lets
             // the user inspect what biometric derivatives Daisy has
@@ -1559,6 +1083,14 @@ struct SettingsView: View {
                 Text("After you name a speaker in a transcript (e.g. \"Alex\"), Daisy stores a short voice fingerprint locally and auto-labels them in future recordings. Open a speaker to add their email (so calendar invites match them too) or notes. Fingerprints never leave your Mac. Forget anytime.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+            }
+
+            // On-disk model cache (maintenance) — kept last on the tab,
+            // after the speaker content it used to interrupt.
+            Section {
+                modelsCacheRow
+            } header: {
+                Text("Models")
             }
         }
         .formStyle(.grouped)
@@ -1639,10 +1171,9 @@ struct SettingsView: View {
         let id: UUID
     }
 
-    /// Per-mode explainer under the speaker-match picker. Mirrors the
-    /// `autoStartPolicyHelp` idiom (one sentence per mode, Daisy's
-    /// plain voice). DEFAULT is Automatic — preserve the long-standing
-    /// behaviour, so its copy reads as "the normal thing".
+    /// Per-mode explainer under the speaker-match picker — one sentence
+    /// per mode in Daisy's plain voice. DEFAULT is Automatic — preserve
+    /// the long-standing behaviour, so its copy reads as "the normal thing".
     private var speakerMatchModeHelp: String {
         switch settings.speakerMatchMode {
         case .automatic:
@@ -1855,7 +1386,7 @@ struct SettingsView: View {
                 // Status (and its Refresh) ride at the header level, right-
                 // aligned — same idea as the Transcription badges.
                 HStack(spacing: 8) {
-                    Text("Provider")
+                    Text("Summary provider")
                     Spacer()
                     StatusBadge(state: summarizerBadgeState, message: summarizerStatusText)
                     Button("Refresh") {
@@ -1900,7 +1431,7 @@ struct SettingsView: View {
                         .foregroundStyle(Color.daisyWarning)
                 }
             } header: {
-                Text("Summary")
+                Text("Summary output")
             }
         }
         .formStyle(.grouped)
@@ -2374,6 +1905,21 @@ struct SettingsView: View {
 
     // About content lives in `AboutView.swift` — promoted out of
     // Settings tabs into a top-level sidebar section.
+}
+
+/// Result of a "Test connection / Test summary" probe — drives the
+/// inline StatusBadge next to the Test button. Hoisted to file scope
+/// (1.0.7.16) from a nested `SettingsView.TestResult` when the Notion
+/// destination config moved to ConnectionsView: SettingsView's Summary
+/// test (`summaryTestResult`) and ConnectionsView's Notion test
+/// (`notionTestResult`) both reference it now, and a private nested
+/// enum wouldn't be visible across the two files. Single definition —
+/// do not duplicate.
+enum TestResult: Equatable {
+    case idle
+    case testing
+    case success(String)
+    case failure(String)
 }
 
 #Preview {

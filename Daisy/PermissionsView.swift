@@ -82,7 +82,7 @@ struct PermissionsView: View {
 
             permissionRow(
                 title: "Calendar (Apple)",
-                caption: "Auto-starts recording at meeting times via EventKit",
+                caption: "Auto-starts recording at meeting times",
                 iconName: "calendar",
                 isRequired: false,
                 status: permissions.calendar,
@@ -189,7 +189,7 @@ struct PermissionsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("Read-only access to your events — scope: calendar.readonly")
+                    Text("Read-only access to your calendar events")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

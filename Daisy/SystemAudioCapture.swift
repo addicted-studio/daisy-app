@@ -654,7 +654,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             // remote side captured.
             state = .stopped
             ToastCenter.shared.show(
-                "Output changed and Daisy couldn't restart system audio capture. Stop & restart the session if you need the remote side recorded.",
+                "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it.",
                 style: .warning
             )
         }
@@ -714,8 +714,8 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
                 silenceWarningFired = true
                 let neverGotAudio = !hasReceivedAudio
                 let msg = neverGotAudio
-                    ? "System audio capture is on but no sound is reaching Daisy. The remote side won't be recorded — check your output device (Bluetooth headphones can't be captured on macOS)."
-                    : "System audio went silent — the remote side may not be recording anymore. Check your output device."
+                    ? "Daisy isn't hearing the other side — they won't be recorded. Check your output device (Bluetooth headphones can't be captured on macOS)."
+                    : "The other side went silent and may not be recording anymore. Check your output device."
                 log.warning("Silent SCStream detected after \(Int(silentDuration), privacy: .public)s (hasReceivedAudio=\(self.hasReceivedAudio, privacy: .public))")
                 ToastCenter.shared.show(msg, style: .warning)
                 return
@@ -737,7 +737,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             silentContentWarningFired = true
             log.warning("Silent-content system capture: buffers arriving but nothing audible after \(Int(now.timeIntervalSince(captureStartedAt)), privacy: .public)s")
             ToastCenter.shared.show(
-                "System audio is being captured but contains no sound — the remote side won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording.",
+                "Daisy is capturing the other side but there's no sound in it — they won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording.",
                 style: .warning
             )
         }
@@ -857,9 +857,21 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
                 self.peakLevelDB = peak
                 self.lastSampleAt = Date()
                 self.hasReceivedAudio = true
+                // Buffers are flowing → clear the "no buffers at all"
+                // warning so the status reflects live state, not a past
+                // stall. It re-fires only if delivery stops again ≥30s.
+                self.silenceWarningFired = false
                 if peak > Self.audibleFloorDB {
                     self.lastAudibleSampleAt = Date()
                     self.receivedAudibleAudio = true
+                    // Real audible content arrived → the remote side IS
+                    // being captured. Clear the silent-content warning so
+                    // the "Only your voice — couldn't reach the other
+                    // side" banner disappears the moment the other party
+                    // speaks. It can't re-fire: path 2 in
+                    // checkForSilentCapture() requires !receivedAudibleAudio,
+                    // which is now permanently true for this session.
+                    self.silentContentWarningFired = false
                 }
             }
         }

@@ -180,9 +180,9 @@ struct HomeView: View {
                 .font(.title3)
                 .foregroundStyle(Color.daisyAccent)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Send sessions somewhere")
+                Text("Send recordings somewhere")
                     .font(.callout.weight(.medium))
-                Text("Daisy can push finished sessions to Notion, Linear, Slack, or any MCP server — automatically or via the kebab menu in History.")
+                Text("Daisy can push finished recordings to Notion, Linear, Slack, or any MCP server — automatically or via the kebab menu in History.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -346,13 +346,14 @@ struct FirstRunView: View {
                 )
                 ctaRow(
                     title: "Wire a destination",
-                    detail: "Auto-send finished sessions to Notion right after Stop. (Power users: Connections → Auto-routing for Linear, Attio, webhooks, custom MCP wrappers.)",
+                    detail: "Auto-send finished recordings to Notion right after Stop — plus Linear, Attio, webhooks, and custom MCP wrappers.",
                     action: {
-                        // 1.0.5: Notion is the primary destination flow and now
-                        // lives in Settings → General → Storage right under the
-                        // sessions-folder picker. Landing here drops the user
-                        // directly into the right Storage block.
-                        nav.openInSettings(.general)
+                        // 1.0.7.16: Notion moved out of Settings onto the
+                        // top-level Connections page → Auto-routing tab,
+                        // alongside the other send-to destinations. Land the
+                        // user there so the Notion row and the MCP
+                        // integrations are in one place.
+                        nav.openInConnections(.autoRouting)
                         finish()
                     }
                 )

@@ -19,10 +19,12 @@
 //     re-needs consent. Settings-tab depth was wrong for that flow.
 //
 //  Layout: TabView with two tabs — MCP server (incoming) and
-//  Auto-routing (outgoing MCP integrations). External CTAs can
-//  deep-link via `AppNavigation.shared.openInConnections(.mcpServer)`
-//  etc. Notion / Calendar destinations live in Settings; this page
-//  is reserved for power-user MCP wiring.
+//  Auto-routing (outgoing destinations: Notion + MCP integrations).
+//  External CTAs can deep-link via
+//  `AppNavigation.shared.openInConnections(.autoRouting)` /
+//  `.mcpServer`. The Notion destination moved here from Settings in
+//  1.0.7.16 — it's an outbound send-to destination, same class as the
+//  MCP integrations. Calendar SOURCES live in Settings → Permissions.
 //
 
 import SwiftUI
@@ -42,11 +44,12 @@ struct ConnectionsView: View {
     ///
     /// 1.0.4: Calendar tab left — EventKit grant in Settings →
     /// Permissions, behaviour toggles in Settings → General.
-    /// 1.0.5: Notion tab left too — destination of the same logical
-    /// class as the local sessions folder, lives in Settings →
-    /// General → Storage with an inline disclosure for advanced
-    /// fields. Google Calendar OAuth UI stays dormant pre-
-    /// verification; when Google approves it comes back here.
+    /// 1.0.5: Notion tab folded into Settings → General → Storage.
+    /// 1.0.7.16: Notion came back here — it's an outbound send-to
+    /// destination, the same class as the MCP integrations, so it now
+    /// renders as a "Notion" Section at the top of the Auto-routing
+    /// tab. Google Calendar OAuth UI stays dormant pre-verification;
+    /// when Google approves it comes back here.
     @State private var selectedSection: ConnectionSection = .autoRouting
     @State private var editingIntegration: MCPIntegration?
     @State private var mcpPortText: String = ""
@@ -61,6 +64,15 @@ struct ConnectionsView: View {
     /// malformed hints. Recomputed on appear, after every write, and
     /// whenever the live server port changes.
     @State private var claudeEntryState: ClaudeDesktopConfig.EntryState = .notInstalled
+
+    // Notion destination state — moved here from SettingsView in
+    // 1.0.7.16 along with the row + sheet. `notionTestResult` drives
+    // the inline StatusBadge next to Test connection; the shared
+    // `TestResult` enum is file-scoped in SettingsView.swift so both
+    // surfaces can name it. `showingNotionSettings` toggles the
+    // credentials / parent / Test-connection sheet.
+    @State private var notionTestResult: TestResult = .idle
+    @State private var showingNotionSettings = false
 
     // Google account UI moved to Settings → Permissions → Calendar
     // (build 42, 2026-05-28) — Apple Calendar and Google Calendar are
@@ -155,8 +167,21 @@ struct ConnectionsView: View {
     }
 
     private var autoRoutingTab: some View {
-        Form { autoRoutingSection }
-            .formStyle(.grouped)
+        Form {
+            // Notion destination — moved here from Settings → General
+            // → Storage in 1.0.7.16. It's an outbound send-to
+            // destination, the same logical class as the MCP
+            // integrations in autoRoutingSection below, so it belongs
+            // on the Connections page rather than next to the local
+            // recordings folder.
+            Section {
+                notionDestinationRow
+            } header: {
+                Text("Notion")
+            }
+            autoRoutingSection
+        }
+        .formStyle(.grouped)
     }
 
     // Calendar UI moved out of Connections entirely in build 42
@@ -167,12 +192,322 @@ struct ConnectionsView: View {
     // Backend (`GoogleOAuthClient` / `GoogleAccountStore` /
     // `GoogleCalendarService`) is unchanged; only the UI surface moved.
 
-    // Notion configuration moved to Settings → General → Storage in
-    // 1.0.5 — destination of the same logical class as the local
-    // sessions folder. The Test connection flow, auto-send toggle,
-    // folder filter, and credentials all live there now next to the
-    // sessions folder picker, with the advanced fields collapsed in
-    // a DisclosureGroup so they don't dominate the General tab.
+    // MARK: - Notion destination
+    //
+    // Moved here from SettingsView (Settings → General → Storage) in
+    // 1.0.7.16 — Notion is an outbound send-to destination, the same
+    // class as the MCP integrations in the Auto-routing section, so it
+    // lives on the Connections page now. The row + auto-send toggle +
+    // optional folder filter render in the Auto-routing tab's "Notion"
+    // Section (see autoRoutingTab); the credentials / parent / Test-
+    // connection sheet opens from the gear button. Persisted fields are
+    // on the shared `AppSettings`; `NotionExporter.shared` does the
+    // probe.
+
+    @ViewBuilder
+    private var notionDestinationRow: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("Notion")
+                        .font(.callout.weight(.medium))
+                    notionStatusBadge
+                }
+                Text(notionRowCaption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            // Gear opens the modal with secret / parent-id / parent-
+            // type / Test connection. Pre-1.0.5.4 those lived in an
+            // inline DisclosureGroup, which pushed Storage section
+            // down and left a visible empty row when collapsed.
+            Button {
+                showingNotionSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Notion settings")
+            Toggle("", isOn: $settings.autoSendNotion)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .disabled(!settings.hasNotionCredentials || settings.lastNotionTestPassedAt == nil)
+                .help(notionToggleHelp)
+        }
+        .sheet(isPresented: $showingNotionSettings) {
+            notionSettingsSheet
+                .frame(minWidth: 520, minHeight: 460)
+        }
+
+        // Folder filter — appears when auto-send is on, so a power
+        // user can scope auto-push to e.g. "Work" folder and keep
+        // personal voice notes off Notion.
+        if settings.autoSendNotion {
+            folderFilterPicker(
+                title: "Only from folders",
+                selection: Binding(
+                    get: { settings.autoSendNotionFolders },
+                    set: { settings.autoSendNotionFolders = $0 }
+                )
+            )
+        }
+    }
+
+    /// Modal sheet with the full Notion configuration — secret,
+    /// parent id, parent type, Test connection. Replaced the prior
+    /// inline DisclosureGroup in 1.0.5.4. Keeps the Storage section
+    /// tight and pushes the field wall out of the main settings
+    /// scroll, which matches what users expect from a macOS sheet.
+    @ViewBuilder
+    private var notionSettingsSheet: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Notion")
+                                .font(.headline)
+                            Text("Send finished recordings into a Notion page or database.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        notionStatusBadge
+                    }
+
+                    LabeledContent {
+                        SecureField("", text: $settings.notionToken, prompt: Text("secret_…"))
+                            .textFieldStyle(.roundedBorder)
+                            .labelsHidden()
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity)
+                    } label: {
+                        labelWithCaption("Integration secret",
+                                         caption: "Paste your Notion integration secret.")
+                    }
+
+                    LabeledContent {
+                        TextField("", text: $settings.notionParentID, prompt: Text("a1b2c3d4…"))
+                            .textFieldStyle(.roundedBorder)
+                            .labelsHidden()
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity)
+                    } label: {
+                        labelWithCaption("Parent ID",
+                                         caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
+                    }
+
+                    LabeledContent {
+                        // pickerStyle(.menu) instead of .segmented:
+                        // macOS 26.2 ships an Apple-side UAF in the Swift
+                        // concurrency ↔ AppKit bridge that crashes any
+                        // SwiftUI Picker(.segmented) on layout (it routes
+                        // through SystemSegmentedControl, an NSSegmentedControl
+                        // wrapper — same UAF family as the NavigationSplitView
+                        // sidebar toggle we removed in build 33). 2 options
+                        // fit the menu naturally in this LabeledContent
+                        // trailing slot. Restore .segmented post-26.x once
+                        // Apple ships the fix.
+                        Picker("", selection: $settings.notionParentKind) {
+                            Text("Page").tag("page")
+                            Text("Database").tag("database")
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .fixedSize()
+                    } label: {
+                        labelWithCaption("Parent type",
+                                         caption: "Page — Daisy adds the recording as a child page underneath. Database — adds a row (title column must be named \"Name\").")
+                    }
+
+                    HStack {
+                        notionTestStatusView
+                        Spacer()
+                        Button("Test connection") {
+                            Task { await testNotion() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color.daisyAccent)
+                        .disabled(notionTestResult == .testing || !settings.hasNotionCredentials)
+                    }
+
+                    Text("Make an internal integration at notion.so/profile/integrations, then share the parent page or database with it. Test creates a probe page you can delete.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(20)
+            }
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") {
+                    showingNotionSettings = false
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .background(Color.daisyBgPrimary)
+    }
+
+    /// Right-of-title badge — same vocabulary as the old section
+    /// header in Connections so returning users recognise the state.
+    @ViewBuilder
+    private var notionStatusBadge: some View {
+        if settings.hasNotionCredentials && settings.lastNotionTestPassedAt != nil {
+            Text("Connected")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.daisySuccess)
+        } else if settings.hasNotionCredentials {
+            Text("Needs test")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(Color.daisyWarning)
+        }
+    }
+
+    /// Caption text under the Notion title — flips depending on
+    /// config state. Three meaningful states: unconfigured (call to
+    /// action), configured-but-untested (warning to test first),
+    /// configured-and-tested (passive confirmation).
+    private var notionRowCaption: String {
+        // The "gear" referenced here is the gearshape button on this
+        // row that opens `notionSettingsSheet` — the deep config
+        // (secret / parent / Test connection) lives in that sheet, not
+        // inline, so the copy points at the gear rather than "below".
+        if !settings.hasNotionCredentials {
+            return "Send finished recordings to Notion as a child page or a database row. Set it up in the gear."
+        }
+        if settings.lastNotionTestPassedAt == nil {
+            return "Run Test connection in the gear first — auto-send only turns on once it passes."
+        }
+        return "Sends each recording to Notion the moment you stop."
+    }
+
+    private var notionToggleHelp: String {
+        if !settings.hasNotionCredentials {
+            return "Open Notion settings in the gear first."
+        }
+        if settings.lastNotionTestPassedAt == nil {
+            return "Run Test connection before enabling auto-send."
+        }
+        return "Auto-send finished recordings to Notion."
+    }
+
+    @ViewBuilder
+    private var notionTestStatusView: some View {
+        switch notionTestResult {
+        case .idle:             StatusBadge(state: .idle)
+        case .testing:          StatusBadge(state: .busy)
+        case .success(let m):   StatusBadge(state: .ok, message: m)
+        case .failure(let m):   StatusBadge(state: .err, message: m)
+        }
+    }
+
+    private func testNotion() async {
+        notionTestResult = .testing
+        let probe = MeetingExportData(
+            title: "Daisy — Connection test",
+            summary: nil,
+            transcriptChunks: ["This page was created by Daisy as a connection test. You can safely delete it."],
+            durationSeconds: 0,
+            locale: "en",
+            startedAt: Date()
+        )
+        do {
+            let url = try await NotionExporter.shared.createMeetingPage(probe)
+            notionTestResult = .success("Test page created in Notion.")
+            // Mark proven-working — the auto-send toggle's enabled
+            // gate flips only after this timestamp exists.
+            settings.lastNotionTestPassedAt = Date()
+            NSWorkspace.shared.open(url)
+        } catch {
+            notionTestResult = .failure("Couldn't reach Notion — \(error.localizedDescription)")
+        }
+    }
+
+    /// Folder-filter picker for "Only from folders" — visible only
+    /// when auto-send is ON. Multi-select via Menu so the row stays
+    /// compact regardless of how many folders the user has.
+    @ViewBuilder
+    private func folderFilterPicker(
+        title: String,
+        selection: Binding<Set<String>>
+    ) -> some View {
+        let folders = FolderStore.shared.allFolders
+        Menu {
+            Button {
+                selection.wrappedValue = []
+            } label: {
+                if selection.wrappedValue.isEmpty {
+                    Label("All folders", systemImage: "checkmark")
+                } else {
+                    Text("All folders")
+                }
+            }
+            Divider()
+            ForEach(folders) { folder in
+                Button {
+                    var current = selection.wrappedValue
+                    if current.contains(folder.slug) {
+                        current.remove(folder.slug)
+                    } else {
+                        current.insert(folder.slug)
+                    }
+                    selection.wrappedValue = current
+                } label: {
+                    if selection.wrappedValue.contains(folder.slug) {
+                        Label(folder.name, systemImage: "checkmark")
+                    } else {
+                        Text(folder.name)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                Text("·")
+                    .foregroundStyle(.tertiary)
+                Text(folderFilterSummary(selection.wrappedValue, allFolders: folders))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func folderFilterSummary(_ slugs: Set<String>, allFolders: [SessionFolder]) -> String {
+        if slugs.isEmpty { return "All folders" }
+        let names = allFolders.filter { slugs.contains($0.slug) }.map(\.name)
+        if names.count == 1 { return names[0] }
+        if names.count <= 3 { return names.joined(separator: ", ") }
+        return "\(names.count) folders"
+    }
+
+    /// Label + caption stacked vertically in the LEADING column of
+    /// a `LabeledContent` row. Keeps the input alone in the
+    /// trailing column — which (1) lets every trailing field share
+    /// the same width regardless of caption length, and (2) lets a
+    /// segmented Picker stay on the same row as its label instead
+    /// of falling into Form's two-line fallback.
+    @ViewBuilder
+    private func labelWithCaption(_ title: String, caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 
     // MARK: - MCP server section
 
@@ -372,7 +707,7 @@ struct ConnectionsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(Color.daisyTextPrimary)
-                .help("Copy the `claude mcp add` command")
+                .help("Copy the claude mcp add command")
                 .accessibilityLabel("Copy Claude Code command")
             }
         }
@@ -597,7 +932,7 @@ struct ConnectionsView: View {
         Section {
             VStack(alignment: .leading, spacing: 12) {
                 if integrationStore.integrations.isEmpty {
-                    Text("No MCP integrations yet. Add one to push finished sessions into Linear, a custom Notion database, or any other MCP-compatible service.")
+                    Text("No MCP integrations yet. Add one to push finished recordings into Linear, a custom Notion database, or any other MCP-compatible service.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -719,8 +1054,9 @@ struct ConnectionsView: View {
         }
     }
 
-    // Shared helpers (labelWithCaption, folderFilterPicker,
-    // folderFilterSummary) left with the Notion section to
-    // Settings in 1.0.5 — they were used only by Notion config
-    // here. SettingsView owns the canonical copies now.
+    // The Notion helpers (labelWithCaption, folderFilterPicker,
+    // folderFilterSummary) came back here with the Notion section in
+    // 1.0.7.16 — they're used only by the Notion destination config,
+    // which now lives on this page (see the Notion destination MARK
+    // above). ConnectionsView owns the canonical copies again.
 }
