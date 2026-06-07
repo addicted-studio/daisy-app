@@ -61,3 +61,147 @@ final class AudioConverter {
         return Array(UnsafeBufferPointer(start: ch, count: count))
     }
 }
+
+/// Decodes finished on-disk `.caf` archives back into the 16 kHz mono
+/// Float32 sample array Whisper + FluidAudio expect.
+///
+/// Why this exists: live transcription runs off an in-memory rolling
+/// buffer (`Transcriber.allSamples`) capped at 30 minutes and trimmed
+/// when the live pass falls behind on a long/dense recording. The
+/// trimmed audio is gone from memory — but it's always on disk in the
+/// `.caf` archive, which the recorder writes frame-for-frame for the
+/// WHOLE session. The post-Stop final pass decodes the archive here so
+/// the saved transcript covers the entire recording regardless of how
+/// far live transcription lagged or how much the buffer trimmed.
+///
+/// `nonisolated` + `enum` (no state) so the decode can run on a
+/// background `Task.detached` off the `@MainActor` Transcriber — it's
+/// CPU + IO heavy (hundreds of MB on a multi-hour session) and must
+/// not block the main thread.
+enum AudioArchiveDecoder {
+    /// Decode one or more `.caf` archives to a single 16 kHz mono Float32
+    /// array, concatenated in the given order. Each file is converted
+    /// independently — mid-session route changes roll the mic archive into
+    /// `microphone.partN.caf` files that may carry different native formats,
+    /// so a single shared converter can't span them. Missing / unreadable /
+    /// header-only (zero-frame) parts are skipped. Returns `nil` only when
+    /// NOTHING decoded (so the caller can fall back to the in-memory buffer);
+    /// a partial decode (one bad part among several good ones) still returns
+    /// what was recovered.
+    nonisolated static func decodeToMono16k(urls: [URL]) -> [Float]? {
+        guard !urls.isEmpty else { return nil }
+        guard let out = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16_000,   // Whisper's required input rate
+            channels: 1,
+            interleaved: false
+        ) else { return nil }
+
+        var samples: [Float] = []
+        var anyDecoded = false
+        for url in urls {
+            guard FileManager.default.fileExists(atPath: url.path) else { continue }
+            guard let part = decodeFile(url: url, to: out), !part.isEmpty else { continue }
+            samples.append(contentsOf: part)
+            anyDecoded = true
+        }
+        return anyDecoded ? samples : nil
+    }
+
+    /// Stream-decode a single file in ~10 s blocks so we never hold the
+    /// whole native-rate file in memory at once (only the 16 kHz result
+    /// grows). Returns an empty array for a zero-frame file, `nil` on a
+    /// hard open/convert failure.
+    nonisolated private static func decodeFile(url: URL, to out: AVAudioFormat) -> [Float]? {
+        let file: AVAudioFile
+        do {
+            file = try AVAudioFile(forReading: url)
+        } catch {
+            return nil
+        }
+        let inFormat = file.processingFormat
+        let totalFrames = file.length
+        guard totalFrames > 0, inFormat.sampleRate > 0 else { return [] }
+        guard let converter = AVAudioConverter(from: inFormat, to: out) else { return nil }
+
+        // One pull = ~10 s of input audio at the file's native rate.
+        let inBlock = AVAudioFrameCount(max(inFormat.sampleRate, 16_000) * 10)
+        guard let inBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: inBlock) else { return nil }
+
+        // AVAudioConverter's input block is `@Sendable`; in a nonisolated
+        // context it can't capture the non-Sendable file + buffer directly.
+        // Hand it ONE `@unchecked Sendable` box instead — AVFoundation calls
+        // the block synchronously on this thread for the lifetime of each
+        // convert(), so there's no real concurrent access to make unsafe.
+        let feed = CAFDecodeFeed(file: file, inBuf: inBuf, blockFrames: inBlock)
+
+        var result: [Float] = []
+        result.reserveCapacity(Int(Double(totalFrames) * 16_000 / inFormat.sampleRate) + 1024)
+
+        let ratio = out.sampleRate / inFormat.sampleRate
+        // Downsampling (ratio < 1) means one input block always fits in the
+        // sized output buffer; the +1024 slack covers resampler look-ahead.
+        let outCap = AVAudioFrameCount(Double(inBlock) * ratio + 1024)
+
+        while true {
+            guard let outBuf = AVAudioPCMBuffer(pcmFormat: out, frameCapacity: outCap) else { break }
+            var convError: NSError?
+            // Pointer type is inferred here (it's an autoreleasing pointer in
+            // the imported AVFoundation signature); we only set its pointee.
+            let status = converter.convert(to: outBuf, error: &convError) { _, inStatus in
+                if let buf = feed.readNext() {
+                    inStatus.pointee = .haveData
+                    return buf
+                }
+                inStatus.pointee = .endOfStream
+                return nil
+            }
+
+            if let ch = outBuf.floatChannelData?[0], outBuf.frameLength > 0 {
+                result.append(contentsOf: UnsafeBufferPointer(start: ch, count: Int(outBuf.frameLength)))
+            }
+
+            if status == .error || status == .endOfStream { break }
+            // .haveData → keep pulling; .inputRanDry can't occur (the input
+            // block only ever returns .haveData or .endOfStream).
+        }
+        return result
+    }
+}
+
+/// Mutable per-file decode state handed to `AVAudioConverter`'s
+/// `@Sendable` input block. AVFoundation invokes the block synchronously
+/// on the calling thread within a single `convert(...)` — there is no
+/// real cross-thread sharing — so `@unchecked Sendable` is sound and lets
+/// the (nonisolated) decode closure capture one Sendable reference instead
+/// of the non-Sendable `AVAudioFile` + `AVAudioPCMBuffer` directly.
+nonisolated private final class CAFDecodeFeed: @unchecked Sendable {
+    private let file: AVAudioFile
+    private let inBuf: AVAudioPCMBuffer
+    private let blockFrames: AVAudioFrameCount
+    private var reachedEOF = false
+
+    init(file: AVAudioFile, inBuf: AVAudioPCMBuffer, blockFrames: AVAudioFrameCount) {
+        self.file = file
+        self.inBuf = inBuf
+        self.blockFrames = blockFrames
+    }
+
+    /// Read the next block from the file. Returns the filled buffer, or
+    /// `nil` once the file is exhausted (caller signals `.endOfStream`).
+    func readNext() -> AVAudioPCMBuffer? {
+        if reachedEOF { return nil }
+        inBuf.frameLength = 0
+        do {
+            try file.read(into: inBuf, frameCount: blockFrames)
+        } catch {
+            reachedEOF = true
+            return nil
+        }
+        if inBuf.frameLength == 0 {
+            reachedEOF = true
+            return nil
+        }
+        return inBuf
+    }
+}
