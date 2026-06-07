@@ -355,7 +355,14 @@ final class Summarizer {
     private func reasonForCurrent() -> String {
         switch providerKind {
         case .appleIntelligence:
-            return "Apple Intelligence is not available on this Mac, not enabled, or still downloading. Check System Settings → Apple Intelligence & Siri, or pick a different provider in Settings → Summary Provider."
+            // Prefer the SPECIFIC FoundationModels reason (not eligible /
+            // not enabled / still downloading / same-language mismatch) so
+            // the user sees exactly what to fix, not a generic catch-all.
+            if #available(macOS 26.0, *),
+               let reason = AppleIntelligenceSummarizer.currentUnavailabilityReason() {
+                return reason
+            }
+            return "Apple Intelligence needs macOS 26 or later. Pick a cloud provider (Anthropic / OpenAI) in Settings → Summary instead."
         case .anthropic:
             return "Anthropic API key is missing. Add it in Settings → Summary Provider."
         case .openai:
