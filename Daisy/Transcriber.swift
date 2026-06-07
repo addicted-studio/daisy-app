@@ -201,6 +201,9 @@ final class Transcriber {
     /// 30 minutes at 16 kHz mono = 30 * 60 * 16_000 = 28_800_000
     /// samples = ~115 MB as Float32.
     private static let bufferedSamplesCap: Int = 30 * 60 * 16_000
+    /// Whisper's required input rate. Used by the final-pass source
+    /// selection (buffer-index ↔ seconds) and the archive-decode path.
+    private static let targetSampleRate: Double = 16_000
     /// Drop the oldest 5 minutes in one batch when the cap is hit —
     /// avoids per-buffer `removeFirst` churn (that would be O(n)
     /// every ingest call once we hit the cap).
@@ -599,8 +602,16 @@ final class Transcriber {
     /// from `RecordingSession.stop()` so the user is freed the
     /// moment audio capture stops, not the moment the final pass
     /// finishes.
-    func runFinalPass() async {
-        await runFinalTranscribe()
+    /// `archiveURLs` — the complete on-disk `.caf` archive(s) for this
+    /// stream (mic parts, or the single system file). When present and
+    /// decodable, the final pass transcribes the FULL recording from
+    /// disk instead of the in-memory rolling buffer, so the saved
+    /// transcript covers the whole session even when live transcription
+    /// fell behind and the buffer trimmed un-transcribed audio. Empty
+    /// (the default, and for transcript-only / "don't record audio"
+    /// sessions) keeps the legacy buffer-based pass.
+    func runFinalPass(archiveURLs: [URL] = []) async {
+        await runFinalTranscribe(archiveURLs: archiveURLs)
         isRunning = false
     }
 
@@ -856,8 +867,8 @@ final class Transcriber {
 
     // MARK: - Final transcribe on stop
 
-    private func runFinalTranscribe() async {
-        guard !allSamples.isEmpty, let started = sessionStartedAt else { return }
+    private func runFinalTranscribe(archiveURLs: [URL] = []) async {
+        guard let started = sessionStartedAt else { return }
         // 2026-05-27 — cooperative cancellation. With the 1.0.7.3 two-
         // stage Stop, this method runs inside the detached finalize
         // Task. If the user hits Start on a new recording mid-final-
@@ -874,7 +885,58 @@ final class Transcriber {
             log.info("Final pass: cancelled before start — bailing")
             return
         }
-        let samples = allSamples
+
+        // Source selection — the heart of the long-recording fix.
+        //
+        // Prefer the COMPLETE on-disk `.caf` archive over the in-memory
+        // rolling buffer. `allSamples` is capped at 30 min and trimmed
+        // (oldest 5 min dropped) whenever the live pass falls behind on a
+        // long/dense recording — so a buffer-based final pass can only
+        // re-transcribe the retained tail and loses everything that was
+        // trimmed, even though the recorder wrote it all to disk. Decoding
+        // the archive here makes the saved transcript cover the ENTIRE
+        // session from 0:00, independent of live-pass lag. The decode is
+        // CPU + IO heavy, so it runs on a detached background Task off the
+        // MainActor. Falls back to the buffer when there's no archive
+        // (transcript-only / "don't record audio" sessions) or a decode
+        // failure (corrupt file) — those keep the legacy behaviour.
+        let archiveSamples: [Float]? = archiveURLs.isEmpty
+            ? nil
+            : await Task.detached(priority: .userInitiated) {
+                AudioArchiveDecoder.decodeToMono16k(urls: archiveURLs)
+            }.value
+
+        if Task.isCancelled {
+            log.info("Final pass: cancelled during archive decode — bailing")
+            return
+        }
+
+        let samples: [Float]
+        let finalRangeStart: Double
+        let fullReplace: Bool
+        if let decoded = archiveSamples, decoded.count > Int(Self.targetSampleRate) {
+            // Archive covers the whole session from second 0.
+            samples = decoded
+            finalRangeStart = 0
+            fullReplace = true
+            log.info("Final pass: transcribing FULL archive — \(decoded.count, privacy: .public) samples (≈\(Int(Double(decoded.count) / Self.targetSampleRate), privacy: .public)s), \(archiveURLs.count, privacy: .public) file(s)")
+        } else {
+            // No usable archive — fall back to the in-memory buffer. On a
+            // long session this only covers the retained (untrimmed) tail;
+            // earlier live-committed segments are preserved below.
+            guard !allSamples.isEmpty else {
+                log.info("Final pass: no archive and empty buffer — nothing to transcribe")
+                return
+            }
+            samples = allSamples
+            finalRangeStart = Double(samplesDropped) / Self.targetSampleRate
+            fullReplace = samplesDropped == 0
+            if archiveURLs.isEmpty {
+                log.info("Final pass: no archive (transcript-only session) — using in-memory buffer, \(samples.count, privacy: .public) samples")
+            } else {
+                log.error("Final pass: archive decode failed/empty — falling back to in-memory buffer (transcript may be incomplete if the buffer was trimmed)")
+            }
+        }
         let lang = languageHint
 
         // Run Whisper + diarization in parallel — both are CoreML on
@@ -910,31 +972,33 @@ final class Transcriber {
                 return
             }
 
-            // The final pass covers the audio currently in
-            // `allSamples`. If the buffer was trimmed on a long
-            // session (>30 min), `samples[0]` corresponds to
-            // session-time `finalRangeStart`, NOT zero. We keep
-            // older committed segments — they were built up by
-            // live passes before trimming — and replace only the
-            // overlapping range with this final pass's output.
-            let finalRangeStart = Double(samplesDropped) / 16_000.0
-
-            if samplesDropped > 0 {
-                // Long session — preserve earlier text from live
-                // commits, drop only segments in the final-pass
-                // range so they can be replaced with cleaner output.
-                committedSegments = committedSegments.filter { $0.endSec <= finalRangeStart }
-                pendingSegments.removeAll()
-                bucketIDs.removeAll()
-                committedThroughSec = finalRangeStart
-                log.info("Final pass: long session (>\(Int(finalRangeStart), privacy: .public)s) — preserved \(self.committedSegments.count, privacy: .public) earlier live segments")
-            } else {
-                // Short session — final pass is authoritative for
-                // the whole transcript. Pre-1.0.3 behaviour.
+            // Reconcile against the live-accumulated segments.
+            //
+            //   • fullReplace == true  — the source covers the whole
+            //     session from second 0 (the on-disk archive, or a short
+            //     buffer that never trimmed). The final pass is
+            //     authoritative for the ENTIRE transcript: clear
+            //     everything and rebuild from this pass's output. This is
+            //     the path that closes the long-recording gap — a 37-min
+            //     archive yields a 37-min transcript regardless of how
+            //     little the live pass committed.
+            //
+            //   • fullReplace == false — buffer fallback on a trimmed
+            //     long session (no archive). `samples[0]` corresponds to
+            //     session-time `finalRangeStart`, not zero, so we keep
+            //     the earlier live-committed segments and replace only the
+            //     retained-tail range with cleaner output.
+            if fullReplace {
                 committedSegments.removeAll()
                 pendingSegments.removeAll()
                 bucketIDs.removeAll()
                 committedThroughSec = 0
+            } else {
+                committedSegments = committedSegments.filter { $0.endSec <= finalRangeStart }
+                pendingSegments.removeAll()
+                bucketIDs.removeAll()
+                committedThroughSec = finalRangeStart
+                log.info("Final pass: buffer fallback (>\(Int(finalRangeStart), privacy: .public)s trimmed) — preserved \(self.committedSegments.count, privacy: .public) earlier live segments")
             }
 
             // Whisper returns segment timestamps relative to

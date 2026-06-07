@@ -1880,6 +1880,16 @@ final class RecordingSession {
         // just sets willSummarize=false so the LLM step is no-op'd.
         let titleSnapshot = title
         let localeHint = localeHintForSummary
+        // Snapshot the complete on-disk archive URLs NOW (capture is
+        // stopped, files are flushed/closed), before the detached task
+        // runs or a fresh start() rotates the recorder. The final pass
+        // decodes these to transcribe the whole recording rather than
+        // the trimmed in-memory buffer. Empty for transcript-only /
+        // "don't record audio" sessions → buffer fallback. Mic can be
+        // multiple parts after a mid-session format change; system is a
+        // single file.
+        let micArchiveURLs = recorder.archivedParts
+        let systemArchiveURLs = systemArchiveURL.map { [$0] } ?? []
         // Transfer ticket ownership to the detached task BEFORE
         // spawning it. If the user hits Stop & save on M1 and
         // then immediately starts M2 (calendar auto-rotation,
@@ -1904,7 +1914,9 @@ final class RecordingSession {
                 title: titleSnapshot,
                 localeHint: localeHint,
                 willSummarize: willSummarize,
-                generation: myGeneration
+                generation: myGeneration,
+                micArchiveURLs: micArchiveURLs,
+                systemArchiveURLs: systemArchiveURLs
             )
         }
     }
@@ -1950,7 +1962,9 @@ final class RecordingSession {
         title: String,
         localeHint: String?,
         willSummarize: Bool,
-        generation: UInt
+        generation: UInt,
+        micArchiveURLs: [URL],
+        systemArchiveURLs: [URL]
     ) async {
         // OSSignpost ranges around each slow phase. Lets
         // `xctrace export --xpc Daisy --tracing-key=signposts` show
@@ -1984,12 +1998,17 @@ final class RecordingSession {
         // ── Stage 1: Final Whisper pass ──────────────────────────────
         //
         // Both transcribers run their final pass concurrently. Each
-        // re-runs Whisper over its full accumulated buffer (up to the
-        // 30-min cap baked into runFinalTranscribe), producing
-        // segment quality that beats the live per-window output. On
-        // an M-series Mac this is CPU-bound on the Neural Engine; on
-        // a 20-min mic session it clocks ~237s in production logs,
-        // which is exactly why we moved it off the inline Stop path.
+        // re-runs Whisper over the COMPLETE on-disk `.caf` archive for
+        // its stream (decoded from disk inside runFinalPass), not the
+        // 30-min-capped in-memory buffer — so the saved transcript
+        // covers the whole recording even when live transcription fell
+        // behind and the rolling buffer trimmed un-transcribed audio
+        // (the long/dense-meeting gap). Sessions with no archive
+        // (transcript-only / "don't record audio") fall back to the
+        // buffer inside runFinalPass. On an M-series Mac this is CPU-
+        // bound on the Neural Engine; on a 20-min mic session it clocks
+        // ~237s in production logs, which is why it runs off the inline
+        // Stop path.
         //
         // `runFinalPass` is wrapped to flip `Transcriber.isRunning =
         // false` at the end — capture stopped in stop(), but
@@ -2008,8 +2027,8 @@ final class RecordingSession {
            attendees.count >= 2 {
             systemTranscriber.speakerCountHint = max(1, attendees.count - 1)
         }
-        async let micFinal: Void = micTranscriber.runFinalPass()
-        async let sysFinal: Void = systemTranscriber.runFinalPass()
+        async let micFinal: Void = micTranscriber.runFinalPass(archiveURLs: micArchiveURLs)
+        async let sysFinal: Void = systemTranscriber.runFinalPass(archiveURLs: systemArchiveURLs)
         _ = await (micFinal, sysFinal)
         signposter.endInterval("final_pass", finalPassState)
         log.info("post-stop final_pass: \(ms(t_final), privacy: .public)ms")
