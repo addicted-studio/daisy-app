@@ -1397,9 +1397,20 @@ struct SettingsView: View {
                     .tint(Color.daisyTextPrimary)
                 }
             } footer: {
-                Text(summarySectionFooter)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(summarySectionFooter)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    // When the provider can't run, surface the specific,
+                    // actionable reason here (warning tint) instead of
+                    // leaving the user with only the "Unavailable" badge.
+                    if case .unavailable(let reason) = summarizer.availability {
+                        Text(reason)
+                            .font(.caption2)
+                            .foregroundStyle(Color.daisyWarning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
 
             // MCP-only extras stay separate — preset menu + raw

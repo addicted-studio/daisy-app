@@ -235,13 +235,25 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
 
     // MARK: - Helpers
 
+    /// The specific reason Apple Intelligence is unavailable right now, or
+    /// `nil` when it's ready. Lets Settings show an actionable message
+    /// ("turn it on" / "still downloading" / "this Mac can't") instead of
+    /// a bare "Unavailable" badge.
+    static func currentUnavailabilityReason() -> String? {
+        switch SystemLanguageModel.default.availability {
+        case .available: return nil
+        case .unavailable(let reason): return describeReason(reason)
+        @unknown default: return "Not available."
+        }
+    }
+
     private static func describeReason<R>(_ reason: R) -> String {
         let mirror = String(describing: reason)
         switch mirror {
         case "deviceNotEligible":
             return "This Mac doesn't support Apple Intelligence."
         case "appleIntelligenceNotEnabled":
-            return "Turn on Apple Intelligence in System Settings → Apple Intelligence & Siri."
+            return "Turn on Apple Intelligence in System Settings → Apple Intelligence & Siri — and make sure your Mac and Siri are set to the same supported language (a US vs. UK English mismatch is a common blocker)."
         case "modelNotReady":
             return "Apple Intelligence is still downloading. Try again in a few minutes."
         default:
