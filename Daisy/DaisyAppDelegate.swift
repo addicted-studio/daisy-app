@@ -21,6 +21,16 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
 
+        // Daisy ships a single DARK appearance (matches the brand site +
+        // launch cover). Force dark Aqua app-wide so every surface — the
+        // menu-bar popover, main window, Settings, the floating widget
+        // NSPanel, and AppKit alerts — renders dark regardless of the
+        // user's system appearance. All brand colours flow through the
+        // appearance-adaptive `DaisyColors` tokens (and the window's
+        // `warmCream` chrome is dynamic too), so this single line resolves
+        // every token to its dark variant.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
+
         // Silence-prompt notification category needs to be on file
         // before the first time `SilenceMonitor` decides to fire
         // one. We also take over as the UN delegate so action taps
