@@ -17,6 +17,7 @@ struct SettingsView: View {
     @Bindable var settings: AppSettings
     @Bindable var whisper = WhisperEngine.shared
     @Bindable var parakeet = ParakeetEngine.shared
+    @Bindable var nemotron = NemotronLiveEngine.shared
     @Bindable var summarizer = Summarizer.shared
     // Calendar source state — needed by the General-tab Calendar
     // section (autoStart / autoStop / menu-bar next-meeting toggles).
@@ -941,6 +942,28 @@ struct SettingsView: View {
                     }
                 }
 
+                // Streaming live preview for dictation (Nemotron 3.5,
+                // on-device). The badge doubles as the model-download
+                // indicator — same pattern as the Faster engine above.
+                // Preview-only: the pasted text still comes from the
+                // dictation engine picked above.
+                Toggle(isOn: $settings.dictationUseNemotronLive) {
+                    transcriptionRowLabel(
+                        "Live preview while dictating",
+                        state: nemotronBadgeState,
+                        message: nemotronShortStatus
+                    )
+                }
+                .help("Shows your words about half a second behind your speech while you hold the dictation key. The pasted text still comes from the dictation engine above. Turning this on downloads an on-device model once.")
+                .onChange(of: settings.dictationUseNemotronLive) { _, useNemotron in
+                    if useNemotron { Task { await NemotronLiveEngine.shared.ensureLoaded() } }
+                }
+                .onAppear {
+                    if settings.dictationUseNemotronLive, !nemotron.isReady {
+                        Task { await NemotronLiveEngine.shared.ensureLoaded() }
+                    }
+                }
+
                 // One transcription language for everything (meetings,
                 // voice notes, dictation). Per-mode overrides were removed
                 // 2026-06-05 — nobody set them separately, and the recorder
@@ -1332,6 +1355,26 @@ struct SettingsView: View {
 
     private var dictationShortStatus: String? {
         settings.dictationUseParakeet ? parakeetShortStatus : whisperShortStatus
+    }
+
+    /// Streaming dictation preview (Nemotron). Badge mirrors the engine's
+    /// load state; the download percentage doubles as the progress UI.
+    private var nemotronBadgeState: StatusBadge.State {
+        switch nemotron.state {
+        case .ready:                 return .ok
+        case .downloading, .loading: return .busy
+        case .failed:                return .err
+        case .notLoaded:             return .idle
+        }
+    }
+
+    private var nemotronShortStatus: String? {
+        switch nemotron.state {
+        case .downloading(let p): return "\(Int(p * 100))%"
+        case .loading: return "Loading"
+        case .failed: return "Failed"
+        case .ready, .notLoaded: return nil
+        }
     }
 
     // MARK: - Summary Provider
