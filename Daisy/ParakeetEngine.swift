@@ -16,10 +16,14 @@
 //  making it the default or adding a UI toggle. See the research note
 //  2026-06-04-dictation-latency-optimization.
 //
-//  API note (FluidAudio @ 9782d877): the convenience `transcribe(_:source:)`
-//  shown in FluidAudio's docs is AHEAD of the pinned commit — the actual
-//  public method is `transcribe(_ samples:decoderState:language:)`, which
-//  we drive with a fresh `TdtDecoderState` per one-shot dictation.
+//  API note (FluidAudio 0.15.2): we deliberately drive the explicit
+//  `transcribe(_ samples:decoderState:)` form with a fresh
+//  `TdtDecoderState` per one-shot dictation (no cross-utterance
+//  streaming context) rather than the convenience overloads. 0.15.x
+//  also ships Nemotron 3.5 streaming ASR (40 locales, ANE) — a
+//  candidate for a future LIVE dictation path — and
+//  `DownloadUtils.enforceOffline` for a hard no-network guarantee
+//  once models are cached (not yet adopted; see backlog).
 //
 
 import Foundation
