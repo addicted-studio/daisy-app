@@ -135,6 +135,38 @@ struct AboutView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
             )
+
+            // Update channel (2026-06-08). OFF = stable releases only
+            // (appcast items without a channel tag). ON = also offered
+            // "beta"-channel builds — newest features first, less soak
+            // time. Applies on the next update check, no restart.
+            HStack(spacing: 12) {
+                Image(systemName: "testtube.2")
+                    .frame(width: 18)
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Get beta updates")
+                        .foregroundStyle(.primary)
+                    Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                Toggle("", isOn: $updater.receiveBetaUpdates)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .labelsHidden()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.daisyBgSidebar)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
         }
     }
 
