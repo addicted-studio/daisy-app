@@ -719,6 +719,11 @@ final class RecordingSession {
                 // one-time ~600 MB download.)
                 Task { await ParakeetEngine.shared.ensureLoaded() }
             }
+            if settings.dictationUseNemotronLive {
+                // Warm the streaming preview engine during the hold so the
+                // first partials land within the first chunk (~0.6 s).
+                Task { await NemotronLiveEngine.shared.ensureLoaded() }
+            }
             await start()
         case .recording, .paused:
             ToastCenter.shared.show(
@@ -1106,6 +1111,11 @@ final class RecordingSession {
         // regardless of the meeting tier; otherwise honour the user's tier.
         let tier: LiveTranscriptionTier = currentMode == .dictation ? .full : settings.liveTranscriptionTier
         let micAudio = recorder.buffers
+        // EXPERIMENTAL (dark): streaming Nemotron live preview for
+        // dictation — replaces the Whisper live timer for this session
+        // only; the pasted final text is unchanged. See NemotronLiveEngine.
+        micTranscriber.dictationNemotronLive =
+            currentMode == .dictation && settings.dictationUseNemotronLive
         micTranscriber.start(consuming: micAudio, startedAt: nowStarted, tier: tier)
         do {
             try recorder.start(

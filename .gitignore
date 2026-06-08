@@ -31,3 +31,4 @@ xcuserdata/
 
 # Claude Code local settings (do not commit)
 .claude/settings.local.json
+.ref-fluidaudio-asr/
