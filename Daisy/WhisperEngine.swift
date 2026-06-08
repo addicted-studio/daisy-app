@@ -239,7 +239,17 @@ final class WhisperEngine {
                 // to gain here. We can revisit if we see real speech
                 // being clipped.
                 let cfg = VadConfig(defaultThreshold: 0.85)
-                let vad = try await VadManager(config: cfg)
+                // Offline-first: cached Silero loads with FluidAudio's
+                // network hard-blocked; first run opens an explicit
+                // download window via the guard.
+                let vad: VadManager
+                do {
+                    vad = try await VadManager(config: cfg)
+                } catch let error where FluidAudioNetworkGuard.isOfflineRejection(error) {
+                    vad = try await FluidAudioNetworkGuard.withDownloadsAllowed("Silero VAD") {
+                        try await VadManager(config: cfg)
+                    }
+                }
                 self.vadBox = VadManagerBox(vad)
                 self.log.info("Silero VAD loaded")
             } catch {

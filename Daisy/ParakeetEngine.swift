@@ -99,17 +99,30 @@ final class ParakeetEngine {
             // progress handler is @Sendable + called off-main, so hop back
             // to MainActor to update observable state (drives the Settings
             // download bar). fractionCompleted spans download→compile 0…1.
-            let models = try await AsrModels.downloadAndLoad(
-                version: .v3,
-                progressHandler: { progress in
-                    let fraction = progress.fractionCompleted
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        if case .ready = self.state { return }
-                        self.state = .downloading(progress: fraction)
+            let load: @MainActor () async throws -> AsrModels = {
+                try await AsrModels.downloadAndLoad(
+                    version: .v3,
+                    progressHandler: { progress in
+                        let fraction = progress.fractionCompleted
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            if case .ready = self.state { return }
+                            self.state = .downloading(progress: fraction)
+                        }
                     }
+                )
+            }
+            // Offline-first: cached models load with FluidAudio's network
+            // hard-blocked; a missing cache throws OfflineError and we
+            // retry inside an explicit download window (first enable).
+            let models: AsrModels
+            do {
+                models = try await load()
+            } catch let error where FluidAudioNetworkGuard.isOfflineRejection(error) {
+                models = try await FluidAudioNetworkGuard.withDownloadsAllowed("Parakeet v3 ASR") {
+                    try await load()
                 }
-            )
+            }
             state = .loading
             // init(config:models:) wires the models in synchronously — the
             // actor reports `isAvailable == true` immediately after.
