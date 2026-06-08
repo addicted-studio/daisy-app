@@ -98,10 +98,10 @@ final class AppSettings {
     /// Nemotron 3.5 multilingual streaming ASR (560 ms chunks, Neural
     /// Engine) instead of the Whisper rolling-window pass. Preview-only —
     /// the pasted text still comes from Whisper/Parakeet on release.
-    /// Default off — ships dark for A/B (same playbook as Parakeet). Flip:
-    ///   defaults write app.essazanov.Daisy daisy.dictationUseNemotronLive -bool YES
-    /// First enable triggers a one-time model download (multilingual
-    /// 560 ms variant). See NemotronLiveEngine.
+    /// Default off. UI: Settings → Transcription → "Live preview while
+    /// dictating" (the badge doubles as the download indicator). First
+    /// enable triggers a one-time model download (multilingual 560 ms
+    /// variant). See NemotronLiveEngine.
     var dictationUseNemotronLive: Bool {
         didSet { defaults.set(dictationUseNemotronLive, forKey: Self.k_dictationUseNemotronLive) }
     }
