@@ -89,7 +89,19 @@ final class DiarizationEngine {
         do {
             // One-time download of the CoreML diarization bundle from
             // HuggingFace (cached in app container after first run).
-            let models = try await DiarizerModels.downloadIfNeeded()
+            // Offline-first (2026-06-08): with FluidAudio's network
+            // hard-blocked by `FluidAudioNetworkGuard`, a complete cache
+            // loads with NO network possible; a missing/incomplete cache
+            // throws OfflineError and we retry inside an explicit,
+            // logged download window.
+            let models: DiarizerModels
+            do {
+                models = try await DiarizerModels.downloadIfNeeded()
+            } catch let error where FluidAudioNetworkGuard.isOfflineRejection(error) {
+                models = try await FluidAudioNetworkGuard.withDownloadsAllowed("diarizer models") {
+                    try await DiarizerModels.downloadIfNeeded()
+                }
+            }
             self.models = models   // cache for the optional speaker-count-hint path
             // Default config — numClusters = -1 means "auto-detect
             // number of speakers" (typically 2-4 for our use case).
@@ -344,3 +356,68 @@ final class DiarizationEngine {
     }
     #endif
 }
+
+#if canImport(FluidAudio)
+/// App-wide policy for FluidAudio's network access (2026-06-08).
+///
+/// FluidAudio 0.15 added `DownloadUtils.enforceOffline`: when true, every
+/// download surface throws a typed `OfflineError` instead of touching the
+/// network, and a corrupt model cache fails loudly instead of silently
+/// re-downloading mid-meeting. Daisy keeps the flag ON for the whole app
+/// lifetime — "nothing leaves your Mac" enforced in code, not just
+/// promised — and opens short, explicit, logged download windows only
+/// when a loader reports its cache is missing/incomplete (first run, or
+/// the user enabling a new engine). Loaders use the offline-first shape:
+///
+///     do { try await load() }
+///     catch let e where FluidAudioNetworkGuard.isOfflineRejection(e) {
+///         try await FluidAudioNetworkGuard.withDownloadsAllowed("x") {
+///             try await load()
+///         }
+///     }
+///
+/// Call sites: DiarizationEngine.ensureLoaded (diarizer models),
+/// WhisperEngine.ensureVADLoadStarted (Silero VAD), ParakeetEngine
+/// .performLoad (Parakeet v3 ASR). Engaged at launch from
+/// DaisyAppDelegate.applicationDidFinishLaunching.
+@MainActor
+enum FluidAudioNetworkGuard {
+    private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "FluidAudioNet")
+    /// Open download windows, refcounted so overlapping loads (e.g.
+    /// diarizer + VAD on first run) don't re-block each other early.
+    private static var openWindows = 0
+
+    /// Hard-block FluidAudio's network. Idempotent; called once at launch.
+    /// No-op while a download window is open (engage() can't race a
+    /// legitimate first-run download).
+    static func engage() {
+        guard openWindows == 0 else { return }
+        DownloadUtils.enforceOffline = true
+        log.info("FluidAudio offline enforcement ON — network blocked outside explicit download windows")
+    }
+
+    /// Run `body` with downloads temporarily allowed, then re-engage.
+    static func withDownloadsAllowed<T>(
+        _ operation: String,
+        _ body: @MainActor () async throws -> T
+    ) async rethrows -> T {
+        openWindows += 1
+        DownloadUtils.enforceOffline = false
+        log.info("FluidAudio download window OPEN: \(operation, privacy: .public)")
+        defer {
+            openWindows -= 1
+            if openWindows == 0 {
+                DownloadUtils.enforceOffline = true
+                log.info("FluidAudio download window CLOSED: \(operation, privacy: .public) — offline enforcement back on")
+            }
+        }
+        return try await body()
+    }
+
+    /// True when `error` is FluidAudio's offline-mode rejection — the
+    /// signal that a cache is missing and a download window is needed.
+    static func isOfflineRejection(_ error: Error) -> Bool {
+        error is DownloadUtils.OfflineError
+    }
+}
+#endif

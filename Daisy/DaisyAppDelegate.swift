@@ -31,6 +31,16 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // every token to its dark variant.
         NSApp.appearance = NSAppearance(named: .darkAqua)
 
+        // FluidAudio (diarization / Silero VAD / Parakeet) network policy:
+        // hard-block every download surface outside explicit, logged
+        // model-download windows — "nothing leaves your Mac" enforced in
+        // code via DownloadUtils.enforceOffline (FluidAudio 0.15+), not
+        // just promised. Loaders retry inside a download window when the
+        // model cache is missing. See FluidAudioNetworkGuard.
+        #if canImport(FluidAudio)
+        FluidAudioNetworkGuard.engage()
+        #endif
+
         // Silence-prompt notification category needs to be on file
         // before the first time `SilenceMonitor` decides to fire
         // one. We also take over as the UN delegate so action taps
