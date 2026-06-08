@@ -386,6 +386,22 @@ final class Transcriber {
     @ObservationIgnored
     private var liveTier: LiveTranscriptionTier = .full
 
+    /// EXPERIMENTAL (dark): set by RecordingSession before `start()` for
+    /// dictation sessions when `dictationUseNemotronLive` is on. Routes
+    /// the live preview through `NemotronLiveEngine` (streaming, 560 ms
+    /// chunks) instead of the Whisper rolling-window timer. The final
+    /// pass / pasted text are unaffected. Cleared on `reset()`.
+    @ObservationIgnored
+    var dictationNemotronLive = false
+    /// True while a Nemotron live session is actually running (engine
+    /// loaded + session began OK). Gates the ingest forward.
+    @ObservationIgnored
+    private var nemotronActive = false
+    /// Stable row identity for the single growing preview segment, so
+    /// SwiftUI updates one row instead of churning new ones per chunk.
+    @ObservationIgnored
+    private var nemotronSegmentID = UUID()
+
     /// Soft pause. Kill the live re-transcribe timer so no rolling
     /// Whisper passes run while we're paused — but keep the
     /// consumerTask alive (no audio is flowing anyway because the
@@ -421,6 +437,13 @@ final class Transcriber {
     /// faster); otherwise the Whisper rolling-window timer (Full tier, or
     /// the Lite fallback while/if Apple is unavailable).
     private func startLivePath() {
+        // EXPERIMENTAL dictation streaming preview (dark) — see
+        // NemotronLiveEngine. Falls back to the Whisper timer when the
+        // engine can't run (model not downloaded yet / load failed).
+        if dictationNemotronLive {
+            startNemotronLivePath()
+            return
+        }
         if liveTier == .lite, #available(macOS 26, *), let appleLocale = resolvedAppleLocale() {
             Task { @MainActor [weak self] in
                 guard let self, self.isRunning, self.appleEngine == nil, self.liveTimer == nil else { return }
@@ -459,6 +482,49 @@ final class Transcriber {
                 strong.kickLiveTranscribe()
             }
         }
+    }
+
+    // MARK: - Nemotron streaming live path (dictation preview, dark)
+
+    private func startNemotronLivePath() {
+        Task { @MainActor [weak self] in
+            guard let self, self.isRunning else { return }
+            let lang = self.localeIdentifier == "auto" ? nil : self.localeIdentifier
+            let ok = await NemotronLiveEngine.shared.beginSession(languageCode: lang) { [weak self] text in
+                self?.applyNemotronRunningText(text)
+            }
+            guard self.isRunning else {
+                if ok { NemotronLiveEngine.shared.endSession() }
+                return
+            }
+            if ok {
+                self.nemotronActive = true
+                self.log.info("Live engine: Nemotron 3.5 streaming (dictation preview)")
+            } else if self.liveTimer == nil, self.appleEngine == nil {
+                self.log.warning("Nemotron live unavailable — falling back to Whisper live timer")
+                self.scheduleWhisperLiveTimer()
+            }
+        }
+    }
+
+    /// Render the running streamed transcript as ONE growing pending
+    /// segment (stable id → no SwiftUI row churn). The one-shot final
+    /// pass on Stop replaces it wholesale, so nothing here is committed.
+    private func applyNemotronRunningText(_ text: String) {
+        guard isRunning, let started = sessionStartedAt else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let endSec = Double(samplesDropped + allSamples.count) / 16_000.0
+        pendingSegments = [TranscriptSegment(
+            id: nemotronSegmentID,
+            startedAt: started,
+            text: trimmed,
+            isFinal: false,
+            source: source,
+            endSec: endSec,
+            startSec: 0
+        )]
+        invalidateSegmentsCache()
     }
 
     /// Concrete `Locale` for the Apple engine, or nil when the user is on
@@ -576,6 +642,12 @@ final class Transcriber {
 
         await finishAppleEngine()
 
+        // Stop the streaming dictation preview, if it was driving live.
+        if nemotronActive {
+            NemotronLiveEngine.shared.endSession()
+            nemotronActive = false
+        }
+
         await transcribeTask?.value
         transcribeTask = nil
 
@@ -625,6 +697,12 @@ final class Transcriber {
         diarizeTask?.cancel()
         diarizeTask = nil
         lastDiarizeSec = 0
+        if nemotronActive {
+            NemotronLiveEngine.shared.endSession()
+        }
+        nemotronActive = false
+        dictationNemotronLive = false
+        nemotronSegmentID = UUID()
         committedSegments.removeAll()
         pendingSegments.removeAll()
         invalidateSegmentsCache()
@@ -678,6 +756,13 @@ final class Transcriber {
         // `allSamples` still accumulates above for the final Whisper pass.
         if #available(macOS 26, *), let engine = appleEngine as? AppleSpeechLiveEngine {
             engine.ingest(chunk.pcm)
+        }
+
+        // Streaming dictation preview (dark) — forward the converted
+        // chunk to the Nemotron engine. Cheap enqueue; decode runs on
+        // the engine's actor off the main thread, strictly FIFO.
+        if nemotronActive {
+            NemotronLiveEngine.shared.ingest(samples: samples)
         }
     }
 

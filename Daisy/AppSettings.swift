@@ -94,6 +94,18 @@ final class AppSettings {
         didSet { defaults.set(dictationUseParakeet, forKey: Self.k_dictationUseParakeet) }
     }
 
+    /// EXPERIMENTAL: stream the DICTATION live preview through FluidAudio's
+    /// Nemotron 3.5 multilingual streaming ASR (560 ms chunks, Neural
+    /// Engine) instead of the Whisper rolling-window pass. Preview-only —
+    /// the pasted text still comes from Whisper/Parakeet on release.
+    /// Default off — ships dark for A/B (same playbook as Parakeet). Flip:
+    ///   defaults write app.essazanov.Daisy daisy.dictationUseNemotronLive -bool YES
+    /// First enable triggers a one-time model download (multilingual
+    /// 560 ms variant). See NemotronLiveEngine.
+    var dictationUseNemotronLive: Bool {
+        didSet { defaults.set(dictationUseNemotronLive, forKey: Self.k_dictationUseNemotronLive) }
+    }
+
     /// Global meeting-recorder hotkey (mode = .meeting). `.none`
     /// disables. Stored in UserDefaults as JSON (struct, not enum
     /// any more). This is the original Daisy hotkey from 1.0.x.
@@ -737,6 +749,8 @@ final class AppSettings {
         self.dictationLocale = defaults.string(forKey: Self.k_dictationLocale) ?? ""
         // Defaults to false (Whisper) when the key is absent.
         self.dictationUseParakeet = defaults.bool(forKey: Self.k_dictationUseParakeet)
+        // Defaults to false (Whisper live preview) when the key is absent.
+        self.dictationUseNemotronLive = defaults.bool(forKey: Self.k_dictationUseNemotronLive)
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will
@@ -1002,6 +1016,7 @@ final class AppSettings {
     private static let k_voiceNoteLocale = "daisy.voiceNoteLocale"
     private static let k_dictationLocale = "daisy.dictationLocale"
     private static let k_dictationUseParakeet = "daisy.dictationUseParakeet"
+    private static let k_dictationUseNemotronLive = "daisy.dictationUseNemotronLive"
     private static let k_recordHotkey = "daisy.recordHotkey"
     private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
     private static let k_dictationHotkey = "daisy.dictationHotkey"
