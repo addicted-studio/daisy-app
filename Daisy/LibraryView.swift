@@ -399,7 +399,10 @@ struct LibraryView: View {
             pool = pool.filter { $0.tag == t }
         }
         if !trimmed.isEmpty {
-            pool = pool.filter { $0.matches(query: trimmed) }
+            // Index-prefiltered substring search — same results as
+            // filtering on `matches(query:)` directly, but without
+            // re-scanning every transcript on each keystroke.
+            pool = store.sessionsMatching(trimmed, in: pool)
         }
         return pool
     }
