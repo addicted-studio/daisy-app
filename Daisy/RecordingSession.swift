@@ -742,7 +742,18 @@ final class RecordingSession {
     func stopDictationHotkey() async {
         guard currentMode == .dictation else { return }
         guard status == .recording || status == .paused else { return }
+        // End-to-end dictation latency: hotkey release → paste. `stop()`
+        // runs the whole dictation branch inline (stopCapture → final
+        // Whisper pass → DictationPaste.handle → cleanup), so wrapping
+        // it measures exactly what the user feels. Same subsystem/
+        // category as the finalizePostStop spans so Instruments and
+        // `log show --signpost` line up in one lane.
+        let signposter = OSSignposter(subsystem: "app.essazanov.Daisy", category: "PostStop")
+        let releaseState = signposter.beginInterval("dictation_release_to_paste", id: signposter.makeSignpostID())
+        let t_release = Date()
         await stop()
+        signposter.endInterval("dictation_release_to_paste", releaseState)
+        log.info("dictation release→paste: \(Int(Date().timeIntervalSince(t_release) * 1000), privacy: .public)ms")
     }
 
     /// Start a recording that is bound to a specific calendar event.
@@ -1705,6 +1716,20 @@ final class RecordingSession {
         // next meeting and will look at the transcript later — by
         // which time the final pass is done. Summary still uses
         // final-quality transcript (waits for re-render).
+        // Dictation only: cancel the in-flight live windowed decode
+        // BEFORE stopCapture's `await transcribeTask?.value`. The
+        // dictation final pass below discards the live result wholesale
+        // (full-replace clears committedSegments), so without the
+        // cancel the final decode just queues behind a doomed live
+        // window on the WhisperEngine semaphore — pure release→paste
+        // latency. cancelLivePass() also kills the live timer so no
+        // new window can start; stopCapture still awaits the cancelled
+        // task, guaranteeing the engine slot is free before the final
+        // pass. Meeting/voice-note paths are untouched — their live
+        // segments ARE the immediate post-stop transcript.
+        if currentMode == .dictation {
+            micTranscriber.cancelLivePass()
+        }
         let stopCaptureState = stopSignposter.beginInterval("stop_capture", id: stopSignposter.makeSignpostID())
         let t_stopCapture = Date()
         async let micCaptured: Void = micTranscriber.stopCapture()
@@ -1785,7 +1810,18 @@ final class RecordingSession {
                 // Whisper path — default, and the automatic fallback when
                 // Parakeet is off, errored, or produced nothing (e.g. a
                 // sub-0.3 s clip FluidAudio rejects).
-                await micTranscriber.runFinalPass()
+                //
+                // `.dictationFinal` (lite search width + one temperature-
+                // fallback retry) instead of `.full`: this decode blocks
+                // the paste, and full-width search on a few seconds of
+                // speech is latency without measurable quality gain.
+                // Meeting/voice-note final passes keep `.full` — they run
+                // detached in finalizePostStop, off the latency path.
+                let dictFinalState = stopSignposter.beginInterval("dictation_final_pass", id: stopSignposter.makeSignpostID())
+                let t_dictFinal = Date()
+                await micTranscriber.runFinalPass(profile: .dictationFinal)
+                stopSignposter.endInterval("dictation_final_pass", dictFinalState)
+                log.info("post-stop dictation_final_pass: \(ms(t_dictFinal), privacy: .public)ms")
                 transcriptText = fullTranscriptText
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }

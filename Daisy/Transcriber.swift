@@ -621,6 +621,24 @@ final class Transcriber {
         await runFinalPass()
     }
 
+    /// Dictation stop: cancel the in-flight live windowed decode (and
+    /// kill the live timer so no new window starts) WITHOUT waiting
+    /// for it. The dictation final pass discards live segments
+    /// wholesale (`runFinalTranscribe` clears `committedSegments` on
+    /// its full-replace path), so the live result is dead weight that
+    /// the final decode would otherwise queue behind on the
+    /// WhisperEngine semaphore. Callers must still go through
+    /// `stopCapture()` afterwards — its `await transcribeTask?.value`
+    /// is what guarantees the cancelled task has actually exited and
+    /// released the engine slot before the final pass starts.
+    /// Meeting/voice-note stops must NOT call this: their live
+    /// segments are the immediate post-stop transcript.
+    func cancelLivePass() {
+        liveTimer?.invalidate()
+        liveTimer = nil
+        transcribeTask?.cancel()
+    }
+
     /// Fast first stage of stopping: halt live consumers, drain
     /// any in-flight live transcribe / diarize tasks, then return.
     /// Does NOT run the final Whisper pass — caller must invoke
@@ -648,8 +666,15 @@ final class Transcriber {
             nemotronActive = false
         }
 
+        // How long Stop waits for the in-flight live windowed decode
+        // before the final pass can start. For dictation,
+        // RecordingSession cancels the task first (`cancelLivePass()`),
+        // so this should be near-zero there — the log line verifies it.
+        let liveDrainStart = Date()
         await transcribeTask?.value
         transcribeTask = nil
+        let liveDrainMs = Int(Date().timeIntervalSince(liveDrainStart) * 1000)
+        log.info("stopCapture live-pass drain: \(liveDrainMs, privacy: .public)ms source=\(String(describing: self.source), privacy: .public)")
 
         // Wait for any in-flight live diarization pass — without
         // this it would race with a later `runFinalPass()` and
@@ -682,8 +707,12 @@ final class Transcriber {
     /// fell behind and the buffer trimmed un-transcribed audio. Empty
     /// (the default, and for transcript-only / "don't record audio"
     /// sessions) keeps the legacy buffer-based pass.
-    func runFinalPass(archiveURLs: [URL] = []) async {
-        await runFinalTranscribe(archiveURLs: archiveURLs)
+    /// `profile` — decode cost profile for the final Whisper pass.
+    /// Defaults to `.full` (meeting/voice-note quality path). The
+    /// dictation stop passes `.dictationFinal` so the inline
+    /// release→paste decode doesn't pay full-width search latency.
+    func runFinalPass(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full) async {
+        await runFinalTranscribe(archiveURLs: archiveURLs, profile: profile)
         isRunning = false
     }
 
@@ -795,18 +824,32 @@ final class Transcriber {
 
         transcribeTask = Task { @MainActor [weak self] in
             do {
-                let result = try await WhisperEngine.shared.transcribe(
-                    samples: samples,
-                    language: lang,
-                    profile: liveProfile
-                )
-                if let strong = self {
-                    strong.applyLivePass(
-                        result,
-                        windowStartSec: windowStartSec,
-                        windowEndSec: windowEndSec
+                // Cooperative cancellation (dictation stop). Don't
+                // start a decode after cancel, and don't apply a
+                // result that lands after cancel — the dictation final
+                // pass clears live segments anyway, and skipping the
+                // apply keeps committedSegments/pendingSegments
+                // untouched mid-stop. WhisperEngine.transcribe also
+                // checks cancellation internally (on slot acquire and
+                // between VAD spans) and throws CancellationError.
+                if !Task.isCancelled {
+                    let result = try await WhisperEngine.shared.transcribe(
+                        samples: samples,
+                        language: lang,
+                        profile: liveProfile
                     )
+                    if let strong = self, !Task.isCancelled {
+                        strong.applyLivePass(
+                            result,
+                            windowStartSec: windowStartSec,
+                            windowEndSec: windowEndSec
+                        )
+                    }
                 }
+            } catch is CancellationError {
+                // Benign: dictation stop cancelled this window — the
+                // result would have been discarded by the final pass.
+                self?.log.info("Live transcribe cancelled — window discarded")
             } catch {
                 if let strong = self {
                     strong.log.error("Live transcribe failed: \(error.localizedDescription, privacy: .public)")
@@ -952,7 +995,7 @@ final class Transcriber {
 
     // MARK: - Final transcribe on stop
 
-    private func runFinalTranscribe(archiveURLs: [URL] = []) async {
+    private func runFinalTranscribe(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full) async {
         guard let started = sessionStartedAt else { return }
         // 2026-05-27 — cooperative cancellation. With the 1.0.7.3 two-
         // stage Stop, this method runs inside the detached finalize
@@ -1030,7 +1073,8 @@ final class Transcriber {
         // overlapping them is essentially free.
         async let whisperResult = WhisperEngine.shared.transcribe(
             samples: samples,
-            language: lang
+            language: lang,
+            profile: profile
         )
         // Diarization is opt-in for the mic source (Settings →
         // Transcription → "Diarize microphone too") and on-by-

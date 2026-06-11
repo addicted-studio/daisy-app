@@ -93,6 +93,10 @@ final class WhisperEngine {
     @ObservationIgnored
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
+    /// One-time post-load warm-up guard — see `warmUpIfNeeded()`.
+    @ObservationIgnored
+    private var didWarmUp = false
+
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Whisper")
 
@@ -222,6 +226,43 @@ final class WhisperEngine {
         // transcribe after that picks it up). This avoids stalling
         // the "ready to record" UX on the Silero CoreML download.
         ensureVADLoadStarted()
+
+        // Phase 4 — one-time warm-up decode (non-blocking). The first
+        // real transcribe after a cold load pays CoreML/ANE function
+        // specialization + tokenizer init on top of the actual decode;
+        // for dictation that cost lands on the user's first hotkey
+        // release. Pay it here instead, against 1 s of silence.
+        warmUpIfNeeded()
+    }
+
+    /// Run a single throwaway `.lite` pass over 1 s of silence so the
+    /// first user-visible transcribe doesn't pay cold-start costs.
+    /// Fire-and-forget: the spawning Task returns immediately and the
+    /// engine's in-actor semaphore (acquire/release inside
+    /// `transcribe`) serializes the warm-up against any real pass that
+    /// arrives first — a real caller queued behind it waits one short
+    /// silence decode at most. Idempotent via `didWarmUp`.
+    private func warmUpIfNeeded() {
+        guard case .ready = state, !didWarmUp else { return }
+        didWarmUp = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let t0 = Date()
+            // 1 s of zeros at Whisper's 16 kHz input rate. NB: if the
+            // Silero VAD finished loading first it will gate this
+            // buffer to "no speech" and skip the Whisper decode — in
+            // the common cold-start case VAD is still downloading/
+            // loading (phase 3 above), so the pass takes the
+            // full-buffer path and warms the decoder for real.
+            let silence = [Float](repeating: 0, count: 16_000)
+            do {
+                _ = try await self.transcribe(samples: silence, language: nil, profile: .lite)
+                self.log.info("Whisper warm-up pass done in \(Int(Date().timeIntervalSince(t0) * 1000), privacy: .public)ms")
+            } catch {
+                // Non-fatal by design — warm-up is purely an optimization.
+                self.log.info("Whisper warm-up pass failed (non-fatal): \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     #if canImport(FluidAudio)
@@ -445,12 +486,35 @@ final class WhisperEngine {
     /// Decode cost profile for a transcription pass. `.lite` trims the
     /// expensive knobs (4 ANE workers, greedy `topK: 1`, no temperature
     /// fallbacks) for throwaway live passes; `.full` is the quality path
-    /// used for every final pass and for the Full live tier. The anti-
-    /// hallucination thresholds + VAD are identical across both — only
-    /// the search width / retry count change.
-    enum DecodeProfile: Sendable {
+    /// used for the meeting/voice-note final pass and for the Full live
+    /// tier. `.dictationFinal` sits in between: same trimmed search
+    /// width as `.lite`, but ONE temperature-fallback retry — the
+    /// dictation final pass pastes its output verbatim with no later
+    /// cleanup pass, so a garbled first decode deserves a second
+    /// chance, while a `.full`-width search on a few seconds of speech
+    /// is pure release→paste latency. The anti-hallucination thresholds
+    /// + VAD are identical across all profiles — only the search width /
+    /// retry / worker counts change.
+    enum DecodeProfile: Sendable, Equatable {
         case full
         case lite
+        case dictationFinal
+
+        /// Temperature-fallback retries when the anti-hallucination
+        /// filters trip. `.full` keeps the historical 3 (see the
+        /// trade-off note in `transcribe`).
+        var temperatureFallbackCount: Int {
+            switch self {
+            case .full:           return 3
+            case .dictationFinal: return 1
+            case .lite:           return 0
+            }
+        }
+        /// Token search width — greedy everywhere off the quality path.
+        var topK: Int { self == .full ? 5 : 1 }
+        /// ANE worker count — 16 only for the full-quality pass; 16 on
+        /// a short span just burst-overheats the ANE (see `.lite` note).
+        var concurrentWorkerCount: Int { self == .full ? 16 : 4 }
     }
 
     /// Run a transcription pass against 16 kHz mono Float samples.
@@ -461,8 +525,21 @@ final class WhisperEngine {
         await acquireSlot()
         defer { releaseSlot() }
 
+        // Cooperative cancellation — bail before any heavy work if the
+        // calling task was cancelled while queued behind another pass
+        // (dictation stop cancels the in-flight live window; a rotated
+        // session cancels its finalize task). The `defer` above
+        // releases the slot to the next waiter.
+        try Task.checkCancellation()
+
         await ensureLoaded()
         guard let box = kitBox else { throw WhisperEngineError.notReady }
+
+        // Per-pass timing instrumentation (privacy-safe: durations and
+        // counts only, never transcript content). Attributes dictation
+        // release→paste latency between the Silero VAD pre-pass and
+        // the Whisper decode itself.
+        let passStart = Date()
 
         // Anti-hallucination knobs. Whisper has a well-documented
         // failure mode where silence or non-speech ambient sound
@@ -509,14 +586,16 @@ final class WhisperEngine {
         // workers instead of the macOS default 16 (16 on a short VAD span
         // every few seconds just burst-overheats the ANE), greedy
         // `topK: 1`, and no temperature fallbacks. The anti-hallucination
-        // thresholds + VAD are kept identical — the final full-quality
-        // pass on Stop (always `.full`) cleans up anything Lite missed.
-        let isLite = profile == .lite
+        // thresholds + VAD are kept identical — the meeting final pass
+        // on Stop (`.full`) cleans up anything Lite missed; dictation's
+        // inline final pass uses `.dictationFinal` (lite width, one
+        // fallback retry) since its output is pasted verbatim. All knob
+        // values live on `DecodeProfile`.
         let options = DecodingOptions(
             task: .transcribe,
             language: language,
-            temperatureFallbackCount: isLite ? 0 : 3,
-            topK: isLite ? 1 : 5,
+            temperatureFallbackCount: profile.temperatureFallbackCount,
+            topK: profile.topK,
             detectLanguage: language == nil,
             skipSpecialTokens: true,
             withoutTimestamps: false,
@@ -524,7 +603,7 @@ final class WhisperEngine {
             compressionRatioThreshold: 2.4,
             logProbThreshold: -1.0,
             noSpeechThreshold: 0.4,
-            concurrentWorkerCount: isLite ? 4 : 16,
+            concurrentWorkerCount: profile.concurrentWorkerCount,
             chunkingStrategy: .vad
         )
 
@@ -535,7 +614,9 @@ final class WhisperEngine {
         // this method). If VAD isn't loaded yet (still downloading
         // its CoreML model, or first transcribe of the session) we
         // fall through to the legacy full-buffer Whisper path.
+        let vadStart = Date()
         let speechSpans: [SpeechSpan] = await runVADPrepass(samples: samples)
+        let vadMs = Int(Date().timeIntervalSince(vadStart) * 1000)
 
         // Run Whisper per speech span (or once on the whole buffer
         // if VAD wasn't available). Per-span timings are translated
@@ -546,9 +627,15 @@ final class WhisperEngine {
             // VAD says "no speech" — skip Whisper entirely. This is
             // the desired behaviour for ambient-noise-only buffers:
             // empty result, no hallucinated text, no compute spent.
+            log.info("Whisper pass: vad=\(vadMs, privacy: .public)ms decode=0ms (no speech) audio=\(samples.count, privacy: .public) samples")
             return []
         }
+        let decodeStart = Date()
         for span in speechSpans {
+            // Cooperative cancellation point between spans — a
+            // cancelled live pass exits here instead of decoding the
+            // remaining spans; `defer` releases the engine slot.
+            try Task.checkCancellation()
             let chunk: [Float]
             let offsetSec: Double
             if span.isFullBuffer {
@@ -569,6 +656,9 @@ final class WhisperEngine {
                 allRaw.append((offsetSec, result.segments))
             }
         }
+        let decodeMs = Int(Date().timeIntervalSince(decodeStart) * 1000)
+        let rawSegmentCount = allRaw.reduce(0) { $0 + $1.segs.count }
+        log.info("Whisper pass: vad=\(vadMs, privacy: .public)ms decode=\(decodeMs, privacy: .public)ms total=\(Int(Date().timeIntervalSince(passStart) * 1000), privacy: .public)ms spans=\(speechSpans.count, privacy: .public) rawSegments=\(rawSegmentCount, privacy: .public) audio=\(samples.count, privacy: .public) samples")
 
         // Post-filter pipeline. Each rule kills a distinct class of
         // hallucination observed in QA; the comments name the class.
