@@ -374,8 +374,10 @@ enum MCPTools {
         guard !q.isEmpty else { return .error("Query is empty.") }
         let limit = max(1, min(args.limit ?? 20, 200))
 
-        let hits = SessionStore.shared.sessions
-            .filter { $0.matches(query: q) }
+        // Index-prefiltered substring search via the shared store —
+        // identical results to filtering on `matches(query:)` directly.
+        let store = SessionStore.shared
+        let hits = store.sessionsMatching(q, in: store.sessions)
             .prefix(limit)
             .map { SessionHit($0, query: q) }
 

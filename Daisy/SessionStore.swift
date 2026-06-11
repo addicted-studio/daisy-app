@@ -57,6 +57,25 @@ final class SessionStore {
     @ObservationIgnored
     private var refreshTask: Task<Void, Never>?
 
+    // MARK: - Search index state
+    //
+    // Inverted token index (token → session IDs) used by
+    // `sessionsMatching(_:in:)` to prefilter the substring search so a
+    // keystroke doesn't re-scan every transcript in memory. Built
+    // lazily on the first search, reconciled incrementally after store
+    // changes. Lives on @MainActor with the rest of the store;
+    // @ObservationIgnored so index churn never invalidates SwiftUI.
+    @ObservationIgnored
+    private var searchTokenIndex: [String: Set<String>] = [:]
+    /// Per-session cached token sets + a cheap content stamp, so a
+    /// refresh() that re-parses every folder doesn't force re-tokenizing
+    /// unchanged sessions (tokenization is the expensive part).
+    @ObservationIgnored
+    private var searchTokenCache: [String: (stamp: Int, tokens: Set<String>)] = [:]
+    /// Set whenever `sessions` is mutated; the next search reconciles.
+    @ObservationIgnored
+    private var searchIndexDirty = true
+
     private init() {}
 
     /// Re-scan the sessions folder. Cheap — typically <100 ms even for
@@ -115,6 +134,7 @@ final class SessionStore {
         guard !roots.isEmpty else {
             lastError = "Couldn't resolve any sessions folder."
             sessions = []
+            searchIndexDirty = true
             return
         }
 
@@ -150,6 +170,9 @@ final class SessionStore {
         // impossible (two recordings starting at the same millisecond
         // would have to come from different installs of Daisy).
         sessions = loaded.sorted(by: { $0.startedAt > $1.startedAt })
+        // Reconcile the search index lazily on the next search — the
+        // per-session content stamp keeps that cheap for unchanged rows.
+        searchIndexDirty = true
 
         // Best-effort cleanup of empty stub directories — they get
         // created when start() runs the prepare phase but the user
@@ -527,7 +550,186 @@ final class SessionStore {
         }
         if let idx = sessions.firstIndex(where: { $0.id == id }) {
             sessions[idx] = updated
+            // Targeted index invalidation: drop the cached token set so
+            // the next search re-tokenizes this session even if the
+            // content stamp were unchanged.
+            searchTokenCache.removeValue(forKey: id)
+            searchIndexDirty = true
         }
+    }
+
+    // MARK: - Search
+
+    /// Substring search over `pool`, accelerated by an inverted token
+    /// index. The result is IDENTICAL to
+    /// `pool.filter { $0.matches(query: query) }` — the index is only a
+    /// candidate prefilter, computed so that it can never drop a true
+    /// substring match; the final check is still the existing
+    /// `StoredSession.matches` scan, run on the (few) candidates.
+    /// Queries with no alphanumeric tokens (pure punctuation/symbols)
+    /// fall back to the full scan. Used by LibraryView's search field
+    /// and the MCP `search_sessions` tool.
+    func sessionsMatching(_ query: String, in pool: [StoredSession]) -> [StoredSession] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return pool }
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        let queryTokens = Self.searchTokens(in: trimmed)
+        var candidates = pool
+        var usedIndex = false
+        if !queryTokens.isEmpty {
+            reconcileSearchIndex()
+            let ids = candidateSessionIDs(forQueryTokens: queryTokens)
+            candidates = pool.filter { ids.contains($0.id) }
+            usedIndex = true
+        }
+        let results = candidates.filter { $0.matches(query: trimmed) }
+        let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
+        // Privacy-safe: counts and timing only, never the query text.
+        log.debug("Search: \(ms, format: .fixed(precision: 2), privacy: .public) ms, pool \(pool.count, privacy: .public), candidates \(candidates.count, privacy: .public), results \(results.count, privacy: .public), index \(usedIndex ? "on" : "off", privacy: .public)")
+        return results
+    }
+
+    /// Bring the inverted index in line with `sessions`. Lazy — runs
+    /// only when a search happens after the store changed. Sessions
+    /// whose content stamp matches the cache keep their token set;
+    /// changed/new sessions are re-tokenized; postings of deleted
+    /// sessions are pruned.
+    private func reconcileSearchIndex() {
+        guard searchIndexDirty else { return }
+        let t0 = DispatchTime.now().uptimeNanoseconds
+        var liveIDs = Set<String>()
+        liveIDs.reserveCapacity(sessions.count)
+        var retokenized = 0
+        for session in sessions {
+            liveIDs.insert(session.id)
+            let stamp = Self.searchStamp(of: session)
+            if let cached = searchTokenCache[session.id], cached.stamp == stamp {
+                continue
+            }
+            var newTokens = Set<String>()
+            for field in Self.searchableFields(of: session) {
+                newTokens.formUnion(Self.searchTokens(in: field))
+            }
+            if let old = searchTokenCache[session.id] {
+                for token in old.tokens.subtracting(newTokens) {
+                    searchTokenIndex[token]?.remove(session.id)
+                    if searchTokenIndex[token]?.isEmpty == true {
+                        searchTokenIndex.removeValue(forKey: token)
+                    }
+                }
+                for token in newTokens.subtracting(old.tokens) {
+                    searchTokenIndex[token, default: []].insert(session.id)
+                }
+            } else {
+                for token in newTokens {
+                    searchTokenIndex[token, default: []].insert(session.id)
+                }
+            }
+            searchTokenCache[session.id] = (stamp, newTokens)
+            retokenized += 1
+        }
+        // Prune postings for sessions that no longer exist.
+        for id in Set(searchTokenCache.keys).subtracting(liveIDs) {
+            guard let old = searchTokenCache.removeValue(forKey: id) else { continue }
+            for token in old.tokens {
+                searchTokenIndex[token]?.remove(id)
+                if searchTokenIndex[token]?.isEmpty == true {
+                    searchTokenIndex.removeValue(forKey: token)
+                }
+            }
+        }
+        searchIndexDirty = false
+        let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
+        log.debug("Search index reconcile: \(ms, format: .fixed(precision: 2), privacy: .public) ms, retokenized \(retokenized, privacy: .public)/\(self.sessions.count, privacy: .public) sessions, \(self.searchTokenIndex.count, privacy: .public) distinct tokens")
+    }
+
+    /// Candidate session IDs for a tokenized query — guaranteed to be a
+    /// SUPERSET of the sessions whose searchable text contains the raw
+    /// query as a substring (no false negatives):
+    ///  • single-token query: the match may sit mid-word ("cube" in
+    ///    "Mediacube"), so accept any indexed token CONTAINING it;
+    ///  • multi-token query: the first query token must END a document
+    ///    token, interior tokens must match exactly, and the last must
+    ///    START a document token ("llo wor" still finds "hello world").
+    /// The vocabulary scan for prefix/suffix/infix is tiny compared to
+    /// scanning the full transcript corpus.
+    private func candidateSessionIDs(forQueryTokens queryTokens: [String]) -> Set<String> {
+        func ids(matching predicate: (String) -> Bool) -> Set<String> {
+            var out = Set<String>()
+            for (token, sessionIDs) in searchTokenIndex where predicate(token) {
+                out.formUnion(sessionIDs)
+            }
+            return out
+        }
+        guard let first = queryTokens.first else { return [] }
+        if queryTokens.count == 1 {
+            return ids { $0.contains(first) }
+        }
+        var result = ids { $0.hasSuffix(first) }
+        for token in queryTokens.dropFirst().dropLast() {
+            if result.isEmpty { return result }
+            result.formIntersection(searchTokenIndex[token] ?? [])
+        }
+        if result.isEmpty { return result }
+        let last = queryTokens[queryTokens.count - 1]
+        result.formIntersection(ids { $0.hasPrefix(last) })
+        return result
+    }
+
+    /// Unicode-aware tokenizer: lowercases, then splits into maximal
+    /// runs of alphanumerics (letters incl. Cyrillic, digits, combining
+    /// marks). Order-preserving; duplicates kept (callers Set-ify when
+    /// needed). Matches the lowercasing `StoredSession.matches` uses.
+    nonisolated private static func searchTokens(in text: String) -> [String] {
+        let alphanumerics = CharacterSet.alphanumerics
+        var tokens: [String] = []
+        var current = ""
+        for scalar in text.lowercased().unicodeScalars {
+            if alphanumerics.contains(scalar) {
+                current.unicodeScalars.append(scalar)
+            } else if !current.isEmpty {
+                tokens.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+        return tokens
+    }
+
+    /// The exact fields `StoredSession.matches(query:)` scans. The
+    /// index MUST be built from the same text, or the prefilter could
+    /// drop true matches. Keep the two in sync.
+    nonisolated private static func searchableFields(of session: StoredSession) -> [String] {
+        var fields = [session.title, session.tag, session.transcriptText]
+        if let s = session.summary {
+            fields.append(s.summary)
+            fields.append(contentsOf: s.actionItems)
+            fields.append(s.clientFollowUp)
+        }
+        return fields
+    }
+
+    /// Cheap change stamp for a session's searchable content. Short
+    /// fields (title/tag/summary) are hashed in full; the transcript
+    /// body only by UTF-8 byte length — O(1) for native strings. The
+    /// body is written exactly once at Stop and no code path edits it
+    /// in place (all editors touch frontmatter or summary.json), so
+    /// length is a sufficient change detector and we avoid re-hashing
+    /// megabytes of text after every refresh(). `reloadSession` also
+    /// drops the cache entry outright as a belt-and-suspenders.
+    nonisolated private static func searchStamp(of session: StoredSession) -> Int {
+        var hasher = Hasher()
+        hasher.combine(session.title)
+        hasher.combine(session.tag)
+        hasher.combine(session.transcriptText.utf8.count)
+        if let s = session.summary {
+            hasher.combine(s.summary)
+            for item in s.actionItems { hasher.combine(item) }
+            hasher.combine(s.clientFollowUp)
+        }
+        return hasher.finalize()
     }
 
     // MARK: - Filesystem helpers
@@ -782,6 +984,11 @@ struct StoredSession: Identifiable, Sendable {
     /// tag — so "mediacube" in the search box finds every session
     /// tagged with that name, even when the body doesn't mention
     /// the brand name.
+    ///
+    /// NB: `SessionStore.sessionsMatching` uses an inverted index as a
+    /// candidate prefilter before calling this. If you add a field
+    /// here, add it to `SessionStore.searchableFields(of:)` (and
+    /// `searchStamp(of:)`) too, or the index will drop true matches.
     func matches(query: String) -> Bool {
         guard !query.isEmpty else { return true }
         let q = query.lowercased()
