@@ -680,7 +680,10 @@ final class SessionStore {
     /// runs of alphanumerics (letters incl. Cyrillic, digits, combining
     /// marks). Order-preserving; duplicates kept (callers Set-ify when
     /// needed). Matches the lowercasing `StoredSession.matches` uses.
-    nonisolated private static func searchTokens(in text: String) -> [String] {
+    /// Internal (not `private`) so the DaisyTests smoke suite can lock
+    /// tokenizer behaviour — the inverted search index is only correct
+    /// if this splits exactly like `StoredSession.matches` lowercases.
+    nonisolated static func searchTokens(in text: String) -> [String] {
         let alphanumerics = CharacterSet.alphanumerics
         var tokens: [String] = []
         var current = ""
