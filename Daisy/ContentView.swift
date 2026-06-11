@@ -744,38 +744,17 @@ struct ContentView: View {
 
     /// Hierarchical bullet tree for Granola-style sections, sized for
     /// the home panel's narrower column (`.callout` font, 4pt row
-    /// spacing). Mirrors `bulletTree(_:level:)` in SessionDetailView
-    /// but tuned for the smaller surface so dense outlines stay
-    /// scannable in the right pane.
-    ///
-    /// Returns `AnyView` rather than `some View` because the function
-    /// is recursive: Swift 6 / Xcode 26 refuses to infer an opaque
-    /// return type that references itself ("function opaque return
-    /// type was inferred as … which defines the opaque type in terms
-    /// of itself"). Type-erasing the recursive call site breaks the
-    /// self-reference. The runtime cost is negligible — bullets are
-    /// at most a few dozen rows.
+    /// spacing) so dense outlines stay scannable in the right pane.
+    /// Thin wrapper over the shared `summaryBulletTree` (defined in
+    /// SessionDetailView.swift) with the popover's typography.
     private func homeBulletTree(_ bullets: [SummaryBullet], level: Int) -> AnyView {
-        AnyView(
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("•")
-                                .font(.callout.weight(level == 0 ? .semibold : .regular))
-                                .foregroundStyle(level == 0 ? .secondary : .tertiary)
-                            Text(bullet.text)
-                                .font(.callout)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if !bullet.children.isEmpty {
-                            homeBulletTree(bullet.children, level: level + 1)
-                                .padding(.leading, 18)
-                        }
-                    }
-                }
-            }
+        summaryBulletTree(
+            bullets,
+            level: level,
+            font: .callout,
+            rowSpacing: 4,
+            bulletSpacing: 8,
+            childIndent: 18
         )
     }
 

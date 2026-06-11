@@ -11,6 +11,58 @@
 import SwiftUI
 import AppKit
 
+/// Shared recursive renderer for hierarchical summary bullets. Used by
+/// both `SessionDetailView.bulletTree` (main window, `.body` sizing)
+/// and `ContentView.homeBulletTree` (popover, `.callout` sizing) — the
+/// view tree is identical, only the typography constants differ.
+/// Top level uses a darker mid-dot, deeper levels use lighter tertiary
+/// dots so the eye reads the indentation as semantic depth rather than
+/// just spacing. Handles arbitrary depth recursively; an empty
+/// `bullets` array renders an empty VStack.
+///
+/// Returns `AnyView` rather than `some View` because the function is
+/// recursive: Swift 6 / Xcode 26 refuses to infer an opaque return
+/// type that references itself. Type-erasing breaks the
+/// self-reference. Cost is negligible at the typical depth/breadth.
+@MainActor
+func summaryBulletTree(
+    _ bullets: [SummaryBullet],
+    level: Int,
+    font: Font,
+    rowSpacing: CGFloat,
+    bulletSpacing: CGFloat,
+    childIndent: CGFloat
+) -> AnyView {
+    AnyView(
+        VStack(alignment: .leading, spacing: rowSpacing) {
+            ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                VStack(alignment: .leading, spacing: rowSpacing) {
+                    HStack(alignment: .firstTextBaseline, spacing: bulletSpacing) {
+                        Text("•")
+                            .font(font.weight(level == 0 ? .semibold : .regular))
+                            .foregroundStyle(level == 0 ? .secondary : .tertiary)
+                        Text(bullet.text)
+                            .font(font)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !bullet.children.isEmpty {
+                        summaryBulletTree(
+                            bullet.children,
+                            level: level + 1,
+                            font: font,
+                            rowSpacing: rowSpacing,
+                            bulletSpacing: bulletSpacing,
+                            childIndent: childIndent
+                        )
+                        .padding(.leading, childIndent)
+                    }
+                }
+            }
+        }
+    )
+}
+
 struct SessionDetailView: View {
     /// Initial snapshot — passed in by the caller (the History list).
     /// We don't render from this directly: instead we look the
@@ -809,35 +861,17 @@ struct SessionDetailView: View {
 
     /// Hierarchical bullet renderer. Up to 3 levels of nesting in
     /// practice (prompt caps depth, but the view handles arbitrary
-    /// depth recursively). Top level uses a darker mid-dot, deeper
-    /// levels use lighter tertiary dots so the eye reads the
-    /// indentation as semantic depth rather than just spacing.
-    ///
-    /// Returns `AnyView` rather than `some View` because the function
-    /// is recursive: Swift 6 / Xcode 26 refuses to infer an opaque
-    /// return type that references itself. Type-erasing breaks the
-    /// self-reference. Cost is negligible at the typical depth/breadth.
+    /// depth recursively). Thin wrapper over the shared
+    /// `summaryBulletTree` (see top of this file) with the main
+    /// window's `.body` typography.
     private func bulletTree(_ bullets: [SummaryBullet], level: Int) -> AnyView {
-        AnyView(
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline, spacing: 10) {
-                            Text("•")
-                                .font(.body.weight(level == 0 ? .semibold : .regular))
-                                .foregroundStyle(level == 0 ? .secondary : .tertiary)
-                            Text(bullet.text)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if !bullet.children.isEmpty {
-                            bulletTree(bullet.children, level: level + 1)
-                                .padding(.leading, 22)
-                        }
-                    }
-                }
-            }
+        summaryBulletTree(
+            bullets,
+            level: level,
+            font: .body,
+            rowSpacing: 6,
+            bulletSpacing: 10,
+            childIndent: 22
         )
     }
 

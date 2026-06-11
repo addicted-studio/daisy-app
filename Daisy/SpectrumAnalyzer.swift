@@ -31,7 +31,10 @@ final class SpectrumAnalyzer: @unchecked Sendable {
     /// at 5.12 kHz — anything higher is sibilance / noise.
     private static let bandEdgesHz: [Float] = [80, 160, 320, 640, 1280, 2560, 5120]
 
-    private let fft: vDSP.FFT<DSPSplitComplex>
+    /// `nil` when vDSP FFT setup fails (allocation failure). `bands(from:)`
+    /// then degrades gracefully — no crash, the spectrum just stops
+    /// updating and the smoothed values stay where they are.
+    private let fft: vDSP.FFT<DSPSplitComplex>?
     private let window: [Float]
 
     // Pre-allocated working buffers — no per-call heap allocation.
@@ -76,7 +79,7 @@ final class SpectrumAnalyzer: @unchecked Sendable {
             log2n: vDSP_Length(Self.log2n),
             radix: .radix2,
             ofType: DSPSplitComplex.self
-        )!
+        )
         window = vDSP.window(
             ofType: Float.self,
             usingSequence: .hanningDenormalized,
@@ -108,6 +111,11 @@ final class SpectrumAnalyzer: @unchecked Sendable {
     func bands(from samples: UnsafeBufferPointer<Float>, sampleRate: Double) -> [Float] {
         lock.lock()
         defer { lock.unlock() }
+
+        // FFT setup failed at init — degrade gracefully: return the
+        // current smoothed values instead of crashing. The widget
+        // petals simply don't animate.
+        guard let fft else { return smoothed }
 
         let n = Self.fftN
         let half = n / 2
@@ -143,10 +151,16 @@ final class SpectrumAnalyzer: @unchecked Sendable {
 
         // 3. Pack windowed reals into split-complex form.
         windowed.withUnsafeBufferPointer { winPtr in
-            winPtr.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: half) { cplxPtr in
+            // baseAddress is non-nil for these fixed-size, non-empty
+            // buffers; guard instead of force-unwrapping so an
+            // impossible nil skips the FFT pass rather than crashing.
+            guard let winBase = winPtr.baseAddress else { return }
+            winBase.withMemoryRebound(to: DSPComplex.self, capacity: half) { cplxPtr in
                 realIn.withUnsafeMutableBufferPointer { rp in
                     imagIn.withUnsafeMutableBufferPointer { ip in
-                        var split = DSPSplitComplex(realp: rp.baseAddress!, imagp: ip.baseAddress!)
+                        guard let realBase = rp.baseAddress,
+                              let imagBase = ip.baseAddress else { return }
+                        var split = DSPSplitComplex(realp: realBase, imagp: imagBase)
                         vDSP_ctoz(cplxPtr, 2, &split, 1, vDSP_Length(half))
                     }
                 }
@@ -158,13 +172,17 @@ final class SpectrumAnalyzer: @unchecked Sendable {
             imagIn.withUnsafeMutableBufferPointer { imagInPtr in
                 realOut.withUnsafeMutableBufferPointer { realOutPtr in
                     imagOut.withUnsafeMutableBufferPointer { imagOutPtr in
+                        guard let realInBase  = realInPtr.baseAddress,
+                              let imagInBase  = imagInPtr.baseAddress,
+                              let realOutBase = realOutPtr.baseAddress,
+                              let imagOutBase = imagOutPtr.baseAddress else { return }
                         let inSplit = DSPSplitComplex(
-                            realp: realInPtr.baseAddress!,
-                            imagp: imagInPtr.baseAddress!
+                            realp: realInBase,
+                            imagp: imagInBase
                         )
                         var outSplit = DSPSplitComplex(
-                            realp: realOutPtr.baseAddress!,
-                            imagp: imagOutPtr.baseAddress!
+                            realp: realOutBase,
+                            imagp: imagOutBase
                         )
                         fft.forward(input: inSplit, output: &outSplit)
                     }
