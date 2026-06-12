@@ -166,6 +166,13 @@ extension RecordingSession {
         autoStopWarningTimer?.invalidate()
         autoStopTimer = nil
         autoStopWarningTimer = nil
+        // Prompt-mode leftovers: a pending snooze dies with the
+        // evaluator (covers stop/reset/failFast AND the fresh re-arm
+        // at the top of scheduleAutoStopIfNeeded), and any
+        // still-visible "Meeting seems over?" banner is moot once
+        // auto-stop is disarmed.
+        autoStopSnoozeUntil = nil
+        AutoStopPromptNotification.cancel()
     }
 
     /// Repeating evaluator (every `autoStopEvalIntervalSec`) for the
@@ -180,19 +187,33 @@ extension RecordingSession {
         }
         guard let meeting = boundMeeting else { cancelAutoStop(); return }
         let now = Date()
+
+        // Prompt-mode snooze ("10 / 30 more minutes" on the banner):
+        // park the whole evaluator until the deadline, then resume
+        // with a clean warned-latch so the question can be asked
+        // again. If the conversation resumed during the snooze, the
+        // first post-expiry tick sees live audio and simply defers.
+        if let until = autoStopSnoozeUntil {
+            if now < until {
+                return
+            } else {
+                autoStopSnoozeUntil = nil
+                autoStopWarned = false
+                autoStopLog.info("Auto-stop snooze expired — re-evaluating")
+            }
+        }
+
         let earliest = meeting.endDate.addingTimeInterval(TimeInterval(settings.autoStopGraceSec))
         let hardMax = meeting.endDate.addingTimeInterval(Self.autoStopMaxOverrunSec)
-
-        // Absolute backstop — stop no matter what's still on the line.
-        if now >= hardMax {
-            if !autoStopWarned { armAutoStopWarningAndStop(silence: false) }
-            return
-        }
 
         // Is anyone still talking? Mic: live RMS (transient-proof).
         // System: recency of the last audible BUFFER, not the
         // published peak — see the constants above for why both
-        // replaced the old `peak > -55` checks.
+        // replaced the old `peak > -55` checks. Computed before the
+        // hard-max branch so the prompt-mode "ignored ask" backstop
+        // below can keep the silence clock honest; the shared
+        // "conversation resumed" un-warn stays below it — past
+        // hardMax a pending stop is no longer cancellable by audio.
         let micAudible = recorder.lastMicRMSDB > Self.autoStopMicRMSFloorDB
         let sysAudible: Bool = {
             guard let at = systemAudio.lastAudibleSampleAt else { return false }
@@ -200,6 +221,31 @@ extension RecordingSession {
         }()
         let audible = micAudible || sysAudible
         autoStopLog.debug("eval: micRMS=\(Int(self.recorder.lastMicRMSDB), privacy: .public)dB sysAudible=\(sysAudible, privacy: .public) silentFor=\(Int(now.timeIntervalSince(self.autoStopLastAudibleAt ?? now)), privacy: .public)s")
+
+        // Absolute backstop — stop no matter what's still on the line.
+        // In prompt mode even the backstop ASKS once; but an ignored
+        // ask can't record forever: once quiet has held for
+        // `autoStopSilenceToStopSec` past the unanswered question,
+        // stop for real.
+        if now >= hardMax {
+            if settings.autoStopPromptMode {
+                if !autoStopWarned {
+                    presentAutoStopPrompt(silence: false)
+                } else if audible {
+                    // Keep the silence clock honest while the prompt
+                    // sits ignored — the shared update below is
+                    // unreachable past hardMax.
+                    autoStopLastAudibleAt = now
+                } else if now.timeIntervalSince(autoStopLastAudibleAt ?? now) >= Self.autoStopSilenceToStopSec {
+                    autoStopLog.warning("Auto-stop: prompt ignored past hard max — forcing stop")
+                    Task { await self.performAutoStop() }
+                }
+            } else if !autoStopWarned {
+                armAutoStopWarningAndStop(silence: false)
+            }
+            return
+        }
+
         if audible {
             autoStopLastAudibleAt = now
             // Conversation resumed during a pending stop — call it off.
@@ -207,6 +253,9 @@ extension RecordingSession {
                 autoStopWarningTimer?.invalidate()
                 autoStopWarningTimer = nil
                 autoStopWarned = false
+                // Prompt mode: the open question is moot too —
+                // withdraw the banner (no-op when none is up).
+                AutoStopPromptNotification.cancel()
                 autoStopLog.info("Auto-stop: audio resumed past scheduled end — stop deferred")
             }
             return
@@ -224,7 +273,11 @@ extension RecordingSession {
             ? Self.autoStopSilenceToStopSec
             : Self.autoStopPreEndSilenceSec
         if silentFor >= threshold, !autoStopWarned {
-            armAutoStopWarningAndStop(silence: true, beforeScheduledEnd: now < earliest)
+            if settings.autoStopPromptMode {
+                presentAutoStopPrompt(silence: true, beforeScheduledEnd: now < earliest)
+            } else {
+                armAutoStopWarningAndStop(silence: true, beforeScheduledEnd: now < earliest)
+            }
         }
     }
 
@@ -273,5 +326,77 @@ extension RecordingSession {
         if settings.notifyOnAutoStop {
             AutoStopNotification.post(meetingTitle: meetingTitle)
         }
+    }
+
+    // MARK: - Prompt mode (ask instead of stopping)
+
+    /// Prompt-mode replacement for `armAutoStopWarningAndStop`
+    /// (Settings → "Ask before auto-stopping"). Instead of a 30 s
+    /// countdown that stops on its own, surface a macOS banner
+    /// ("Meeting seems over" — Stop & save / 10 more minutes /
+    /// 30 more minutes) plus an in-app action toast, and leave the
+    /// session running until the user answers. The only forced path
+    /// is the hard-max backstop in `evaluateAutoStop`, which stops an
+    /// ignored ask once quiet has held for `autoStopSilenceToStopSec`.
+    private func presentAutoStopPrompt(silence: Bool, beforeScheduledEnd: Bool = false) {
+        guard status == .recording || status == .paused, !autoStopSuppressed else { return }
+        guard !autoStopWarned else { return }
+        autoStopWarned = true
+        // Restart the quiet clock at the moment of the ask so the
+        // hard-max "prompt ignored" forced stop can never land sooner
+        // than `autoStopSilenceToStopSec` after the question went up
+        // (matters when a snooze expires past hardMax with an
+        // already-stale autoStopLastAudibleAt).
+        autoStopLastAudibleAt = Date()
+        let msg: String
+        if silence && beforeScheduledEnd {
+            msg = "Meeting's been silent for 10 minutes — looks like it wrapped up early. Stop & save?"
+        } else if silence {
+            msg = "Meeting seems over — it's been quiet for a couple of minutes. Stop & save?"
+        } else {
+            msg = "Meeting has run well past its end. Stop & save?"
+        }
+        AutoStopPromptNotification.post(meetingTitle: boundMeeting?.title ?? title)
+        // In-app twin of the banner (and the whole ask when macOS
+        // notifications are denied). One action only — the snooze
+        // options live on the banner; ignoring the toast just keeps
+        // recording.
+        ToastCenter.shared.showAction(
+            msg,
+            actionLabel: "Stop & save",
+            style: .warning,
+            duration: .seconds(15)
+        ) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in await self.performAutoStopFromPrompt() }
+        }
+        autoStopLog.info("Auto-stop prompt presented (silence=\(silence, privacy: .public), beforeScheduledEnd=\(beforeScheduledEnd, privacy: .public)) — waiting for the user")
+    }
+
+    /// "10 / 30 more minutes" on the auto-stop prompt. Parks the
+    /// evaluator until the deadline, un-latches `autoStopWarned` so
+    /// the question can be asked again afterwards, and withdraws the
+    /// banner.
+    // internal for RecordingSession.swift (called from the init-time
+    // Foundation-bus observers for the banner's snooze actions)
+    func snoozeAutoStop(minutes: Int) {
+        guard status == .recording || status == .paused else { return }
+        autoStopSnoozeUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        autoStopWarned = false
+        AutoStopPromptNotification.cancel()
+        ToastCenter.shared.show("Auto-stop snoozed for \(minutes) minutes.", style: .info)
+        autoStopLog.info("Auto-stop snoozed for \(minutes, privacy: .public) min by prompt action")
+    }
+
+    /// "Stop & save" on the auto-stop prompt (banner action or the
+    /// in-app toast button) — same stop path the silence-gated flow
+    /// uses, after withdrawing the banner.
+    // internal for RecordingSession.swift (called from the init-time
+    // Foundation-bus observer for the banner's Stop & save action)
+    func performAutoStopFromPrompt() async {
+        guard status == .recording || status == .paused else { return }
+        AutoStopPromptNotification.cancel()
+        autoStopLog.info("Auto-stop prompt: user confirmed Stop & save")
+        await performAutoStop()
     }
 }

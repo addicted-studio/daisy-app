@@ -425,6 +425,13 @@ final class RecordingSession {
     /// is the last time mic RMS or a fresh audible system buffer cleared the auto-stop gate.
     var autoStopWarned: Bool = false
     var autoStopLastAudibleAt: Date?
+    /// Prompt-mode auto-stop snooze deadline ("10 / 30 more minutes"
+    /// on the "Meeting seems over" banner). While set and in the
+    /// future, `evaluateAutoStop` skips entirely; on expiry it clears
+    /// this and un-latches `autoStopWarned` so the question can be
+    /// asked again. Reset by `cancelAutoStop()` (stop/reset/re-arm).
+    // internal for RecordingSession+AutoStop.swift
+    var autoStopSnoozeUntil: Date?
 
     // ─── Low-disk guard (transcript-only fallback) ───────────────────
     /// True when this session is transcript-only because of low disk (set
@@ -629,6 +636,40 @@ final class RecordingSession {
                     self.log.info("Auto-start prompt ignored — dropping pending trigger")
                 }
                 self.pendingAutoStartTrigger = nil
+            }
+        }
+
+        // Prompt-mode auto-stop (Settings → "Ask before auto-stopping"):
+        // the "Meeting seems over" banner's actions come back over the
+        // same Foundation bus. Stop & save runs the auto-stop now; the
+        // snooze actions park the evaluator for 10 / 30 minutes. Same
+        // singleton-lifetime ownership as the observers above.
+        NotificationCenter.default.addObserver(
+            forName: AutoStopPromptNotification.stopRequested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.performAutoStopFromPrompt()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: AutoStopPromptNotification.snooze10Requested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.snoozeAutoStop(minutes: 10)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: AutoStopPromptNotification.snooze30Requested,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.snoozeAutoStop(minutes: 30)
             }
         }
     }

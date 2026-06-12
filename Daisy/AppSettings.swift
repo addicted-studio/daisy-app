@@ -602,6 +602,17 @@ final class AppSettings {
         didSet { defaults.set(autoStopGraceSec, forKey: Self.k_autoStopGraceSec) }
     }
 
+    /// Prompt-before-stopping variant of the calendar auto-stop. When
+    /// ON (and `autoStopFromCalendar` is on), the silence-gated
+    /// evaluator ASKS instead of stopping on its own: a macOS banner
+    /// ("Meeting seems over") with Stop & save / 10 more minutes /
+    /// 30 more minutes actions, plus a matching in-app action toast.
+    /// OFF (default) keeps the original behaviour — a 30 s "Keep
+    /// going" warning toast, then an automatic stop & save.
+    var autoStopPromptMode: Bool {
+        didSet { defaults.set(autoStopPromptMode, forKey: Self.k_autoStopPromptMode) }
+    }
+
     // ─── MCP server (Phase 6a) ────────────────────────────────────────
     //
     // Daisy can expose its sessions to external AI clients (Claude
@@ -943,6 +954,10 @@ final class AppSettings {
         self.autoStopFromCalendar = defaults.object(forKey: Self.k_autoStopFromCalendar) as? Bool ?? true
         let storedGrace = defaults.integer(forKey: Self.k_autoStopGraceSec)
         self.autoStopGraceSec = storedGrace > 0 ? storedGrace : 300
+        // Default OFF — asking is the opt-in variant; the silent
+        // auto-stop with its cancellable warning toast stays the
+        // default. `bool(forKey:)` returns false for unset keys.
+        self.autoStopPromptMode = defaults.bool(forKey: Self.k_autoStopPromptMode)
         self.mcpServerEnabled = defaults.bool(forKey: Self.k_mcpServerEnabled)
         let storedPort = defaults.integer(forKey: Self.k_mcpServerPort)
         self.mcpServerPort = storedPort > 0 ? storedPort : 54321
@@ -1051,6 +1066,7 @@ final class AppSettings {
     private static let k_floatingWidgetEnabled = "daisy.floatingWidgetEnabled"
     private static let k_autoStopFromCalendar = "daisy.autoStopFromCalendar"
     private static let k_autoStopGraceSec = "daisy.autoStopGraceSec"
+    private static let k_autoStopPromptMode = "daisy.autoStopPromptMode"
     private static let k_mcpServerEnabled = "daisy.mcpServerEnabled"
     private static let k_mcpServerPort = "daisy.mcpServerPort"
     private static let k_mcpSummarizerURL = "daisy.mcpSummarizer.url"
