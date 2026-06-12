@@ -34,10 +34,22 @@ extension RecordingSession {
     /// end even if audio is still flowing (background music, forgotten
     /// call), so a left-running session can't record forever.
     private static let autoStopMaxOverrunSec: TimeInterval = 30 * 60
-    /// Peak-dBFS floor above which mic/system counts as "audible" for
-    /// auto-stop gating. Higher than the −80 dB liveness floor: room tone
-    /// shouldn't keep a finished meeting alive, but speech easily clears it.
-    private static let autoStopAudibleFloorDB: Float = -55
+    /// RMS-dBFS floor above which the MIC counts as "audible" for
+    /// auto-stop gating. RMS, not peak: the original peak>-55 gate
+    /// (1.0.7.18) spiked on keyboard clicks / chair creaks / fans,
+    /// each sampling instant above the floor reset the silence clock,
+    /// and a tester's ended meeting recorded all the way to the
+    /// 30-min backstop. Conversational speech RMS sits ≳ −45;
+    /// room tone ≲ −55.
+    private static let autoStopMicRMSFloorDB: Float = -50
+    /// How recently the SYSTEM side must have delivered an audible
+    /// buffer (peak > its −55 floor) to count as "someone talking".
+    /// Timestamp-based on purpose: ScreenCaptureKit stops delivering
+    /// buffers when the call app goes quiet or quits, so the published
+    /// `peakLevelDB` FREEZES at its last (loud) value — comparing it
+    /// to a floor kept `audible` true for an entire post-meeting
+    /// half-hour (same tester report).
+    private static let autoStopSystemRecencySec: TimeInterval = 15
     /// How often the silence-gated evaluator re-checks.
     private static let autoStopEvalIntervalSec: TimeInterval = 10
 
@@ -177,9 +189,17 @@ extension RecordingSession {
             return
         }
 
-        // Is anyone still talking? Either stream above the floor counts.
-        let audible = recorder.levelDB > Self.autoStopAudibleFloorDB
-            || systemAudio.peakLevelDB > Self.autoStopAudibleFloorDB
+        // Is anyone still talking? Mic: live RMS (transient-proof).
+        // System: recency of the last audible BUFFER, not the
+        // published peak — see the constants above for why both
+        // replaced the old `peak > -55` checks.
+        let micAudible = recorder.lastMicRMSDB > Self.autoStopMicRMSFloorDB
+        let sysAudible: Bool = {
+            guard let at = systemAudio.lastAudibleSampleAt else { return false }
+            return now.timeIntervalSince(at) < Self.autoStopSystemRecencySec
+        }()
+        let audible = micAudible || sysAudible
+        autoStopLog.debug("eval: micRMS=\(Int(self.recorder.lastMicRMSDB), privacy: .public)dB sysAudible=\(sysAudible, privacy: .public) silentFor=\(Int(now.timeIntervalSince(self.autoStopLastAudibleAt ?? now)), privacy: .public)s")
         if audible {
             autoStopLastAudibleAt = now
             // Conversation resumed during a pending stop — call it off.

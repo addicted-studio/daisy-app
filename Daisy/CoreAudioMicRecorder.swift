@@ -206,6 +206,14 @@ final class CoreAudioMicRecorder {
     /// Render-thread → MainActor liveness bridge (RMS above floor).
     @ObservationIgnored
     private let micLiveness = LivenessBox()
+
+    /// Latest mic RMS (dBFS) from the render thread — continuously
+    /// updated while recording, −160 after pause/stop reset. Used by
+    /// RecordingSession's auto-stop speech gate: RMS, unlike
+    /// `levelDB`'s peak, rides through keyboard clicks / chair creaks
+    /// / fan transients instead of spiking on them.
+    /// internal for RecordingSession+AutoStop.swift
+    var lastMicRMSDB: Float { micLiveness.snapshot().lastRMS }
     /// Render-thread write gate (low-disk → transcript-only without
     /// tearing down capture). Default open; closed by
     /// `stopArchivingKeepTranscribing()`, reopened on each `start()`.
