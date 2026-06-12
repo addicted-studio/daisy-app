@@ -624,16 +624,18 @@ struct ContentView: View {
     ///   • Paused → the button reads "Resume"; clicking it re-enters
     ///     active recording, so the button is orange (warm, the
     ///     recording dot is about to come back).
-    /// Start (idle) and resting / unknown states default to orange,
-    /// matching `RecordCapsule.fill` in the main sidebar so the
-    /// primary CTA reads as one consistent control.
+    /// Start (idle) and resting / unknown states wear the brand
+    /// accent — NOT the recording orange — matching
+    /// `RecordCapsule.fill` in the main sidebar. Orange is reserved
+    /// for "mic is (about to be) live"; an orange idle button read
+    /// as "already recording" (user feedback, 1.0.7.18).
     private var primaryFill: Color {
         switch session.status {
         case .recording: return .daisyPaused
         case .paused:    return .daisyRecording
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
-        default: return .daisyRecording
+        default: return .daisyAccent
         }
     }
 

@@ -114,6 +114,19 @@ struct HotkeyRecorder: View {
 /// re-renders, and so the monitor closure can capture `self`
 /// (a class) without struct-value-capture surprises.
 private final class KeyCaptureBox {
+    /// The box that is currently listening, app-wide. Settings shows
+    /// three recorders (Record / Voice note / Dictation), each with
+    /// its own box — without this guard two boxes can listen at the
+    /// same time (clicking a second "Press keys…" button is a mouse
+    /// event, so it never stops the first box). Both then install
+    /// NSEvent monitors and the earlier-registered one consumes the
+    /// keystroke, writing the combo into ITS binding — user report:
+    /// focus visually on Dictation, shortcut landed on Voice note.
+    /// `start()` force-cancels the previous listener instead.
+    /// MainActor-confined (file compiles with default MainActor
+    /// isolation; monitors fire on the main thread).
+    private static weak var activeListener: KeyCaptureBox?
+
     private var keyToken: Any?
     private var flagsToken: Any?
     private var onCapture: ((HotkeyChoice) -> Void)?
@@ -135,7 +148,17 @@ private final class KeyCaptureBox {
         onCapture: @escaping (HotkeyChoice) -> Void,
         onCancel: @escaping () -> Void
     ) {
+        // Only one recorder may listen at a time — force-cancel the
+        // previous one (its view flips back to idle via onCancel).
+        if let other = Self.activeListener, other !== self {
+            other.forceCancel()
+        }
+
         stop()
+        // NB: claim the slot only AFTER stop() — stop() clears the
+        // slot when it belongs to self, so the other order would
+        // immediately null out the claim.
+        Self.activeListener = self
         self.onCapture = onCapture
         self.onCancel = onCancel
         trackedModifiers = []
@@ -177,6 +200,15 @@ private final class KeyCaptureBox {
         }
     }
 
+    /// Stop listening AND notify the owning recorder so its
+    /// `isListening` state flips back to idle. Used when another
+    /// recorder starts listening and takes over.
+    private func forceCancel() {
+        let cancel = onCancel
+        stop()
+        DispatchQueue.main.async { cancel?() }
+    }
+
     func stop() {
         if let keyToken {
             NSEvent.removeMonitor(keyToken)
@@ -189,6 +221,7 @@ private final class KeyCaptureBox {
         onCapture = nil
         onCancel = nil
         trackedModifiers = []
+        if Self.activeListener === self { Self.activeListener = nil }
     }
 
     /// Returns `nil` to consume the event (so it doesn't propagate

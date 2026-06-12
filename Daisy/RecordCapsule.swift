@@ -143,12 +143,14 @@ struct RecordCapsule: View {
         case .paused:                                  return .daisyRecording
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
-        // Idle Start uses the same orange family as recording — the
-        // sidebar capsule is THE record affordance, so wearing the
-        // mic-active colour even at rest is honest. State change
-        // still reads clearly via icon (record.circle → stop.fill),
-        // label (Start → Stop), timer, and the pulse halo.
-        default:                                       return .daisyRecording
+        // Idle Start wears the brand accent, NOT the recording
+        // orange. Orange means "mic is (about to be) live" — paused-
+        // Resume above, the widget core, the system-audio warning.
+        // User feedback (1.0.7.18): an orange idle button reads as
+        // "recording is already running". Accent keeps the capsule
+        // the most saturated thing in the sidebar without borrowing
+        // the active-state colour.
+        default:                                       return .daisyAccent
         }
     }
 
