@@ -391,6 +391,20 @@ struct MainView: View {
                         .listRowInsets(EdgeInsets(top: 12, leading: -8, bottom: 8, trailing: -8))
                         .listRowBackground(Color.clear)
                 }
+
+                // One-time speech-model download progress. Unlike the
+                // rows above this is NOT gated on recording state: the
+                // big Whisper download (~626 MB) kicks off at first
+                // launch, before the user ever hits Record, and used to
+                // be visible only in the widget tooltip + Settings
+                // badge. The pill renders nothing once engines are
+                // ready, so in the common steady state this row simply
+                // isn't there. Same negative-inset compensation as the
+                // pills above; 12pt top gap = informational-row rhythm
+                // (matches SystemAudioStatusPill's spacing rationale).
+                ModelDownloadPill(settings: settings)
+                    .listRowInsets(EdgeInsets(top: 12, leading: -8, bottom: 8, trailing: -8))
+                    .listRowBackground(Color.clear)
             }
         }
         .listStyle(.sidebar)
@@ -584,6 +598,125 @@ struct SystemAudioStatusPill: View {
             Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
         )
         .help(message)
+    }
+}
+
+// MARK: - Model download pill
+
+/// The single most relevant speech-model load in flight, unified across
+/// the three ASR engines (whose `LoadState` enums are distinct types).
+/// `ModelDownloadPill` (main-window sidebar) and the popover's progress
+/// bar in `ContentView` both resolve through this, so the two surfaces
+/// always describe the same download.
+///
+/// Priority when several engines load at once: Whisper > Parakeet >
+/// Nemotron. Whisper is the engine every recording blocks on
+/// (`RecordingSession.start()` awaits it); the other two are optional
+/// dictation extras, so they only count while their settings toggles
+/// are on — a disabled engine sits in `.notLoaded` forever and would
+/// otherwise be permanent noise. One activity, never a stack.
+enum ModelLoadActivity: Equatable {
+    case downloading(progress: Double)
+    case loading
+
+    /// Highest-priority in-flight load, or `nil` when every relevant
+    /// engine is `.notLoaded` / `.ready` / `.failed`. Failures stay
+    /// out on purpose — they already surface via the Settings badge
+    /// and the session status label, and a permanent red pill in the
+    /// sidebar would shout forever with no action attached.
+    ///
+    /// Reading the engines' `@Observable` state inside a view body is
+    /// what makes SwiftUI re-render as the download progresses — no
+    /// timers, no polling.
+    static func current(settings: AppSettings) -> ModelLoadActivity? {
+        switch WhisperEngine.shared.state {
+        case .downloading(let progress): return .downloading(progress: progress)
+        case .loading: return .loading
+        case .notLoaded, .ready, .failed: break
+        }
+        if settings.dictationUseParakeet {
+            switch ParakeetEngine.shared.state {
+            case .downloading(let progress): return .downloading(progress: progress)
+            case .loading: return .loading
+            case .notLoaded, .ready, .failed: break
+            }
+        }
+        if settings.dictationUseNemotronLive {
+            switch NemotronLiveEngine.shared.state {
+            case .downloading(let progress): return .downloading(progress: progress)
+            case .loading: return .loading
+            case .notLoaded, .ready, .failed: break
+            }
+        }
+        return nil
+    }
+}
+
+/// Sidebar progress row for the one-time speech-model download
+/// (Whisper is ~626 MB on a fresh install; Parakeet / Nemotron when
+/// those dictation engines are enabled). Until 1.0.7.19 the only
+/// surfaces were the widget tooltip and the Settings → Transcription
+/// badge — on a fresh install the main window gave no hint that a
+/// large download was running (user feedback). Same banner-family
+/// chip as `SystemAudioStatusPill` above (0.20 fill + 0.20
+/// strokeBorder) with a thin linear bar inside.
+///
+///   • `.downloading` → "Downloading speech model… 67%" + determinate bar
+///   • `.loading`     → "Loading speech model…" + indeterminate bar
+///   • ready / failed / not loaded → renders nothing (steady state;
+///     failures keep their existing Settings-badge + status-label paths)
+struct ModelDownloadPill: View {
+    /// Plain `let` is enough — Observation tracks the `settings.*`
+    /// and `*Engine.shared.state` reads inside `body` (made via
+    /// `ModelLoadActivity.current`) without `@Bindable`.
+    let settings: AppSettings
+
+    var body: some View {
+        switch ModelLoadActivity.current(settings: settings) {
+        case .downloading(let progress)?:
+            pill(
+                label: "Downloading speech model… \(Int(progress * 100))%",
+                progress: min(max(progress, 0), 1)
+            )
+        case .loading?:
+            pill(label: "Loading speech model…", progress: nil)
+        case nil:
+            EmptyView()
+        }
+    }
+
+    /// Banner-family chip — cinnamon accent (informational, not a
+    /// warning, so no exclamation glyph), icon + caption on top, thin
+    /// bar underneath. `progress == nil` renders the indeterminate
+    /// linear bar for the brief CoreML-init phase, where no meaningful
+    /// fraction exists.
+    private func pill(label: String, progress: Double?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "arrow.down.circle")
+                    .font(.caption2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(Color.daisyTextPrimary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            ProgressView(value: progress, total: 1.0)
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            Capsule(style: .continuous).fill(Color.daisyAccent.opacity(0.20))
+        )
+        .overlay(
+            Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+        )
+        .help("One-time setup: Daisy transcribes on-device, so the speech model has to download first. Recording starts as soon as it's ready.")
     }
 }
 

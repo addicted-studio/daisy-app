@@ -331,6 +331,7 @@ struct ContentView: View {
             }
 
             statusRow
+            modelDownloadBar
             HStack(spacing: 8) {
                 recordButton
                     .frame(maxWidth: .infinity)
@@ -541,6 +542,28 @@ struct ContentView: View {
         case .summarizing: return "Apple Intelligence is summarizing…"
         case .finished: return "Done"
         case .failed(let msg): return msg
+        }
+    }
+
+    /// Thin determinate bar under the status row while a speech model
+    /// downloads — the visual counterpart to the "Downloading … NN%"
+    /// status text, which only appears while `.preparing`; the big
+    /// first-launch Whisper download mostly runs while the session is
+    /// still idle and the label just says "Ready". Same engine-priority
+    /// logic as the sidebar's `ModelDownloadPill` (via
+    /// `ModelLoadActivity`, defined in MainView.swift). The brief
+    /// `.loading` CoreML-init phase has no meaningful fraction → no
+    /// bar; the status text covers it. Reading the `@Observable`
+    /// engine state here re-renders the popover as progress ticks —
+    /// no timers.
+    @ViewBuilder
+    private var modelDownloadBar: some View {
+        if case .downloading(let progress)? = ModelLoadActivity.current(settings: settings) {
+            ProgressView(value: min(max(progress, 0), 1), total: 1.0)
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+                .help("One-time setup: Daisy transcribes on-device, so the speech model has to download first.")
         }
     }
 
