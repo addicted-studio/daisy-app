@@ -12,6 +12,7 @@
 //
 
 import Foundation
+import os
 
 extension RecordingSession {
     // MARK: - Auto-stop (calendar-bound)
