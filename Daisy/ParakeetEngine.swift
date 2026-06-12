@@ -102,14 +102,15 @@ final class ParakeetEngine {
             let load: @MainActor () async throws -> AsrModels = {
                 try await AsrModels.downloadAndLoad(
                     version: .v3,
-                    progressHandler: { [weak self] progress in
-                        // Weak at the outer (progress) closure — the
-                        // reference FluidAudio actually retains. Unwrap
-                        // BEFORE the Task: a weak capture is a mutable
-                        // box, and Swift 6 forbids the nested Task from
-                        // capturing a captured `var`. The Task gets an
-                        // immutable strong `self` for the brief hop.
-                        guard let self else { return }
+                    progressHandler: { progress in
+                        // Strong capture on purpose: the engine is a
+                        // process-lifetime singleton (`.shared`), so a
+                        // weak dance buys nothing — and any [weak self]
+                        // here just trips Xcode 26's mismatch warning
+                        // against the enclosing `load` closure, which
+                        // would implicitly capture self strongly anyway.
+                        // FluidAudio releases the handler when
+                        // downloadAndLoad returns.
                         let fraction = progress.fractionCompleted
                         Task { @MainActor in
                             if case .ready = self.state { return }
