@@ -536,7 +536,12 @@ struct ContentView: View {
             default:
                 return "Preparing…"
             }
-        case .recording: return "Recording locally · on-device transcription"
+        // Recording: no caption — the pulsing orange dot + running
+        // timer already say it, and "Recording locally · on-device
+        // transcription" was privacy-pitch noise on every session
+        // (user feedback 2026-06-12). The consent footer keeps the
+        // privacy message.
+        case .recording: return ""
         case .paused: return "Paused · capture stopped, session held"
         case .stopping: return "Stopping…"
         case .summarizing: return "Apple Intelligence is summarizing…"
