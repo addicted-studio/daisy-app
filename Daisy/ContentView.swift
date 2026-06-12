@@ -558,12 +558,24 @@ struct ContentView: View {
     /// no timers.
     @ViewBuilder
     private var modelDownloadBar: some View {
-        if case .downloading(let progress)? = ModelLoadActivity.current(settings: settings) {
+        switch ModelLoadActivity.current(settings: settings) {
+        case .checking?:
+            // Cache-check / repo-resolve phase — no meaningful
+            // fraction yet, indeterminate bar (matches the sidebar
+            // pill's "Checking models…" state).
+            ProgressView(value: nil, total: 1.0)
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+                .help("Checking speech models…")
+        case .downloading(let progress)?:
             ProgressView(value: min(max(progress, 0), 1), total: 1.0)
                 .progressViewStyle(.linear)
                 .controlSize(.small)
                 .tint(Color.daisyAccent)
-                .help("One-time setup: Daisy transcribes on-device, so the speech model has to download first.")
+                .help("One-time setup: Daisy transcribes on-device, so the model has to download first.")
+        case .loading?, nil:
+            EmptyView()
         }
     }
 

@@ -616,8 +616,20 @@ struct SystemAudioStatusPill: View {
 /// are on — a disabled engine sits in `.notLoaded` forever and would
 /// otherwise be permanent noise. One activity, never a stack.
 enum ModelLoadActivity: Equatable {
+    /// Engine reports `.downloading` but no bytes have moved yet —
+    /// resolving the HF repo / checking the on-disk cache. Showing
+    /// "Downloading… 0%" here is misleading (a cached model never
+    /// downloads anything); surfaces render this as "Checking
+    /// models…" with an indeterminate bar.
+    case checking
     case downloading(progress: Double)
     case loading
+
+    /// True while real bytes are moving — the only phase with a
+    /// meaningful fraction.
+    private static func classify(_ progress: Double) -> ModelLoadActivity {
+        progress > 0.001 ? .downloading(progress: progress) : .checking
+    }
 
     /// Highest-priority in-flight load, or `nil` when every relevant
     /// engine is `.notLoaded` / `.ready` / `.failed`. Failures stay
@@ -630,20 +642,20 @@ enum ModelLoadActivity: Equatable {
     /// timers, no polling.
     static func current(settings: AppSettings) -> ModelLoadActivity? {
         switch WhisperEngine.shared.state {
-        case .downloading(let progress): return .downloading(progress: progress)
+        case .downloading(let progress): return classify(progress)
         case .loading: return .loading
         case .notLoaded, .ready, .failed: break
         }
         if settings.dictationUseParakeet {
             switch ParakeetEngine.shared.state {
-            case .downloading(let progress): return .downloading(progress: progress)
+            case .downloading(let progress): return classify(progress)
             case .loading: return .loading
             case .notLoaded, .ready, .failed: break
             }
         }
         if settings.dictationUseNemotronLive {
             switch NemotronLiveEngine.shared.state {
-            case .downloading(let progress): return .downloading(progress: progress)
+            case .downloading(let progress): return classify(progress)
             case .loading: return .loading
             case .notLoaded, .ready, .failed: break
             }
@@ -661,6 +673,7 @@ enum ModelLoadActivity: Equatable {
 /// chip as `SystemAudioStatusPill` above (0.20 fill + 0.20
 /// strokeBorder) with a thin linear bar inside.
 ///
+///   • `.checking`    → "Checking models…" + indeterminate bar
 ///   • `.downloading` → "Downloading model… 67%" + determinate bar
 ///   • `.loading`     → "Loading model…" + indeterminate bar
 ///   • ready / failed / not loaded → renders nothing (steady state;
@@ -673,6 +686,8 @@ struct ModelDownloadPill: View {
 
     var body: some View {
         switch ModelLoadActivity.current(settings: settings) {
+        case .checking?:
+            pill(label: "Checking models…", progress: nil)
         case .downloading(let progress)?:
             pill(
                 label: "Downloading model… \(Int(progress * 100))%",
