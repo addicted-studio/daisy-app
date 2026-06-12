@@ -661,8 +661,8 @@ enum ModelLoadActivity: Equatable {
 /// chip as `SystemAudioStatusPill` above (0.20 fill + 0.20
 /// strokeBorder) with a thin linear bar inside.
 ///
-///   • `.downloading` → "Downloading speech model… 67%" + determinate bar
-///   • `.loading`     → "Loading speech model…" + indeterminate bar
+///   • `.downloading` → "Downloading model… 67%" + determinate bar
+///   • `.loading`     → "Loading model…" + indeterminate bar
 ///   • ready / failed / not loaded → renders nothing (steady state;
 ///     failures keep their existing Settings-badge + status-label paths)
 struct ModelDownloadPill: View {
@@ -675,11 +675,11 @@ struct ModelDownloadPill: View {
         switch ModelLoadActivity.current(settings: settings) {
         case .downloading(let progress)?:
             pill(
-                label: "Downloading speech model… \(Int(progress * 100))%",
+                label: "Downloading model… \(Int(progress * 100))%",
                 progress: min(max(progress, 0), 1)
             )
         case .loading?:
-            pill(label: "Loading speech model…", progress: nil)
+            pill(label: "Loading model…", progress: nil)
         case nil:
             EmptyView()
         }
@@ -710,13 +710,18 @@ struct ModelDownloadPill: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+        // Rounded rectangle, NOT the banner capsule — with two stacked
+        // lines + a progress bar inside, a capsule's fully-round ends
+        // swallow the corners (user feedback on first build).
         .background(
-            Capsule(style: .continuous).fill(Color.daisyAccent.opacity(0.20))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.daisyAccent.opacity(0.20))
         )
         .overlay(
-            Capsule(style: .continuous).strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
         )
-        .help("One-time setup: Daisy transcribes on-device, so the speech model has to download first. Recording starts as soon as it's ready.")
+        .help("One-time setup: Daisy transcribes on-device, so the model has to download first. Recording starts as soon as it's ready.")
     }
 }
 
