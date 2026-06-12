@@ -100,65 +100,66 @@ struct AboutView: View {
             // as filler — the manual-check button is exactly the same
             // action a user lands on from the App menu anyway, no
             // need for a second presentation of it.
-            HStack(spacing: 12) {
-                Image(systemName: "arrow.down.circle")
-                    .frame(width: 18) // 2026-05-25 — was 22, matched to SettingsView + PermissionsView icon column for cross-surface row-rhythm
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Automatically check for updates")
-                        .foregroundStyle(.primary)
-                    Text(lastCheckedLine)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                }
-                Spacer()
-                Button("Check for Updates…") {
-                    updater.checkForUpdates()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(Color.daisyTextPrimary)
-                .disabled(!updater.canCheckForUpdates)
-                Toggle("", isOn: $updater.automaticallyChecksForUpdates)
-                    .toggleStyle(.switch)
+            // Both update rows share ONE card, divider between them —
+            // same grouping treatment as the Links/Studio sections
+            // below (user feedback 2026-06-12: two stacked single-row
+            // cards read as two unrelated settings).
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrow.down.circle")
+                        .frame(width: 18) // 2026-05-25 — was 22, matched to SettingsView + PermissionsView icon column for cross-surface row-rhythm
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Automatically check for updates")
+                            .foregroundStyle(.primary)
+                        Text(lastCheckedLine)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                    Spacer()
+                    Button("Check for Updates…") {
+                        updater.checkForUpdates()
+                    }
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .labelsHidden()
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.daisyBgSidebar)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
+                    .tint(Color.daisyTextPrimary)
+                    .disabled(!updater.canCheckForUpdates)
+                    Toggle("", isOn: $updater.automaticallyChecksForUpdates)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
 
-            // Update channel (2026-06-08). OFF = stable releases only
-            // (appcast items without a channel tag). ON = also offered
-            // "beta"-channel builds — newest features first, less soak
-            // time. Applies on the next update check, no restart.
-            HStack(spacing: 12) {
-                Image(systemName: "testtube.2")
-                    .frame(width: 18)
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Get beta updates")
-                        .foregroundStyle(.primary)
-                    Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                divider
+
+                // Update channel (2026-06-08). OFF = stable releases only
+                // (appcast items without a channel tag). ON = also offered
+                // "beta"-channel builds — newest features first, less soak
+                // time. Applies on the next update check, no restart.
+                HStack(spacing: 12) {
+                    Image(systemName: "testtube.2")
+                        .frame(width: 18)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Get beta updates")
+                            .foregroundStyle(.primary)
+                        Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                    Toggle("", isOn: $updater.receiveBetaUpdates)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
                 }
-                Spacer()
-                Toggle("", isOn: $updater.receiveBetaUpdates)
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .labelsHidden()
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Color.daisyBgSidebar)
