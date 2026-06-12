@@ -887,23 +887,36 @@ final class RecordingSession {
         }
 
         if title.isEmpty {
-            // Mode-aware default title. Pre-1.0.6.3 every session
-            // (meeting, voice note, dictation) got the "Meeting …"
-            // prefix regardless of `currentMode`, which made voice
-            // notes look like miscategorised meetings in the
-            // History sidebar. Now the title reflects what the
-            // session actually is — the user's expectation when
-            // they tap the voice-notes hotkey is a Library entry
-            // that reads "Voice note", not "Meeting".
-            let f = DateFormatter()
-            f.dateFormat = "yyyy-MM-dd HH:mm"
-            let prefix: String
-            switch currentMode {
-            case .meeting:   prefix = "Meeting"
-            case .voiceNote: prefix = "Voice note"
-            case .dictation: prefix = "Dictation"
+            // Calendar-bound sessions take the EVENT's name. This is
+            // the pickup the 2026-05-25 note in performStartFromMeeting
+            // promised ("start()'s title-generation block picks up
+            // boundMeeting.title directly") — it was never actually
+            // wired, so auto-started meetings showed the placeholder
+            // "Meeting yyyy-MM-dd HH:mm" instead of the calendar
+            // title (tester report, 2026-06-12).
+            if currentMode == .meeting,
+               let boundTitle = boundMeeting?.title,
+               !boundTitle.isEmpty {
+                title = boundTitle
+            } else {
+                // Mode-aware default title. Pre-1.0.6.3 every session
+                // (meeting, voice note, dictation) got the "Meeting …"
+                // prefix regardless of `currentMode`, which made voice
+                // notes look like miscategorised meetings in the
+                // History sidebar. Now the title reflects what the
+                // session actually is — the user's expectation when
+                // they tap the voice-notes hotkey is a Library entry
+                // that reads "Voice note", not "Meeting".
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd HH:mm"
+                let prefix: String
+                switch currentMode {
+                case .meeting:   prefix = "Meeting"
+                case .voiceNote: prefix = "Voice note"
+                case .dictation: prefix = "Dictation"
+                }
+                title = "\(prefix) \(f.string(from: Date()))"
             }
-            title = "\(prefix) \(f.string(from: Date()))"
         }
 
         status = .preparing
