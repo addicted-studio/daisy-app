@@ -143,22 +143,24 @@ struct RecordCapsule: View {
         case .paused:                                  return .daisyRecording
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
-        // Idle Start wears the brand accent, NOT the recording
-        // orange. Orange means "mic is (about to be) live" — paused-
-        // Resume above, the widget core, the system-audio warning.
-        // User feedback (1.0.7.18): an orange idle button reads as
-        // "recording is already running". Accent keeps the capsule
-        // the most saturated thing in the sidebar without borrowing
-        // the active-state colour.
-        default:                                       return .daisyAccent
+        // Idle Start is GREEN (palette `daisySuccess`), not the
+        // recording orange. Orange means "mic is (about to be) live"
+        // — paused-Resume above, the widget core, the system-audio
+        // warning. User feedback (1.0.7.18): an orange idle button
+        // reads as "recording is already running". Green = "go",
+        // unmistakably pre-recording.
+        default:                                       return .daisySuccess
         }
     }
 
     private var foreground: Color {
         switch session.status {
         case .recording, .preparing, .stopping,
-             .summarizing, .failed:                   return .white
-        default:                                       return .white
+             .summarizing, .failed, .paused:          return .white
+        // White on sage (`daisySuccess` dark = 0x8FC4A2) is ~2:1 —
+        // unreadable. Idle/finished use near-black ink instead, the
+        // standard treatment for light-green "go" buttons.
+        default:                                       return Color.black.opacity(0.85)
         }
     }
 

@@ -90,13 +90,14 @@ final class FloatingPanelController {
         withObservationTracking {
             _ = session.status
         } onChange: { [weak self] in
-            // Weak at the OUTER closure — `[weak self]` only on the
-            // inner Task left the onChange closure itself holding a
-            // strong implicit capture (Xcode 26 warning), which is
-            // the reference observation actually retains. Hop back
-            // to main and re-arm.
+            // Weak at the OUTER closure — that's the reference the
+            // observation registration actually retains. Unwrap here:
+            // a weak capture is a mutable box, and Swift 6 forbids the
+            // nested Task from capturing a captured `var` — so hand
+            // the Task an immutable strong `self` instead (retains
+            // the controller only for the duration of the hop).
+            guard let self else { return }
             Task { @MainActor in
-                guard let self else { return }
                 self.applyVisibility(for: self.session.status)
                 self.startObserving()
             }
@@ -111,9 +112,10 @@ final class FloatingPanelController {
         withObservationTracking {
             _ = settings.floatingWidgetEnabled
         } onChange: { [weak self] in
-            // Weak at the outer closure — see startObserving().
+            // Weak at the outer closure, unwrapped before the Task —
+            // see startObserving() for the rationale.
+            guard let self else { return }
             Task { @MainActor in
-                guard let self else { return }
                 self.applyVisibility(for: self.session.status)
                 self.startObservingSettings()
             }
