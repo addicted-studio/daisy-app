@@ -78,6 +78,14 @@ struct DaisyApp: App {
                     }
                 }
                 .keyboardShortcut("?", modifiers: [.command])
+                Divider()
+                // Tester feedback channel: collects the last 24 h of
+                // Daisy's own logs + an environment header and opens
+                // a pre-addressed Mail compose — the user reviews and
+                // presses Send themselves (LogReporter.swift).
+                Button("Send Log Report…") {
+                    LogReporter.sendReport(settings: settings)
+                }
             }
             // Replace the default About panel with one that names the
             // studio and links to contact + website. The system's
