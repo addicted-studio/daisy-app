@@ -103,12 +103,15 @@ final class ParakeetEngine {
                 try await AsrModels.downloadAndLoad(
                     version: .v3,
                     progressHandler: { [weak self] progress in
-                        // Weak at the outer (progress) closure — weak only
-                        // on the inner Task left the handler FluidAudio
-                        // retains holding self strongly (Xcode 26 warning).
+                        // Weak at the outer (progress) closure — the
+                        // reference FluidAudio actually retains. Unwrap
+                        // BEFORE the Task: a weak capture is a mutable
+                        // box, and Swift 6 forbids the nested Task from
+                        // capturing a captured `var`. The Task gets an
+                        // immutable strong `self` for the brief hop.
+                        guard let self else { return }
                         let fraction = progress.fractionCompleted
                         Task { @MainActor in
-                            guard let self else { return }
                             if case .ready = self.state { return }
                             self.state = .downloading(progress: fraction)
                         }

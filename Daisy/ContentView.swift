@@ -586,7 +586,7 @@ struct ContentView: View {
                 if let label = hotkeyBadgeLabel {
                     Text(label)
                         .font(.caption2.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(primaryForeground.opacity(0.75))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(
@@ -596,7 +596,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .foregroundStyle(.white)
+            .foregroundStyle(primaryForeground)
             .background(
                 Capsule(style: .continuous).fill(primaryFill)
             )
@@ -647,8 +647,8 @@ struct ContentView: View {
     ///   • Paused → the button reads "Resume"; clicking it re-enters
     ///     active recording, so the button is orange (warm, the
     ///     recording dot is about to come back).
-    /// Start (idle) and resting / unknown states wear the brand
-    /// accent — NOT the recording orange — matching
+    /// Start (idle) and resting / unknown states are GREEN (palette
+    /// `daisySuccess`) — NOT the recording orange — matching
     /// `RecordCapsule.fill` in the main sidebar. Orange is reserved
     /// for "mic is (about to be) live"; an orange idle button read
     /// as "already recording" (user feedback, 1.0.7.18).
@@ -658,7 +658,16 @@ struct ContentView: View {
         case .paused:    return .daisyRecording
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
-        default: return .daisyAccent
+        default: return .daisySuccess
+        }
+    }
+
+    /// White on sage is ~2:1 — idle/finished switch to near-black
+    /// ink (see `RecordCapsule.foreground`); live states stay white.
+    private var primaryForeground: Color {
+        switch session.status {
+        case .idle, .finished: return Color.black.opacity(0.85)
+        default: return .white
         }
     }
 

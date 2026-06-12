@@ -519,18 +519,22 @@ final class MCPServer {
             if connection.state == .cancelled { return }
             Task { @MainActor in
                 guard strongSelf.sseConnection === connection else { return }
-                connection.send(content: keepaliveBytes, completion: .contentProcessed { [weak strongSelf, weak connection] error in
-                    // Weak at the OUTER (completion) closure — weak only
-                    // on the inner Task left the completion handler that
-                    // Network.framework retains holding both strongly
-                    // (Xcode 26 warning).
+                connection.send(content: keepaliveBytes, completion: .contentProcessed { error in
+                    // `strongSelf`/`connection` are immutable strong
+                    // `let`s from the timer-handler guard, captured
+                    // strongly all the way down — weak captures here
+                    // are mutable boxes Swift 6 won't let the nested
+                    // Task reference, and the lifetime is bounded
+                    // anyway: Network.framework releases this
+                    // completion as soon as the send resolves (the
+                    // long-lived reference is the timer handler above,
+                    // which IS weak).
                     guard error != nil else { return }
                     // The peer is gone (half-open detected). Cancelling
                     // drives the stateUpdateHandler → tearDownSSE on the
                     // MainActor; we don't touch isolated state here.
                     Task { @MainActor in
-                        guard let strongSelf, let connection,
-                              strongSelf.sseConnection === connection else { return }
+                        guard strongSelf.sseConnection === connection else { return }
                         strongSelf.log.info("SSE keepalive write failed — peer gone; tearing down so client can reconnect cleanly")
                         connection.cancel()
                     }
