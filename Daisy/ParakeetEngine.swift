@@ -102,9 +102,12 @@ final class ParakeetEngine {
             let load: @MainActor () async throws -> AsrModels = {
                 try await AsrModels.downloadAndLoad(
                     version: .v3,
-                    progressHandler: { progress in
+                    progressHandler: { [weak self] progress in
+                        // Weak at the outer (progress) closure — weak only
+                        // on the inner Task left the handler FluidAudio
+                        // retains holding self strongly (Xcode 26 warning).
                         let fraction = progress.fractionCompleted
-                        Task { @MainActor [weak self] in
+                        Task { @MainActor in
                             guard let self else { return }
                             if case .ready = self.state { return }
                             self.state = .downloading(progress: fraction)

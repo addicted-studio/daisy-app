@@ -103,9 +103,12 @@ final class NemotronLiveEngine {
                 try await StreamingNemotronMultilingualAsrManager.downloadAndPreloadShared(
                     languageCode: "auto",  // full-vocab multilingual — one cache for all locales
                     chunkMs: 560,          // lowest-latency tier; dictation is latency-first
-                    progressHandler: { progress in
+                    progressHandler: { [weak self] progress in
+                        // Weak at the outer (progress) closure — weak only
+                        // on the inner Task left the handler FluidAudio
+                        // retains holding self strongly (Xcode 26 warning).
                         let fraction = progress.fractionCompleted
-                        Task { @MainActor [weak self] in
+                        Task { @MainActor in
                             guard let self else { return }
                             if case .ready = self.state { return }
                             self.state = .downloading(progress: fraction)

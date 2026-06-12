@@ -89,9 +89,13 @@ final class FloatingPanelController {
         applyVisibility(for: session.status)
         withObservationTracking {
             _ = session.status
-        } onChange: {
-            // Hop back to main and re-arm.
-            Task { @MainActor [weak self] in
+        } onChange: { [weak self] in
+            // Weak at the OUTER closure — `[weak self]` only on the
+            // inner Task left the onChange closure itself holding a
+            // strong implicit capture (Xcode 26 warning), which is
+            // the reference observation actually retains. Hop back
+            // to main and re-arm.
+            Task { @MainActor in
                 guard let self else { return }
                 self.applyVisibility(for: self.session.status)
                 self.startObserving()
@@ -106,8 +110,9 @@ final class FloatingPanelController {
     private func startObservingSettings() {
         withObservationTracking {
             _ = settings.floatingWidgetEnabled
-        } onChange: {
-            Task { @MainActor [weak self] in
+        } onChange: { [weak self] in
+            // Weak at the outer closure — see startObserving().
+            Task { @MainActor in
                 guard let self else { return }
                 self.applyVisibility(for: self.session.status)
                 self.startObservingSettings()

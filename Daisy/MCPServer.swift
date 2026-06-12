@@ -519,12 +519,16 @@ final class MCPServer {
             if connection.state == .cancelled { return }
             Task { @MainActor in
                 guard strongSelf.sseConnection === connection else { return }
-                connection.send(content: keepaliveBytes, completion: .contentProcessed { error in
+                connection.send(content: keepaliveBytes, completion: .contentProcessed { [weak strongSelf, weak connection] error in
+                    // Weak at the OUTER (completion) closure — weak only
+                    // on the inner Task left the completion handler that
+                    // Network.framework retains holding both strongly
+                    // (Xcode 26 warning).
                     guard error != nil else { return }
                     // The peer is gone (half-open detected). Cancelling
                     // drives the stateUpdateHandler → tearDownSSE on the
                     // MainActor; we don't touch isolated state here.
-                    Task { @MainActor [weak strongSelf, weak connection] in
+                    Task { @MainActor in
                         guard let strongSelf, let connection,
                               strongSelf.sseConnection === connection else { return }
                         strongSelf.log.info("SSE keepalive write failed — peer gone; tearing down so client can reconnect cleanly")
