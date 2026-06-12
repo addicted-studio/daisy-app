@@ -21,6 +21,15 @@ extension RecordingSession {
     /// on BOTH mic and system. A live conversation never has this long a
     /// gap; a finished meeting does.
     private static let autoStopSilenceToStopSec: TimeInterval = 120
+    /// BEFORE the scheduled end, stop only after this much continuous
+    /// quiet — the "everyone left early" case. Tester report (1.0.7.18):
+    /// stopped talking ~30 min before the meeting's scheduled end and
+    /// the recording ran the full remainder, because the quiet gate
+    /// only armed past endDate+grace. Ten minutes of TOTAL silence
+    /// (mic AND system below the floor) mid-meeting is dead air, not a
+    /// pause — and the 30 s "Keep going" toast still covers the rare
+    /// silent-work-session case.
+    private static let autoStopPreEndSilenceSec: TimeInterval = 600
     /// Absolute backstop: stop unconditionally this long past the scheduled
     /// end even if audio is still flowing (background music, forgotten
     /// call), so a left-running session can't record forever.
@@ -183,23 +192,36 @@ extension RecordingSession {
             return
         }
 
-        // Silent right now — only consider stopping once past endDate+grace.
-        guard now >= earliest else { return }
-        let silentFor = now.timeIntervalSince(autoStopLastAudibleAt ?? earliest)
-        if silentFor >= Self.autoStopSilenceToStopSec, !autoStopWarned {
-            armAutoStopWarningAndStop(silence: true)
+        // Silent right now. Two quiet thresholds:
+        //   past endDate+grace → 120 s (meeting is over, wrap up fast)
+        //   before endDate     → 10 min (everyone left early; long
+        //                        enough that a real meeting pause
+        //                        never trips it)
+        // `autoStopLastAudibleAt` is seeded at arm time, so `?? now`
+        // is just belt-and-braces (treats unknown as "audible now").
+        let silentFor = now.timeIntervalSince(autoStopLastAudibleAt ?? now)
+        let threshold = now >= earliest
+            ? Self.autoStopSilenceToStopSec
+            : Self.autoStopPreEndSilenceSec
+        if silentFor >= threshold, !autoStopWarned {
+            armAutoStopWarningAndStop(silence: true, beforeScheduledEnd: now < earliest)
         }
     }
 
     /// Show the 30 s "Keep going" warning and arm the actual stop. Called
     /// by `evaluateAutoStop` when the quiet/overrun condition is first met.
     /// "Keep going" cancels auto-stop for the rest of the session.
-    private func armAutoStopWarningAndStop(silence: Bool) {
+    private func armAutoStopWarningAndStop(silence: Bool, beforeScheduledEnd: Bool = false) {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
         autoStopWarned = true
-        let msg = silence
-            ? "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds."
-            : "Meeting has run well past its end — Daisy will stop & save in 30 seconds."
+        let msg: String
+        if silence && beforeScheduledEnd {
+            msg = "Meeting's been silent for 10 minutes — looks like it wrapped up early. Daisy will stop & save in 30 seconds."
+        } else if silence {
+            msg = "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds."
+        } else {
+            msg = "Meeting has run well past its end — Daisy will stop & save in 30 seconds."
+        }
         ToastCenter.shared.showAction(
             msg,
             actionLabel: "Keep going",
