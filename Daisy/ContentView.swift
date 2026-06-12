@@ -480,20 +480,27 @@ struct ContentView: View {
         }
     }
 
+    /// Hidden entirely while recording (user feedback 2026-06-12):
+    /// the caption is gone, the pulsing dot read as clutter, and the
+    /// elapsed timer now lives inside the record button itself — so
+    /// an active session has nothing left to say here.
+    @ViewBuilder
     private var statusRow: some View {
-        HStack(spacing: 8) {
-            statusDot
-            Text(statusLabel)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            if session.status == .recording || session.status == .finished || session.status == .summarizing {
-                Text(formatTime(session.elapsed))
-                    .font(.system(.caption, design: .monospaced))
+        if session.status != .recording {
+            HStack(spacing: 8) {
+                statusDot
+                Text(statusLabel)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                if session.status == .finished || session.status == .summarizing {
+                    Text(formatTime(session.elapsed))
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
+            .font(.caption)
         }
-        .font(.caption)
     }
 
     private var statusDot: some View {
@@ -600,7 +607,21 @@ struct ContentView: View {
                 Text(primaryLabel)
                     .font(.callout.weight(.medium))
                 Spacer()
-                if let label = hotkeyBadgeLabel {
+                // During an active session the badge slot shows the
+                // elapsed timer (moved here from the old status row —
+                // user feedback 2026-06-12); when idle it shows the
+                // configured hotkey hint. Same chip styling so the
+                // button reads as one control either way.
+                if session.status == .recording || session.status == .paused {
+                    Text(formatTime(session.elapsed))
+                        .font(.system(.caption2, design: .monospaced).weight(.medium))
+                        .foregroundStyle(primaryForeground.opacity(0.85))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(.white.opacity(0.18))
+                        )
+                } else if let label = hotkeyBadgeLabel {
                     Text(label)
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(primaryForeground.opacity(0.75))
