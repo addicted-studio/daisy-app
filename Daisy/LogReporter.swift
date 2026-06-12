@@ -33,7 +33,10 @@ enum LogReporter {
     /// Cap the attachment at ~5 MB — `log show --info --debug` over a
     /// chatty day can balloon, and mail providers bounce huge mails.
     /// We keep the TAIL (most recent lines) when trimming.
-    private static let maxLogBytes = 5_000_000
+    /// `nonisolated`: read from the off-main log-collection closure;
+    /// immutable Int, so opting out of the enum's MainActor isolation
+    /// is safe.
+    nonisolated private static let maxLogBytes = 5_000_000
 
     /// Collect → write temp file → open Mail compose. Toasts cover
     /// the slow parts and the no-Mail-account fallback.
