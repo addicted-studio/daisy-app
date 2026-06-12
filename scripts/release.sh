@@ -567,6 +567,27 @@ fi
     fi
 )
 
+# -----------------------------------------------------------------------------
+# 7. Write the released version back into project.pbxproj so Xcode dev
+#    builds report the real version. The archive above overrides
+#    MARKETING_VERSION / CURRENT_PROJECT_VERSION on the command line,
+#    so the pbxproj used to stay frozen at whatever was last hand-set
+#    (1.0.7.3/45 for weeks) — every ⌘R build, About panel, and
+#    Send Log Report header then lied about the version under test
+#    (Egor, 2026-06-12). Replaces only ≥2-digit build numbers and
+#    dotted versions of ≥4 chars, which matches the app target's pair
+#    but not the test target's "1" / "1.0".
+#    Appcast remains the authority for "next free build" (step 0).
+# -----------------------------------------------------------------------------
+PBXPROJ="${DAISY_REPO}/Daisy.xcodeproj/project.pbxproj"
+if [[ -f "${PBXPROJ}" ]]; then
+    sed -i '' \
+        -e "s/CURRENT_PROJECT_VERSION = [0-9]\{2,\};/CURRENT_PROJECT_VERSION = ${BUILD};/g" \
+        -e "s/MARKETING_VERSION = [0-9][0-9.]\{3,\};/MARKETING_VERSION = ${VERSION};/g" \
+        "${PBXPROJ}"
+    echo "  ✓ project.pbxproj bumped to ${VERSION} (${BUILD}) — commit it with your next app-repo push"
+fi
+
 echo
 echo "────────────────────────────────────────────────────────────────"
 echo "  ✓ Daisy ${VERSION} (build ${BUILD}) released on the ${CHANNEL} channel."
