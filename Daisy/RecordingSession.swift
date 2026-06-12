@@ -422,7 +422,7 @@ final class RecordingSession {
     /// fires at a fixed endDate+grace; it waits for a quiet stretch past
     /// the scheduled end (or a hard maximum). `autoStopWarned` latches
     /// once the 30s warning + pending stop are armed; `autoStopLastAudibleAt`
-    /// is the last time mic OR system audio cleared `autoStopAudibleFloorDB`.
+    /// is the last time mic RMS or a fresh audible system buffer cleared the auto-stop gate.
     var autoStopWarned: Bool = false
     var autoStopLastAudibleAt: Date?
 
