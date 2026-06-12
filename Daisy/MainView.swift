@@ -687,14 +687,17 @@ struct ModelDownloadPill: View {
     var body: some View {
         switch ModelLoadActivity.current(settings: settings) {
         case .checking?:
-            pill(label: "Checking models…", progress: nil)
+            // Eyes, not a download arrow — nothing is downloading yet,
+            // Daisy is just looking around (cache check / repo resolve).
+            pill(label: "Checking models…", icon: "eyes", progress: nil)
         case .downloading(let progress)?:
             pill(
                 label: "Downloading model… \(Int(progress * 100))%",
+                icon: "arrow.down.circle",
                 progress: min(max(progress, 0), 1)
             )
         case .loading?:
-            pill(label: "Loading model…", progress: nil)
+            pill(label: "Loading model…", icon: "arrow.down.circle", progress: nil)
         case nil:
             EmptyView()
         }
@@ -705,10 +708,10 @@ struct ModelDownloadPill: View {
     /// bar underneath. `progress == nil` renders the indeterminate
     /// linear bar for the brief CoreML-init phase, where no meaningful
     /// fraction exists.
-    private func pill(label: String, progress: Double?) -> some View {
+    private func pill(label: String, icon: String, progress: Double?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "arrow.down.circle")
+                Image(systemName: icon)
                     .font(.caption2)
                     .foregroundStyle(Color.daisyAccent)
                 Text(label)
