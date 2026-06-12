@@ -732,74 +732,46 @@ struct ContentView: View {
     // No coloured "AI" card, no sparkles header, no provider badge —
     // the summary reads as plain document sections so it sits naturally
     // above the transcript and feels like one working write-up.
+    //
+    // 2026-06-12 — the whole textual body (Meeting lede + sections +
+    // Next actions + Follow-up, headers included) is ONE attributed
+    // string inside ONE NSTextView. Before, every block was its own
+    // SwiftUI `Text` and macOS selection can't cross view boundaries —
+    // drag-select / ⌘A topped out at a single line (Egor, release
+    // blocker). `compact: true` keeps the popover's `.callout`
+    // typography and tighter indents (the old homeBulletTree
+    // constants); headers are localised inside the builder via the
+    // same language sniffing this card used to do inline. See
+    // summaryAttributedString(_:compact:) in SelectableTextView.swift.
+    // Only the follow-up copy button stays as a SwiftUI control — an
+    // NSTextView can't host buttons inline, so it sits as a trailing
+    // footer row under the text.
 
     @ViewBuilder
     private var summaryCard: some View {
         if let summary = session.summarizer.lastSummary {
-            // Detect summary language from its lede + first bullet
-            // so the structural headers match the content language.
-            // Same trick as SessionDetailView.summaryLabels(for:).
-            let labels: SummaryLabels = {
-                var sample = summary.summary
-                if sample.count < 60, let firstBullet = summary.sections.first?.bullets.first?.text {
-                    sample += " " + firstBullet
-                }
-                return SummaryLabels.for(language: LanguageDetector.detect(sample))
-            }()
-            VStack(alignment: .leading, spacing: 16) {
-                // 1-sentence lede (or full legacy paragraph if
-                // sections are empty — pre-1.0.2 fallback).
-                if !summary.summary.isEmpty {
-                    mdSection(title: labels.meeting) {
-                        Text(summary.summary)
-                            .font(.callout)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                // Granola-style topical outline. Legacy summaries
-                // have `sections == []` and skip this loop.
-                ForEach(Array(summary.sections.enumerated()), id: \.offset) { _, section in
-                    mdSection(title: section.title) {
-                        homeBulletTree(section.bullets, level: 0)
-                    }
-                }
-                if !summary.actionItems.isEmpty {
-                    mdSection(title: labels.nextActions) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(summary.actionItems.enumerated()), id: \.offset) { _, item in
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    Image(systemName: "square")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                    Text(item)
-                                        .font(.callout)
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                SelectableTextView(attributed: summaryAttributedString(summary, compact: true))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Same defense-in-depth as the detail view: never
+                    // paint outside the card on a mis-measured line.
+                    .clipped()
                 if !summary.clientFollowUp.isEmpty {
-                    mdSection(title: labels.followUp) {
-                        HStack(alignment: .top, spacing: 6) {
-                            Text(summary.clientFollowUp)
-                                .font(.callout)
-                                .textSelection(.enabled)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
-                                ToastCenter.shared.show("Follow-up draft copied", style: .success)
-                            } label: {
-                                Image(systemName: "doc.on.doc").font(.caption)
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
-                            .help("Copy the draft message")
+                    // Copy affordance for the draft message — the draft
+                    // itself is the last block of the text body above.
+                    HStack {
+                        Spacer(minLength: 0)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
+                            ToastCenter.shared.show("Follow-up draft copied", style: .success)
+                        } label: {
+                            Label("Copy follow-up", systemImage: "doc.on.doc")
+                                .font(.caption)
                         }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Copy the draft message")
                     }
                 }
             }
@@ -812,44 +784,6 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    /// Hierarchical bullet tree for Granola-style sections, sized for
-    /// the home panel's narrower column (`.callout` font, 4pt row
-    /// spacing) so dense outlines stay scannable in the right pane.
-    /// Thin wrapper over the shared `summaryBulletTree` (defined in
-    /// SessionDetailView.swift) with the popover's typography.
-    private func homeBulletTree(_ bullets: [SummaryBullet], level: Int) -> AnyView {
-        summaryBulletTree(
-            bullets,
-            level: level,
-            font: .callout,
-            rowSpacing: 4,
-            bulletSpacing: 8,
-            childIndent: 18
-        )
-    }
-
-    /// MD-style section header: H3 weight + hairline divider. Mirrors
-    /// `mdSection` in SessionDetailView so the popover and the main
-    /// window read with the same typographic grammar.
-    @ViewBuilder
-    private func mdSection<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.daisyTextPrimary)
-                Rectangle()
-                    .fill(Color.daisyDivider)
-                    .frame(height: 0.5)
-            }
-            content()
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Transcript
