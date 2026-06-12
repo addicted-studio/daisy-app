@@ -214,6 +214,18 @@ final class CoreAudioMicRecorder {
     /// / fan transients instead of spiking on them.
     /// internal for RecordingSession+AutoStop.swift
     var lastMicRMSDB: Float { micLiveness.snapshot().lastRMS }
+
+    /// Level helpers, re-exported from the render-thread context below.
+    /// The implementations live on `RenderContext` (a PRIVATE class —
+    /// invisible outside this file), so these internal forwarders are
+    /// the public face DaisyTests' −160 dB sentinel locks compile
+    /// against. Pure functions, no recorder state involved.
+    nonisolated static func peakLevelDB(of buffer: AVAudioPCMBuffer) -> Float {
+        RenderContext.peakLevelDB(of: buffer)
+    }
+    nonisolated static func rmsLevelDB(of buffer: AVAudioPCMBuffer) -> Float {
+        RenderContext.rmsLevelDB(of: buffer)
+    }
     /// Render-thread write gate (low-disk → transcript-only without
     /// tearing down capture). Default open; closed by
     /// `stopArchivingKeepTranscribing()`, reopened on each `start()`.
