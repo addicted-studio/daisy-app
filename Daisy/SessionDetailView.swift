@@ -11,58 +11,6 @@
 import SwiftUI
 import AppKit
 
-/// Shared recursive renderer for hierarchical summary bullets. Used by
-/// both `SessionDetailView.bulletTree` (main window, `.body` sizing)
-/// and `ContentView.homeBulletTree` (popover, `.callout` sizing) — the
-/// view tree is identical, only the typography constants differ.
-/// Top level uses a darker mid-dot, deeper levels use lighter tertiary
-/// dots so the eye reads the indentation as semantic depth rather than
-/// just spacing. Handles arbitrary depth recursively; an empty
-/// `bullets` array renders an empty VStack.
-///
-/// Returns `AnyView` rather than `some View` because the function is
-/// recursive: Swift 6 / Xcode 26 refuses to infer an opaque return
-/// type that references itself. Type-erasing breaks the
-/// self-reference. Cost is negligible at the typical depth/breadth.
-@MainActor
-func summaryBulletTree(
-    _ bullets: [SummaryBullet],
-    level: Int,
-    font: Font,
-    rowSpacing: CGFloat,
-    bulletSpacing: CGFloat,
-    childIndent: CGFloat
-) -> AnyView {
-    AnyView(
-        VStack(alignment: .leading, spacing: rowSpacing) {
-            ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                VStack(alignment: .leading, spacing: rowSpacing) {
-                    HStack(alignment: .firstTextBaseline, spacing: bulletSpacing) {
-                        Text("•")
-                            .font(font.weight(level == 0 ? .semibold : .regular))
-                            .foregroundStyle(level == 0 ? .secondary : .tertiary)
-                        Text(bullet.text)
-                            .font(font)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    if !bullet.children.isEmpty {
-                        summaryBulletTree(
-                            bullet.children,
-                            level: level + 1,
-                            font: font,
-                            rowSpacing: rowSpacing,
-                            bulletSpacing: bulletSpacing,
-                            childIndent: childIndent
-                        )
-                        .padding(.leading, childIndent)
-                    }
-                }
-            }
-        }
-    )
-}
-
 struct SessionDetailView: View {
     /// Initial snapshot — passed in by the caller (the History list).
     /// We don't render from this directly: instead we look the
@@ -645,35 +593,70 @@ struct SessionDetailView: View {
         }
     }
 
-    // Summary sections rendered as a plain MD-style document — no
-    // coloured AI card, no sparkles header, no border. The user reads
-    // this like a normal write-up: H2 heading, body text, bullets.
-    // Each section is independent so the gestalt is "one document"
-    // rather than "a feature card".
+    // Summary rendered as a plain MD-style document — no coloured AI
+    // card, no sparkles header, no border. The user reads this like a
+    // normal write-up: headers, body text, bullets.
     //
-    // 1.0.2: switched to a Granola-style outline. `summary.sections`
-    // carries 3-5 topical chunks with hierarchical bullets, rendered
-    // here as indented bullet trees. `summary.summary` is a one-line
-    // lede above them. Legacy summaries written before the schema
-    // change have `sections == []`; we fall back to rendering
-    // `summary` as a paragraph plus a "Next actions" block, which
-    // matches the old layout exactly so previously-saved sessions
-    // don't suddenly look broken.
+    // 2026-06-12 — the whole textual body (Meeting lede + Granola-style
+    // sections + Next actions + Follow-up draft, headers included) is
+    // now ONE attributed string inside ONE NSTextView. Before, every
+    // block was its own SwiftUI `Text` with `.textSelection(.enabled)`,
+    // and macOS selection can't cross view boundaries — drag-select /
+    // ⌘A in the summary topped out at a single line (Egor, release
+    // blocker). Same fix the transcript got on 2026-05-25; see
+    // summaryAttributedString(_:compact:) in SelectableTextView.swift
+    // for the exact content/typography mirror (including the legacy
+    // `sections == []` paragraph fallback).
+    //
+    // Only the follow-up's INTERACTIVE chrome stays as SwiftUI views
+    // below the text — an NSTextView can't host controls inline:
+    //   • drafting: the draft leaves the text body, spinner section
+    //     shows in its place (same swap the old card did);
+    //   • present: copy-draft button as a trailing footer row (was a
+    //     corner overlay on the old standalone follow-up Text);
+    //   • empty: the "model judged this internal" plaque under its
+    //     localised header, exactly as before.
     @ViewBuilder
     private func summarySection(_ summary: MeetingSummary) -> some View {
-        if summary.sections.isEmpty {
-            // Legacy summary (pre-1.0.2): paragraph + flat actions.
-            legacySummarySection(summary)
-        } else {
-            // Granola-style outline.
-            granolaStyleSummary(summary)
-        }
+        let labels = summaryLabels(for: summary)
+        let hasFollowUpText = !summary.clientFollowUp.isEmpty && !isDraftingFollowUp
+        let bodySummary = hasFollowUpText
+            ? summary
+            : MeetingSummary(
+                summary: summary.summary,
+                sections: summary.sections,
+                actionItems: summary.actionItems,
+                clientFollowUp: ""
+            )
 
-        mdSection(title: summaryLabels(for: summary).followUp) {
-            if isDraftingFollowUp {
-                // Drafting in flight — visible spinner so the user sees the
-                // click registered (previously only a toast fired, which
-                // Egor flagged as "не хватает прогресса для фолоапа").
+        SelectableTextView(attributed: summaryAttributedString(bodySummary, compact: false))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Same defense-in-depth as the transcript below: if a line is
+            // ever mis-measured, never paint outside the card.
+            .clipped()
+
+        if hasFollowUpText {
+            // Copy affordance for the draft message — the draft itself is
+            // the last block of the attributed body above.
+            HStack {
+                Spacer(minLength: 0)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
+                    ToastCenter.shared.show("Follow-up draft copied", style: .success)
+                } label: {
+                    Label("Copy follow-up", systemImage: "doc.on.doc")
+                        .font(.callout)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help("Copy the draft message")
+            }
+        } else if isDraftingFollowUp {
+            // Drafting in flight — visible spinner so the user sees the
+            // click registered (previously only a toast fired, which
+            // Egor flagged as "не хватает прогресса для фолоапа").
+            mdSection(title: labels.followUp) {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text("Drafting follow-up…")
@@ -682,34 +665,12 @@ struct SessionDetailView: View {
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            } else if !summary.clientFollowUp.isEmpty {
-                // ZStack (not HStack): a sibling Button alongside the Text
-                // ate mouse hit-events over the text on macOS 26 (tester
-                // couldn't select + ⌘C). ZStack with the button anchored
-                // top-trailing leaves the Text full-width for unobstructed
-                // selection, copy affordance in the corner.
-                ZStack(alignment: .topTrailing) {
-                    Text(summary.clientFollowUp)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.trailing, 28)
-                    Button {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
-                        ToastCenter.shared.show("Follow-up draft copied", style: .success)
-                    } label: {
-                        Image(systemName: "doc.on.doc").font(.callout)
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Copy the draft message")
-                }
-            } else {
-                // Empty: the model judged the conversation internal — surface
-                // that decision + a one-click re-roll instead of a silently
-                // missing section.
+            }
+        } else {
+            // Empty: the model judged the conversation internal — surface
+            // that decision + a one-click re-roll instead of a silently
+            // missing section.
+            mdSection(title: labels.followUp) {
                 followUpEmptyStatePlaque
             }
         }
@@ -783,96 +744,6 @@ struct SessionDetailView: View {
             sample += " " + firstBullet
         }
         return SummaryLabels.for(language: LanguageDetector.detect(sample))
-    }
-
-    /// Granola-style: 1-line lede + topical outline + standalone
-    /// "Next actions" with owner-prefixed items. The outline section
-    /// titles come straight from the model — they're already
-    /// localised (RU summaries get RU titles like "Следующие шаги"
-    /// without us mapping anything). The STRUCTURAL headers (Meeting
-    /// / Next actions / Follow-up) we localise ourselves via
-    /// `summaryLabels(for:)`.
-    @ViewBuilder
-    private func granolaStyleSummary(_ summary: MeetingSummary) -> some View {
-        let labels = summaryLabels(for: summary)
-        if !summary.summary.isEmpty {
-            mdSection(title: labels.meeting) {
-                Text(summary.summary)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        ForEach(Array(summary.sections.enumerated()), id: \.offset) { _, section in
-            mdSection(title: section.title) {
-                bulletTree(section.bullets, level: 0)
-            }
-        }
-        if !summary.actionItems.isEmpty {
-            mdSection(title: labels.nextActions) {
-                actionItemList(summary.actionItems)
-            }
-        }
-    }
-
-    /// Legacy pre-1.0.2 layout — paragraph + flat actions.
-    /// Preserved verbatim so sessions saved on an older build keep
-    /// rendering correctly. Localised headers via content detection
-    /// — old summaries don't carry a language field but the lede
-    /// itself is in the user's language, so `LanguageDetector` on
-    /// `summary.summary` is reliable enough.
-    @ViewBuilder
-    private func legacySummarySection(_ summary: MeetingSummary) -> some View {
-        let labels = summaryLabels(for: summary)
-        mdSection(title: labels.meeting) {
-            Text(summary.summary)
-                .font(.body)
-                .foregroundStyle(.primary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        if !summary.actionItems.isEmpty {
-            mdSection(title: labels.nextActions) {
-                actionItemList(summary.actionItems)
-            }
-        }
-    }
-
-    /// Shared renderer for the flat actionItems block. Each row is
-    /// the checkbox-square icon + text; the owner prefix (if any) is
-    /// part of the text itself so no special styling is needed.
-    @ViewBuilder
-    private func actionItemList(_ items: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Image(systemName: "square")
-                        .font(.body)
-                        .foregroundStyle(.tertiary)
-                    Text(item)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-    }
-
-    /// Hierarchical bullet renderer. Up to 3 levels of nesting in
-    /// practice (prompt caps depth, but the view handles arbitrary
-    /// depth recursively). Thin wrapper over the shared
-    /// `summaryBulletTree` (see top of this file) with the main
-    /// window's `.body` typography.
-    private func bulletTree(_ bullets: [SummaryBullet], level: Int) -> AnyView {
-        summaryBulletTree(
-            bullets,
-            level: level,
-            font: .body,
-            rowSpacing: 6,
-            bulletSpacing: 10,
-            childIndent: 22
-        )
     }
 
     /// Document-style section: H2-weight heading, hairline rule under

@@ -22,6 +22,15 @@
 //  + copy + Find Bar working. Background draw is off so the view
 //  inherits whatever SwiftUI background sits behind it.
 //
+//  2026-06-12 — second mode: `init(attributed:)` renders a pre-built
+//  NSAttributedString verbatim. Used by the summary card, which had the
+//  same class of bug as the transcript (a stack of separate SwiftUI
+//  `Text` views — lede / headers / each bullet — so selection couldn't
+//  cross view boundaries; Egor flagged it as a release blocker). The
+//  card builds one fully-styled string via
+//  `summaryAttributedString(_:compact:)` (bottom of this file) and both
+//  modes share the same makeNSView / updateNSView / sizeThatFits.
+//
 
 import AppKit
 import SwiftUI
@@ -30,10 +39,35 @@ struct SelectableTextView: NSViewRepresentable {
 
     let text: String
     let font: NSFont
+    /// Non-nil ⇒ attributed mode: render this exact string (summary
+    /// card). nil ⇒ markdown mode: render `text` through
+    /// `attributedText()` below (transcript). See `displayString()`.
+    let attributed: NSAttributedString?
 
     init(_ text: String, font: NSFont = NSFont.preferredFont(forTextStyle: .body)) {
         self.text = text
         self.font = font
+        self.attributed = nil
+    }
+
+    /// Attributed mode — the caller owns ALL styling (fonts, colours,
+    /// paragraph styles). `text` mirrors the plain characters so any
+    /// string-based introspection keeps working; `font` stays the body
+    /// default and is only used for the one-line measurement slack in
+    /// `sizeThatFits` (the storage's real fonts come from the
+    /// attributed string itself).
+    init(attributed: NSAttributedString) {
+        self.text = attributed.string
+        self.font = NSFont.preferredFont(forTextStyle: .body)
+        self.attributed = attributed
+    }
+
+    /// What actually lands in the text storage: the caller-supplied
+    /// attributed string, or the markdown-rendered transcript. The
+    /// markdown path (`attributedText()`) is untouched by the
+    /// attributed mode — both converge here only.
+    private func displayString() -> NSAttributedString {
+        attributed ?? attributedText()
     }
 
     /// Build the display string. The transcript body is lightweight markdown
@@ -131,6 +165,11 @@ struct SelectableTextView: NSViewRepresentable {
     final class Coordinator {
         var lastText: String?
         var lastFont: NSFont?
+        /// Attributed-mode gate — the summary card rebuilds its
+        /// NSAttributedString on every SwiftUI body pass, so we keep the
+        /// last rendered one and compare by equality (characters AND
+        /// attributes) before touching the text storage.
+        var lastAttributed: NSAttributedString?
     }
 
     func makeNSView(context: Context) -> NSTextView {
@@ -181,23 +220,35 @@ struct SelectableTextView: NSViewRepresentable {
         // SwiftUI Text has no equivalent.
         tv.usesFindBar = true
         tv.isIncrementalSearchingEnabled = true
-        // Render markdown (headings/quotes/bold, markers stripped) — see
-        // attributedText(). Record what we rendered for the update gate.
-        tv.textStorage?.setAttributedString(attributedText())
+        // Markdown mode renders headings/quotes/bold with markers
+        // stripped (see attributedText()); attributed mode takes the
+        // caller's string verbatim. Record what we rendered for the
+        // update gate.
+        tv.textStorage?.setAttributedString(displayString())
         context.coordinator.lastText = text
         context.coordinator.lastFont = font
+        context.coordinator.lastAttributed = attributed
         return tv
     }
 
     func updateNSView(_ nsView: NSTextView, context: Context) {
-        // Rebuild only when the SOURCE text or font actually changed — see
-        // Coordinator for why we don't compare nsView.string/font.
-        guard context.coordinator.lastText != text
-            || context.coordinator.lastFont != font else { return }
+        // Rebuild only on a REAL change. Markdown mode compares the
+        // source text + font (see Coordinator for why we don't compare
+        // nsView.string/font). Attributed mode compares the attributed
+        // strings themselves by equality — the caller re-derives the
+        // value each body pass, so identity is useless but equality
+        // (characters + attributes) is exact.
+        if let attributed {
+            guard context.coordinator.lastAttributed != attributed else { return }
+        } else {
+            guard context.coordinator.lastText != text
+                || context.coordinator.lastFont != font else { return }
+        }
         context.coordinator.lastText = text
         context.coordinator.lastFont = font
+        context.coordinator.lastAttributed = attributed
         nsView.font = font
-        nsView.textStorage?.setAttributedString(attributedText())
+        nsView.textStorage?.setAttributedString(displayString())
         // Force layout-manager flush so the next sizeThatFits call reads
         // a fresh usedRect (otherwise a transcript that grew mid-session
         // — e.g. live append — could measure against stale glyph ranges
@@ -246,4 +297,207 @@ struct SelectableTextView: NSViewRepresentable {
         let lineHeight = layoutManager.defaultLineHeight(for: font)
         return CGSize(width: width, height: ceil(used.height) + ceil(lineHeight))
     }
+}
+
+// MARK: - Summary → attributed string
+
+/// Render a `MeetingSummary` into ONE attributed string for
+/// `SelectableTextView(attributed:)`. The summary card used to be a stack
+/// of independent SwiftUI `Text` views (lede, each section header, every
+/// bullet and action item its own view) and macOS text selection cannot
+/// cross view boundaries — drag-select / ⌘A topped out at a single line
+/// (Egor, 2026-06-12, release blocker). One NSTextView over one attributed
+/// string gives whole-card selection — the same fix the transcript got on
+/// 2026-05-25 (see file header).
+///
+/// Mirrors the old SwiftUI card 1:1 in content, order and hierarchy:
+/// Meeting lede → topical sections (hierarchical bullets) → Next actions
+/// (☐ rows, mirroring the old `square` SF-symbol checkboxes) → Follow-up
+/// draft. Structural headers come from `SummaryLabels`, localised to the
+/// summary's own language via the same content sniffing the card used.
+/// Legacy summaries (`sections == []`) keep the pre-1.0.2 paragraph
+/// fallback. Empty `actionItems` / `clientFollowUp` blocks are skipped,
+/// exactly like the old conditional sections.
+///
+/// `compact: false` = History detail document (`.body` text, `.title3`
+/// headers, 22pt per nesting level — the old `bulletTree` constants).
+/// `compact: true` = menu-bar popover (`.callout` text, `.subheadline`
+/// headers, 18pt per level — the old `homeBulletTree` constants).
+///
+/// Block gaps are expressed through paragraphSpacing(Before), NOT blank
+/// lines, so copying the whole card yields clean text with no stray empty
+/// paragraphs. Bullet rows are "•\t<text>" with a hanging indent — wrapped
+/// lines align under the text, not under the marker. Only semantic colours
+/// (label / secondaryLabel / tertiaryLabel) so the forced-darkAqua
+/// appearance renders them correctly.
+@MainActor
+func summaryAttributedString(_ summary: MeetingSummary, compact: Bool) -> NSAttributedString {
+    // Typography — NSFont equivalents of the SwiftUI styles the card used.
+    let bodyFont = NSFont.preferredFont(forTextStyle: compact ? .callout : .body)
+    let headerBase = NSFont.preferredFont(forTextStyle: compact ? .subheadline : .title3)
+    let headerFont = NSFont.systemFont(ofSize: headerBase.pointSize, weight: .semibold)
+    // Top-level bullet markers were semibold in the SwiftUI tree.
+    let topMarkerFont = NSFont.systemFont(ofSize: bodyFont.pointSize, weight: .semibold)
+
+    // Layout constants — same numbers the old SwiftUI stacks used
+    // (rowSpacing / bulletSpacing / childIndent / inter-section VStack
+    // spacing in SessionDetailView resp. ContentView).
+    let indentStep: CGFloat = compact ? 18 : 22   // per bullet nesting level
+    let markerGap: CGFloat = compact ? 8 : 10     // marker glyph → text gap
+    let rowGap: CGFloat = compact ? 4 : 6         // between rows in a block
+    let blockGap: CGFloat = compact ? 16 : 18     // between blocks
+    let headerGap: CGFloat = compact ? 8 : 10     // header → its content
+
+    // Structural-header language — same trick as the old
+    // `SessionDetailView.summaryLabels(for:)`: sniff the lede, padded
+    // with the first bullet when the lede alone is too short for
+    // NLLanguageRecognizer. Unknown / low confidence → English labels.
+    var sample = summary.summary
+    if sample.count < 60, let firstBullet = summary.sections.first?.bullets.first?.text {
+        sample += " " + firstBullet
+    }
+    let labels = SummaryLabels.for(language: LanguageDetector.detect(sample))
+
+    let result = NSMutableAttributedString()
+
+    func paragraphStyle(
+        spacingBefore: CGFloat,
+        spacing: CGFloat,
+        level: Int = 0,
+        hangingIndent: CGFloat = 0
+    ) -> NSParagraphStyle {
+        let ps = NSMutableParagraphStyle()
+        ps.firstLineHeadIndent = CGFloat(level) * indentStep
+        ps.headIndent = ps.firstLineHeadIndent + hangingIndent
+        if hangingIndent > 0 {
+            // Marker rows are "•\t<text>" — this tab stop lands the text
+            // exactly on headIndent, so wrapped lines align under the
+            // TEXT, not under the marker.
+            ps.tabStops = [NSTextTab(textAlignment: .left, location: ps.headIndent, options: [:])]
+        }
+        ps.paragraphSpacingBefore = spacingBefore
+        ps.paragraphSpacing = spacing
+        return ps
+    }
+
+    /// Append one paragraph built from styled runs. The separating "\n"
+    /// goes in BEFORE the new paragraph, carrying the PREVIOUS
+    /// paragraph's attributes (a newline belongs to the paragraph it
+    /// terminates) — so the result never ends in a trailing newline,
+    /// which NSTextView would lay out as a phantom empty last line and
+    /// inflate the measured height.
+    func appendParagraph(_ runs: [(String, [NSAttributedString.Key: Any])]) {
+        if result.length > 0 {
+            let prev = result.attributes(at: result.length - 1, effectiveRange: nil)
+            result.append(NSAttributedString(string: "\n", attributes: prev))
+        }
+        for (string, attrs) in runs where !string.isEmpty {
+            result.append(NSAttributedString(string: string, attributes: attrs))
+        }
+    }
+
+    func appendHeader(_ title: String) {
+        // blockGap minus the preceding row's own paragraphSpacing, so the
+        // VISIBLE gap between blocks matches the old VStack spacing
+        // exactly (spacing between paragraphs = prev.paragraphSpacing +
+        // next.paragraphSpacingBefore). First block starts flush.
+        let before = result.length == 0 ? 0 : max(0, blockGap - rowGap)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: headerFont,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle(spacingBefore: before, spacing: headerGap),
+        ]
+        appendParagraph([(title, attrs)])
+    }
+
+    /// Plain paragraph block (lede / follow-up draft). Inner "\n"s in the
+    /// source text keep this one style per paragraph — the model's
+    /// multi-paragraph follow-ups get rowGap spacing between paragraphs.
+    func appendBody(_ text: String) {
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: bodyFont,
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraphStyle(spacingBefore: 0, spacing: rowGap),
+        ]
+        appendParagraph([(text, attrs)])
+    }
+
+    /// "<marker>\t<text>" row with a hanging indent.
+    func appendMarkerRow(
+        marker: String,
+        markerFont: NSFont,
+        markerColor: NSColor,
+        text: String,
+        level: Int
+    ) {
+        // Measure the actual marker glyph so the tab stop clears it at
+        // any text size, then add the same marker→text gap the HStacks
+        // used (`bulletSpacing`).
+        let markerWidth = ceil((marker as NSString).size(withAttributes: [.font: markerFont]).width)
+        let ps = paragraphStyle(
+            spacingBefore: 0,
+            spacing: rowGap,
+            level: level,
+            hangingIndent: markerWidth + markerGap
+        )
+        appendParagraph([
+            (marker + "\t", [.font: markerFont, .foregroundColor: markerColor, .paragraphStyle: ps]),
+            (text, [.font: bodyFont, .foregroundColor: NSColor.labelColor, .paragraphStyle: ps]),
+        ])
+    }
+
+    /// Recursive bullets — same depth styling the SwiftUI tree had: the
+    /// top level gets a darker semibold mid-dot, deeper levels lighter
+    /// tertiary dots, so the eye reads indentation as semantic depth.
+    func appendBullets(_ bullets: [SummaryBullet], level: Int) {
+        for bullet in bullets {
+            appendMarkerRow(
+                marker: "•",
+                markerFont: level == 0 ? topMarkerFont : bodyFont,
+                markerColor: level == 0 ? .secondaryLabelColor : .tertiaryLabelColor,
+                text: bullet.text,
+                level: level
+            )
+            if !bullet.children.isEmpty {
+                appendBullets(bullet.children, level: level + 1)
+            }
+        }
+    }
+
+    // Assembly — mirrors the old card's order and conditionals.
+
+    if summary.sections.isEmpty {
+        // Legacy pre-1.0.2 summary: full paragraph under "Meeting",
+        // shown even when other blocks are empty (old behaviour).
+        appendHeader(labels.meeting)
+        appendBody(summary.summary)
+    } else {
+        if !summary.summary.isEmpty {
+            appendHeader(labels.meeting)
+            appendBody(summary.summary)
+        }
+        for section in summary.sections {
+            appendHeader(section.title)
+            appendBullets(section.bullets, level: 0)
+        }
+    }
+    if !summary.actionItems.isEmpty {
+        appendHeader(labels.nextActions)
+        for item in summary.actionItems {
+            // ☐ mirrors the old `square` SF-symbol checkbox rows; owner
+            // prefixes (if any) are part of the item text itself.
+            appendMarkerRow(
+                marker: "☐",
+                markerFont: bodyFont,
+                markerColor: .tertiaryLabelColor,
+                text: item,
+                level: 0
+            )
+        }
+    }
+    if !summary.clientFollowUp.isEmpty {
+        appendHeader(labels.followUp)
+        appendBody(summary.clientFollowUp)
+    }
+    return result
 }
