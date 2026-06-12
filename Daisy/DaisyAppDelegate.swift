@@ -54,6 +54,9 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         AutoStopNotification.register()
         // 1.0.7.9: Prompt-mode "record this call?" ask.
         AutoStartPromptNotification.register()
+        // Prompt-mode "meeting seems over — stop & save?" ask
+        // (Settings → "Ask before auto-stopping").
+        AutoStopPromptNotification.register()
 
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
@@ -201,12 +204,31 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
                 NotificationCenter.default.post(
                     name: AutoStartPromptNotification.ignoreRequested, object: nil
                 )
+            case AutoStopPromptNotification.actionStop:
+                // Auto-stop prompt: user confirmed — stop & save now.
+                // RecordingSession's init-time observer routes to
+                // performAutoStopFromPrompt().
+                NotificationCenter.default.post(
+                    name: AutoStopPromptNotification.stopRequested, object: nil
+                )
+            case AutoStopPromptNotification.actionSnooze10:
+                NotificationCenter.default.post(
+                    name: AutoStopPromptNotification.snooze10Requested, object: nil
+                )
+            case AutoStopPromptNotification.actionSnooze30:
+                NotificationCenter.default.post(
+                    name: AutoStopPromptNotification.snooze30Requested, object: nil
+                )
             default:
                 // Tap on the banner body of a silence-prompt category —
                 // treat as "Not yet" so the silence clock resets.
                 // For other categories (auto-start tapped body, auto-
-                // stop tapped body) we just dismiss; the broadcast
-                // only fires when an explicit action button is hit.
+                // stop tapped body, auto-stop PROMPT tapped body) we
+                // just dismiss — macOS already activates the app on a
+                // body tap, and for the auto-stop prompt that's the
+                // whole contract: open Daisy, keep recording, decide
+                // there. The broadcast only fires when an explicit
+                // action button is hit.
                 let cat = response.notification.request.content.categoryIdentifier
                 if cat == SilencePromptNotification.categoryID {
                     NotificationCenter.default.post(

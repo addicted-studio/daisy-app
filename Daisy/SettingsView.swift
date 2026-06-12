@@ -744,6 +744,19 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
                 .disabled(!hasAnyCalendarSource)
+
+                // Rides on the auto-stop row above: when ON, the
+                // silence-gated stop asks first (macOS banner with
+                // Stop & save / 10 / 30 more minutes + an in-app
+                // toast) instead of counting down and stopping on
+                // its own. Greyed out while auto-stop itself is off.
+                Toggle(isOn: $settings.autoStopPromptMode) {
+                    Text("Ask before auto-stopping")
+                    Text("Notification with Stop & save / snooze options instead of stopping on its own.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(!hasAnyCalendarSource || !settings.autoStopFromCalendar)
             } header: {
                 Text("Meetings")
             } footer: {

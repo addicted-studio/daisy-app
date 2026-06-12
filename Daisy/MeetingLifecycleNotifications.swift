@@ -303,3 +303,118 @@ enum AutoStopNotification {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
+
+// MARK: - Auto-stop PROMPT (ask instead of stopping)
+
+/// "Meeting seems over — stop & save?" banner with Stop & save /
+/// 10 more minutes / 30 more minutes actions, used when
+/// `AppSettings.autoStopPromptMode` is ON. Unlike `AutoStopNotification`
+/// (a receipt AFTER the stop), this fires INSTEAD of the automatic stop
+/// and gates it on the user's choice — the session keeps recording
+/// until they answer (or the hard-max backstop in
+/// `RecordingSession.evaluateAutoStop` force-stops an ignored ask).
+/// Action taps come back over the Foundation bus, same pattern as
+/// `AutoStartPromptNotification`. A body tap just opens the app; a
+/// swipe-dismiss is silent (keep recording — the evaluator may ask
+/// again later). No toast fallback here: `presentAutoStopPrompt`
+/// always posts an in-app action toast alongside, so the ask is never
+/// lost when notifications are denied.
+@MainActor
+enum AutoStopPromptNotification {
+
+    static let requestID = "app.essazanov.Daisy.autoStopPrompt"
+    static let categoryID = "daisy.autostop.prompt"
+
+    /// User tapped "Stop & save" — stop the session now.
+    static let actionStop = "AUTOSTOP_PROMPT_STOP"
+    /// User tapped "10 more minutes" — snooze the evaluator.
+    static let actionSnooze10 = "AUTOSTOP_PROMPT_SNOOZE_10"
+    /// User tapped "30 more minutes" — snooze the evaluator.
+    static let actionSnooze30 = "AUTOSTOP_PROMPT_SNOOZE_30"
+
+    /// Broadcast on the main bus when the user picks Stop & save.
+    /// RecordingSession subscribes and runs the auto-stop.
+    static let stopRequested = Notification.Name("Daisy.autoStopPrompt.stopRequested")
+    /// Broadcast when the user picks "10 more minutes".
+    static let snooze10Requested = Notification.Name("Daisy.autoStopPrompt.snooze10Requested")
+    /// Broadcast when the user picks "30 more minutes".
+    static let snooze30Requested = Notification.Name("Daisy.autoStopPrompt.snooze30Requested")
+
+    static func register() {
+        let center = UNUserNotificationCenter.current()
+        let stop = UNNotificationAction(
+            identifier: actionStop,
+            title: "Stop & save",
+            options: [.foreground, .destructive]
+        )
+        let snooze10 = UNNotificationAction(
+            identifier: actionSnooze10,
+            title: "10 more minutes",
+            options: []
+        )
+        let snooze30 = UNNotificationAction(
+            identifier: actionSnooze30,
+            title: "30 more minutes",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: categoryID,
+            actions: [stop, snooze10, snooze30],
+            intentIdentifiers: [],
+            options: []
+        )
+        // Merge with whatever's already registered (silence prompt,
+        // auto-start, auto-stop) rather than replacing —
+        // setNotificationCategories is destructive otherwise.
+        center.getNotificationCategories { existing in
+            var merged = existing
+            merged.insert(category)
+            center.setNotificationCategories(merged)
+        }
+    }
+
+    /// Surface the ask. `meetingTitle` shows in the body so the user
+    /// knows which meeting looks finished. Denied/ephemeral is a
+    /// silent no-op — the in-app toast posted by the caller carries
+    /// the question instead.
+    static func post(meetingTitle: String) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    if granted {
+                        Task { @MainActor in addRequest(title: meetingTitle) }
+                    }
+                }
+            case .authorized, .provisional:
+                Task { @MainActor in addRequest(title: meetingTitle) }
+            case .denied, .ephemeral:
+                break
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    static func cancel() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [requestID])
+        center.removeDeliveredNotifications(withIdentifiers: [requestID])
+    }
+
+    private static func addRequest(title: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Meeting seems over"
+        content.body = title.isEmpty
+            ? "Stop & save the recording, or keep going?"
+            : "Stop & save \"\(title)\", or keep going?"
+        content.sound = .default
+        content.categoryIdentifier = categoryID
+        let request = UNNotificationRequest(
+            identifier: requestID,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+}
