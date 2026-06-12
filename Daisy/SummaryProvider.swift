@@ -388,6 +388,18 @@ nonisolated struct CloudSummaryDTO: Codable {
         )
     }
 
+    /// True when the decode produced no usable content — no lede, no
+    /// sections, no action items. The tell-tale of a schema-variant
+    /// payload whose real keys were aliases ("lede", "outline", …):
+    /// with all-optional fields it decodes without throwing, just
+    /// empty. `clientFollowUp` is deliberately ignored here — an
+    /// alias retry on a follow-up-only payload is a no-op, not a risk.
+    var isEffectivelyEmpty: Bool {
+        (summary ?? "").isEmpty
+            && (sections ?? []).isEmpty
+            && (actionItems ?? []).isEmpty
+    }
+
     /// Case-insensitive key aliases the model sometimes emits.
     /// Maps the alias → the canonical key the decoder expects.
     /// Order: longest-first so "client_follow_up" matches before
@@ -488,7 +500,24 @@ nonisolated extension CloudSummaryDTO {
 
         let decoder = JSONDecoder()
         do {
-            return try decoder.decode(CloudSummaryDTO.self, from: data)
+            let dto = try decoder.decode(CloudSummaryDTO.self, from: data)
+            // All-optional fields (1.0.3) mean a schema-variant payload
+            // ("lede" / "outline" / "action_items") decodes "successfully"
+            // as an all-nil DTO — so the DecodingError fallback below
+            // never fires, and the alias machinery it was built around
+            // became dead code: such summaries silently came back EMPTY.
+            // (Caught by the cloudDTO_aliasLedeBecomesSummary regression
+            // test, 2026-06-12.) If nothing usable decoded, retry once
+            // through the alias remap before accepting the empty DTO.
+            if dto.isEffectivelyEmpty {
+                let remapped = Self.remapKeyAliases(jsonString: s)
+                if let remappedData = remapped.data(using: .utf8),
+                   let retried = try? decoder.decode(CloudSummaryDTO.self, from: remappedData),
+                   !retried.isEffectivelyEmpty {
+                    return retried
+                }
+            }
+            return dto
         } catch {
             // Fallback: remap common key aliases and retry once.
             // Useful when a model emits `lede` / `outline` /
