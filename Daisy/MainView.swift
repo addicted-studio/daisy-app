@@ -21,7 +21,7 @@ import SwiftUI
 // MARK: - Section enum
 
 enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
-    case home, library, connections, settings, about
+    case home, library, dictation, connections, settings, about
 
     var id: String { rawValue }
 
@@ -29,6 +29,7 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .home:        "Home"
         case .library:     "Library"
+        case .dictation:   "Dictation"
         case .connections: "Connections"
         case .settings:    "Settings"
         case .about:       "About"
@@ -44,6 +45,12 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         // History, which framed it as a chronological log; Library
         // reframes it as a curated collection, and the icon follows.
         case .library:     "books.vertical"
+        // character.cursor.ibeam reads as "type / insert text at the
+        // caret" — the universal dictation/typing affordance (same
+        // glyph the old Settings → Dictation tab used). Reframes this
+        // section as "where your dictated words live" alongside the
+        // Library of meetings.
+        case .dictation:   "character.cursor.ibeam"
         // arrow.triangle.branch reads as "things diverging from a
         // central point" — same shape Notion / Linear / Raycast use
         // for their Integrations / Connections nav entries. Closest
@@ -80,10 +87,6 @@ enum SettingsTab: String, Hashable, Sendable {
     /// Split out of the overloaded General tab in 1.0.7.16.
     case recording
     case transcription
-    /// Dictation — push-to-talk word-replacement dictionary (+ a 1-day
-    /// history later). Split from Transcription so the dictation user
-    /// has a focused home.
-    case dictation
     case summary
     /// System privacy permissions Daisy interacts with — Microphone,
     /// Calendar, Accessibility, Screen Recording. Lives in Settings
@@ -460,6 +463,8 @@ struct MainView: View {
             HomeView(session: session)
         case .library:
             LibraryView()
+        case .dictation:
+            DictationView()
         case .connections:
             ConnectionsView(settings: settings)
         case .settings:

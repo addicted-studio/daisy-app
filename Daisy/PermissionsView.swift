@@ -69,34 +69,23 @@ struct PermissionsView: View {
                 openSettings: permissions.openAccessibilitySettings
             )
         } header: {
-            // Global privacy explainer + overall status ride on the
-            // first section header (first thing read). The two rows
-            // below are the minimum Daisy needs to dictate.
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("System access")
-                    Spacer()
-                    if permissions.needsAttention {
-                        Label("Required permission missing", systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
-                            .foregroundStyle(Color.daisyWarning)
-                    } else if permissions.hasAllRequiredGranted && permissions.hasAllOptionalGranted {
-                        Label("All granted", systemImage: "checkmark.seal.fill")
-                            .font(.caption)
-                            .foregroundStyle(Color.daisySuccess)
-                    }
+            // Header names the group ("enough to dictate") and carries the
+            // overall permission status badge. The on-device privacy
+            // explainer that used to sit here was dropped (Egor, 2026-06-13)
+            // — it was a wall of text above the first prompt.
+            HStack {
+                Text("Enough for dictation")
+                Spacer()
+                if permissions.needsAttention {
+                    Label("Required permission missing", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyWarning)
+                } else if permissions.hasAllRequiredGranted && permissions.hasAllOptionalGranted {
+                    Label("All granted", systemImage: "checkmark.seal.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisySuccess)
                 }
-                Text("Daisy works entirely on-device. None of these permissions ship data anywhere — they only let macOS know which local APIs Daisy may call. You can revoke any of them later in System Settings → Privacy & Security")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textCase(nil)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-        } footer: {
-            Text("Microphone + Accessibility are all that dictation needs.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .textCase(nil)
         }
 
         // ── For meeting recording: asked lazily on first use ──

@@ -128,11 +128,6 @@ struct SettingsView: View {
                 .tabItem { Label("Transcription", systemImage: "waveform") }
                 .scrollContentBackground(.hidden)
 
-            dictationTab
-                .tag(SettingsTab.dictation)
-                .tabItem { Label("Dictation", systemImage: "character.cursor.ibeam") }
-                .scrollContentBackground(.hidden)
-
             summaryTab
                 .tag(SettingsTab.summary)
                 .tabItem { Label("Summary", systemImage: "text.bubble") }
@@ -595,9 +590,75 @@ struct SettingsView: View {
                 Text("Profile")
             }
 
-            // (Audio/mic, Shortcuts, Meetings, and the floating widget
-            // moved to the new "Recording" tab in 1.0.7.16. General is now
-            // app-level prefs: Profile, Storage, Privacy, Notifications.)
+            // ── Appearance ────────────────────────────────────
+            // Single home for every on-screen display setting Daisy
+            // exposes (1.0.7.19). Consolidated from three scattered
+            // homes: the menu-bar / widget toggles were in Recording's
+            // "Menu bar & widget" section, the live-preview + live-
+            // transcript controls were in Transcription. Grouped here
+            // because they all answer one question — "how does Daisy
+            // show up on screen" — independent of audio I/O or how the
+            // recorder processes a session.
+            Section {
+                Toggle(isOn: $settings.compactMenuBarOnly) {
+                    Text("Menu-bar only (compact)")
+                    Text("Hide the main window and live in the menu bar + widget, like a focused dictation tool. Open the window any time from the menu-bar ⋯ menu.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Toggle("Floating widget", isOn: $settings.floatingWidgetEnabled)
+                Toggle("Show next meeting in the menu bar", isOn: $settings.menuBarShowsNextMeeting)
+                    .disabled(!hasAnyCalendarSource)
+
+                // Streaming live preview for dictation (Nemotron 3.5,
+                // on-device). The badge doubles as the model-download
+                // indicator — same pattern as the Faster engine in
+                // Transcription. Preview-only: the pasted text still comes
+                // from the dictation engine picked in Transcription.
+                Toggle(isOn: $settings.dictationUseNemotronLive) {
+                    transcriptionRowLabel(
+                        "Live preview while dictating",
+                        state: nemotronBadgeState,
+                        message: nemotronShortStatus
+                    )
+                }
+                .help("Shows your words about half a second behind your speech while you hold the dictation key. The pasted text still comes from the dictation engine above. Turning this on downloads an on-device model once.")
+                .onChange(of: settings.dictationUseNemotronLive) { _, useNemotron in
+                    if useNemotron { Task { await NemotronLiveEngine.shared.ensureLoaded() } }
+                }
+                .onAppear {
+                    if settings.dictationUseNemotronLive, !nemotron.isReady {
+                        Task { await NemotronLiveEngine.shared.ensureLoaded() }
+                    }
+                }
+
+                // Live-transcript tier — how the toolbar transcript updates
+                // during a meeting. Plain names: Default (was "Lite") is the
+                // sensible default; Full is heavier; Off transcribes once on
+                // Stop. The final saved transcript is always full quality,
+                // and dictation always runs live regardless of this.
+                Picker("Live transcript", selection: $settings.liveTranscriptionTier) {
+                    Text("Off").tag(LiveTranscriptionTier.off)
+                    Text("Standard").tag(LiveTranscriptionTier.lite)
+                    Text("Full · uses more memory").tag(LiveTranscriptionTier.full)
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("Appearance")
+            } footer: {
+                if !hasAnyCalendarSource {
+                    Text("Showing the next meeting needs calendar access in Settings → Permissions.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            // (Audio/mic, Shortcuts, Meetings moved to the "Recording"
+            // tab in 1.0.7.16. The menu-bar / widget toggles + the live-
+            // preview / live-transcript controls were pulled into the
+            // "Appearance" section above in 1.0.7.19. General is now
+            // app-level prefs: Profile, Appearance, Storage, Privacy,
+            // Notifications.)
 
             // ── Group 2: Storage / Privacy ────────────────────
             // Split (1.0.7.16) from one "Storage" section that conflated
@@ -779,29 +840,10 @@ struct SettingsView: View {
                 }
             }
 
-            // ── Menu bar & widget ─────────────────────────────
-            // Daisy's on-screen presence. (Floating widget moved here from
-            // "Audio & devices"; "Show next meeting" from "Meetings" — both
-            // are about how visible Daisy is, not audio I/O.)
-            Section {
-                Toggle(isOn: $settings.compactMenuBarOnly) {
-                    Text("Menu-bar only (compact)")
-                    Text("Hide the main window and live in the menu bar + widget, like a focused dictation tool. Open the window any time from the menu-bar ⋯ menu.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Toggle("Floating widget", isOn: $settings.floatingWidgetEnabled)
-                Toggle("Show next meeting in the menu bar", isOn: $settings.menuBarShowsNextMeeting)
-                    .disabled(!hasAnyCalendarSource)
-            } header: {
-                Text("Menu bar & widget")
-            } footer: {
-                if !hasAnyCalendarSource {
-                    Text("Showing the next meeting needs calendar access in Settings → Permissions.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
+            // (The "Menu bar & widget" section — compact / floating
+            // widget / show-next-meeting toggles — moved to General →
+            // "Appearance" in 1.0.7.19, consolidating every on-screen
+            // display setting in one place.)
         }
         .formStyle(.grouped)
     }
@@ -973,27 +1015,9 @@ struct SettingsView: View {
                     }
                 }
 
-                // Streaming live preview for dictation (Nemotron 3.5,
-                // on-device). The badge doubles as the model-download
-                // indicator — same pattern as the Faster engine above.
-                // Preview-only: the pasted text still comes from the
-                // dictation engine picked above.
-                Toggle(isOn: $settings.dictationUseNemotronLive) {
-                    transcriptionRowLabel(
-                        "Live preview while dictating",
-                        state: nemotronBadgeState,
-                        message: nemotronShortStatus
-                    )
-                }
-                .help("Shows your words about half a second behind your speech while you hold the dictation key. The pasted text still comes from the dictation engine above. Turning this on downloads an on-device model once.")
-                .onChange(of: settings.dictationUseNemotronLive) { _, useNemotron in
-                    if useNemotron { Task { await NemotronLiveEngine.shared.ensureLoaded() } }
-                }
-                .onAppear {
-                    if settings.dictationUseNemotronLive, !nemotron.isReady {
-                        Task { await NemotronLiveEngine.shared.ensureLoaded() }
-                    }
-                }
+                // ("Live preview while dictating" moved to General →
+                // "Appearance" in 1.0.7.19, alongside the other on-screen
+                // display settings.)
 
                 // One transcription language for everything (meetings,
                 // voice notes, dictation). Per-mode overrides were removed
@@ -1010,17 +1034,9 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                // Live-transcript tier — how the toolbar transcript updates
-                // during a meeting. Plain names: Default (was "Lite") is the
-                // sensible default; Full is heavier; Off transcribes once on
-                // Stop. The final saved transcript is always full quality,
-                // and dictation always runs live regardless of this.
-                Picker("Live transcript", selection: $settings.liveTranscriptionTier) {
-                    Text("Off").tag(LiveTranscriptionTier.off)
-                    Text("Standard").tag(LiveTranscriptionTier.lite)
-                    Text("Full · uses more memory").tag(LiveTranscriptionTier.full)
-                }
-                .pickerStyle(.menu)
+                // ("Live transcript" tier moved to General → "Appearance"
+                // in 1.0.7.19, alongside the other on-screen display
+                // settings.)
             } header: {
                 Text("Transcription")
             }
@@ -1409,31 +1425,6 @@ struct SettingsView: View {
     }
 
     // MARK: - Summary Provider
-
-    private var dictationTab: some View {
-        Form {
-            Section {
-                DictationDictionaryView()
-            } header: {
-                Text("Word replacements")
-            } footer: {
-                Text("Daisy applies these to dictation before it pastes — handy for names, brands and jargon the model mishears.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            Section {
-                DictationHistoryView()
-            } header: {
-                Text("Recent dictations")
-            } footer: {
-                Text("The last 24 hours of dictations, then auto-cleared. Tap one to copy it.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .formStyle(.grouped)
-    }
 
     private var summaryTab: some View {
         Form {
