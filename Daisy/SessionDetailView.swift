@@ -641,6 +641,10 @@ struct SessionDetailView: View {
     private func summarySection(_ summary: MeetingSummary) -> some View {
         let labels = summaryLabels(for: summary)
         let hasFollowUpText = !summary.clientFollowUp.isEmpty && !isDraftingFollowUp
+        // No follow-up sub-section at all for a no-content summary (e.g.
+        // the "no speech captured" sentinel): no plaque, no Draft CTA when
+        // there's nothing to follow up on.
+        let hasContent = !summary.sections.isEmpty || !summary.actionItems.isEmpty
         let bodySummary = hasFollowUpText
             ? summary
             : MeetingSummary(
@@ -690,10 +694,11 @@ struct SessionDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-        } else {
-            // Empty: the model judged the conversation internal — surface
-            // that decision + a one-click re-roll instead of a silently
-            // missing section.
+        } else if hasContent {
+            // Empty follow-up but real content: the model judged the
+            // conversation internal — surface that decision + a one-click
+            // re-roll instead of a silently missing section. Skipped
+            // entirely for a no-content summary (see hasContent).
             mdSection(title: labels.followUp) {
                 followUpEmptyStatePlaque
             }
