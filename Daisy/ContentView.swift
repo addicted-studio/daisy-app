@@ -762,8 +762,10 @@ struct ContentView: View {
                     HStack {
                         Spacer(minLength: 0)
                         Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
+                            // Two-flavor write — HTML <p> blocks for
+                            // mail / Slack, verbatim text for plain
+                            // targets (MarkdownClipboard.swift).
+                            RichClipboard.copy(markdown: summary.clientFollowUp)
                             ToastCenter.shared.show("Follow-up draft copied", style: .success)
                         } label: {
                             Label("Copy follow-up", systemImage: "doc.on.doc")
