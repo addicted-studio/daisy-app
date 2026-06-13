@@ -29,16 +29,6 @@ struct AboutView: View {
 
     var body: some View {
         Form {
-            // Brand block as the Form's leading content, but rendered
-            // borderless (plain row background) so the 56pt logo isn't
-            // boxed inside a grouped card. The version line keeps its
-            // click-to-copy affordance verbatim.
-            Section {
-                brandHeader
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
-            }
-
             // Updates lives directly under the version line — natural
             // pairing of "what version am I on" and "how do I get newer
             // ones". Apple's own About panels historically had this same
@@ -180,35 +170,6 @@ struct AboutView: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(Color.daisyBgPrimary)
-    }
-
-    // MARK: - Brand header
-
-    private var brandHeader: some View {
-        // 2026-05-25 — merged the bottom-of-page "Daisy is built so
-        // your meetings stay on your Mac…" paragraph into this header
-        // subtitle. Pre-fix the page had two short value-prop
-        // statements ~600pt apart: one under the title (Local
-        // meeting capture for Mac.) and one at the very bottom
-        // (full privacy explainer). The visual split made the
-        // footer paragraph feel like fine print no one reads,
-        // while the top subtitle was just a category descriptor.
-        // Merged: the title pill carries both pieces — what it is
-        // + what's on-device — and we drop the duplicate "for Mac"
-        // from the original footer along the way. Trailing period
-        // dropped per the Daisy caption rule (see
-        // business/projects/daisy → Brand copy rules).
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Daisy")
-                    .font(.title.weight(.semibold))
-                Text("Local meeting capture for Mac — audio, transcript, and summary all on-device by default. Cloud LLMs (Anthropic, OpenAI) and MCP integrations are strictly opt-in")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer()
-        }
     }
 
     // MARK: - Updates

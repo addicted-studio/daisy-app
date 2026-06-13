@@ -423,38 +423,7 @@ struct MainView: View {
         // for List row selection fills, focus rings, and `Label`
         // icon colour in `.sidebar` style.
         .tint(Color.daisyAccentSoft)
-        .safeAreaInset(edge: .bottom) {
-            HStack(spacing: 6) {
-                Text("Daisy")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("v\(appVersion)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-                    // 2026-05-27 — click-to-copy on the version pill.
-                    // Useful for bug reports / support — user posts a
-                    // GitHub issue or DM and pastes "Daisy 1.0.7.2 (29)"
-                    // instead of squinting at the pill, then asking
-                    // which one is the build. No visual change: same
-                    // font/colour/padding. `.contentShape` widens the
-                    // hit-target to the whole text frame (otherwise
-                    // SwiftUI hit-tests glyph rectangles only, which
-                    // makes single-digit versions tiny). `.help`
-                    // surfaces the affordance on hover without adding
-                    // an icon, per Egor's "no icon" constraint.
-                    .contentShape(Rectangle())
-                    .onTapGesture { VersionInfo.copyToClipboardWithToast() }
-                    .help("Click to copy version")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.bar)
-        }
     }
-
-    private var appVersion: String { VersionInfo.marketingVersion }
 
     // MARK: Detail
 
