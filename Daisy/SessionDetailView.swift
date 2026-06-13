@@ -126,7 +126,8 @@ struct SessionDetailView: View {
                         title: summaryBlockTitle,
                         storageKey: "daisy.session.detail.summaryExpanded",
                         copyLabel: "Copy summary",
-                        copyText: summaryCopyText
+                        copyText: summaryCopyText,
+                        showsCopy: false
                     ) {
                         VStack(alignment: .leading, spacing: 18) {
                             // 2026-05-26 — three cases:
@@ -201,15 +202,18 @@ struct SessionDetailView: View {
         // trailing edges comes from (a) uniform horizontal padding per
         // icon in `toolbarIcon(_:)` and (b) `.fixedSize()` on the
         // ellipsis Menu to collapse the hidden chevron's phantom width.
-        ToolbarItemGroup(placement: .primaryAction) {
+        // Summarize is the primary action — its own capsule with a WORD
+        // label (Egor, 2026-06-13), not a bare sparkle peer of copy/more.
+        ToolbarItem(placement: .primaryAction) {
             Button {
                 attemptReSummarize()
             } label: {
-                toolbarIcon("sparkles")
+                Label("Summarize", systemImage: "sparkles")
             }
             .buttonStyle(.borderless)
             .help("Re-summarize via current provider")
-
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
             Button {
                 attemptCopyMarkdown()
             } label: {
@@ -1602,6 +1606,10 @@ private struct CollapsibleBlock<Content: View>: View {
     let storageKey: String
     let copyLabel: String
     let copyText: () -> String
+    /// When false the header copy button is hidden — used by the Summary
+    /// block, whose copy is served by the toolbar + the follow-up button,
+    /// so the block doesn't show a second redundant copy control (Egor).
+    let showsCopy: Bool
     let content: () -> Content
 
     @AppStorage private var isExpanded: Bool
@@ -1611,12 +1619,14 @@ private struct CollapsibleBlock<Content: View>: View {
         storageKey: String,
         copyLabel: String,
         copyText: @escaping () -> String,
+        showsCopy: Bool = true,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.storageKey = storageKey
         self.copyLabel = copyLabel
         self.copyText = copyText
+        self.showsCopy = showsCopy
         self.content = content
         // @AppStorage with a dynamic key: have to use the underlying
         // wrapper init directly. Default to expanded — first-run users
@@ -1670,24 +1680,26 @@ private struct CollapsibleBlock<Content: View>: View {
 
             Spacer()
 
-            Button {
-                let text = copyText()
-                guard !text.isEmpty else {
-                    ToastCenter.shared.show("Nothing to copy yet", style: .warning)
-                    return
+            if showsCopy {
+                Button {
+                    let text = copyText()
+                    guard !text.isEmpty else {
+                        ToastCenter.shared.show("Nothing to copy yet", style: .warning)
+                        return
+                    }
+                    // Two-flavor write (MarkdownClipboard.swift) — the
+                    // closures hand us markdown; rich paste targets read
+                    // the semantic-HTML render, plain ones the markdown.
+                    RichClipboard.copy(markdown: text)
+                    ToastCenter.shared.show("\(title) copied", style: .success)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.callout)
                 }
-                // Two-flavor write (MarkdownClipboard.swift) — the
-                // closures hand us markdown; rich paste targets read
-                // the semantic-HTML render, plain ones the markdown.
-                RichClipboard.copy(markdown: text)
-                ToastCenter.shared.show("\(title) copied", style: .success)
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.callout)
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+                .help(copyLabel)
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-            .help(copyLabel)
         }
     }
 }
