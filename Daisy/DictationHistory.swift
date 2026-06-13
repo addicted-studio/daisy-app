@@ -58,13 +58,13 @@ final class DictationHistory {
     /// How long an entry is kept before it's swept. Tunable — bump this if
     /// the 24-hour window proves too short in practice. Entries past this
     /// age are dropped on load and on every `record(_:)`.
-    static let retention: TimeInterval = 24 * 60 * 60
+    nonisolated static let retention: TimeInterval = 24 * 60 * 60
 
     /// Hard cap on stored entries, independent of age. Bounds the size of
     /// the UserDefaults blob if the user dictates heavily inside one
     /// window. We keep the most recent `maxEntries` (the list is
     /// newest-first, so this is a simple prefix).
-    static let maxEntries = 200
+    nonisolated static let maxEntries = 200
 
     /// Newest-first list of recent dictations. Observable so the Settings
     /// list re-renders on add/clear. Persisted on every mutation via
