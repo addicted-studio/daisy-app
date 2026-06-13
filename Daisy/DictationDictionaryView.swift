@@ -46,7 +46,7 @@ struct DictationDictionaryView: View {
             // One-line explainer in Daisy's plain voice. Caption styling
             // matches the per-section helper text used elsewhere in
             // Settings (e.g. the speaker-match-mode help).
-            Text("Fix words dictation tends to mishear. Before pasting, Daisy swaps each entry on the left for the text on the right — handy for names, brands, and jargon.")
+            Text("Replace words dictation mishears. Daisy swaps each match before pasting.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -93,7 +93,7 @@ struct DictationDictionaryView: View {
                 Image(systemName: "arrow.right")
                     .font(.caption2)
                     .foregroundStyle(.clear)
-                Text("Replace with")
+                Text("Replacement")
                     .frame(maxWidth: .infinity, alignment: .leading)
                 // Spacer matching the trailing delete button column.
                 Color.clear.frame(width: 22)
@@ -144,7 +144,7 @@ struct DictationDictionaryView: View {
                     .foregroundStyle(Color.daisyError)
             }
             .buttonStyle(.borderless)
-            .help("Remove this replacement")
+            .help("Remove")
         }
     }
 

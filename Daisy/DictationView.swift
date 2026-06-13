@@ -24,9 +24,9 @@ struct DictationView: View {
             Section {
                 DictationDictionaryView()
             } header: {
-                Text("Word replacements")
+                Text("Vocabulary")
             } footer: {
-                Text("Daisy applies these to dictation before it pastes — handy for names, brands and jargon the model mishears.")
+                Text("Fixed before pasting — names, brands, jargon.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -36,11 +36,13 @@ struct DictationView: View {
             } header: {
                 Text("Recent dictations")
             } footer: {
-                Text("The last 24 hours of dictations, then auto-cleared. Tap one to copy it.")
+                Text("Last 24 hours. Tap to copy.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.daisyBgPrimary)
     }
 }
