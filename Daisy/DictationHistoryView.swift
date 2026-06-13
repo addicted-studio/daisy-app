@@ -47,7 +47,7 @@ struct DictationHistoryView: View {
             // One-line explainer in Daisy's plain voice — sets the privacy
             // expectation (local, auto-expiring) up front. Caption styling
             // matches the per-section helper text used elsewhere.
-            Text("Everything you dictate is kept here for 24 hours, then deleted. Stays on your Mac — tap any entry to copy it again.")
+            Text("Kept on your Mac for 24 hours, then deleted. Tap to copy.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -71,7 +71,7 @@ struct DictationHistoryView: View {
         HStack(spacing: 8) {
             Image(systemName: "clock")
                 .foregroundStyle(.secondary)
-            Text("Nothing dictated in the last 24 hours.")
+            Text("Nothing in the last 24 hours.")
                 .foregroundStyle(.secondary)
             Spacer()
         }
@@ -117,7 +117,7 @@ struct DictationHistoryView: View {
             .padding(.vertical, 6)
         }
         .buttonStyle(.plain)
-        .help("Copy this dictation")
+        .help("Copy")
     }
 
     // MARK: - Clear
@@ -129,7 +129,7 @@ struct DictationHistoryView: View {
         // destructively so it reads as the dangerous action it is.
         Button(role: .destructive) {
             history.clear()
-            ToastCenter.shared.show("Dictation history cleared", style: .success)
+            ToastCenter.shared.show("History cleared", style: .success)
         } label: {
             Label("Clear history", systemImage: "trash")
         }
