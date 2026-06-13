@@ -486,7 +486,11 @@ struct ContentView: View {
     /// an active session has nothing left to say here.
     @ViewBuilder
     private var statusRow: some View {
-        if session.status != .recording {
+        // Idle has nothing to say either — the green Record button IS the
+        // "Ready" signal (Egor, 2026-06-13), so the "● Ready" line is just
+        // noise. Hide the row for .idle too; preparing / summarizing /
+        // finished / failed still surface here.
+        if session.status != .recording && session.status != .idle {
             HStack(spacing: 8) {
                 statusDot
                 Text(statusLabel)
@@ -768,7 +772,7 @@ struct ContentView: View {
                             RichClipboard.copy(markdown: summary.clientFollowUp)
                             ToastCenter.shared.show("Follow-up draft copied", style: .success)
                         } label: {
-                            Label("Copy follow-up", systemImage: "doc.on.doc")
+                            Label("Copy follow-up", systemImage: "envelope")
                                 .font(.caption)
                         }
                         .buttonStyle(.borderless)

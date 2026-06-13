@@ -556,6 +556,25 @@ struct SettingsView: View {
 
     private var generalTabForm: some View {
         Form {
+            // ── App mode ──────────────────────────────────────
+            // First thing in the first tab, so the full app vs the
+            // focused dictation-only (Dzen) build is impossible to miss.
+            // Dictation-only parks all meeting machinery (ServiceWiring)
+            // and defers Screen Recording / Calendar.
+            Section {
+                Picker("Mode", selection: $settings.dictationOnlyMode) {
+                    Text("Full — meetings + dictation").tag(false)
+                    Text("Dictation only").tag(true)
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("App mode")
+            } footer: {
+                Text("Dictation only turns Daisy into a focused push-to-talk tool — no meetings, calendar or Screen Recording. Switch back any time.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
             // ── Group 0: Profile ──────────────────────────────
             // Identity used to label the mic-side of transcripts.
             // Empty by default → falls back to the generic "Me".
@@ -723,18 +742,9 @@ struct SettingsView: View {
             }
 
             // ── Meetings ──────────────────────────────────────
+            // Greyed out when App mode = "Dictation only" (General tab) —
+            // the meeting machinery is parked in that mode.
             Section {
-                // Master switch: dictation-only (Dzen) parks ALL meeting
-                // machinery (calendar polling, app-launch auto-start) and
-                // drops the Screen Recording / Calendar asks. The meeting
-                // controls below grey out while it's on.
-                Toggle(isOn: $settings.dictationOnlyMode) {
-                    Text("Dictation-only mode")
-                    Text("Turn Daisy into a focused push-to-talk dictation tool. Stops calendar polling and meeting auto-start; never asks for Screen Recording or Calendar.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Picker("Auto-record", selection: $settings.autoStartPolicy) {
                     ForEach(AutoStartPolicy.allCases) { policy in
                         Text(policy.displayName).tag(policy)
