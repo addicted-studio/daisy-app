@@ -34,27 +34,35 @@ struct AboutView: View {
             // ones". Apple's own About panels historically had this same
             // adjacency.
             Section {
-                // App version as the first row of Updates — pairs "what am
-                // I on" with "how to get newer" (moved here from the brand
-                // header). Click the row to copy "Daisy <version> (<build>)".
-                HStack(spacing: 10) {
-                    Image(systemName: "number")
-                        .frame(width: 18)
+                // Current version — name on the left, number + a copy button
+                // on the right. Click it to copy "Daisy <version> (<build>)"
+                // for support pastes.
+                LabeledContent {
+                    Button {
+                        VersionInfo.copyToClipboardWithToast()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("\(VersionInfo.marketingVersion) (\(VersionInfo.buildNumber))")
+                                .monospacedDigit()
+                            Image(systemName: "doc.on.doc")
+                                .font(.caption)
+                        }
                         .foregroundStyle(.secondary)
-                    Text(versionLine)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    Spacer()
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy version")
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "info.circle")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text("Current version")
+                    }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { VersionInfo.copyToClipboardWithToast() }
-                .help("Click to copy version")
 
-                // "Automatically check for updates" — manual Check button
-                // on the trailing side (same action the App menu lands on)
-                // plus the automatic-check toggle, with the last-checked
-                // caption underneath. LabeledContent gives us the Settings
-                // row grid; the trailing HStack carries the button + switch.
+                // Automatic update — the auto-check toggle plus a manual
+                // "Check for Updates…" (same action as the App menu). Both
+                // controls regular-size so the switch matches the one below.
                 LabeledContent {
                     HStack(spacing: 8) {
                         Button("Check for Updates…") {
@@ -66,8 +74,6 @@ struct AboutView: View {
                         .disabled(!updater.canCheckForUpdates)
 
                         Toggle("", isOn: $updater.automaticallyChecksForUpdates)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
                             .labelsHidden()
                     }
                 } label: {
@@ -75,31 +81,16 @@ struct AboutView: View {
                         Image(systemName: "arrow.down.circle")
                             .frame(width: 18)
                             .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Automatically check for updates")
-                            Text(lastCheckedLine)
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                                .monospacedDigit()
-                        }
+                        Text("Automatic update")
                     }
                 }
 
-                // Update channel (2026-06-08). OFF = stable releases only
-                // (appcast items without a channel tag). ON = also offered
-                // "beta"-channel builds — newest features first, less soak
-                // time. Applies on the next update check, no restart.
                 Toggle(isOn: $updater.receiveBetaUpdates) {
                     HStack(spacing: 10) {
                         Image(systemName: "testtube.2")
                             .frame(width: 18)
                             .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Get beta updates")
-                            Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                        Text("Get beta updates")
                     }
                 }
             } header: {
@@ -172,17 +163,6 @@ struct AboutView: View {
         .background(Color.daisyBgPrimary)
     }
 
-    // MARK: - Updates
-
-    private var lastCheckedLine: String {
-        if let last = updater.lastUpdateCheckDate {
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .abbreviated
-            return "Last checked \(formatter.localizedString(for: last, relativeTo: Date()))"
-        }
-        return "Daisy will check daily once enabled."
-    }
-
     // MARK: - Pieces
 
     /// One link row in the Settings row idiom: a leading title label and
@@ -223,15 +203,6 @@ struct AboutView: View {
                 Text(title)
             }
         }
-    }
-
-    private var versionLine: String {
-        // Displayed format ("Version X (build)") differs from the
-        // clipboard payload ("Daisy X (build)") — the surrounding
-        // About panel already labels itself "Daisy", so the in-UI
-        // "Version" prefix avoids redundancy. See VersionInfo for
-        // the support-paste payload.
-        "Version \(VersionInfo.marketingVersion) (\(VersionInfo.buildNumber))"
     }
 }
 
