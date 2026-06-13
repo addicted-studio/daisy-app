@@ -9,10 +9,16 @@
 //  deep in preferences.
 //
 //  Content mirrors the in-app About tab that existed before — brand
-//  block, links, studio note — just rebuilt with the surface
-//  layout the rest of the detail pane uses (ScrollView + padded
-//  sections) rather than Form. Form chrome read as "preferences",
-//  which About is not.
+//  block, links, studio note. 2026-06-13: rebuilt onto the SAME
+//  grouped-Form surface the rest of Settings uses (DictationView /
+//  SettingsView: `Form { Section … } .formStyle(.grouped)
+//  .scrollContentBackground(.hidden) .background(.daisyBgPrimary)`).
+//  The earlier ScrollView + custom RoundedRectangle(daisyBgSidebar)
+//  cards diverged from every other detail pane — different card
+//  colour, grid, and insets. Switching to Form makes About's section
+//  cards, colours, and row rhythm identical to Settings/Dictation.
+//  The brand block sits borderless ABOVE the Form (a title header,
+//  not a boxed card) so the 56pt logo keeps room to breathe.
 //
 
 import AppKit
@@ -22,23 +28,122 @@ struct AboutView: View {
     @Bindable private var updater = SparkleUpdater.shared
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+        Form {
+            // Brand block as the Form's leading content, but rendered
+            // borderless (plain row background) so the 56pt logo isn't
+            // boxed inside a grouped card. The version line keeps its
+            // click-to-copy affordance verbatim.
+            Section {
                 brandHeader
-
-                // Updates lives directly under the version line —
-                // natural pairing of "what version am I on" and "how
-                // do I get newer ones". Apple's own About panels
-                // historically had this same adjacency.
-                updatesSection
-                linksSection
-                studioSection
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 12, trailing: 0))
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 28)
-            .padding(.bottom, 40)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Updates lives directly under the version line — natural
+            // pairing of "what version am I on" and "how do I get newer
+            // ones". Apple's own About panels historically had this same
+            // adjacency.
+            Section {
+                // "Automatically check for updates" — manual Check button
+                // on the trailing side (same action the App menu lands on)
+                // plus the automatic-check toggle, with the last-checked
+                // caption underneath. LabeledContent gives us the Settings
+                // row grid; the trailing HStack carries the button + switch.
+                LabeledContent {
+                    HStack(spacing: 8) {
+                        Button("Check for Updates…") {
+                            updater.checkForUpdates()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(Color.daisyTextPrimary)
+                        .disabled(!updater.canCheckForUpdates)
+
+                        Toggle("", isOn: $updater.automaticallyChecksForUpdates)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Automatically check for updates")
+                        Text(lastCheckedLine)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                }
+
+                // Update channel (2026-06-08). OFF = stable releases only
+                // (appcast items without a channel tag). ON = also offered
+                // "beta"-channel builds — newest features first, less soak
+                // time. Applies on the next update check, no restart.
+                Toggle(isOn: $updater.receiveBetaUpdates) {
+                    Text("Get beta updates")
+                    Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Updates")
+            }
+
+            Section {
+                aboutLinkRow(
+                    title: "Website",
+                    detail: "mydaisy.io",
+                    url: URL(string: "https://mydaisy.io")
+                )
+                aboutLinkRow(
+                    title: "Support",
+                    detail: "mydaisy.io/support",
+                    url: URL(string: "https://mydaisy.io/support")
+                )
+                aboutLinkRow(
+                    title: "Source code",
+                    detail: "github.com/addicted-studio/daisy-app",
+                    url: URL(string: "https://github.com/addicted-studio/daisy-app")
+                )
+                aboutLinkRow(
+                    title: "Community",
+                    detail: "Q&A, ideas, show-and-tell",
+                    url: URL(string: "https://github.com/addicted-studio/daisy-app/discussions")
+                )
+                aboutLinkRow(
+                    title: "License",
+                    detail: "Apache 2.0 — open source",
+                    url: URL(string: "https://github.com/addicted-studio/daisy-app/blob/main/LICENSE")
+                )
+                aboutLinkRow(
+                    title: "Privacy",
+                    detail: "mydaisy.io/privacy",
+                    url: URL(string: "https://mydaisy.io/privacy")
+                )
+                aboutLinkRow(
+                    title: "Contact",
+                    detail: "essazanov@pm.me",
+                    url: URL(string: "mailto:essazanov@pm.me")
+                )
+            } header: {
+                Text("Links")
+            }
+
+            Section {
+                aboutLinkRow(
+                    title: "Made by",
+                    detail: "Addicted Studio",
+                    url: URL(string: "https://addicted.sh")
+                )
+            } header: {
+                Text("Studio")
+            }
+            // Bottom paragraph removed 2026-05-25 — merged into the
+            // page-top brand header so the value-prop landed before the
+            // user scrolled five rows of links instead of after.
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .background(Color.daisyBgPrimary)
     }
 
     // MARK: - Brand header
@@ -90,87 +195,6 @@ struct AboutView: View {
 
     // MARK: - Updates
 
-    private var updatesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Updates")
-            // Single-row layout: leading icon + label/last-checked
-            // VStack, manual Check button, toggle on the right edge.
-            // Originally a two-row card with "Check now" as a separate
-            // labelled action; consolidated after the second row read
-            // as filler — the manual-check button is exactly the same
-            // action a user lands on from the App menu anyway, no
-            // need for a second presentation of it.
-            // Both update rows share ONE card, divider between them —
-            // same grouping treatment as the Links/Studio sections
-            // below (user feedback 2026-06-12: two stacked single-row
-            // cards read as two unrelated settings).
-            VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Image(systemName: "arrow.down.circle")
-                        .frame(width: 18) // 2026-05-25 — was 22, matched to SettingsView + PermissionsView icon column for cross-surface row-rhythm
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Automatically check for updates")
-                            .foregroundStyle(.primary)
-                        Text(lastCheckedLine)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .monospacedDigit()
-                    }
-                    Spacer()
-                    Button("Check for Updates…") {
-                        updater.checkForUpdates()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(Color.daisyTextPrimary)
-                    .disabled(!updater.canCheckForUpdates)
-                    Toggle("", isOn: $updater.automaticallyChecksForUpdates)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-
-                divider
-
-                // Update channel (2026-06-08). OFF = stable releases only
-                // (appcast items without a channel tag). ON = also offered
-                // "beta"-channel builds — newest features first, less soak
-                // time. Applies on the next update check, no restart.
-                HStack(spacing: 12) {
-                    Image(systemName: "testtube.2")
-                        .frame(width: 18)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Get beta updates")
-                            .foregroundStyle(.primary)
-                        Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: $updater.receiveBetaUpdates)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-            }
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.daisyBgSidebar)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
-        }
-    }
-
     private var lastCheckedLine: String {
         if let last = updater.lastUpdateCheckDate {
             let formatter = RelativeDateTimeFormatter()
@@ -180,132 +204,19 @@ struct AboutView: View {
         return "Daisy will check daily once enabled."
     }
 
-    // MARK: - Links
-
-    private var linksSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Links")
-            VStack(spacing: 0) {
-                aboutRow(
-                    icon: "globe",
-                    title: "Website",
-                    detail: "mydaisy.io",
-                    url: URL(string: "https://mydaisy.io")
-                )
-                divider
-                aboutRow(
-                    icon: "lifepreserver",
-                    title: "Support",
-                    detail: "mydaisy.io/support",
-                    url: URL(string: "https://mydaisy.io/support")
-                )
-                divider
-                aboutRow(
-                    icon: "chevron.left.forwardslash.chevron.right",
-                    title: "Source code",
-                    detail: "github.com/addicted-studio/daisy-app",
-                    url: URL(string: "https://github.com/addicted-studio/daisy-app")
-                )
-                divider
-                aboutRow(
-                    icon: "bubble.left.and.bubble.right",
-                    title: "Community",
-                    detail: "Q&A, ideas, show-and-tell",
-                    url: URL(string: "https://github.com/addicted-studio/daisy-app/discussions")
-                )
-                divider
-                aboutRow(
-                    icon: "doc.text",
-                    title: "License",
-                    detail: "Apache 2.0 — open source",
-                    url: URL(string: "https://github.com/addicted-studio/daisy-app/blob/main/LICENSE")
-                )
-                divider
-                aboutRow(
-                    icon: "lock.shield",
-                    title: "Privacy",
-                    detail: "mydaisy.io/privacy",
-                    url: URL(string: "https://mydaisy.io/privacy")
-                )
-                divider
-                aboutRow(
-                    icon: "envelope",
-                    title: "Contact",
-                    detail: "essazanov@pm.me",
-                    url: URL(string: "mailto:essazanov@pm.me")
-                )
-            }
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.daisyBgSidebar)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
-        }
-    }
-
-    // MARK: - Studio
-
-    private var studioSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader("Studio")
-            VStack(spacing: 0) {
-                aboutRow(
-                    icon: "building.2",
-                    title: "Made by",
-                    detail: "Addicted Studio",
-                    url: URL(string: "https://addicted.sh")
-                )
-            }
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.daisyBgSidebar)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
-            // Bottom paragraph removed 2026-05-25 — merged into the
-            // page-top brand header so the value-prop landed before
-            // the user scrolled five rows of links instead of after.
-        }
-    }
-
     // MARK: - Pieces
 
-    private var divider: some View {
-        Rectangle()
-            .fill(Color.daisyDivider)
-            .frame(height: 0.5)
-            .padding(.leading, 44) // align past the icon column
-    }
-
-    private func sectionHeader(_ text: String) -> some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
-            .tracking(0.5)
-    }
-
+    /// One link row in the Settings row idiom: a leading title label and
+    /// a trailing button that opens the URL. Built on `LabeledContent`
+    /// so it inherits the same grid/insets as every other Form row in
+    /// Settings (which don't carry leading icons — so neither does this).
     @ViewBuilder
-    private func aboutRow(
-        icon: String,
+    private func aboutLinkRow(
         title: String,
         detail: String,
         url: URL?
     ) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .frame(width: 18) // 2026-05-25 — was 22, matched to SettingsView + PermissionsView icon column for cross-surface row-rhythm consistency
-                .foregroundStyle(.secondary)
-            Text(title)
-                .foregroundStyle(.primary)
-            Spacer()
+        LabeledContent {
             if let url {
                 Button {
                     NSWorkspace.shared.open(url)
@@ -322,9 +233,9 @@ struct AboutView: View {
             } else {
                 Text(detail).foregroundStyle(.secondary)
             }
+        } label: {
+            Text(title)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
     }
 
     private var versionLine: String {
