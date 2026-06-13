@@ -35,6 +35,7 @@
 import Foundation
 import Observation
 import os
+import SwiftUI  // for Array.move(fromOffsets:toOffset:) used in move(from:to:)
 
 /// One substitution rule: replace occurrences of `from` with `to`.
 /// `Identifiable` so SwiftUI's `ForEach` can track rows across edits and
