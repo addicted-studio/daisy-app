@@ -73,6 +73,19 @@ nonisolated struct MeetingSummary: Codable, Sendable, Equatable {
         self.clientFollowUp = clientFollowUp
     }
 
+    /// Sentinel for a recording that captured no intelligible speech.
+    /// Built WITHOUT calling the LLM (see `Summarizer.summarize`): empty
+    /// outline / actions / follow-up, so the card shows one clean line and
+    /// the follow-up plaque is suppressed — instead of the model
+    /// fabricating an apologetic "the recording failed" summary plus a
+    /// matching client follow-up (Egor, 2026-06-13).
+    static let noSpeechCaptured = MeetingSummary(
+        summary: "No speech was captured in this recording — there's nothing to summarize.",
+        sections: [],
+        actionItems: [],
+        clientFollowUp: ""
+    )
+
     // MARK: - Codable
 
     init(from decoder: Decoder) throws {
@@ -387,6 +400,17 @@ final class Summarizer {
     @discardableResult
     func summarize(transcript: String, title: String, localeHint: String?) async -> MeetingSummary? {
         guard !transcript.isEmpty else { return nil }
+        // No intelligible speech → don't hand a near-empty transcript to
+        // the LLM (it fabricates an apologetic "recording failed" summary
+        // and a client follow-up to match). Short-circuit to a clean
+        // empty-state instead (Egor, 2026-06-13).
+        if Self.isEffectivelySilent(transcript) {
+            lastSummary = .noSpeechCaptured
+            lastError = nil
+            isSummarizing = false
+            log.info("Skipped summary — transcript carried essentially no speech")
+            return .noSpeechCaptured
+        }
         isSummarizing = true
         lastError = nil
 
@@ -407,6 +431,16 @@ final class Summarizer {
             isSummarizing = false
             return nil
         }
+    }
+
+    /// True when a transcript carries essentially no speech — a failed or
+    /// silent capture. Counts word-like tokens (runs of 2+ letters); a
+    /// real meeting, even ~20 seconds, has dozens, so the low threshold
+    /// won't swallow short-but-real sessions. Bump it if silent captures
+    /// still slip through with more garbled tokens.
+    static func isEffectivelySilent(_ transcript: String) -> Bool {
+        let words = transcript.split { !$0.isLetter }.filter { $0.count >= 2 }
+        return words.count < 8
     }
 
     func clear() {
