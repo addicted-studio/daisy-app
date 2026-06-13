@@ -65,12 +65,17 @@ struct AboutView: View {
                             .labelsHidden()
                     }
                 } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Automatically check for updates")
-                        Text(lastCheckedLine)
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .monospacedDigit()
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.down.circle")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Automatically check for updates")
+                            Text(lastCheckedLine)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .monospacedDigit()
+                        }
                     }
                 }
 
@@ -79,10 +84,17 @@ struct AboutView: View {
                 // "beta"-channel builds — newest features first, less soak
                 // time. Applies on the next update check, no restart.
                 Toggle(isOn: $updater.receiveBetaUpdates) {
-                    Text("Get beta updates")
-                    Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Image(systemName: "testtube.2")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Get beta updates")
+                            Text("Newest builds first — they've had less testing. The website always keeps the stable download.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             } header: {
                 Text("Updates")
@@ -90,36 +102,43 @@ struct AboutView: View {
 
             Section {
                 aboutLinkRow(
+                    icon: "globe",
                     title: "Website",
                     detail: "mydaisy.io",
                     url: URL(string: "https://mydaisy.io")
                 )
                 aboutLinkRow(
+                    icon: "lifepreserver",
                     title: "Support",
                     detail: "mydaisy.io/support",
                     url: URL(string: "https://mydaisy.io/support")
                 )
                 aboutLinkRow(
+                    icon: "chevron.left.forwardslash.chevron.right",
                     title: "Source code",
                     detail: "github.com/addicted-studio/daisy-app",
                     url: URL(string: "https://github.com/addicted-studio/daisy-app")
                 )
                 aboutLinkRow(
+                    icon: "bubble.left.and.bubble.right",
                     title: "Community",
                     detail: "Q&A, ideas, show-and-tell",
                     url: URL(string: "https://github.com/addicted-studio/daisy-app/discussions")
                 )
                 aboutLinkRow(
+                    icon: "doc.text",
                     title: "License",
                     detail: "Apache 2.0 — open source",
                     url: URL(string: "https://github.com/addicted-studio/daisy-app/blob/main/LICENSE")
                 )
                 aboutLinkRow(
+                    icon: "lock.shield",
                     title: "Privacy",
                     detail: "mydaisy.io/privacy",
                     url: URL(string: "https://mydaisy.io/privacy")
                 )
                 aboutLinkRow(
+                    icon: "envelope",
                     title: "Contact",
                     detail: "essazanov@pm.me",
                     url: URL(string: "mailto:essazanov@pm.me")
@@ -130,6 +149,7 @@ struct AboutView: View {
 
             Section {
                 aboutLinkRow(
+                    icon: "building.2",
                     title: "Made by",
                     detail: "Addicted Studio",
                     url: URL(string: "https://addicted.sh")
@@ -212,6 +232,7 @@ struct AboutView: View {
     /// Settings (which don't carry leading icons — so neither does this).
     @ViewBuilder
     private func aboutLinkRow(
+        icon: String,
         title: String,
         detail: String,
         url: URL?
@@ -234,7 +255,14 @@ struct AboutView: View {
                 Text(detail).foregroundStyle(.secondary)
             }
         } label: {
-            Text(title)
+            // Leading icon (secondary) + title — matches the icon rows in
+            // Settings → Permissions (18pt icon column).
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .frame(width: 18)
+                    .foregroundStyle(.secondary)
+                Text(title)
+            }
         }
     }
 
