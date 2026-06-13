@@ -99,6 +99,9 @@ struct SettingsView: View {
     /// child — that's why early onboarding clicks felt broken
     /// (user wanted Summary, got Capture).
     @State private var settingsTab: SettingsTab = .general
+    /// Live `/api/tags` model list for the Ollama picker (empty until
+    /// fetched / when the server is unreachable → static catalog).
+    @State private var ollamaInstalledModels: [String] = []
     @Bindable private var nav = AppNavigation.shared
 
     var body: some View {
@@ -1405,7 +1408,9 @@ struct SettingsView: View {
             Section {
                 Picker("Provider", selection: $summarizer.providerKind) {
                     ForEach(availableSummaryProviders, id: \.self) { kind in
-                        Text(kind.displayName).tag(kind)
+                        // Model-aware for Ollama: a `:cloud` model is not
+                        // local, so the row reads "Ollama (cloud model)".
+                        Text(kind.displayName(ollamaModel: kind == .ollama ? summarizer.ollamaModel : nil)).tag(kind)
                     }
                 }
                 .pickerStyle(.menu)
@@ -1551,19 +1556,27 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
             }
             Picker("Model", selection: $summarizer.ollamaModel) {
-                ForEach(OllamaAPISummarizer.availableModels, id: \.id) { item in
+                ForEach(ollamaModelChoices, id: \.id) { item in
                     Text(item.label).tag(item.id)
                 }
-                // Free-form fallback — user may have pulled a model
-                // we don't list (custom fine-tunes, latest tags etc.).
-                // tag("") keeps the picker from rejecting an unknown
-                // current value; the inline TextField below is the
-                // real authoring surface for off-list IDs.
-                if !OllamaAPISummarizer.availableModels.contains(where: { $0.id == summarizer.ollamaModel }) {
+                // Free-form fallback — the current value may not be in
+                // the live list yet (just typed, or the server is down
+                // and we're on the static catalog).
+                if !ollamaModelChoices.contains(where: { $0.id == summarizer.ollamaModel }) {
                     Text("Custom: \(summarizer.ollamaModel)").tag(summarizer.ollamaModel)
                 }
             }
             .pickerStyle(.menu)
+            // Pull the real installed-model list from /api/tags on first
+            // appearance and whenever the server URL changes. An empty
+            // result (server unreachable) leaves ollamaModelChoices on
+            // the static catalog.
+            .task(id: summarizer.ollamaBaseURL) {
+                ollamaInstalledModels = await OllamaAPISummarizer.fetchInstalledModels(
+                    baseURL: URL(string: summarizer.ollamaBaseURL)
+                        ?? URL(string: OllamaAPISummarizer.defaultBaseURLString)!
+                )
+            }
             LabeledContent("Model tag") {
                 TextField("", text: $summarizer.ollamaModel, prompt: Text(OllamaAPISummarizer.defaultModelID))
                     .textFieldStyle(.roundedBorder)
@@ -1659,11 +1672,35 @@ struct SettingsView: View {
         case .openai:
             return "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05."
         case .ollama:
+            if OllamaAPISummarizer.isCloudModel(summarizer.ollamaModel) {
+                return "“\(summarizer.ollamaModel)” is an Ollama cloud model: your local Ollama daemon proxies the request to ollama.com, so the transcript LEAVES your Mac (Ollama bills the usage). For fully on-device summaries pick a model without a `:cloud`/`-cloud` tag."
+            }
             return "Daisy calls your local Ollama server (`ollama serve`) over its native `/api/chat` REST. No API key, no network egress — everything stays on your Mac. Pull the model first: `ollama pull \(OllamaAPISummarizer.defaultModelID)`. Free."
         case .lmStudio:
             return "Daisy calls your local LM Studio server over its OpenAI-compatible `/v1/chat/completions` REST. No API key, no network egress — everything stays on your Mac. Load a model in the LM Studio app and click Developer → Start. The API identifier in this picker must match the one LM Studio shows under the loaded model. Free."
         case .mcp:
             return "Advanced — for users running a custom MCP server (Python shim, `mcp-ollama` wrapper, etc.). Daisy connects over HTTP+SSE and calls one tool per summary. For stock Ollama or LM Studio use their dedicated providers above instead — those work without an MCP shim."
+        }
+    }
+
+    /// Model picker choices for Ollama. Prefers the live `/api/tags`
+    /// listing (what the user has actually pulled, including spooled
+    /// `:cloud` stubs); falls back to the static catalog when the
+    /// server is unreachable. Known ids reuse the catalog's friendly
+    /// label; unknown ids show the raw tag, and cloud models are marked
+    /// so the egress is visible before selection.
+    private var ollamaModelChoices: [(id: String, label: String)] {
+        guard !ollamaInstalledModels.isEmpty else {
+            return OllamaAPISummarizer.availableModels
+        }
+        let catalog = Dictionary(
+            OllamaAPISummarizer.availableModels.map { ($0.id, $0.label) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return ollamaInstalledModels.map { name in
+            if let known = catalog[name] { return (id: name, label: known) }
+            let suffix = OllamaAPISummarizer.isCloudModel(name) ? " — cloud (ollama.com)" : ""
+            return (id: name, label: name + suffix)
         }
     }
 
