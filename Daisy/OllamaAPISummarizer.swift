@@ -189,4 +189,50 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
         ("gemma2:9b",              "Gemma 2 9B (~5.4 GB)"),
         ("gpt-oss:20b",            "GPT-OSS 20B (~13 GB)"),
     ]
+
+    // MARK: - Cloud-model detection
+
+    /// True when a model id is one of Ollama's hosted **cloud** models.
+    /// Ollama names these with a `:cloud` (e.g. `gpt-oss:120b-cloud`,
+    /// `qwen3-coder:480b-cloud`) or `-cloud` suffix; the LOCAL daemon
+    /// transparently proxies a chat request for such a model out to
+    /// ollama.com. So even though Daisy still POSTs to 127.0.0.1, the
+    /// transcript leaves the Mac — the privacy copy must say so, and
+    /// `SummaryProviderKind`'s model-aware label helpers key off this.
+    static func isCloudModel(_ id: String) -> Bool {
+        let lowered = id.lowercased()
+        return lowered.hasSuffix(":cloud") || lowered.hasSuffix("-cloud")
+    }
+
+    // MARK: - Installed-model listing
+
+    private struct TagsResponse: Decodable {
+        struct Entry: Decodable { let name: String }
+        let models: [Entry]
+    }
+
+    /// The models this Ollama server actually knows about, via
+    /// `/api/tags` — the same endpoint `isReady()` probes, here read for
+    /// its payload. Drives the Settings picker so the list reflects what
+    /// the user has really pulled (plus any spooled `:cloud` stubs)
+    /// instead of a hardcoded catalog that silently goes stale. Returns
+    /// `[]` on any error (server down, decode failure); the caller falls
+    /// back to `availableModels`.
+    static func fetchInstalledModels(
+        baseURL: URL,
+        urlSession: URLSession = .shared
+    ) async -> [String] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("api/tags"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 2
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else { return [] }
+            let decoded = try JSONDecoder().decode(TagsResponse.self, from: data)
+            return decoded.models.map(\.name)
+        } catch {
+            return []
+        }
+    }
 }

@@ -91,6 +91,37 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
             return "Sent to your MCP server — stays local if it's on 127.0.0.1."
         }
     }
+
+    // MARK: - Ollama cloud-model honesty
+    //
+    // The labels above are computed from the provider case alone, which
+    // is correct for every provider EXCEPT an Ollama `:cloud`/`-cloud`
+    // model: the local daemon proxies those to ollama.com, so "(local)",
+    // "stays on your Mac", and `isLocal == true` would be lies. These
+    // model-aware variants take the currently-selected Ollama model and
+    // tell the truth; for any other provider (or a genuine local model)
+    // they fall through to the plain values. Pass `nil` when no model
+    // applies.
+
+    func displayName(ollamaModel: String?) -> String {
+        isOllamaCloud(ollamaModel) ? "Ollama (cloud model)" : displayName
+    }
+
+    func privacyTag(ollamaModel: String?) -> String {
+        isOllamaCloud(ollamaModel)
+            ? "Proxied by your local Ollama out to ollama.com — transcript leaves your Mac."
+            : privacyTag
+    }
+
+    func isLocal(ollamaModel: String?) -> Bool {
+        isOllamaCloud(ollamaModel) ? false : isLocal
+    }
+
+    /// True only for `.ollama` paired with a `:cloud`/`-cloud` model id.
+    private func isOllamaCloud(_ model: String?) -> Bool {
+        guard self == .ollama, let model else { return false }
+        return OllamaAPISummarizer.isCloudModel(model)
+    }
 }
 
 /// Common interface every back-end must satisfy.
