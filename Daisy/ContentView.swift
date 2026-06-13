@@ -304,9 +304,13 @@ struct ContentView: View {
     private var systemAudioBanner: some View {
         switch session.systemAudioStatus {
         case .denied, .failed:
-            SystemAudioStatusPill(session: session)
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
+            // Muted when the user opted out of meeting-permission
+            // reminders (Settings → Permissions → "Don't remind me").
+            if !settings.suppressMeetingPermissionReminders {
+                SystemAudioStatusPill(session: session)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+            }
         default:
             EmptyView()
         }

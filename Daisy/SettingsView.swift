@@ -133,7 +133,7 @@ struct SettingsView: View {
                 .tabItem { Label("Summary", systemImage: "text.bubble") }
                 .scrollContentBackground(.hidden)
 
-            PermissionsView()
+            PermissionsView(settings: settings)
                 .tag(SettingsTab.permissions)
                 .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
                 .scrollContentBackground(.hidden)
@@ -263,7 +263,11 @@ struct SettingsView: View {
                 // as a hamburger menu (i.e. "more actions") and
                 // testers tried right-clicking it. Chevron matches
                 // the rest of the macOS dropdown idiom.
-                Image(systemName: "chevron.down")
+                // Match the menu Pickers elsewhere in Settings (e.g.
+                // Auto-record) — the up/down chevron is macOS's menu-
+                // picker indicator, so the preset menu reads as the same
+                // kind of control (Egor, 2026-06-13).
+                Image(systemName: "chevron.up.chevron.down")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
