@@ -724,12 +724,24 @@ struct SettingsView: View {
 
             // ── Meetings ──────────────────────────────────────
             Section {
+                // Master switch: dictation-only (Dzen) parks ALL meeting
+                // machinery (calendar polling, app-launch auto-start) and
+                // drops the Screen Recording / Calendar asks. The meeting
+                // controls below grey out while it's on.
+                Toggle(isOn: $settings.dictationOnlyMode) {
+                    Text("Dictation-only mode")
+                    Text("Turn Daisy into a focused push-to-talk dictation tool. Stops calendar polling and meeting auto-start; never asks for Screen Recording or Calendar.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Picker("Auto-record", selection: $settings.autoStartPolicy) {
                     ForEach(AutoStartPolicy.allCases) { policy in
                         Text(policy.displayName).tag(policy)
                     }
                 }
                 .pickerStyle(.menu)
+                .disabled(settings.dictationOnlyMode)
 
                 Toggle("Record the other side", isOn: $settings.captureSystemAudio)
 

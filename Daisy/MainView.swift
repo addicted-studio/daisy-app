@@ -799,6 +799,13 @@ private struct AutoStartWiring: ViewModifier {
             .onChange(of: settings.autoStartFromCalendar) { _, _ in
                 ServiceWiring.applyCalendar(settings: settings, session: session)
             }
+            // Dictation-only (Dzen) flips ALL meeting machinery on/off:
+            // re-apply both the app-launch detector and the calendar
+            // service so they park (or resume) the instant it changes.
+            .onChange(of: settings.dictationOnlyMode) { _, _ in
+                ServiceWiring.applyMeetingAutoStart(settings: settings, session: session)
+                ServiceWiring.applyCalendar(settings: settings, session: session)
+            }
     }
 }
 
