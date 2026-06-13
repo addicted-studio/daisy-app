@@ -665,7 +665,7 @@ struct SessionDetailView: View {
                     RichClipboard.copy(markdown: summary.clientFollowUp)
                     ToastCenter.shared.show("Follow-up draft copied", style: .success)
                 } label: {
-                    Label("Copy follow-up", systemImage: "doc.on.doc")
+                    Label("Copy follow-up", systemImage: "envelope")
                         .font(.callout)
                 }
                 .buttonStyle(.borderless)
