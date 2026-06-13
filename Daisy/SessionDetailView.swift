@@ -213,8 +213,15 @@ struct SessionDetailView: View {
         // to icon-only — that collapse is why the old `Label` showed only
         // the sparkle. So: text title + default style = proper text pill.
         ToolbarItem(placement: .primaryAction) {
-            Button("Summarize") {
+            Button {
                 attemptReSummarize()
+            } label: {
+                // Horizontal inset so the word has room from the pill's
+                // edges instead of hugging them — mirrors the Daisy brand
+                // pill on the leading side (MainView's `.padding(.horizontal, 12)`).
+                // The button style adds its own base inset, so a touch less.
+                Text("Summarize")
+                    .padding(.horizontal, 10)
             }
             .help("Re-summarize via current provider")
         }
