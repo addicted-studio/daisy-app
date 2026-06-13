@@ -333,6 +333,58 @@ final class SessionStore {
         }
     }
 
+    /// How many sessions a bulk-delete would actually remove for a
+    /// given scope. Mirrors the filtering in `deleteAllSessions` /
+    /// `deleteSessions(inFolder:)` exactly — including skipping the
+    /// in-progress recording — so a "Delete N recordings?" confirm
+    /// shows the true post-delete count rather than a raw
+    /// `sessions.count` that might include the live one. Pass `nil`
+    /// for the "all recordings" scope, or a folder slug to scope to
+    /// one folder.
+    func deletableSessionCount(inFolder slug: String? = nil) -> Int {
+        sessionsToDelete(inFolder: slug).count
+    }
+
+    /// The concrete sessions a bulk-delete would remove for `slug`
+    /// (`nil` == every folder). Always excludes the currently-recording
+    /// session: its directory has audio but no `transcript.md` mid-
+    /// session, and removing it would orphan the open `.caf`
+    /// descriptors and break the post-stop transcript write — the same
+    /// data-loss path `activeRecordingDirName` guards in husk cleanup.
+    /// A `StoredSession.id` IS its directory name, so the guard is a
+    /// direct id comparison. (In practice a young live recording isn't
+    /// in `sessions` yet — it's `.unreadable` until transcript.md
+    /// lands — but a finalized-then-still-flagged folder could be, so
+    /// the explicit skip is the safe belt-and-suspenders.)
+    private func sessionsToDelete(inFolder slug: String?) -> [StoredSession] {
+        var pool = sessions
+        if let slug, !slug.isEmpty {
+            pool = pool.filter { $0.folderSlug == slug }
+        }
+        if let active = activeRecordingDirName {
+            pool = pool.filter { $0.id != active }
+        }
+        return pool
+    }
+
+    /// Delete EVERY stored session from disk + the in-memory list,
+    /// skipping the in-progress recording if one is active. Reuses the
+    /// per-session removal path (`deleteMany`) so the FileManager logic,
+    /// per-session error capture, and single trailing `refresh()` all
+    /// match the multi-select delete. No-op (still refreshes) when
+    /// there's nothing to remove.
+    func deleteAllSessions() async {
+        await deleteMany(sessionsToDelete(inFolder: nil))
+    }
+
+    /// Delete every session belonging to `slug` (the `daisy_folder`
+    /// frontmatter value, e.g. "inbox" / "work"). Same scoping the
+    /// Library sidebar and MCP use (`folderSlug == slug`), same
+    /// active-recording skip, and the same `deleteMany` removal path.
+    func deleteSessions(inFolder slug: String) async {
+        await deleteMany(sessionsToDelete(inFolder: slug))
+    }
+
     /// Persist a speaker-to-attendee mapping for a session. Rewrites
     /// the `daisy_speaker_map:` frontmatter line as a YAML inline
     /// dict (`{A: "Alex", B: "Maria"}`) and refreshes the store so

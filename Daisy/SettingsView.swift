@@ -128,6 +128,11 @@ struct SettingsView: View {
                 .tabItem { Label("Transcription", systemImage: "waveform") }
                 .scrollContentBackground(.hidden)
 
+            dictationTab
+                .tag(SettingsTab.dictation)
+                .tabItem { Label("Dictation", systemImage: "character.cursor.ibeam") }
+                .scrollContentBackground(.hidden)
+
             summaryTab
                 .tag(SettingsTab.summary)
                 .tabItem { Label("Summary", systemImage: "text.bubble") }
@@ -598,6 +603,7 @@ struct SettingsView: View {
             Section {
                 storageRow
                 clearAudioCacheRow
+                BulkDeleteRecordingsView()
             } header: {
                 Text("Storage")
             }
@@ -1394,6 +1400,22 @@ struct SettingsView: View {
     }
 
     // MARK: - Summary Provider
+
+    private var dictationTab: some View {
+        Form {
+            Section {
+                DictationDictionaryView()
+            } header: {
+                Text("Word replacements")
+            } footer: {
+                Text("Daisy applies these to dictation before it pastes — handy for names, brands and jargon the model mishears.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            // 1-day dictation history section lands here next wave.
+        }
+        .formStyle(.grouped)
+    }
 
     private var summaryTab: some View {
         Form {

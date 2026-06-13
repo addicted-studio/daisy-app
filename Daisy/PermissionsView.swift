@@ -47,19 +47,8 @@ struct PermissionsView: View {
 
     @ViewBuilder
     private var permissionsSection: some View {
+        // ── For dictation: the minimum to dictate ─────────────
         Section {
-            // 2026-05-25 — captions trimmed to one short sentence
-            // each. Pre-fix every row carried 2-3 sentences with a
-            // "Required." / "Optional." prefix, repeating what the
-            // explicit `Optional` pill next to the title already
-            // said (and what its absence said for required rows).
-            // The result was a wall of paragraphs the user had to
-            // skim through before figuring out what to click. New
-            // shape: badge tells you required vs optional, caption
-            // tells you why this one knob exists. Detail / failure
-            // modes still live in their respective help text and
-            // toasts at the moment they matter, not preemptively
-            // here.
             permissionRow(
                 title: "Microphone",
                 caption: "Captures your voice",
@@ -79,55 +68,10 @@ struct PermissionsView: View {
                 requestAction: { permissions.requestAccessibility() },
                 openSettings: permissions.openAccessibilitySettings
             )
-
-            permissionRow(
-                title: "Calendar (Apple)",
-                caption: "Auto-starts recording at meeting times",
-                iconName: "calendar",
-                isRequired: false,
-                status: permissions.calendar,
-                requestAction: { Task { await permissions.requestCalendar() } },
-                openSettings: permissions.openCalendarSettings
-            )
-
-            // Google Calendar — moved here from Connections in build 42.
-            // Apple and Google are both calendar SOURCES; they belong
-            // side-by-side under one "Calendar" mental model rather
-            // than in different parts of Settings. Custom row shape
-            // (vs `permissionRow`) because OAuth's affordances —
-            // Connect, Disconnect, connected-as email — don't fit the
-            // EventKit-style "Request access / Open Settings…" rhythm
-            // that `permissionRow` is built for.
-            googleCalendarRow
-
-            permissionRow(
-                title: "Screen recording",
-                caption: "Captures the other side of meetings",
-                iconName: "rectangle.on.rectangle",
-                isRequired: false,
-                status: permissions.screenRecording,
-                requestAction: { permissions.requestScreenRecording() },
-                openSettings: permissions.openScreenRecordingSettings
-            )
-
-            permissionRow(
-                title: "Notifications",
-                caption: "Banner when Daisy auto-starts or saves",
-                iconName: "bell",
-                isRequired: false,
-                status: permissions.notifications,
-                requestAction: { permissions.requestNotifications() },
-                openSettings: permissions.openNotificationSettings
-            )
         } header: {
-            // 2026-05-25 — promoted the privacy explainer from the
-            // Section footer up to the header, immediately under
-            // "System access". Pre-fix it sat at the very bottom
-            // of the Permissions tab below five rows of buttons,
-            // i.e. exactly where nobody reads it. The whole point
-            // of the paragraph is "don't worry, these don't ship
-            // data anywhere" — that reassurance has to land BEFORE
-            // the user starts approving prompts, not after.
+            // Global privacy explainer + overall status ride on the
+            // first section header (first thing read). The two rows
+            // below are the minimum Daisy needs to dictate.
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("System access")
@@ -148,6 +92,60 @@ struct PermissionsView: View {
                     .textCase(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        } footer: {
+            Text("Microphone + Accessibility are all that dictation needs.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .textCase(nil)
+        }
+
+        // ── For meeting recording: asked lazily on first use ──
+        Section {
+            permissionRow(
+                title: "Screen recording",
+                caption: "Captures the other side of meetings",
+                iconName: "rectangle.on.rectangle",
+                isRequired: false,
+                status: permissions.screenRecording,
+                requestAction: { permissions.requestScreenRecording() },
+                openSettings: permissions.openScreenRecordingSettings
+            )
+
+            permissionRow(
+                title: "Calendar (Apple)",
+                caption: "Auto-starts recording at meeting times",
+                iconName: "calendar",
+                isRequired: false,
+                status: permissions.calendar,
+                requestAction: { Task { await permissions.requestCalendar() } },
+                openSettings: permissions.openCalendarSettings
+            )
+
+            // Google Calendar — OAuth row, same "calendar source"
+            // mental model as Apple Calendar, sat side-by-side.
+            googleCalendarRow
+        } header: {
+            Text("For meeting recording")
+        } footer: {
+            Text("Only needed if you also record meetings — Daisy asks for these the first time you record one, not up front.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .textCase(nil)
+        }
+
+        // ── Notifications ─────────────────────────────────────
+        Section {
+            permissionRow(
+                title: "Notifications",
+                caption: "Banner when Daisy auto-starts or saves",
+                iconName: "bell",
+                isRequired: false,
+                status: permissions.notifications,
+                requestAction: { permissions.requestNotifications() },
+                openSettings: permissions.openNotificationSettings
+            )
+        } header: {
+            Text("Notifications")
         }
     }
 

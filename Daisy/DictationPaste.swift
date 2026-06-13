@@ -77,6 +77,18 @@ final class DictationPaste {
             return
         }
 
+        // Apply the user's custom-vocabulary replacements ("claude" →
+        // "Claude", "daisy app" → "Daisy", …) BEFORE anything touches the
+        // pasteboard, so the corrected text is what gets written, copied,
+        // and pasted. `DictationDictionary` is `@MainActor` and we're
+        // already on the MainActor here (this method is MainActor-isolated
+        // and the sole caller — `RecordingSession`, itself `@MainActor` —
+        // invokes it synchronously), so this is a plain same-actor call:
+        // no await, no snapshot, no actor hop needed. `apply` returns the
+        // input unchanged when the table is empty, so this is a no-op for
+        // users who never set up a dictionary.
+        let transcript = DictationDictionary.shared.apply(to: transcript)
+
         // Cancel any in-flight restore from a previous dictation —
         // back-to-back dictations shouldn't restore the previous-
         // previous clipboard on top of the current transcript.
