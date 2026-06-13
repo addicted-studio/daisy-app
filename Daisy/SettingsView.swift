@@ -441,12 +441,15 @@ struct SettingsView: View {
         //     meeting recordings, not files. Same reason "cache" got
         //     dropped from the row title (dev word).
         let sizeText: String = {
-            if audioCacheFiles == 0 { return "Nothing to clear" }
-            let noun = audioCacheFiles == 1 ? "recording" : "recordings"
+            if audioCacheFiles == 0 { return "No audio to delete" }
             let size: String
             if mb < 1024 { size = String(format: "%.0f MB", mb) }
             else { size = String(format: "%.2f GB", mb / 1024.0) }
-            return "\(size) · \(audioCacheFiles) \(noun)"
+            // No recording count here — it read as a contradiction next to
+            // the "Delete recordings" row's count ("1 recording" vs "26
+            // recordings"). The reassurance "keeps transcripts" is what
+            // actually distinguishes this row from deleting whole recordings.
+            return "\(size) · keeps transcripts"
         }()
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -455,7 +458,7 @@ struct SettingsView: View {
                 // (Sessions folder / Notion). Without it the row
                 // visually deemphasised itself, like an info row
                 // instead of an actionable one.
-                Text("Clear all audio now")
+                Text("Delete audio files")
                     .font(.callout.weight(.medium))
                 Text(sizeText)
                     .font(.caption)
@@ -484,7 +487,7 @@ struct SettingsView: View {
                 if clearingAudioCache {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("Clear")
+                    Text("Delete")
                 }
             }
             .buttonStyle(.bordered)
@@ -513,7 +516,7 @@ struct SettingsView: View {
         //   - "Audio cache was already empty" → "Nothing to clear —
         //     audio is already gone" mirrors the row caption when
         //     idle so the language is consistent before/after.
-        .alert("Delete all audio recordings?", isPresented: $showingClearAudioConfirm) {
+        .alert("Delete all audio files?", isPresented: $showingClearAudioConfirm) {
             Button("Delete", role: .destructive) {
                 clearingAudioCache = true
                 AudioRetentionSweep.runNow { _, freedBytes in
