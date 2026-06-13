@@ -42,7 +42,6 @@ struct FirstRunView: View {
     /// progress-dot indices.
     enum Step: Int, CaseIterable {
         case welcome
-        case mode
         case microphone
         case screenRecording
         case accessibility
@@ -53,15 +52,13 @@ struct FirstRunView: View {
         static var total: Int { allCases.count }
     }
 
-    /// The steps actually shown, in order. Screen Recording is dropped
-    /// in dictation-only (Dzen) mode — Daisy never captures system audio
-    /// there, so the permission is never needed. The mode is chosen on
-    /// the `.mode` step, so this recomputes the moment a card is tapped.
+    /// The steps actually shown, in order. Onboarding asks only for the
+    /// minimal dictation permission set — Microphone + Accessibility.
+    /// Screen Recording is no longer asked at onboarding; it's requested
+    /// lazily on the first meeting recording (its `.screenRecording` step
+    /// stays defined but is intentionally absent from this list).
     private var orderedSteps: [Step] {
-        if settings.dictationOnlyMode {
-            return [.welcome, .mode, .microphone, .accessibility, .hotkeys, .done]
-        }
-        return [.welcome, .mode, .microphone, .screenRecording, .accessibility, .hotkeys, .done]
+        [.welcome, .microphone, .accessibility, .hotkeys, .done]
     }
 
     @State private var step: Step = .welcome
@@ -132,7 +129,6 @@ struct FirstRunView: View {
         Group {
             switch step {
             case .welcome: welcomeStep
-            case .mode: modeStep
             case .microphone: micStep
             case .screenRecording: screenStep
             case .accessibility: accessibilityStep
@@ -162,104 +158,12 @@ struct FirstRunView: View {
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Pick how you'll use it, grant a couple of quick permissions, set your hotkeys — then you're set.")
+            Text("A couple of quick permission asks and one hotkey screen, then you're set.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
-    }
-
-    private var modeStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("How will you use Daisy?")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
-            Text("This sets how much Daisy asks for up front. You can switch any time in Settings → Meetings.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            modeCard(
-                title: "Dictation + meetings",
-                detail: "The full app: push-to-talk dictation plus meeting recording, transcripts and summaries.",
-                permissions: "Asks for Microphone, Screen Recording and Accessibility (Calendar later, optional).",
-                recommended: true,
-                onPick: {
-                    settings.dictationOnlyMode = false
-                    advance()
-                }
-            )
-            modeCard(
-                title: "Dictation only",
-                detail: "Just push-to-talk dictation that types where your cursor is — no meetings, no calendar, no meeting machinery running in the background.",
-                permissions: "Asks for only Microphone + Accessibility.",
-                recommended: false,
-                onPick: {
-                    settings.dictationOnlyMode = true
-                    advance()
-                }
-            )
-            Spacer()
-        }
-    }
-
-    /// One selectable card on the mode step. The permission line is the
-    /// whole point of the fork (deferred permissions = the pitch), so it
-    /// gets its own emphasised row under the description.
-    @ViewBuilder
-    private func modeCard(
-        title: String,
-        detail: String,
-        permissions: String,
-        recommended: Bool,
-        onPick: @escaping () -> Void
-    ) -> some View {
-        Button(action: onPick) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(title)
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(Color.daisyTextPrimary)
-                    if recommended {
-                        Text("RECOMMENDED")
-                            .font(.caption2.weight(.semibold))
-                            .tracking(0.4)
-                            .foregroundStyle(Color.daisyAccent)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-                Label(permissions, systemImage: "lock.shield")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(Color.daisyTextPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(
-                        recommended ? Color.daisyAccent.opacity(0.5) : Color.daisyDivider,
-                        lineWidth: recommended ? 1 : 0.5
-                    )
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     private var micStep: some View {
@@ -434,13 +338,6 @@ struct FirstRunView: View {
                 }
                 .padding(.top, 4)
             }
-            if settings.dictationOnlyMode {
-                Label("Daisy can also record and summarize meetings — turn it on any time in Settings → Meetings.", systemImage: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
-            }
             VStack(alignment: .leading, spacing: 10) {
                 Text("Optional setup")
                     .font(.footnote.weight(.semibold))
@@ -503,10 +400,6 @@ struct FirstRunView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color.daisyAccent)
                     .keyboardShortcut(.defaultAction)
-            case .mode:
-                // The two cards are the action — no footer primary, so the
-                // user makes an explicit choice. Back stays available.
-                EmptyView()
             case .microphone, .screenRecording, .accessibility:
                 Button("Skip for now") { advance() }
                     .buttonStyle(.bordered)
