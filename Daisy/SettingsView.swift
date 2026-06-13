@@ -781,6 +781,12 @@ struct SettingsView: View {
             // "Audio & devices"; "Show next meeting" from "Meetings" — both
             // are about how visible Daisy is, not audio I/O.)
             Section {
+                Toggle(isOn: $settings.compactMenuBarOnly) {
+                    Text("Menu-bar only (compact)")
+                    Text("Hide the main window and live in the menu bar + widget, like a focused dictation tool. Open the window any time from the menu-bar ⋯ menu.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Toggle("Floating widget", isOn: $settings.floatingWidgetEnabled)
                 Toggle("Show next meeting in the menu bar", isOn: $settings.menuBarShowsNextMeeting)
                     .disabled(!hasAnyCalendarSource)
@@ -1412,7 +1418,16 @@ struct SettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
-            // 1-day dictation history section lands here next wave.
+
+            Section {
+                DictationHistoryView()
+            } header: {
+                Text("Recent dictations")
+            } footer: {
+                Text("The last 24 hours of dictations, then auto-cleared. Tap one to copy it.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .formStyle(.grouped)
     }

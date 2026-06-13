@@ -445,6 +445,25 @@ final class AppSettings {
         didSet { defaults.set(menuBarShowsNextMeeting, forKey: Self.k_menuBarShowsNextMeeting) }
     }
 
+    /// When ON, Daisy behaves as a focused menu-bar app (à la Wispr
+    /// Flow): the big main window does NOT auto-open at launch, and the
+    /// app runs with `.accessory` activation policy (no Dock icon, no
+    /// Cmd+Tab entry). Daisy lives entirely in the menu-bar popover +
+    /// the floating petal widget. The popover's "More" menu still offers
+    /// "Open Library…" / "Settings…" (which raise the main window) and
+    /// "Quit Daisy", so the user is never stranded — and clicking a Dock
+    /// re-add or any reopen flips the policy back to `.regular`.
+    ///
+    /// Default OFF — behaviour is then byte-for-byte the historical
+    /// regular-app experience (Dock icon, main window opens on launch and
+    /// on Dock click). The activation-policy swap is applied live on
+    /// toggle (no relaunch needed) via the MainView wiring modifier; the
+    /// launch-time decision lives in
+    /// `DaisyAppDelegate.applicationDidFinishLaunching`.
+    var compactMenuBarOnly: Bool {
+        didSet { defaults.set(compactMenuBarOnly, forKey: Self.k_compactMenuBarOnly) }
+    }
+
     /// Whether the first-run welcome sheet has been dismissed at
     /// least once. We show it on first launch (and on a clean
     /// install with no other Daisy data) to anchor the user on
@@ -877,6 +896,11 @@ final class AppSettings {
             ?? (isFreshInstall ? Self.audioRetentionDeleteAfterTranscription : 0)
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
+        // Default OFF — `defaults.bool(forKey:)` returns false for unset
+        // keys, so a fresh install gets the historical regular-app
+        // behaviour (Dock icon + main window on launch). Only an explicit
+        // user opt-in moves it to the menu-bar-only experience.
+        self.compactMenuBarOnly = defaults.bool(forKey: Self.k_compactMenuBarOnly)
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
         self.hasSeenAcousticLoopbackExplainer =
             defaults.bool(forKey: Self.k_hasSeenAcousticLoopbackExplainer)
@@ -1053,6 +1077,7 @@ final class AppSettings {
     private static let k_audioRetentionDays = "daisy.audioRetentionDays"
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
+    private static let k_compactMenuBarOnly = "daisy.compactMenuBarOnly"
     private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"
     private static let k_hasSeenAcousticLoopbackExplainer =
         "daisy.hasSeenAcousticLoopbackExplainer"
