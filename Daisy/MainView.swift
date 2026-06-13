@@ -80,6 +80,10 @@ enum SettingsTab: String, Hashable, Sendable {
     /// Split out of the overloaded General tab in 1.0.7.16.
     case recording
     case transcription
+    /// Dictation — push-to-talk word-replacement dictionary (+ a 1-day
+    /// history later). Split from Transcription so the dictation user
+    /// has a focused home.
+    case dictation
     case summary
     /// System privacy permissions Daisy interacts with — Microphone,
     /// Calendar, Accessibility, Screen Recording. Lives in Settings
