@@ -491,7 +491,7 @@ struct SettingsView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
-            .tint(audioCacheFiles == 0 ? Color.secondary : Color.red)
+            .tint(audioCacheFiles == 0 ? Color.secondary : Color.daisyError)
             .disabled(clearingAudioCache || audioCacheFiles == 0)
         }
         .task(id: audioCacheRefreshTick) {
