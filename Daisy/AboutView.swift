@@ -183,7 +183,6 @@ struct AboutView: View {
         // dropped per the Daisy caption rule (see
         // business/projects/daisy → Brand copy rules).
         HStack(alignment: .top, spacing: 16) {
-            DaisyMark(size: 56, tint: .primary)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Daisy")
                     .font(.title.weight(.semibold))
