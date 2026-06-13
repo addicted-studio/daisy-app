@@ -18,7 +18,23 @@ enum MarkdownExporter {
 
     // MARK: - Render
 
-    static func renderMarkdown(session: RecordingSession) -> String {
+    static func renderMarkdown(session: RecordingSession, includeFrontmatter: Bool = true) -> String {
+        var lines: [String] = []
+        if includeFrontmatter {
+            lines.append(contentsOf: frontmatterLines(session: session))
+            lines.append("")
+        }
+        renderBody(session: session, into: &lines)
+        return lines.joined(separator: "\n")
+    }
+
+    /// YAML frontmatter block (`---` … `---`). Split out of
+    /// `renderMarkdown` in 1.0.7.19 so clipboard copies can skip it:
+    /// pasted into Slack / Gmail / Claude the vault metadata is pure
+    /// noise, and the rich-HTML clipboard flavor (MarkdownClipboard)
+    /// would render it as paragraph soup. The on-disk transcript.md
+    /// and the Save-panel export keep `includeFrontmatter: true`.
+    private static func frontmatterLines(session: RecordingSession) -> [String] {
         var lines: [String] = []
         lines.append("---")
         lines.append("title: \(yamlQuote(session.title))")
@@ -133,7 +149,13 @@ enum MarkdownExporter {
         lines.append("daisy_mic_audio_status: \(archiveLabel(session.micAudioArchiveStatus))")
         lines.append("tags: [meeting, transcript, daisy]")
         lines.append("---")
-        lines.append("")
+        return lines
+    }
+
+    /// Document body — `# title`, recorded-quote, summary, screenshots,
+    /// transcript. Shared tail of both flavors (with / without
+    /// frontmatter).
+    private static func renderBody(session: RecordingSession, into lines: inout [String]) {
         lines.append("# \(session.title)")
         lines.append("")
 
@@ -242,8 +264,6 @@ enum MarkdownExporter {
             lines.append("\(prefix) \(text)")
             lines.append("")
         }
-
-        return lines.joined(separator: "\n")
     }
 
     // MARK: - Save flow
@@ -280,13 +300,16 @@ enum MarkdownExporter {
         }
     }
 
-    /// Copy the rendered markdown to the system pasteboard. Handy when the
-    /// user wants to drop it straight into Claude or Notion.
+    /// Copy the rendered markdown to the system pasteboard — used by the
+    /// popover footer Copy button and the widget's "Copy last transcript".
+    /// Two-flavor write via RichClipboard (1.0.7.19): semantic HTML for
+    /// rich targets (Slack / Notion / Gmail / Apple Notes), raw markdown
+    /// for plain ones (Obsidian / Claude / editors). Frontmatter is
+    /// omitted — it's vault metadata, noise everywhere a clipboard paste
+    /// lands; the on-disk transcript.md keeps it (see saveWithPanel).
     @MainActor
     static func copyToClipboard(session: RecordingSession) {
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(renderMarkdown(session: session), forType: .string)
+        RichClipboard.copy(markdown: renderMarkdown(session: session, includeFrontmatter: false))
     }
 
     // MARK: - Folder bookmark (security-scoped)

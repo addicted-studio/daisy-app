@@ -235,6 +235,23 @@ struct SessionDetailView: View {
                     Label("Move to folder…", systemImage: "folder")
                 }
                 Divider()
+                // 1.0.7.19 — explicit single-flavor copies. The toolbar
+                // Copy button writes BOTH html + markdown (the right
+                // default for chat / mail / Notion); these two are for
+                // when the user wants exactly one flavor: raw markdown
+                // as plain text, or the Obsidian variant with the YAML
+                // frontmatter block for vault filing.
+                Button {
+                    copyPlainMarkdown(includeFrontmatter: false)
+                } label: {
+                    Label("Copy as Markdown", systemImage: "doc.on.doc")
+                }
+                Button {
+                    copyPlainMarkdown(includeFrontmatter: true)
+                } label: {
+                    Label("Copy for Obsidian", systemImage: "doc.append")
+                }
+                Divider()
                 Button {
                     Task { await sendToNotion() }
                 } label: {
@@ -641,8 +658,11 @@ struct SessionDetailView: View {
             HStack {
                 Spacer(minLength: 0)
                 Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(summary.clientFollowUp, forType: .string)
+                    // Two-flavor write — the draft is plain paragraphs,
+                    // so the HTML flavor gives mail composers / Slack
+                    // proper <p> blocks while plain targets get the
+                    // text verbatim (MarkdownClipboard.swift).
+                    RichClipboard.copy(markdown: summary.clientFollowUp)
                     ToastCenter.shared.show("Follow-up draft copied", style: .success)
                 } label: {
                     Label("Copy follow-up", systemImage: "doc.on.doc")
@@ -1313,10 +1333,59 @@ struct SessionDetailView: View {
         // from the LLM and the asynchronous summary.json + transcript.md
         // rewrite hasn't completed yet. Re-rendering matches exactly
         // what the user is looking at on screen.
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(assembledMarkdown(), forType: .string)
+        //
+        // 1.0.7.19 — two-flavor write (MarkdownClipboard.swift):
+        // semantic HTML for rich targets (Slack / Notion / Gmail /
+        // Apple Notes), raw markdown for plain ones (Obsidian /
+        // Claude / editors). No frontmatter on the default copy —
+        // the kebab's "Copy for Obsidian" is the frontmatter path.
+        RichClipboard.copy(markdown: assembledMarkdown())
         ToastCenter.shared.show("Markdown copied to clipboard", style: .success)
+    }
+
+    /// Kebab-menu copy variants (1.0.7.19) — explicit single-flavor
+    /// writes for when the user wants the RAW markdown as plain text
+    /// (the toolbar Copy writes html + markdown; targets that prefer
+    /// HTML would paste the rich flavor even when the user wanted
+    /// source). `includeFrontmatter` is the Obsidian-vault variant.
+    private func copyPlainMarkdown(includeFrontmatter: Bool) {
+        guard !session.transcriptText.isEmpty else {
+            ToastCenter.shared.show("No transcript yet", style: .warning)
+            return
+        }
+        RichClipboard.copyPlain(markdown: markdownDocument(includeFrontmatter: includeFrontmatter))
+        ToastCenter.shared.show(
+            includeFrontmatter
+                ? "Markdown with frontmatter copied"
+                : "Markdown copied to clipboard",
+            style: .success
+        )
+    }
+
+    /// Full markdown document for the copy actions. The body is always
+    /// re-assembled from in-memory state (see `copyMarkdown`'s lag
+    /// note); `includeFrontmatter` prepends the verbatim YAML block
+    /// from the on-disk transcript.md — frontmatter never lags memory
+    /// the way the summary does, because every frontmatter mutation
+    /// (folder / tag / speaker map) goes through SessionStore's
+    /// synchronous upsert-and-rewrite path.
+    private func markdownDocument(includeFrontmatter: Bool) -> String {
+        let body = assembledMarkdown()
+        guard includeFrontmatter, let fm = onDiskFrontmatter() else { return body }
+        return fm + "\n\n" + body
+    }
+
+    /// The verbatim `---`-fenced frontmatter block from this session's
+    /// transcript.md, or nil when the file is missing / carries none.
+    private func onDiskFrontmatter() -> String? {
+        guard let url = session.transcriptURL,
+              let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let lines = raw.components(separatedBy: "\n")
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+        for i in 1..<lines.count where lines[i].trimmingCharacters(in: .whitespaces) == "---" {
+            return lines[0...i].joined(separator: "\n")
+        }
+        return nil
     }
 
     /// Build a full markdown document for clipboard / share: title
@@ -1480,13 +1549,17 @@ struct SessionDetailView: View {
     /// when the user dictated in RU, never via chrome).
     private var summaryBlockTitle: String { "Summary" }
 
-    /// Plain-text dump of everything the Summary collapsible
-    /// renders — Meeting lede + topical sections + Next actions +
-    /// Follow-up — ready to ⌘V into any text field. Markdown stripped
-    /// (no `**bold**` / `# headers`) because the use case is "paste
-    /// into Slack / email / ChatGPT" where markdown noise is worse
-    /// than nothing. Section titles upper-cased so they survive the
-    /// plain-text round trip as visual headers.
+    /// Markdown body of everything the Summary collapsible renders —
+    /// lede paragraph, `##` topical sections with nested bullets,
+    /// `- [ ]` next actions, follow-up draft. Built by
+    /// `summaryMarkdown(_:labels:)` (MarkdownClipboard.swift), whose
+    /// order mirrors `summaryAttributedString` 1:1. CollapsibleBlock
+    /// writes it through `RichClipboard.copy`, so rich targets
+    /// (Slack / Notion / Gmail / Apple Notes) paste real headings +
+    /// indented bullets while plain targets (Obsidian / Claude /
+    /// editors) get clean markdown. Replaces the 1.0.7.1 ALL-CAPS
+    /// plain-text dump — that lowest-common-denominator format is
+    /// exactly what the two-flavor pasteboard makes unnecessary.
     ///
     /// Returns "" when no summary is loaded (CollapsibleBlock won't
     /// fire copy in that state, but harmless to return an empty
@@ -1494,46 +1567,8 @@ struct SessionDetailView: View {
     private var summaryCopyText: () -> String {
         return {
             guard let s = session.summary else { return "" }
-            var out: [String] = []
-            let labels = summaryLabels(for: s)
-            if !s.summary.isEmpty {
-                out.append(labels.meeting.uppercased())
-                out.append(s.summary)
-            }
-            for section in s.sections {
-                if !out.isEmpty { out.append("") }
-                out.append(section.title.uppercased())
-                out.append(contentsOf: flattenBullets(section.bullets, indent: 0))
-            }
-            if !s.actionItems.isEmpty {
-                if !out.isEmpty { out.append("") }
-                out.append(labels.nextActions.uppercased())
-                for item in s.actionItems {
-                    out.append("• \(item)")
-                }
-            }
-            if !s.clientFollowUp.isEmpty {
-                if !out.isEmpty { out.append("") }
-                out.append(labels.followUp.uppercased())
-                out.append(s.clientFollowUp)
-            }
-            return out.joined(separator: "\n")
+            return summaryMarkdown(s, labels: summaryLabels(for: s))
         }
-    }
-
-    /// Recursive bullet → plain-text. Two-space indent per nesting
-    /// level, `• ` marker at every level (simpler than alternating
-    /// glyphs, and pastes cleanly into any chat surface).
-    private func flattenBullets(_ bullets: [SummaryBullet], indent: Int) -> [String] {
-        var out: [String] = []
-        let prefix = String(repeating: "  ", count: indent) + "• "
-        for b in bullets {
-            out.append(prefix + b.text)
-            if !b.children.isEmpty {
-                out.append(contentsOf: flattenBullets(b.children, indent: indent + 1))
-            }
-        }
-        return out
     }
 }
 
@@ -1641,8 +1676,10 @@ private struct CollapsibleBlock<Content: View>: View {
                     ToastCenter.shared.show("Nothing to copy yet", style: .warning)
                     return
                 }
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                // Two-flavor write (MarkdownClipboard.swift) — the
+                // closures hand us markdown; rich paste targets read
+                // the semantic-HTML render, plain ones the markdown.
+                RichClipboard.copy(markdown: text)
                 ToastCenter.shared.show("\(title) copied", style: .success)
             } label: {
                 Image(systemName: "doc.on.doc")

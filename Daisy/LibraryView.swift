@@ -240,14 +240,34 @@ struct LibraryView: View {
         }
     }
 
-    /// Copy the on-disk transcript.md straight to the clipboard.
-    /// Lightweight version of the detail-view copy action.
+    /// Copy the on-disk transcript.md to the clipboard. Lightweight
+    /// version of the detail-view copy action — same two-flavor write
+    /// (MarkdownClipboard.swift): semantic HTML for rich paste targets
+    /// (Slack / Notion / Gmail / Apple Notes), raw markdown for plain
+    /// ones (Obsidian / Claude / editors). The leading YAML frontmatter
+    /// is stripped — it belongs only in the .md file on disk and the
+    /// detail view's explicit "Copy for Obsidian", never in a copy the
+    /// user drops into a chat or note (was: raw file, frontmatter and
+    /// all, written as plain text only — literal `##`/`**` everywhere
+    /// but Obsidian).
     private func copyTranscript(of session: StoredSession) {
         guard let url = session.transcriptURL,
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.setString(text, forType: .string)
+              let raw = try? String(contentsOf: url, encoding: .utf8) else { return }
+        RichClipboard.copy(markdown: Self.strippingFrontmatter(raw))
+    }
+
+    /// Drop a leading `---`-fenced YAML block, returning just the body.
+    /// Inverse of `SessionDetailView.onDiskFrontmatter`; returns the
+    /// input unchanged when there is no well-formed frontmatter.
+    private static func strippingFrontmatter(_ raw: String) -> String {
+        let lines = raw.components(separatedBy: "\n")
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return raw }
+        for i in 1..<lines.count where lines[i].trimmingCharacters(in: .whitespaces) == "---" {
+            return lines[(i + 1)...]
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return raw
     }
 
     // MARK: - Session list
