@@ -19,6 +19,10 @@
 import SwiftUI
 
 struct PermissionsView: View {
+    /// Passed in from SettingsView so the "Don't remind me" toggle in the
+    /// meeting-recording group can read/write the suppress flag.
+    @Bindable var settings: AppSettings
+
     @Bindable private var permissions = SystemPermissions.shared
 
     /// Observable Google account state — moved here from
@@ -113,6 +117,17 @@ struct PermissionsView: View {
             // Google Calendar — OAuth row, same "calendar source"
             // mental model as Apple Calendar, sat side-by-side.
             googleCalendarRow
+
+            // "Don't remind me" — mutes Daisy's in-app warning when a
+            // recording isn't capturing the other side. The macOS
+            // permission prompt still appears when you record a meeting,
+            // so this only hides the nag, not the actual ask.
+            Toggle(isOn: $settings.suppressMeetingPermissionReminders) {
+                Text("Don't remind me")
+                Text("Hide the in-app warning that the other side isn't being captured. The macOS permission prompt still appears when you record a meeting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text("For meeting recording")
         } footer: {

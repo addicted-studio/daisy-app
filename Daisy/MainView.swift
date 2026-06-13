@@ -382,7 +382,10 @@ struct MainView: View {
                 // is informational ("here's what's being captured");
                 // putting it above Stop made the eye land on a label
                 // before the actionable button, which felt wrong.
-                if session.status == .recording || session.status == .paused {
+                // Muted when the user opted out of meeting-permission
+                // reminders (Settings → Permissions → "Don't remind me").
+                if (session.status == .recording || session.status == .paused),
+                   !settings.suppressMeetingPermissionReminders {
                     SystemAudioStatusPill(session: session)
                         // 2026-05-25 — top inset 0 → 12 per Egor's
                         // pass. The status pill belongs to a

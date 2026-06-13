@@ -464,6 +464,15 @@ final class AppSettings {
         didSet { defaults.set(compactMenuBarOnly, forKey: Self.k_compactMenuBarOnly) }
     }
 
+    /// When true, Daisy hides its in-app "the other side isn't being
+    /// captured" warning (the system-audio status pill). The macOS
+    /// permission prompt still fires when the user records a meeting —
+    /// this only mutes Daisy's own reminder. Toggled in Settings →
+    /// Permissions → "For meeting recording" → "Don't remind me".
+    var suppressMeetingPermissionReminders: Bool {
+        didSet { defaults.set(suppressMeetingPermissionReminders, forKey: Self.k_suppressMeetingPermissionReminders) }
+    }
+
     /// Whether the first-run welcome sheet has been dismissed at
     /// least once. We show it on first launch (and on a clean
     /// install with no other Daisy data) to anchor the user on
@@ -901,6 +910,7 @@ final class AppSettings {
         // behaviour (Dock icon + main window on launch). Only an explicit
         // user opt-in moves it to the menu-bar-only experience.
         self.compactMenuBarOnly = defaults.bool(forKey: Self.k_compactMenuBarOnly)
+        self.suppressMeetingPermissionReminders = defaults.bool(forKey: Self.k_suppressMeetingPermissionReminders)
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
         self.hasSeenAcousticLoopbackExplainer =
             defaults.bool(forKey: Self.k_hasSeenAcousticLoopbackExplainer)
@@ -1078,6 +1088,7 @@ final class AppSettings {
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
     private static let k_compactMenuBarOnly = "daisy.compactMenuBarOnly"
+    private static let k_suppressMeetingPermissionReminders = "daisy.suppressMeetingPermissionReminders"
     private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"
     private static let k_hasSeenAcousticLoopbackExplainer =
         "daisy.hasSeenAcousticLoopbackExplainer"
