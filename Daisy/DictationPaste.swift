@@ -89,6 +89,17 @@ final class DictationPaste {
         // users who never set up a dictionary.
         let transcript = DictationDictionary.shared.apply(to: transcript)
 
+        // Log the final, about-to-be-pasted text to the rolling 24-hour
+        // dictation history so the user can glance back / re-copy it later.
+        // Placed AFTER `apply(to:)` so the record matches exactly what
+        // lands in the user's field (dictionary already applied). Like
+        // `DictationDictionary`, `DictationHistory` is `@MainActor` and
+        // we're already on the MainActor here, so this is a plain
+        // synchronous same-actor call — no await, no hop. `record` ignores
+        // empty/whitespace-only input, so a stray blank transcript that
+        // slips past the early guard above still won't pollute the log.
+        DictationHistory.shared.record(transcript)
+
         // Cancel any in-flight restore from a previous dictation —
         // back-to-back dictations shouldn't restore the previous-
         // previous clipboard on top of the current transcript.
