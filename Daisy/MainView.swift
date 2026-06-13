@@ -425,7 +425,6 @@ struct MainView: View {
         .tint(Color.daisyAccentSoft)
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 6) {
-                DaisyMark(size: 14, tint: .secondary)
                 Text("Daisy")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
