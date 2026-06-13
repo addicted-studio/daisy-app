@@ -204,13 +204,18 @@ struct SessionDetailView: View {
         // ellipsis Menu to collapse the hidden chevron's phantom width.
         // Summarize is the primary action — its own capsule with a WORD
         // label (Egor, 2026-06-13), not a bare sparkle peer of copy/more.
+        // NB: use the DEFAULT toolbar button style here (do NOT set
+        // `.borderless`). On macOS 26 a standalone ToolbarItem only gets
+        // its own Liquid Glass capsule when the button draws a background;
+        // `.borderless` suppresses that, which is what previously left a
+        // bare sparkle floating with no pill. A plain-text `Button` title
+        // (no `systemImage`) keeps the WORD visible rather than collapsing
+        // to icon-only — that collapse is why the old `Label` showed only
+        // the sparkle. So: text title + default style = proper text pill.
         ToolbarItem(placement: .primaryAction) {
-            Button {
+            Button("Summarize") {
                 attemptReSummarize()
-            } label: {
-                Label("Summarize", systemImage: "sparkles")
             }
-            .buttonStyle(.borderless)
             .help("Re-summarize via current provider")
         }
         ToolbarItemGroup(placement: .primaryAction) {
