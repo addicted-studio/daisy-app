@@ -218,30 +218,20 @@ struct HomeView: View {
 
     @ViewBuilder
     private var upcomingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader
-
-            // Source-agnostic gating: show events if ANY calendar
-            // source is live (Apple EventKit OR Google OAuth). The
-            // "Connect Calendar" / "Calendar denied" CTAs only fire
-            // when BOTH sources are unavailable — a user with only
-            // Google connected should see their Google events here,
-            // not a redundant "connect Apple Calendar" prompt.
-            if hasAnyCalendarSource {
+        // Calendar block shows ONLY when a calendar is actually connected
+        // (Apple EventKit OR Google OAuth). When nothing is connected we
+        // render nothing here — no "Connect Calendar" nag on Home; hooking
+        // up a calendar is discovered in Settings → Permissions (Egor,
+        // 2026-06-13). `connectCalendarCTA` / `deniedCalendarCTA` stay
+        // defined but dormant in case we want the inline prompt back.
+        if hasAnyCalendarSource {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionHeader
                 eventsBody
-            } else {
-                switch calendar.authorizationStatus {
-                case .denied, .restricted, .writeOnly:
-                    deniedCalendarCTA
-                case .notDetermined, .fullAccess:
-                    connectCalendarCTA
-                @unknown default:
-                    connectCalendarCTA
-                }
             }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
     }
 
     /// True when at least one calendar source can deliver events

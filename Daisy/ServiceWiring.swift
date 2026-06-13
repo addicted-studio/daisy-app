@@ -97,13 +97,6 @@ enum ServiceWiring {
     /// a "different" meeting from what's already being recorded.
     /// Surfacing rather than acting is the right move.
     static func applyMeetingAutoStart(settings: AppSettings, session: RecordingSession) {
-        // Dictation-only (Dzen) parks the meeting-app detector entirely —
-        // no NSWorkspace observation, no auto-start, no Screen Recording
-        // prompt down the line.
-        guard !settings.dictationOnlyMode else {
-            MeetingDetector.shared.stop()
-            return
-        }
         guard settings.autoStartOnMeeting else {
             MeetingDetector.shared.stop()
             return
@@ -143,13 +136,6 @@ enum ServiceWiring {
     ///     for the Home view even when auto-start is off — the user
     ///     still wants to see what's coming.
     static func applyCalendar(settings: AppSettings, session: RecordingSession) {
-        // Dictation-only (Dzen) stops calendar polling and auto-start
-        // outright — no EventKit/Google reads, no scheduled-meeting
-        // timers, and crucially no Calendar permission prompt.
-        guard !settings.dictationOnlyMode else {
-            CalendarService.shared.stop()
-            return
-        }
         // CalendarService now multiplexes EventKit + Google OAuth.
         // Start the service if EITHER source is available — a
         // user might only have Google connected (no Internet

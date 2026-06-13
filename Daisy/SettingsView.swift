@@ -556,25 +556,6 @@ struct SettingsView: View {
 
     private var generalTabForm: some View {
         Form {
-            // ── App mode ──────────────────────────────────────
-            // First thing in the first tab, so the full app vs the
-            // focused dictation-only (Dzen) build is impossible to miss.
-            // Dictation-only parks all meeting machinery (ServiceWiring)
-            // and defers Screen Recording / Calendar.
-            Section {
-                Picker("Mode", selection: $settings.dictationOnlyMode) {
-                    Text("Full — meetings + dictation").tag(false)
-                    Text("Dictation only").tag(true)
-                }
-                .pickerStyle(.menu)
-            } header: {
-                Text("App mode")
-            } footer: {
-                Text("Dictation only turns Daisy into a focused push-to-talk tool — no meetings, calendar or Screen Recording. Switch back any time.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
             // ── Group 0: Profile ──────────────────────────────
             // Identity used to label the mic-side of transcripts.
             // Empty by default → falls back to the generic "Me".
@@ -742,8 +723,6 @@ struct SettingsView: View {
             }
 
             // ── Meetings ──────────────────────────────────────
-            // Greyed out when App mode = "Dictation only" (General tab) —
-            // the meeting machinery is parked in that mode.
             Section {
                 Picker("Auto-record", selection: $settings.autoStartPolicy) {
                     ForEach(AutoStartPolicy.allCases) { policy in
@@ -751,7 +730,6 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .disabled(settings.dictationOnlyMode)
 
                 Toggle("Record the other side", isOn: $settings.captureSystemAudio)
 
