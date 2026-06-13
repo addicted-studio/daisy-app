@@ -44,6 +44,22 @@ struct AboutView: View {
             // ones". Apple's own About panels historically had this same
             // adjacency.
             Section {
+                // App version as the first row of Updates — pairs "what am
+                // I on" with "how to get newer" (moved here from the brand
+                // header). Click the row to copy "Daisy <version> (<build>)".
+                HStack(spacing: 10) {
+                    Image(systemName: "number")
+                        .frame(width: 18)
+                        .foregroundStyle(.secondary)
+                    Text(versionLine)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { VersionInfo.copyToClipboardWithToast() }
+                .help("Click to copy version")
+
                 // "Automatically check for updates" — manual Check button
                 // on the trailing side (same action the App menu lands on)
                 // plus the automatic-check toggle, with the last-checked
@@ -190,23 +206,6 @@ struct AboutView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Text(versionLine)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
-                    .padding(.top, 2)
-                    // 2026-05-27 — click-to-copy on the About header
-                    // version line. Same affordance as the sidebar
-                    // version pill in MainView; both copy
-                    // "Daisy <version> (<build>)" so support pastes
-                    // are uniform regardless of which surface the
-                    // user clicked from. No icon / no visual change
-                    // per Egor's constraint — discoverability via
-                    // `.help` tooltip only. `.contentShape` widens
-                    // the hit target to the full text frame.
-                    .contentShape(Rectangle())
-                    .onTapGesture { VersionInfo.copyToClipboardWithToast() }
-                    .help("Click to copy version")
             }
             Spacer()
         }
