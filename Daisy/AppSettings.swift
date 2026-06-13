@@ -455,6 +455,19 @@ final class AppSettings {
         didSet { defaults.set(hasShownFirstRun, forKey: Self.k_hasShownFirstRun) }
     }
 
+    /// "Dictation only" (a.k.a. Dzen) mode, chosen at onboarding and
+    /// flippable in Settings → Meetings. When true Daisy suspends ALL
+    /// meeting machinery — the NSWorkspace meeting-app detector, calendar
+    /// polling and calendar auto-start — and never asks for Screen
+    /// Recording or Calendar access, becoming a focused push-to-talk
+    /// dictation tool that needs only Microphone + Accessibility.
+    /// `ServiceWiring.applyMeetingAutoStart` / `applyCalendar` read this
+    /// and stay parked; `FirstRunView` skips the Screen Recording step.
+    /// Default false (full meetings + dictation).
+    var dictationOnlyMode: Bool {
+        didSet { defaults.set(dictationOnlyMode, forKey: Self.k_dictationOnlyMode) }
+    }
+
     /// Set the first time a user opens a meeting session whose
     /// `daisy_system_audio_status` is `empty` and reads the
     /// acoustic-loopback explainer banner in SessionDetailView. After
@@ -878,6 +891,7 @@ final class AppSettings {
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
         self.hasShownFirstRun = defaults.bool(forKey: Self.k_hasShownFirstRun)
+        self.dictationOnlyMode = defaults.bool(forKey: Self.k_dictationOnlyMode)
         self.hasSeenAcousticLoopbackExplainer =
             defaults.bool(forKey: Self.k_hasSeenAcousticLoopbackExplainer)
         self.autoSendNotion = defaults.object(forKey: Self.k_autoSendNotion) as? Bool ?? false
@@ -1054,6 +1068,7 @@ final class AppSettings {
     private static let k_recordingSoundsEnabled = "daisy.recordingSoundsEnabled"
     private static let k_menuBarShowsNextMeeting = "daisy.menuBarShowsNextMeeting"
     private static let k_hasShownFirstRun = "daisy.hasShownFirstRun"
+    private static let k_dictationOnlyMode = "daisy.dictationOnlyMode"
     private static let k_hasSeenAcousticLoopbackExplainer =
         "daisy.hasSeenAcousticLoopbackExplainer"
     private static let k_autoSendNotion = "daisy.autoSendNotion"
