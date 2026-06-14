@@ -143,13 +143,16 @@ struct RecordCapsule: View {
         case .paused:                                  return .daisyRecording
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
-        // Idle Start is GREEN (palette `daisySuccess`), not the
-        // recording orange. Orange means "mic is (about to be) live"
-        // — paused-Resume above, the widget core, the system-audio
-        // warning. User feedback (1.0.7.18): an orange idle button
-        // reads as "recording is already running". Green = "go",
-        // unmistakably pre-recording.
-        default:                                       return .daisySuccess
+        // Idle / finished Start is a warm BEIGE (`daisyRecordIdle`) — not
+        // green, not the recording orange. Orange means "mic is (about to
+        // be) live" — paused-Resume above, the widget core, the
+        // system-audio warning — so the idle button must stay off that hue
+        // (an orange idle button reads as "already recording", 1.0.7.18
+        // feedback). Beige sits in the cream brand family and reads as a
+        // calm "go" affordance; the dark-ink label + record glyph carry
+        // the meaning. (Was sage green through 1.0.7.19 — Egor asked to
+        // calm the palette, 2026-06-13.)
+        default:                                       return .daisyRecordIdle
         }
     }
 
@@ -157,9 +160,10 @@ struct RecordCapsule: View {
         switch session.status {
         case .recording, .preparing, .stopping,
              .summarizing, .failed, .paused:          return .white
-        // White on sage (`daisySuccess` dark = 0x8FC4A2) is ~2:1 —
-        // unreadable. Idle/finished use near-black ink instead, the
-        // standard treatment for light-green "go" buttons.
+        // Idle/finished sit on the light `daisyRecordIdle` beige, so the
+        // label uses near-black ink (white would vanish). Active and
+        // transitional states sit on saturated fills (orange / grey / red)
+        // and use white.
         default:                                       return Color.black.opacity(0.85)
         }
     }

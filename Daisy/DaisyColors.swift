@@ -215,8 +215,17 @@ extension Color {
     /// Sage was the previous accent — pulled because it read as
     /// "Granola territory", which Daisy actively differentiates from.
     static let daisyAccent = Color(
-        light: Color(hex: 0xA66E2A),   // deep cinnamon
-        dark:  Color(hex: 0xD4A04E)    // brighter amber for dark mode
+        // 2026-06-13 — calmed from a saturated amber/gold to a light brown
+        // so the accent stops reading as "yellow" against the warm
+        // surfaces (Egor: the yellow highlights felt noisy). Held at the
+        // SAME perceived luminance as the old amber, so dark-ink text on
+        // accent-filled chips (the folder pills) keeps its contrast — only
+        // the saturation drops (~63%→~39%) and the hue browns. Stays
+        // distinct from `daisyAccentSoft` (taupe selection fill) and
+        // `daisyRecording` (system orange). History: sage → cinnamon/amber
+        // → this light brown.
+        light: Color(hex: 0x9E7338),   // muted brown (was 0xA66E2A cinnamon)
+        dark:  Color(hex: 0xC6A079)    // light brown (was 0xD4A04E amber)
     )
 
     /// Softer cinnamon for system-tinted backgrounds — sidebar List
@@ -228,5 +237,21 @@ extension Color {
     static let daisyAccentSoft = Color(
         light: Color(hex: 0xC9986D),   // caramel-tan
         dark:  Color(hex: 0xB89376)    // warm taupe
+    )
+
+    // ─── Record button (idle / finished) ─────────────────────────────
+    //
+    // The "Start a recording" capsule fill when nothing is live. A warm
+    // light beige in the cream brand family — replaces the old sage-green
+    // "go" button (through 1.0.7.19) after Egor asked to calm the palette
+    // (2026-06-13). Pairs with near-black ink. Deliberately NOT used for
+    // the live states: recording → grey, paused-Resume → orange, failed →
+    // red, so the capsule colour still signals what a click does. Beige
+    // (not pure white) keeps it from shouting next to those saturated
+    // state colours, and one step warmer/deeper than `daisyBgElevated`
+    // (card surface) so it still reads as a filled, tappable affordance.
+    static let daisyRecordIdle = Color(
+        light: Color(hex: 0xEADCC0),   // warm light beige on cream
+        dark:  Color(hex: 0xE6DAC0)    // warm light beige on near-black
     )
 }
