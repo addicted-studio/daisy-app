@@ -746,6 +746,9 @@ struct SettingsView: View {
 
             // Auto-summary lives in the Summary tab — it sits next
             // to the provider config it depends on.
+
+            // ── Voice Memos import (bottom of General) ────────
+            VoiceMemoImportSection(settings: settings)
         }
         .formStyle(.grouped)
     }

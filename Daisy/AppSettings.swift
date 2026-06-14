@@ -37,6 +37,13 @@ final class AppSettings {
     var screenshotIntervalSec: Int {
         didSet { defaults.set(screenshotIntervalSec, forKey: Self.k_screenshotInterval) }
     }
+    /// Opt-in: import Apple Voice Memos recordings as transcripts into a
+    /// "Voice Memos" subfolder of the transcripts folder. Off by default.
+    /// Reading the Voice Memos library needs Full Disk Access (the
+    /// Settings → Recording row guides the user). Drives `VoiceMemoScanner`.
+    var ingestVoiceMemos: Bool {
+        didSet { defaults.set(ingestVoiceMemos, forKey: Self.k_ingestVoiceMemos) }
+    }
     var autoSummarize: Bool {
         didSet { defaults.set(autoSummarize, forKey: Self.k_autoSummarize) }
     }
@@ -771,6 +778,8 @@ final class AppSettings {
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
+        // Default OFF — opt-in, and reading Voice Memos needs Full Disk Access.
+        self.ingestVoiceMemos = defaults.bool(forKey: Self.k_ingestVoiceMemos)
         // Default OFF — when the user hasn't picked a summarizer
         // provider yet (no Anthropic / OpenAI key, no MCP server,
         // Apple Intelligence not detected) auto-summarize would
@@ -1051,6 +1060,7 @@ final class AppSettings {
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
+    private static let k_ingestVoiceMemos = "daisy.ingestVoiceMemos"
     private static let k_autoSummarize = "daisy.autoSummarize"
     private static let k_showSessionAfterStop = "daisy.showSessionAfterStop"
     /// `nonisolated` because `currentSummaryLanguage` (above) reads

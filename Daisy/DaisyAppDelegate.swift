@@ -87,6 +87,16 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // (Settings → "Ask before auto-stopping").
         AutoStopPromptNotification.register()
 
+        // Voice Memos import (Settings → Recording). Reads the raw
+        // UserDefaults bool — same rationale as `compactMenuBarOnly`
+        // above: the @main App's State wiring isn't guaranteed visible
+        // this early, and the persisted value is the source of truth.
+        // No-op unless the user opted in; arms a daily scan + one
+        // delayed pass.
+        VoiceMemoScanner.shared.start(
+            enabled: UserDefaults.standard.bool(forKey: "daisy.ingestVoiceMemos")
+        )
+
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
                 self.applyWarmChrome(to: window)
