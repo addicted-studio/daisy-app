@@ -521,7 +521,11 @@ final class WhisperEngine {
     /// Multiple callers are serialized. `language` is a two-letter ISO
     /// code ("en", "ru") or nil for auto-detect. `profile` trades decode
     /// cost for quality — see `DecodeProfile`.
-    func transcribe(samples: [Float], language: String?, profile: DecodeProfile = .full) async throws -> [WhisperSegment] {
+    /// `biasTerms` — canonical spellings to nudge the decoder toward
+    /// (the dictation vocabulary). Default `[]` → no biasing, so meeting
+    /// and voice-note passes are byte-identical to before. Only the
+    /// dictation final pass populates it (see `Transcriber.runFinalPass`).
+    func transcribe(samples: [Float], language: String?, profile: DecodeProfile = .full, biasTerms: [String] = []) async throws -> [WhisperSegment] {
         await acquireSlot()
         defer { releaseSlot() }
 
@@ -534,6 +538,22 @@ final class WhisperEngine {
 
         await ensureLoaded()
         guard let box = kitBox else { throw WhisperEngineError.notReady }
+
+        // Vocabulary biasing (dictation only — every other caller passes
+        // `biasTerms: []`, so this stays a no-op for meetings/voice notes).
+        // Tokenise the user's canonical spellings into decoder prompt
+        // tokens (Whisper's `initial_prompt` analog — prepended to the
+        // prefill tokens) so the decode is nudged toward producing them;
+        // strip the tokenizer's special tokens so only word-piece IDs go
+        // in. Best-effort: if the tokenizer isn't ready we just skip
+        // biasing rather than failing the pass.
+        var biasPromptTokens: [Int]? = nil
+        if !biasTerms.isEmpty, let tokenizer = box.kit.tokenizer {
+            let promptText = " " + biasTerms.joined(separator: " ")
+            let tokens = tokenizer.encode(text: promptText)
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            if !tokens.isEmpty { biasPromptTokens = tokens }
+        }
 
         // Per-pass timing instrumentation (privacy-safe: durations and
         // counts only, never transcript content). Attributes dictation
@@ -600,6 +620,7 @@ final class WhisperEngine {
             skipSpecialTokens: true,
             withoutTimestamps: false,
             wordTimestamps: false,
+            promptTokens: biasPromptTokens,
             compressionRatioThreshold: 2.4,
             logProbThreshold: -1.0,
             noSpeechThreshold: 0.4,

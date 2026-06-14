@@ -1560,7 +1560,7 @@ final class RecordingSession {
                 // detached in finalizePostStop, off the latency path.
                 let dictFinalState = stopSignposter.beginInterval("dictation_final_pass", id: stopSignposter.makeSignpostID())
                 let t_dictFinal = Date()
-                await micTranscriber.runFinalPass(profile: .dictationFinal)
+                await micTranscriber.runFinalPass(profile: .dictationFinal, biasTerms: DictationDictionary.shared.biasTerms())
                 stopSignposter.endInterval("dictation_final_pass", dictFinalState)
                 log.info("post-stop dictation_final_pass: \(ms(t_dictFinal), privacy: .public)ms")
                 transcriptText = fullTranscriptText
