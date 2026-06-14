@@ -2,51 +2,38 @@
 //  DictationDictionaryView.swift
 //  Daisy
 //
-//  Editor for the dictation custom-vocabulary table
-//  (`DictationDictionary`). Renders a list of `from → to` rows with
-//  inline editing, per-row delete, an Add button, and an empty state.
+//  Editor for the dictation vocabulary (`DictationDictionary`). Lists each
+//  entry — a taught word (`.term`) or a `heard → replacement` correction —
+//  with per-row edit/delete, and an "Add word" button that presents the
+//  Wispr-style `AddVocabularyView` modal.
 //
-//  Embedding contract: this view renders ONLY rows + controls — no
-//  `Form`, no `Section` of its own. The caller is expected to drop it
-//  inside a Settings `Form { Section { … } }`, e.g. a future "Dictation"
-//  tab:
-//
-//      Section {
-//          DictationDictionaryView()
-//      } header: {
-//          Text("Word replacements")
-//      }
+//  Embedding contract: this view renders ONLY rows + controls — no `Form`,
+//  no `Section` of its own. The caller drops it inside a Settings
+//  `Form { Section { … } }` (today: the sidebar "Dictation" page →
+//  "Vocabulary" section).
 //
 //  Styling mirrors the other Settings rows (callout-weight titles,
-//  `.roundedBorder` text fields, `.bordered`/`.small` secondary buttons,
-//  `Color.daisy*` tokens) so it sits seamlessly next to the existing
-//  speaker-profile and storage rows.
+//  `.bordered`/`.borderless` buttons, `Color.daisy*` tokens) so it sits
+//  seamlessly next to the speaker-profile and storage rows.
 //
 
 import SwiftUI
 
 struct DictationDictionaryView: View {
-    /// The shared store. `@Bindable` so row edits and add/delete drive
-    /// observation and re-render the list in place.
+    /// The shared store. `@Bindable` so add/edit/delete drive observation
+    /// and re-render the list in place.
     @Bindable private var dictionary = DictationDictionary.shared
 
-    /// Id of the row whose `from` field should grab focus — set right
-    /// after `add()` so a new row is immediately typeable without a
-    /// manual click.
-    @FocusState private var focusedField: Field?
-
-    /// Field identity for `@FocusState`. We only auto-focus the `from`
-    /// side of a freshly-added row; the `to` field is reached by Tab.
-    private enum Field: Hashable {
-        case from(UUID)
-    }
+    /// Presents the add modal.
+    @State private var showingAdd = false
+    /// Non-nil presents the edit modal for that entry (`.sheet(item:)`).
+    @State private var editingEntry: DictationReplacement?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // One-line explainer in Daisy's plain voice. Caption styling
-            // matches the per-section helper text used elsewhere in
-            // Settings (e.g. the speaker-match-mode help).
-            Text("Replace words dictation mishears. Daisy swaps each match before pasting.")
+            // One-line explainer in Daisy's plain voice — names both
+            // flavours so the Add modal's toggle reads as expected.
+            Text("Teach Daisy your words. A word fixes spelling and casing (and, on Whisper, helps it be heard); a correction replaces something Daisy mishears.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -59,19 +46,22 @@ struct DictationDictionaryView: View {
 
             addButton
         }
+        .sheet(isPresented: $showingAdd) {
+            AddVocabularyView()
+        }
+        .sheet(item: $editingEntry) { entry in
+            AddVocabularyView(editing: entry)
+        }
     }
 
     // MARK: - Empty state
 
     @ViewBuilder
     private var emptyState: some View {
-        // Mirrors `SettingsView.speakerProfilesRow`'s empty placeholder
-        // — icon + secondary line, left-aligned — so the two management
-        // surfaces feel like siblings.
         HStack(spacing: 8) {
             Image(systemName: "character.book.closed")
                 .foregroundStyle(.secondary)
-            Text("No replacements yet.")
+            Text("No words yet.")
                 .foregroundStyle(.secondary)
             Spacer()
         }
@@ -82,69 +72,68 @@ struct DictationDictionaryView: View {
 
     @ViewBuilder
     private var rows: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Column captions so the direction of the swap is legible
-            // before the user has filled anything in.
-            HStack(spacing: 8) {
-                Text("Heard")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                // Spacer matching the arrow column so the two captions
-                // sit over their fields.
-                Image(systemName: "arrow.right")
-                    .font(.caption2)
-                    .foregroundStyle(.clear)
-                Text("Replacement")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                // Spacer matching the trailing delete button column.
-                Color.clear.frame(width: 22)
-            }
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
-            .textCase(.uppercase)
-
-            ForEach(dictionary.replacements) { replacement in
-                row(for: replacement)
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(dictionary.replacements) { entry in
+                row(for: entry)
             }
         }
     }
 
     @ViewBuilder
-    private func row(for replacement: DictationReplacement) -> some View {
+    private func row(for entry: DictationReplacement) -> some View {
         HStack(spacing: 8) {
-            TextField(
-                "",
-                text: binding(for: replacement, keyPath: \.from),
-                prompt: Text("e.g. claude")
-            )
-            .textFieldStyle(.roundedBorder)
-            .focused($focusedField, equals: .from(replacement.id))
-            .frame(maxWidth: .infinity)
+            // Leading glyph distinguishes a taught word from a correction
+            // rule at a glance.
+            Image(systemName: entry.kind == .term ? "text.book.closed" : "arrow.left.arrow.right")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
 
-            Image(systemName: "arrow.right")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            entryLabel(entry)
 
-            TextField(
-                "",
-                text: binding(for: replacement, keyPath: \.to),
-                prompt: Text("e.g. Claude")
-            )
-            .textFieldStyle(.roundedBorder)
-            .frame(maxWidth: .infinity)
+            Spacer(minLength: 8)
 
-            // Per-row delete. Borderless icon button with a destructive
-            // tint — distinct hit target from the text fields so a
-            // mis-click can't wipe a row. Matches the "Forget" idiom in
-            // the speaker list (there it's a bordered word; here a
-            // compact glyph keeps the row from getting too wide).
             Button {
-                dictionary.remove(replacement)
+                editingEntry = entry
+            } label: {
+                Image(systemName: "pencil")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Edit")
+
+            // Per-row delete — borderless destructive glyph, distinct hit
+            // target from the edit button. Matches the "Forget" idiom in
+            // the speaker list (a compact glyph keeps the row narrow).
+            Button {
+                dictionary.remove(entry)
             } label: {
                 Image(systemName: "minus.circle.fill")
                     .foregroundStyle(Color.daisyError)
             }
             .buttonStyle(.borderless)
             .help("Remove")
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture { editingEntry = entry }
+    }
+
+    /// The content half of a row: the word, or `heard → replacement`.
+    @ViewBuilder
+    private func entryLabel(_ entry: DictationReplacement) -> some View {
+        switch entry.kind {
+        case .term:
+            Text(entry.to.isEmpty ? "—" : entry.to)
+        case .correction:
+            HStack(spacing: 6) {
+                Text(entry.from.isEmpty ? "—" : entry.from)
+                    .foregroundStyle(.secondary)
+                Image(systemName: "arrow.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Text(entry.to.isEmpty ? "—" : entry.to)
+            }
         }
     }
 
@@ -153,41 +142,12 @@ struct DictationDictionaryView: View {
     @ViewBuilder
     private var addButton: some View {
         Button {
-            let id = dictionary.add()
-            // Defer focus to the next runloop tick so the row exists in
-            // the view tree before we try to focus its field.
-            DispatchQueue.main.async {
-                focusedField = .from(id)
-            }
+            showingAdd = true
         } label: {
-            Label("Add replacement", systemImage: "plus")
+            Label("Add word", systemImage: "plus")
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .tint(Color.daisyTextPrimary)
-    }
-
-    // MARK: - Binding helper
-
-    /// A two-way binding into a single field of one rule. Reads the
-    /// freshest copy from the store on `get`, and routes `set` through
-    /// `update(_:)` so every keystroke persists. Falls back to the
-    /// passed-in value if the row vanished mid-edit (defensive — keeps
-    /// the field from binding to a stale optional).
-    private func binding(
-        for replacement: DictationReplacement,
-        keyPath: WritableKeyPath<DictationReplacement, String>
-    ) -> Binding<String> {
-        Binding(
-            get: {
-                let current = dictionary.replacements.first { $0.id == replacement.id } ?? replacement
-                return current[keyPath: keyPath]
-            },
-            set: { newValue in
-                var updated = dictionary.replacements.first { $0.id == replacement.id } ?? replacement
-                updated[keyPath: keyPath] = newValue
-                dictionary.update(updated)
-            }
-        )
     }
 }

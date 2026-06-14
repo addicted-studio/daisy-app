@@ -711,8 +711,11 @@ final class Transcriber {
     /// Defaults to `.full` (meeting/voice-note quality path). The
     /// dictation stop passes `.dictationFinal` so the inline
     /// release→paste decode doesn't pay full-width search latency.
-    func runFinalPass(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full) async {
-        await runFinalTranscribe(archiveURLs: archiveURLs, profile: profile)
+    /// `biasTerms` — dictation vocabulary fed to Whisper's `promptTokens`.
+    /// Default `[]` (meeting/voice-note final passes don't bias); the
+    /// dictation stop passes `DictationDictionary.shared.biasTerms()`.
+    func runFinalPass(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full, biasTerms: [String] = []) async {
+        await runFinalTranscribe(archiveURLs: archiveURLs, profile: profile, biasTerms: biasTerms)
         isRunning = false
     }
 
@@ -995,7 +998,7 @@ final class Transcriber {
 
     // MARK: - Final transcribe on stop
 
-    private func runFinalTranscribe(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full) async {
+    private func runFinalTranscribe(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full, biasTerms: [String] = []) async {
         guard let started = sessionStartedAt else { return }
         // 2026-05-27 — cooperative cancellation. With the 1.0.7.3 two-
         // stage Stop, this method runs inside the detached finalize
@@ -1074,7 +1077,8 @@ final class Transcriber {
         async let whisperResult = WhisperEngine.shared.transcribe(
             samples: samples,
             language: lang,
-            profile: profile
+            profile: profile,
+            biasTerms: biasTerms
         )
         // Diarization is opt-in for the mic source (Settings →
         // Transcription → "Diarize microphone too") and on-by-
