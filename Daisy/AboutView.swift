@@ -75,6 +75,10 @@ struct AboutView: View {
 
                         Toggle("", isOn: $updater.automaticallyChecksForUpdates)
                             .labelsHidden()
+                            // Nested in LabeledContent/HStack it loses the
+                            // Form-row context and defaults to .checkbox —
+                            // force .switch to match "Get beta updates" below.
+                            .toggleStyle(.switch)
                     }
                 } label: {
                     HStack(spacing: 10) {

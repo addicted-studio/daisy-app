@@ -56,7 +56,6 @@ struct DictationHistoryView: View {
                 emptyState
             } else {
                 rows
-                clearButton
             }
         }
     }
@@ -118,24 +117,6 @@ struct DictationHistoryView: View {
         }
         .buttonStyle(.plain)
         .help("Copy")
-    }
-
-    // MARK: - Clear
-
-    @ViewBuilder
-    private var clearButton: some View {
-        // Destructive, low-emphasis: bordered + small to match the
-        // dictionary's "Add" button weight, tinted error-red and labelled
-        // destructively so it reads as the dangerous action it is.
-        Button(role: .destructive) {
-            history.clear()
-            ToastCenter.shared.show("History cleared", style: .success)
-        } label: {
-            Label("Clear history", systemImage: "trash")
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(Color.daisyError)
     }
 
     // MARK: - Copy

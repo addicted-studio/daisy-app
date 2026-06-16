@@ -19,6 +19,7 @@ import SwiftUI
 
 struct RecordCapsule: View {
     @Bindable var session: RecordingSession
+    @Bindable var settings: AppSettings
 
     var body: some View {
         Button(action: handleTap) {
@@ -40,6 +41,16 @@ struct RecordCapsule: View {
                     Text(formatTime(session.elapsed))
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.85))
+                } else if let label = hotkeyLabel {
+                    // Idle: show the configured global record hotkey as a
+                    // chip (mirrors the popover Record button) so the
+                    // shortcut is discoverable in the main window too.
+                    Text(label)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(foreground.opacity(0.55))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.black.opacity(0.06)))
                 }
             }
             // 2026-05-25 — horizontal padding bumped 8 → 12 per Egor's
@@ -101,6 +112,14 @@ struct RecordCapsule: View {
     }
 
     // MARK: - Style per state
+
+    /// Configured global record hotkey label, or nil if disabled — shown
+    /// as a chip on the idle button, mirroring the popover Record button.
+    private var hotkeyLabel: String? {
+        let choice = settings.recordHotkey
+        guard choice.keyCode != nil else { return nil }
+        return choice.label
+    }
 
     private var icon: String {
         switch session.status {

@@ -24,7 +24,7 @@ struct VoiceMemoImportSection: View {
         Section {
             Toggle(isOn: $settings.ingestVoiceMemos) {
                 Text("Import Voice Memos")
-                Text("Daisy checks once a day and transcribes new recordings into a “Voice Memos” folder. No summaries — fully on-device.")
+                Text("Daisy checks once a day and transcribes new recordings into a notes folder you pick below — separate from meeting sessions. No summaries — fully on-device.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -45,6 +45,13 @@ struct VoiceMemoImportSection: View {
                             .truncationMode(.middle)
                     }
                 }
+
+                Button("Choose folder…") {
+                    if VoiceMemoFolder.presentPicker() != nil {
+                        refreshDestPath()
+                    }
+                }
+                .controlSize(.small)
 
                 Button {
                     Task { await scanner.scanNow(backfill: true) }
@@ -105,10 +112,6 @@ struct VoiceMemoImportSection: View {
     }
 
     private func refreshDestPath() {
-        if let base = SessionsFolder.resolveUserFolder() {
-            destPath = base.appendingPathComponent(VoiceMemoScanner.destSubfolder).path
-        } else {
-            destPath = "Daisy’s default folder — pick a transcripts folder in General to use your vault"
-        }
+        destPath = (VoiceMemoFolder.resolveUserFolder() ?? VoiceMemoFolder.defaultFolder()).path
     }
 }

@@ -605,8 +605,8 @@ struct SettingsView: View {
             // recorder processes a session.
             Section {
                 Toggle(isOn: $settings.compactMenuBarOnly) {
-                    Text("Menu-bar only (compact)")
-                    Text("Hide the main window and live in the menu bar + widget, like a focused dictation tool. Open the window any time from the menu-bar ⋯ menu.")
+                    Text("Compact menu bar")
+                    Text("Clicking the menu-bar icon opens a quick dropdown menu instead of the live transcription window. The Dock icon and app menus stay.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

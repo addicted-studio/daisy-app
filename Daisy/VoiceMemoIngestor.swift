@@ -39,9 +39,13 @@ enum VoiceMemoIngestor {
         guard ready else { throw IngestError.download }
 
         // 2. Decode to 16 kHz mono off the main actor (CPU + IO heavy).
-        guard let samples = await Task.detached(priority: .utility) {
+        // NB: the detached call is pulled into its own `let` — a trailing
+        // closure inside a `guard`/`if` condition is parsed as the body
+        // brace, so it can't live in the guard line.
+        let decoded = await Task.detached(priority: .utility) {
             AudioArchiveDecoder.decodeToMono16k(urls: [url])
-        }.value, !samples.isEmpty else {
+        }.value
+        guard let samples = decoded, !samples.isEmpty else {
             throw IngestError.decode
         }
 

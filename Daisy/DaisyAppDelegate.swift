@@ -19,36 +19,12 @@ import UserNotifications
 final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Compact / menu-bar-only mode (Settings → Recording). When the
-        // user has opted in, Daisy launches as a focused menu-bar app:
-        // `.accessory` policy (no Dock icon / no Cmd+Tab) and the main
-        // `Window` scene that SwiftUI auto-opens is closed immediately, so
-        // only the menu-bar popover + floating widget are present. The
-        // popover's "More" menu still offers "Open Library…" / "Settings…"
-        // (both raise the main window) and "Quit Daisy", and
-        // `applicationShouldHandleReopen` flips us back to `.regular` — so
-        // the user is never stranded.
-        //
-        // Read the raw UserDefaults value rather than an AppSettings handle:
-        // this runs at launch where the @main App's State wiring isn't
-        // guaranteed visible here, and the persisted bool is the source of
-        // truth. Default false (key unset) → the historical regular-app
-        // path below, byte-for-byte unchanged.
-        let compactMenuBarOnly = UserDefaults.standard.bool(forKey: "daisy.compactMenuBarOnly")
-        if compactMenuBarOnly {
-            NSApp.setActivationPolicy(.accessory)
-            // Close the main window SwiftUI opens for the `Window` scene so
-            // it doesn't sit in front. Try synchronously first (kills the
-            // flash if the window already exists this early) and again on
-            // the next runloop turn (the scene's window may not be created
-            // yet at this point in launch). Closing — not destroying — is
-            // fine: the `Window` scene reopens via `openWindow(id:"main")`
-            // from the popover / widget.
-            Self.closeMainWindows()
-            DispatchQueue.main.async { Self.closeMainWindows() }
-        } else {
-            NSApp.setActivationPolicy(.regular)
-        }
+        // Daisy is always a regular app (Dock icon + app menus). The
+        // "Compact menu bar" setting (Settings → General → Appearance) no
+        // longer demotes to `.accessory` — it only swaps the menu-bar
+        // icon's click from the transcription popover to a dropdown menu
+        // (see DaisyApp's conditional MenuBarExtra). Dock icon + menus stay.
+        NSApp.setActivationPolicy(.regular)
 
         // Daisy ships a single DARK appearance (matches the brand site +
         // launch cover). Force dark Aqua app-wide so every surface — the
@@ -119,17 +95,6 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // menubar appears at the top of fullscreen with its own
         // material backdrop. Our cream `containerBackground` still
         // tints everything below it.
-    }
-
-    /// Close every main-capable window — used by the compact /
-    /// menu-bar-only launch path to tuck away the `Window` scene SwiftUI
-    /// auto-opens. Closing keeps the scene reopenable via
-    /// `openWindow(id:"main")`; it does not quit the app
-    /// (`applicationShouldTerminateAfterLastWindowClosed` returns false).
-    private static func closeMainWindows() {
-        for window in NSApp.windows where window.canBecomeMain {
-            window.close()
-        }
     }
 
     // MARK: - Chrome

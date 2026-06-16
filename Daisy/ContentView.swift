@@ -490,24 +490,28 @@ struct ContentView: View {
     /// an active session has nothing left to say here.
     @ViewBuilder
     private var statusRow: some View {
-        // Idle has nothing to say either — the green Record button IS the
-        // "Ready" signal (Egor, 2026-06-13), so the "● Ready" line is just
-        // noise. Hide the row for .idle too; preparing / summarizing /
-        // finished / failed still surface here.
-        if session.status != .recording && session.status != .idle {
+        // Only surface states the Record button does NOT already convey:
+        // model-download progress (preparing), paused context, the
+        // summarizer engine, and failures. Recording / idle / stopping /
+        // finished are all shown by the button itself, so their status
+        // line was pure duplication — Egor 2026-06-16.
+        switch session.status {
+        case .preparing, .paused, .summarizing, .failed:
             HStack(spacing: 8) {
                 statusDot
                 Text(statusLabel)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer(minLength: 8)
-                if session.status == .finished || session.status == .summarizing {
+                if session.status == .summarizing {
                     Text(formatTime(session.elapsed))
                         .font(.system(.caption, design: .monospaced))
                         .foregroundStyle(.secondary)
                 }
             }
             .font(.caption)
+        default:
+            EmptyView()
         }
     }
 
@@ -693,18 +697,19 @@ struct ContentView: View {
     ///   • Paused → the button reads "Resume"; clicking it re-enters
     ///     active recording, so the button is orange (warm, the
     ///     recording dot is about to come back).
-    /// Start (idle) and resting / unknown states are GREEN (palette
-    /// `daisySuccess`) — NOT the recording orange — matching
-    /// `RecordCapsule.fill` in the main sidebar. Orange is reserved
-    /// for "mic is (about to be) live"; an orange idle button read
-    /// as "already recording" (user feedback, 1.0.7.18).
+    /// Start (idle) and resting / unknown states are a warm BEIGE
+    /// (`daisyRecordIdle`) — NOT green, NOT the recording orange —
+    /// matching `RecordCapsule.fill` in the main sidebar. Orange is
+    /// reserved for "mic is (about to be) live"; an orange idle button
+    /// read as "already recording" (user feedback, 1.0.7.18). (Was sage
+    /// green / daisySuccess through 1.0.7.21 — calm-palette pass 2026-06-15.)
     private var primaryFill: Color {
         switch session.status {
         case .recording: return .daisyPaused
         case .paused:    return .daisyRecording
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
-        default: return .daisySuccess
+        default: return .daisyRecordIdle
         }
     }
 
@@ -876,9 +881,8 @@ struct ContentView: View {
         case .recording: return "Listening…"
         case .finished: return "No speech was captured."
         default:
-            if let label = hotkeyBadgeLabel {
-                return "Press \(label) or click Record to begin."
-            }
+            // Hotkey is already shown in the Record button's badge — no
+            // need to repeat it in the empty state.
             return "Click Record to begin."
         }
     }

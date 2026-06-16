@@ -304,7 +304,6 @@ struct MainView: View {
         .modifier(HotkeyStopWiring(settings: settings, session: session))
         .modifier(AutoStartWiring(settings: settings, session: session))
         .modifier(CalendarServerWiring(settings: settings, session: session))
-        .modifier(CompactModeWiring(settings: settings))
     }
 
     // MARK: Sidebar
@@ -321,7 +320,7 @@ struct MainView: View {
             // Recording capsule sits directly under nav items, no
             // section header — header label was visual noise.
             Section {
-                RecordCapsule(session: session)
+                RecordCapsule(session: session, settings: settings)
                     // 2026-05-25 — capsule was visibly narrower than
                     // the Home / Library / etc. selection chips above.
                     // `List(.sidebar)` adds ~8pt implicit horizontal
@@ -805,51 +804,6 @@ private struct CalendarServerWiring: ViewModifier {
             .onChange(of: settings.mcpServerPort) { _, _ in
                 if settings.mcpServerEnabled {
                     ServiceWiring.applyMCPServer(settings: settings)
-                }
-            }
-    }
-}
-
-/// Live application of the compact / menu-bar-only toggle (Settings →
-/// Recording). The launch-time decision lives in
-/// `DaisyAppDelegate.applicationDidFinishLaunching`; this modifier makes
-/// runtime flips take effect WITHOUT a relaunch.
-///
-///   • ON  → switch to `.accessory` (drop the Dock icon / Cmd+Tab) and
-///           close the main window. The menu-bar popover + floating
-///           widget remain; the popover's "More" menu still offers
-///           "Open Library…" / "Settings…" and "Quit Daisy", so the user
-///           can always get the window back or quit.
-///   • OFF → switch to `.regular` (Dock icon returns) and re-open + raise
-///           the main window, restoring today's default experience.
-///
-/// `openWindow(id:"main")` is the same entry point the menu-bar popover
-/// uses, so re-opening here is guaranteed to focus the single `Window`
-/// scene rather than spawn a duplicate. Plain `let` is enough —
-/// Observation tracks the `settings.compactMenuBarOnly` read inside the
-/// `.onChange`.
-private struct CompactModeWiring: ViewModifier {
-    let settings: AppSettings
-    @Environment(\.openWindow) private var openWindow
-
-    func body(content: Content) -> some View {
-        content
-            .onChange(of: settings.compactMenuBarOnly) { _, isCompact in
-                if isCompact {
-                    NSApp.setActivationPolicy(.accessory)
-                    // Drop the Dock icon and tuck the window away. Closing
-                    // (not destroying) keeps the `Window` scene reopenable.
-                    for window in NSApp.windows where window.canBecomeMain {
-                        window.close()
-                    }
-                } else {
-                    NSApp.setActivationPolicy(.regular)
-                    // Bring Daisy fully back: Dock icon + the main window,
-                    // focused. `openWindow` re-presents the single `Window`
-                    // scene; `activate` pulls the app to the foreground so
-                    // the restored window isn't buried behind other apps.
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
                 }
             }
     }

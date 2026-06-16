@@ -125,9 +125,22 @@ struct DaisyApp: App {
             }
         }
 
+        // Menu-bar icon — ONE MenuBarExtra, `.window` style. Clicking it
+        // opens a popover whose CONTENT branches on "Compact menu bar":
+        //  • Default    → full ContentView (live record + transcription).
+        //  • Compact ON → CompactMenuView: just the quick actions, so the
+        //    transcription mini-window never shows.
+        // The branch lives in the content (ViewBuilder), NOT at the scene
+        // level — `SceneBuilder` rejects if/else, so two conditional
+        // MenuBarExtra scenes won't compile. Content branching updates live
+        // when the toggle flips; Dock icon + app menus stay untouched.
         MenuBarExtra {
-            ContentView(session: session, settings: settings)
-                .frame(width: 420, height: 580)
+            if settings.compactMenuBarOnly {
+                CompactMenuView(session: session, settings: settings)
+            } else {
+                ContentView(session: session, settings: settings)
+                    .frame(width: 420, height: 580)
+            }
         } label: {
             MenuBarLabel(session: session, settings: settings)
         }
@@ -180,5 +193,78 @@ private struct MenuBarLabel: View {
         case .idle, .finished, .failed:
             return calendar.nextMeetingShortLabel
         }
+    }
+}
+
+// MARK: - Compact menu-bar popover
+//
+// Menu-bar popover content when "Compact menu bar" is on — the quick
+// actions from ContentView's "⋯ More" menu, without the live
+// transcription UI. NOTE: this is a compact POPOVER styled like a menu,
+// not a true native NSMenu dropdown — SwiftUI's MenuBarExtra can't switch
+// to `.menu` style conditionally, so a real dropdown would need an AppKit
+// NSStatusItem. Good enough to keep the transcription window out of the way.
+
+private struct CompactMenuView: View {
+    @Bindable var session: RecordingSession
+    @Bindable var settings: AppSettings
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            row("Summarize now", "sparkles",
+                disabled: session.segments.isEmpty || session.summarizer.isSummarizing) {
+                Task { await session.runSummary() }
+            }
+            row("Open Library…", "books.vertical") {
+                AppNavigation.shared.section = .library
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            row("Settings…", "gear") {
+                AppNavigation.shared.section = .settings
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+
+            Divider().padding(.vertical, 4)
+
+            row("New recording", "plus.circle",
+                disabled: session.status == .recording) {
+                session.reset()
+            }
+            row("Check for Updates…", "arrow.down.circle",
+                disabled: !SparkleUpdater.shared.canCheckForUpdates) {
+                SparkleUpdater.shared.checkForUpdates()
+            }
+
+            Divider().padding(.vertical, 4)
+
+            row("Quit Daisy", "power") {
+                NSApp.terminate(nil)
+            }
+        }
+        .padding(6)
+        .frame(width: 240)
+    }
+
+    @ViewBuilder
+    private func row(_ title: String, _ icon: String,
+                     disabled: Bool = false,
+                     action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .frame(width: 16)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
     }
 }

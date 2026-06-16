@@ -226,14 +226,9 @@ struct SessionDetailView: View {
             .help("Re-summarize via current provider")
         }
         ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                attemptCopyMarkdown()
-            } label: {
-                toolbarIcon("doc.on.doc")
-            }
-            .buttonStyle(.borderless)
-            .help("Copy markdown to clipboard")
-
+            // The standalone Copy button was removed (Egor 2026-06-16 — its
+            // both-flavours behaviour read as ambiguous next to Summarize).
+            // Single-flavour copies live in the ⋯ menu below.
             Menu {
                 Menu {
                     ForEach(FolderStore.shared.allFolders) { f in
@@ -354,16 +349,6 @@ struct SessionDetailView: View {
             return
         }
         Task { await draftFollowUp() }
-    }
-
-    private func attemptCopyMarkdown() {
-        guard !session.transcriptText.isEmpty else {
-            ToastCenter.shared.show("No transcript yet", style: .warning)
-            return
-        }
-        copyMarkdown()
-        let scope = session.summary == nil ? "Transcript" : "Summary + transcript"
-        ToastCenter.shared.show("\(scope) copied to clipboard", style: .success)
     }
 
     /// Uniform toolbar icon. `Color.daisyTextPrimary` is an explicit
@@ -860,11 +845,14 @@ struct SessionDetailView: View {
                     .font(.body)
                     .foregroundStyle(.tertiary)
             } else {
-                SelectableTextView(mappedTranscriptText)
+                // A 50-min transcript in one intrinsic-height NSTextView hits
+                // AppKit's max view height and clips the bottom unscrollably
+                // (Egor 2026-06-16). ScrollableTextView scrolls internally,
+                // so give it a bounded pane height. (600pt is a tunable
+                // default — can be made window-relative later.)
+                ScrollableTextView(mappedTranscriptText)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    // Defense-in-depth: even if the NSTextView ever mis-
-                    // measures a line's width again, clip to the card so a
-                    // tail can never paint outside the rounded container.
+                    .frame(height: 600)
                     .clipped()
             }
         }
@@ -1345,23 +1333,6 @@ struct SessionDetailView: View {
         }
         isDraftingFollowUp = false
         isRunningAction = false
-    }
-
-    private func copyMarkdown() {
-        // Assemble from in-memory state (transcriptText + summary)
-        // rather than reading transcriptURL off disk. The on-disk
-        // file might lag the current view — e.g., summary just arrived
-        // from the LLM and the asynchronous summary.json + transcript.md
-        // rewrite hasn't completed yet. Re-rendering matches exactly
-        // what the user is looking at on screen.
-        //
-        // 1.0.7.19 — two-flavor write (MarkdownClipboard.swift):
-        // semantic HTML for rich targets (Slack / Notion / Gmail /
-        // Apple Notes), raw markdown for plain ones (Obsidian /
-        // Claude / editors). No frontmatter on the default copy —
-        // the kebab's "Copy for Obsidian" is the frontmatter path.
-        RichClipboard.copy(markdown: assembledMarkdown())
-        ToastCenter.shared.show("Markdown copied to clipboard", style: .success)
     }
 
     /// Kebab-menu copy variants (1.0.7.19) — explicit single-flavor
