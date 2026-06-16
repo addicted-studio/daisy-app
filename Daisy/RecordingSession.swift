@@ -989,6 +989,19 @@ final class RecordingSession {
         // started transcribers — pre-1.0.3 these `return`s left
         // `sessionsFolderTicket` retained until the next start/reset.
         await WhisperEngine.shared.ensureLoaded()
+        // Cold-restart race: the very first model load right after an app
+        // restart can briefly land not-ready or transiently failed, which
+        // surfaced as a red "Try again" button that just works on the second
+        // tap (Egor 2026-06-16). Auto-do that retry — up to twice, letting
+        // the in-flight load settle between attempts (a second ensureLoaded
+        // re-runs performLoad once the first task has cleared). Only the
+        // not-ready path pays this; a warm engine skips it entirely.
+        var whisperRetries = 0
+        while !WhisperEngine.shared.isReady && whisperRetries < 2 {
+            whisperRetries += 1
+            try? await Task.sleep(for: .milliseconds(300))
+            await WhisperEngine.shared.ensureLoaded()
+        }
         if case .failed(let msg) = WhisperEngine.shared.state {
             await failFast("Whisper model failed to load: \(msg)")
             return

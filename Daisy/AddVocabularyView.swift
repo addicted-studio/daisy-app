@@ -72,15 +72,6 @@ struct AddVocabularyView: View {
             Text(editing == nil ? "Add to vocabulary" : "Edit vocabulary")
                 .font(.title3.weight(.semibold))
 
-            Toggle(isOn: $isCorrection.animation(.easeInOut(duration: 0.15))) {
-                HStack(spacing: 6) {
-                    Text("Correct a misspelling")
-                    Image(systemName: "info.circle")
-                        .foregroundStyle(.secondary)
-                        .help("On: turns this into a correction rule — Daisy replaces the misheard version with your spelling whenever it's dictated. Off: just teaches Daisy a new word so it spells and capitalises it correctly (and, on Whisper, hears it better).")
-                }
-            }
-
             if isCorrection {
                 HStack(spacing: 10) {
                     TextField("Misspelling", text: $misspelling)
@@ -98,6 +89,19 @@ struct AddVocabularyView: View {
             }
 
             HStack(spacing: 10) {
+                // "Correct a misspelling" moved down to the button row,
+                // left-aligned (Egor 2026-06-16), as a SWITCH (not the
+                // default macOS checkbox).
+                Toggle(isOn: $isCorrection.animation(.easeInOut(duration: 0.15))) {
+                    HStack(spacing: 6) {
+                        Text("Correct a misspelling")
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.secondary)
+                            .help("On: turns this into a correction rule — Daisy replaces the misheard version with your spelling whenever it's dictated. Off: just teaches Daisy a new word so it spells and capitalises it correctly (and, on Whisper, hears it better).")
+                    }
+                }
+                .toggleStyle(.switch)
+
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)

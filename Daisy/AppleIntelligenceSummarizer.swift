@@ -222,6 +222,18 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
             // Surface Apple's "unsupported language" specifically so the
             // coordinator can offer the user to switch providers.
             let msg = error.localizedDescription
+            // Long meeting overflowed the on-device model's small context
+            // window → tell the user to switch to a big-context provider.
+            // The coordinator turns `modelUnavailable` into a "switch
+            // provider" prompt (same path as the language case below).
+            if msg.localizedCaseInsensitiveContains("context size") ||
+               msg.localizedCaseInsensitiveContains("context window") ||
+               msg.localizedCaseInsensitiveContains("exceeded") {
+                throw SummaryProviderError.modelUnavailable(
+                    provider: "Apple Intelligence",
+                    reason: "This recording is too long for Apple Intelligence's on-device model. For long meetings, switch to Anthropic, OpenAI, or Ollama in Settings → Summary."
+                )
+            }
             if msg.localizedCaseInsensitiveContains("unsupported language") ||
                msg.localizedCaseInsensitiveContains("locale") {
                 throw SummaryProviderError.modelUnavailable(

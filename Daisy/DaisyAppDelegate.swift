@@ -106,19 +106,25 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
     /// — Liquid Glass uses a private `_NSGlassBackdropView`, not
     /// NSVisualEffectView, so traversal couldn't touch it.
     private func applyWarmChrome(to window: NSWindow) {
+        // Pin the WINDOW (titlebar included) to dark — Daisy is dark-only.
+        // NSApp.appearance alone didn't always reach the titlebar chrome, so
+        // under a light SYSTEM appearance the transparent titlebar showed a
+        // white strip at the top (Egor 2026-06-16). Setting it on the window
+        // forces the titlebar dark too.
+        window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = Self.warmCream
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
     }
 
-    /// Cream window-background NSColor matching `daisyBgPrimary`.
-    /// Dynamic by appearance so it tracks light/dark mode.
-    private static let warmCream: NSColor = NSColor(name: nil) { appearance in
-        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        return isDark
-            ? NSColor(srgbRed: 0x1C/255, green: 0x1A/255, blue: 0x17/255, alpha: 1)
-            : NSColor(srgbRed: 0xFA/255, green: 0xF7/255, blue: 0xF0/255, alpha: 1)
-    }
+    /// Window background — PINNED to `daisyBgPrimary`'s dark value
+    /// (`0x1C1A17`). Daisy is a dark-only app (NSApp.appearance is forced
+    /// `.darkAqua`), so this is deliberately NOT dynamic: a dynamic color let
+    /// the transparent-titlebar strip resolve to the light/cream variant
+    /// under a LIGHT system appearance — the titlebar chrome doesn't always
+    /// honour the forced app appearance — which read as a white bar at the
+    /// top (Egor 2026-06-16). Fixed dark = the chrome always matches content.
+    private static let warmCream = NSColor(srgbRed: 0x1C/255, green: 0x1A/255, blue: 0x17/255, alpha: 1)
 
     // Keep the process alive after the last window closes — we still
     // have a menu-bar item and possibly the floating widget.

@@ -127,7 +127,7 @@ struct SessionDetailView: View {
                         storageKey: "daisy.session.detail.summaryExpanded",
                         copyLabel: "Copy summary",
                         copyText: summaryCopyText,
-                        showsCopy: false
+                        showsCopy: session.summary != nil
                     ) {
                         VStack(alignment: .leading, spacing: 18) {
                             // 2026-05-26 — three cases:
@@ -161,6 +161,21 @@ struct SessionDetailView: View {
                             }
                             if session.hasScreenshots { screenshotsSection }
                         }
+                    }
+                }
+                // Follow-up — its OWN accordion with its own copy button
+                // (Egor 2026-06-16), just like Transcript. Shown once there's
+                // a summary with real content; empty → plaque + Draft CTA,
+                // drafting → spinner.
+                if let summary = session.summary, showFollowUpBlock(summary) {
+                    CollapsibleBlock(
+                        title: "Follow-up",
+                        storageKey: "daisy.session.detail.followUpExpanded",
+                        copyLabel: "Copy follow-up",
+                        copyText: { session.summary?.clientFollowUp ?? "" },
+                        showsCopy: !(session.summary?.clientFollowUp.isEmpty ?? true)
+                    ) {
+                        followUpSection(summary)
                     }
                 }
                 CollapsibleBlock(
@@ -216,13 +231,24 @@ struct SessionDetailView: View {
             Button {
                 attemptReSummarize()
             } label: {
-                // Horizontal inset so the word has room from the pill's
-                // edges instead of hugging them — mirrors the Daisy brand
-                // pill on the leading side (MainView's `.padding(.horizontal, 12)`).
-                // The button style adds its own base inset, so a touch less.
-                Text("Summarize")
+                // While a summary is being (re)generated the button shows a
+                // spinner + "Summarizing…" — the main "loader when creating a
+                // summary" affordance, visible even if the Summary block is
+                // collapsed (Egor 2026-06-16). Horizontal inset gives the
+                // label room from the pill's edges.
+                if isResummarizing {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Summarizing…")
+                    }
                     .padding(.horizontal, 10)
+                } else {
+                    Text("Summarize")
+                        .padding(.horizontal, 10)
+                }
             }
+            .disabled(isRunningAction)
             .help("Re-summarize via current provider")
         }
         ToolbarItemGroup(placement: .primaryAction) {
@@ -292,16 +318,12 @@ struct SessionDetailView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            // Padding INSIDE the Menu label is eaten by Menu's
-            // own size measurement (the previous attempt put it
-            // on `toolbarIcon` directly and didn't survive).
-            // Applying it OUTSIDE the Menu, after `.fixedSize()`,
-            // pushes the entire Menu view inward from its
-            // ToolbarItemGroup slot — which is the gap we actually
-            // see on screen. 16pt overshoots the phantom chevron
-            // (~12pt) by a few points so the visible gap matches
-            // the 12pt sparkles has on the leading side.
-            .padding(.trailing, 16)
+            // (2026-06-16) The `.padding(.trailing, 16)` that used to sit
+            // here aligned the GROUP's trailing edge when this group also
+            // held the Copy icon. With the ⋯ menu now the only item, that
+            // padding pushed the three dots off-centre to the left — removed
+            // so the glyph centres in its pill (toolbarIcon's symmetric 12pt
+            // + `.fixedSize()` collapsing the chevron's phantom width).
             // Menu in macOS 26 toolbar inherits `.tint` colour for
             // its label glyph — bypasses Image.foregroundStyle. Pin
             // the tint locally so the ellipsis matches the other
@@ -636,69 +658,54 @@ struct SessionDetailView: View {
     //     localised header, exactly as before.
     @ViewBuilder
     private func summarySection(_ summary: MeetingSummary) -> some View {
-        let labels = summaryLabels(for: summary)
-        let hasFollowUpText = !summary.clientFollowUp.isEmpty && !isDraftingFollowUp
-        // No follow-up sub-section at all for a no-content summary (e.g.
-        // the "no speech captured" sentinel): no plaque, no Draft CTA when
-        // there's nothing to follow up on.
-        let hasContent = !summary.sections.isEmpty || !summary.actionItems.isEmpty
-        let bodySummary = hasFollowUpText
-            ? summary
-            : MeetingSummary(
-                summary: summary.summary,
-                sections: summary.sections,
-                actionItems: summary.actionItems,
-                clientFollowUp: ""
-            )
-
+        // Body only — lede + topical sections + next actions. The follow-up
+        // draft is its OWN accordion now (Egor 2026-06-16), so strip it here.
+        let bodySummary = MeetingSummary(
+            summary: summary.summary,
+            sections: summary.sections,
+            actionItems: summary.actionItems,
+            clientFollowUp: ""
+        )
         SelectableTextView(attributed: summaryAttributedString(bodySummary, compact: false))
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Same defense-in-depth as the transcript below: if a line is
-            // ever mis-measured, never paint outside the card.
+            // Defense-in-depth: if a line is ever mis-measured, never paint
+            // outside the card.
             .clipped()
+    }
 
-        if hasFollowUpText {
-            // Copy affordance for the draft message — the draft itself is
-            // the last block of the attributed body above.
-            HStack {
-                Spacer(minLength: 0)
-                Button {
-                    // Two-flavor write — the draft is plain paragraphs,
-                    // so the HTML flavor gives mail composers / Slack
-                    // proper <p> blocks while plain targets get the
-                    // text verbatim (MarkdownClipboard.swift).
-                    RichClipboard.copy(markdown: summary.clientFollowUp)
-                    ToastCenter.shared.show("Follow-up draft copied", style: .success)
-                } label: {
-                    Label("Copy follow-up", systemImage: "envelope")
-                        .font(.callout)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                .help("Copy the draft message")
-            }
-        } else if isDraftingFollowUp {
-            // Drafting in flight — visible spinner so the user sees the
-            // click registered (previously only a toast fired, which
-            // Egor flagged as "не хватает прогресса для фолоапа").
-            mdSection(title: labels.followUp) {
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Drafting follow-up…")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                }
+    /// Whether the Follow-up accordion shows: there's a draft, one is being
+    /// drafted, or the summary has real content (→ empty-state plaque + CTA).
+    /// Hidden for a no-content summary (e.g. the "no speech captured"
+    /// sentinel) where there's nothing to follow up on.
+    private func showFollowUpBlock(_ summary: MeetingSummary) -> Bool {
+        let hasContent = !summary.sections.isEmpty || !summary.actionItems.isEmpty
+        return !summary.clientFollowUp.isEmpty || isDraftingFollowUp || hasContent
+    }
+
+    /// Content of the Follow-up accordion: the draft message, a drafting
+    /// spinner, or the empty-state plaque. Copy is served by the block's own
+    /// header button now (no inline copy button here anymore).
+    @ViewBuilder
+    private func followUpSection(_ summary: MeetingSummary) -> some View {
+        if !summary.clientFollowUp.isEmpty && !isDraftingFollowUp {
+            SelectableTextView(summary.clientFollowUp)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .clipped()
+        } else if isDraftingFollowUp {
+            // Drafting in flight — visible spinner so the user sees the click
+            // registered (previously only a toast fired).
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Drafting follow-up…")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-        } else if hasContent {
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
             // Empty follow-up but real content: the model judged the
-            // conversation internal — surface that decision + a one-click
-            // re-roll instead of a silently missing section. Skipped
-            // entirely for a no-content summary (see hasContent).
-            mdSection(title: labels.followUp) {
-                followUpEmptyStatePlaque
-            }
+            // conversation internal — surface that + a one-click re-roll.
+            followUpEmptyStatePlaque
         }
     }
 
@@ -1559,7 +1566,14 @@ struct SessionDetailView: View {
     private var summaryCopyText: () -> String {
         return {
             guard let s = session.summary else { return "" }
-            return summaryMarkdown(s, labels: summaryLabels(for: s))
+            // Body only — the Follow-up accordion copies the draft itself.
+            let body = MeetingSummary(
+                summary: s.summary,
+                sections: s.sections,
+                actionItems: s.actionItems,
+                clientFollowUp: ""
+            )
+            return summaryMarkdown(body, labels: summaryLabels(for: s))
         }
     }
 }
