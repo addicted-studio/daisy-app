@@ -24,8 +24,6 @@ struct DictationDictionaryView: View {
     /// and re-render the list in place.
     @Bindable private var dictionary = DictationDictionary.shared
 
-    /// Presents the add modal.
-    @State private var showingAdd = false
     /// Non-nil presents the edit modal for that entry (`.sheet(item:)`).
     @State private var editingEntry: DictationReplacement?
 
@@ -43,11 +41,6 @@ struct DictationDictionaryView: View {
             } else {
                 rows
             }
-
-            addButton
-        }
-        .sheet(isPresented: $showingAdd) {
-            AddVocabularyView()
         }
         .sheet(item: $editingEntry) { entry in
             AddVocabularyView(editing: entry)
@@ -137,17 +130,4 @@ struct DictationDictionaryView: View {
         }
     }
 
-    // MARK: - Add
-
-    @ViewBuilder
-    private var addButton: some View {
-        Button {
-            showingAdd = true
-        } label: {
-            Label("Add word", systemImage: "plus")
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(Color.daisyTextPrimary)
-    }
 }

@@ -13,16 +13,17 @@
 //  from "library is there but we're blocked" so Settings can guide
 //  the user to the right place.
 //
-//  Path is NOT hardcoded to one location: Voice Memos has used a
-//  couple of containers across macOS versions, so we probe known
-//  candidates and use the first that resolves.
+//  Every member is `nonisolated`: the project builds with main-actor-
+//  by-default isolation, but this is a stateless file-IO utility that
+//  runs on background tasks (the ingestor calls `ensureDownloaded` /
+//  `decodeToMono16k` inside `Task.detached`). Same pattern as
+//  `AudioArchiveDecoder`. Path is NOT hardcoded — we probe known
+//  containers and use the first that resolves.
 //
 
 import Foundation
-import os
 
 enum VoiceMemoLibrary {
-    private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "VoiceMemos")
 
     /// One recording in the Voice Memos library.
     struct VoiceMemo: Sendable, Identifiable, Equatable {
@@ -41,7 +42,7 @@ enum VoiceMemoLibrary {
 
     /// Whether Daisy can currently read the library — drives the
     /// Settings status row.
-    enum AccessStatus: Equatable, Sendable {
+    enum AccessStatus: Error, Equatable, Sendable {
         case ok                    // directory readable
         case needsFullDiskAccess   // directory exists but read denied
         case noLibrary             // no Voice Memos library found
@@ -51,7 +52,7 @@ enum VoiceMemoLibrary {
     // MARK: - Location
 
     /// Candidate container paths, probed in order.
-    private static func candidateDirectories() -> [URL] {
+    nonisolated private static func candidateDirectories() -> [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return [
             home.appendingPathComponent("Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings", isDirectory: true),
@@ -64,7 +65,7 @@ enum VoiceMemoLibrary {
     /// Full Disk Access is denied, `fileExists` may report false for a
     /// path that's really there — so callers should treat a nil here
     /// together with `accessStatus()` rather than as a hard "no library".
-    static func resolveRecordingsDirectory() -> URL? {
+    nonisolated static func resolveRecordingsDirectory() -> URL? {
         let fm = FileManager.default
         for dir in candidateDirectories() {
             var isDir: ObjCBool = false
@@ -80,7 +81,7 @@ enum VoiceMemoLibrary {
     /// Probe each candidate by actually trying to list it, and map the
     /// failure: a permission error anywhere ⇒ `.needsFullDiskAccess`;
     /// otherwise (only not-found errors) ⇒ `.noLibrary`.
-    static func accessStatus() -> AccessStatus {
+    nonisolated static func accessStatus() -> AccessStatus {
         var sawPermissionDenied = false
         for dir in candidateDirectories() {
             do {
@@ -94,7 +95,7 @@ enum VoiceMemoLibrary {
         return sawPermissionDenied ? .needsFullDiskAccess : .noLibrary
     }
 
-    private static func isPermissionError(_ err: NSError) -> Bool {
+    nonisolated private static func isPermissionError(_ err: NSError) -> Bool {
         if err.domain == NSCocoaErrorDomain {
             if err.code == NSFileReadNoPermissionError { return true }
             if let underlying = err.userInfo[NSUnderlyingErrorKey] as? NSError {
@@ -114,7 +115,7 @@ enum VoiceMemoLibrary {
     /// `.needsFullDiskAccess`). iCloud placeholders (`.<name>.m4a.icloud`)
     /// are included and mapped to their real `.m4a` path; the actual
     /// download is deferred to `ensureDownloaded` at ingest time.
-    static func enumerate() -> Result<[VoiceMemo], AccessStatus> {
+    nonisolated static func enumerate() -> Result<[VoiceMemo], AccessStatus> {
         guard let dir = resolveRecordingsDirectory() else {
             let status = accessStatus()
             return .failure(status == .ok ? .noLibrary : status)
@@ -174,7 +175,7 @@ enum VoiceMemoLibrary {
     ///
     /// Blocking (`Thread.sleep`) — intended to run on a background
     /// queue (the ingestor calls it inside `Task.detached`).
-    static func ensureDownloaded(_ url: URL, timeout: TimeInterval = 90) -> Bool {
+    nonisolated static func ensureDownloaded(_ url: URL, timeout: TimeInterval = 90) -> Bool {
         let fm = FileManager.default
         func isReady() -> Bool {
             let vals = try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])

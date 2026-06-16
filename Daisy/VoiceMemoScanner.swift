@@ -26,10 +26,6 @@ import os
 final class VoiceMemoScanner {
     static let shared = VoiceMemoScanner()
 
-    /// Subfolder name created inside the user's transcripts/sessions
-    /// folder for voice-memo notes.
-    static let destSubfolder = "Voice Memos"
-
     // Observable status for the Settings UI.
     private(set) var isScanning = false
     private(set) var importedThisRun = 0
@@ -97,13 +93,16 @@ final class VoiceMemoScanner {
         importedThisRun = 0
         defer { isScanning = false }
 
-        // Resolve destination inside the user's transcripts folder.
-        guard let ticket = SessionsFolder.acquireBase() else {
-            log.warning("Voice memo scan: no base folder acquired")
+        // Resolve the DEDICATED voice-memo destination folder — separate
+        // from meeting sessions (Egor 2026-06-16). Transcripts write
+        // straight into it; the user picks it in Settings (default: a
+        // reliable ~/Library/Application Support/Daisy/Notes fallback).
+        guard let ticket = VoiceMemoFolder.acquireBase() else {
+            log.warning("Voice memo scan: no destination folder acquired")
             return
         }
         defer { ticket.release() }
-        let destDir = ticket.url.appendingPathComponent(Self.destSubfolder, isDirectory: true)
+        let destDir = ticket.url
 
         switch VoiceMemoLibrary.enumerate() {
         case .failure(let status):

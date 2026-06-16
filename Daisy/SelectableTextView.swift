@@ -67,7 +67,7 @@ struct SelectableTextView: NSViewRepresentable {
     /// markdown path (`attributedText()`) is untouched by the
     /// attributed mode — both converge here only.
     private func displayString() -> NSAttributedString {
-        attributed ?? attributedText()
+        attributed ?? Self.renderMarkdown(text, font: font)
     }
 
     /// Build the display string. The transcript body is lightweight markdown
@@ -83,7 +83,7 @@ struct SelectableTextView: NSViewRepresentable {
     /// `**` parity is evaluated WITHIN each line (the exporter emits balanced
     /// pairs per line, so the odd-index pieces are the bold ones). Fonts are
     /// computed once up front, not per line.
-    private func attributedText() -> NSAttributedString {
+    static func renderMarkdown(_ text: String, font: NSFont) -> NSAttributedString {
         let bodyBold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         func sized(_ scale: CGFloat) -> NSFont {
             NSFont(descriptor: bodyBold.fontDescriptor, size: font.pointSize * scale) ?? bodyBold
@@ -296,6 +296,85 @@ struct SelectableTextView: NSViewRepresentable {
         // `usageBoundsForTextContainer`; deferred — needs on-device check.)
         let lineHeight = layoutManager.defaultLineHeight(for: font)
         return CGSize(width: width, height: ceil(used.height) + ceil(lineHeight))
+    }
+}
+
+// MARK: - Scrollable transcript view (long transcripts)
+
+/// Scrollable variant for LONG transcripts. `SelectableTextView` sizes a
+/// bare NSTextView to its FULL intrinsic height so the outer SwiftUI
+/// ScrollView owns scrolling — but on a 50-min, ~900-segment transcript
+/// the laid-out height runs to tens of thousands of points and hits
+/// AppKit's max view/layer height (~16k pt): the bottom is clipped with
+/// no way to scroll to it (Egor, 2026-06-16). Here the NSTextView lives
+/// inside its OWN NSScrollView and scrolls internally — TextKit lays the
+/// text out lazily, so any length renders. The caller bounds the pane
+/// height via `.frame`. Selection + ⌘F still span the whole transcript
+/// (one text storage). Reuses `SelectableTextView.renderMarkdown`.
+struct ScrollableTextView: NSViewRepresentable {
+    let text: String
+    let font: NSFont
+
+    init(_ text: String, font: NSFont = NSFont.preferredFont(forTextStyle: .body)) {
+        self.text = text
+        self.font = font
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    final class Coordinator {
+        var lastText: String?
+        var lastFont: NSFont?
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let tv = NSTextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.drawsBackground = false
+        tv.backgroundColor = .clear
+        tv.textColor = .labelColor
+        tv.font = font
+        tv.textContainerInset = .zero
+        // Standard scrollable-NSTextView setup: the view grows vertically
+        // to fit content inside the scroll view's clip view, width tracks
+        // the visible content width so text wraps to the pane.
+        tv.minSize = NSSize(width: 0, height: 0)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        // ⌘F Find Bar inside long transcripts, same as SelectableTextView.
+        tv.usesFindBar = true
+        tv.isIncrementalSearchingEnabled = true
+        tv.textStorage?.setAttributedString(SelectableTextView.renderMarkdown(text, font: font))
+
+        let scroll = NSScrollView()
+        scroll.documentView = tv
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.scrollerStyle = .overlay
+
+        context.coordinator.lastText = text
+        context.coordinator.lastFont = font
+        return scroll
+    }
+
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
+        guard let tv = scroll.documentView as? NSTextView else { return }
+        // Rebuild only on a real change (the transcript can grow via live
+        // append before finalize replaces it).
+        guard context.coordinator.lastText != text
+            || context.coordinator.lastFont != font else { return }
+        context.coordinator.lastText = text
+        context.coordinator.lastFont = font
+        tv.font = font
+        tv.textStorage?.setAttributedString(SelectableTextView.renderMarkdown(text, font: font))
     }
 }
 
