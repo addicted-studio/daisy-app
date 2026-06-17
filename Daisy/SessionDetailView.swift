@@ -60,6 +60,11 @@ struct SessionDetailView: View {
     /// save-on-blur idiom the title editor below uses.
     @State private var tagDraft: String = ""
     @FocusState private var tagFieldFocused: Bool
+    /// Inline-editable session title — mirrors the tag field's draft/commit
+    /// pattern so you can rename a recording from the Library header (Egor
+    /// 2026-06-16).
+    @State private var titleDraft: String = ""
+    @FocusState private var titleFieldFocused: Bool
     /// One-shot global flag — once the user has seen + dismissed the
     /// acoustic-loopback explainer for any meeting session, never
     /// show it again on subsequent empty-audio sessions. AppStorage
@@ -411,23 +416,32 @@ struct SessionDetailView: View {
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(Color.daisyTextPrimary)
             .font(.body.weight(.medium))
-            // 12pt mirrors the brand pill in `MainView.swift:118`
-            // (its comment: "bumped from 6 → 12 so the mark +
-            // wordmark have room from the pill's left and right
-            // edges instead of hugging them"). 6pt was producing
-            // the exact same "icons hug the capsule edge" symptom
-            // the brand pill fix was originally written to solve.
-            .padding(.horizontal, 12)
+            // 18pt horizontal so the lone ⋯ glyph's auto-fitted Liquid
+            // Glass pill reads as a proper capsule instead of a tight
+            // rounded square (Egor 2026-06-16). The kebab is the only
+            // `toolbarIcon` now that Copy was removed, so widening it
+            // only affects the ⋯. (Was 12.)
+            .padding(.horizontal, 18)
     }
 
     // MARK: - Header (title + metadata; actions live in toolbar)
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(session.title)
+            TextField("Untitled", text: $titleDraft)
                 .font(.title2.weight(.semibold))
-                .textSelection(.enabled)
-                .lineLimit(2)
+                .textFieldStyle(.plain)
+                .focused($titleFieldFocused)
+                .lineLimit(1)
+                .onSubmit {
+                    commitTitle()
+                    titleFieldFocused = false
+                }
+                .onChange(of: titleFieldFocused) { _, isFocused in
+                    // Commit on blur so clicking away persists the rename.
+                    if !isFocused { commitTitle() }
+                }
+                .help("Click to rename this recording")
             HStack(spacing: 8) {
                 Text(formattedDate)
                 Text("·")
@@ -450,13 +464,24 @@ struct SessionDetailView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-        .onAppear { tagDraft = session.tag }
-        .onChange(of: session.id) { _, _ in tagDraft = session.tag }
+        .onAppear {
+            tagDraft = session.tag
+            titleDraft = session.title
+        }
+        .onChange(of: session.id) { _, _ in
+            tagDraft = session.tag
+            titleDraft = session.title
+        }
         .onChange(of: session.tag) { _, newValue in
             // External edit (e.g., from another window or a future
             // bulk tagging path) — reflect in the field unless the
             // user is actively editing it.
             if !tagFieldFocused { tagDraft = newValue }
+        }
+        .onChange(of: session.title) { _, newValue in
+            // External title change (MCP set_session_title, or the
+            // post-stop auto-title) — reflect unless the user is editing.
+            if !titleFieldFocused { titleDraft = newValue }
         }
     }
 
@@ -558,6 +583,17 @@ struct SessionDetailView: View {
         let trimmed = tagDraft.trimmingCharacters(in: .whitespaces)
         guard trimmed != session.tag else { return }
         Task { await SessionStore.shared.setTag(trimmed, for: session) }
+    }
+
+    private func commitTitle() {
+        let trimmed = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An empty title would make the session unreadable in lists — revert.
+        guard !trimmed.isEmpty else {
+            titleDraft = session.title
+            return
+        }
+        guard trimmed != session.title else { return }
+        Task { await SessionStore.shared.setTitle(trimmed, for: session) }
     }
 
 

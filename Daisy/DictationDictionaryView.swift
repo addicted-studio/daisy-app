@@ -101,8 +101,8 @@ struct DictationDictionaryView: View {
             Button {
                 dictionary.remove(entry)
             } label: {
-                Image(systemName: "minus.circle.fill")
-                    .foregroundStyle(Color.daisyError)
+                Image(systemName: "trash")
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .help("Remove")
