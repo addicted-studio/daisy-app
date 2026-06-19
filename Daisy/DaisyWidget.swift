@@ -73,6 +73,12 @@ struct DaisyWidget: View {
     // is sized to match (70.4 → 59.84, same ×0.85) so shadow padding stays
     // proportional, well clear of the .shadow(radius:6, y:3) blur extent.
     private let petalCount = 8
+    /// Reactive-petal amplitude gain shared by meeting AND dictation, so the
+    /// two modes drive the petals with IDENTICAL sensitivity (Egor 2026-06-19
+    /// — see `amplitudeFor`). 1.0 == a faithful 1:1 read of the analyzer's
+    /// already-normalised/gated/smoothed bands. voiceNote scales OFF this
+    /// (×1.06) so its small deliberate liveliness can never silently diverge.
+    private static let petalReactiveGain: Float = 1.0
     private let basePetalLength: CGFloat = 5.236  // was 6.16, −15%
     private let maxPetalLength: CGFloat = 13.464  // was 15.84, −15%
     private let petalWidth: CGFloat = 5.236       // was 6.16, −15%
@@ -342,16 +348,34 @@ struct DaisyWidget: View {
                 ? petalIndex
                 : (petalCount - 1 - petalIndex)
             guard bandIndex < bands.count else { return 0.12 }
-            // Subtle per-mode "character" so the three recording modes read
-            // as different by MOTION, not only by the small centre dot:
-            // dictation a touch calmer (steady solo voice), voice-note a
-            // touch livelier. Kept near 1.0 so petals stay a faithful read
-            // of the spectrum — set all gains to 1.0 for a pure visualiser.
+            // Per-mode "character" so the recording modes read as different
+            // by MOTION, not only by the small centre dot. Kept near 1.0 so
+            // petals stay a faithful read of the spectrum.
+            //
+            // Egor 2026-06-19 — dictation now shares meeting's gain
+            // (`petalReactiveGain`) EXACTLY, instead of the old 0.92.
+            //   Why: the capture→analyzer→spectrumBands→petal pipeline is
+            //   byte-for-byte identical across all three modes (one
+            //   CoreAudioMicRecorder, one SpectrumAnalyzer, fed
+            //   unconditionally from the render workQueue — see
+            //   RecordingSession.start()). So the ONLY thing that ever made
+            //   dictation petals less reactive than meeting was this 0.92
+            //   multiplier. It reads as a tiny "8% smaller" on paper, but
+            //   it compounds badly at the low end: a steady solo dictation
+            //   voice already normalises into a modest 0.2–0.5 band range
+            //   (not the wide swings of a louder, multi-voice meeting), and
+            //   the `max(0.12, …)` resting floor eats the bottom — shaving
+            //   another 8% off the top collapses the *visible* swing above
+            //   the floor, so the petals sat almost frozen (tester report).
+            //   Routing dictation through the shared constant equalises its
+            //   sensitivity to meeting by construction, and the two can no
+            //   longer drift apart. Meeting is unchanged (it was already
+            //   1.0 == petalReactiveGain), so this can't regress it.
+            //   voiceNote keeps its deliberate +6% liveliness.
             let gain: Float
             switch mode {
-            case .meeting:   gain = 1.0
-            case .dictation: gain = 0.92
-            case .voiceNote: gain = 1.06
+            case .meeting, .dictation: gain = Self.petalReactiveGain
+            case .voiceNote:           gain = Self.petalReactiveGain * 1.06
             }
             return max(0.12, min(1.0, bands[bandIndex] * gain))
         case .preparing, .stopping, .summarizing:
