@@ -217,21 +217,26 @@ struct SessionDetailView: View {
 
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
-        // macOS 26: ToolbarItemGroup renders the contained items inside
-        // ONE shared Liquid Glass capsule. Symmetry on the leading and
-        // trailing edges comes from (a) uniform horizontal padding per
-        // icon in `toolbarIcon(_:)` and (b) `.fixedSize()` on the
-        // ellipsis Menu to collapse the hidden chevron's phantom width.
+        // macOS 26 Liquid Glass sizing rule (load-bearing — read before
+        // touching either pill): a toolbar control gets its OWN auto-fitted
+        // glass capsule ONLY when it draws its own background, i.e. the
+        // DEFAULT button/menu style. That capsule wraps the control's whole
+        // label *including internal padding*, so padding on the label widens
+        // the PILL. A `.borderless`/`.borderlessButton` style suppresses that
+        // background; the control then borrows the enclosing container's
+        // glass and its label padding is absorbed as layout margin OUTSIDE
+        // the pill — which only widens the GAP, never the capsule. (That was
+        // the long-standing ⋯ bug: borderlessButton + ToolbarItemGroup +
+        // .fixedSize() made `.padding(.horizontal,24)` read as a gap, not
+        // width.) Both items below therefore use their OWN ToolbarItem with
+        // the DEFAULT style and pad the LABEL.
+        //
         // Summarize is the primary action — its own capsule with a WORD
         // label (Egor, 2026-06-13), not a bare sparkle peer of copy/more.
-        // NB: use the DEFAULT toolbar button style here (do NOT set
-        // `.borderless`). On macOS 26 a standalone ToolbarItem only gets
-        // its own Liquid Glass capsule when the button draws a background;
-        // `.borderless` suppresses that, which is what previously left a
-        // bare sparkle floating with no pill. A plain-text `Button` title
-        // (no `systemImage`) keeps the WORD visible rather than collapsing
-        // to icon-only — that collapse is why the old `Label` showed only
-        // the sparkle. So: text title + default style = proper text pill.
+        // Plain-text `Button` title (no `systemImage`) keeps the WORD visible
+        // rather than collapsing to icon-only — that collapse is why the old
+        // `Label` showed only the sparkle. So: text title + default style =
+        // proper text pill.
         ToolbarItem(placement: .primaryAction) {
             Button {
                 attemptReSummarize()
@@ -256,10 +261,13 @@ struct SessionDetailView: View {
             .disabled(isRunningAction)
             .help("Re-summarize via current provider")
         }
-        ToolbarItemGroup(placement: .primaryAction) {
-            // The standalone Copy button was removed (Egor 2026-06-16 — its
-            // both-flavours behaviour read as ambiguous next to Summarize).
-            // Single-flavour copies live in the ⋯ menu below.
+        // ⋯ overflow menu — its OWN ToolbarItem (NOT a ToolbarItemGroup) so,
+        // exactly like Summarize, the default-styled control draws its own
+        // Liquid Glass capsule that auto-fits around the padded label. The
+        // standalone Copy button was removed (Egor 2026-06-16 — its
+        // both-flavours behaviour read as ambiguous next to Summarize);
+        // single-flavour copies live in this ⋯ menu.
+        ToolbarItem(placement: .primaryAction) {
             Menu {
                 Menu {
                     ForEach(FolderStore.shared.allFolders) { f in
@@ -277,22 +285,40 @@ struct SessionDetailView: View {
                     Label("Move to folder…", systemImage: "folder")
                 }
                 Divider()
-                // 1.0.7.19 — explicit single-flavor copies. The toolbar
-                // Copy button writes BOTH html + markdown (the right
-                // default for chat / mail / Notion); these two are for
-                // when the user wants exactly one flavor: raw markdown
-                // as plain text, or the Obsidian variant with the YAML
-                // frontmatter block for vault filing.
+                // Per-section copies (Egor 2026-06-17). Each copies that
+                // section as plain markdown — the SAME text the matching
+                // accordion's copy button produces (summaryCopyText is
+                // body-only; follow-up + transcript reuse the accordion
+                // closures). "Copy all" is the whole session. The old two
+                // single-flavor items (Copy as Markdown / Copy for
+                // Obsidian) were dropped: the only difference was a YAML
+                // frontmatter block, too subtle to warrant two entries —
+                // Daisy's routing handles vault filing.
+                Button {
+                    copySection(summaryCopyText(), label: "Summary")
+                } label: {
+                    Label("Copy Summary", systemImage: "doc.on.doc")
+                }
+                .disabled(session.summary == nil)
+                Button {
+                    copySection(session.summary?.clientFollowUp ?? "", label: "Follow-up")
+                } label: {
+                    Label("Copy Follow-up", systemImage: "arrowshape.turn.up.right")
+                }
+                .disabled(session.summary?.clientFollowUp.isEmpty ?? true)
+                Button {
+                    copySection(mappedTranscriptText, label: "Transcript")
+                } label: {
+                    Label("Copy Transcript", systemImage: "text.alignleft")
+                }
+                .disabled(session.transcriptText.isEmpty)
+                Divider()
                 Button {
                     copyPlainMarkdown(includeFrontmatter: false)
                 } label: {
-                    Label("Copy as Markdown", systemImage: "doc.on.doc")
+                    Label("Copy all", systemImage: "doc.plaintext")
                 }
-                Button {
-                    copyPlainMarkdown(includeFrontmatter: true)
-                } label: {
-                    Label("Copy for Obsidian", systemImage: "doc.append")
-                }
+                .disabled(session.transcriptText.isEmpty)
                 Divider()
                 Button {
                     Task { await sendToNotion() }
@@ -320,20 +346,23 @@ struct SessionDetailView: View {
             } label: {
                 toolbarIcon("ellipsis")
             }
-            .menuStyle(.borderlessButton)
+            // DEFAULT menu style (do NOT set `.borderlessButton`): only the
+            // default style draws the control's own Liquid Glass background,
+            // and that capsule wraps the label INCLUDING toolbarIcon's
+            // horizontal padding — which is what actually widens the pill.
+            // `.borderlessButton` suppressed that background, so the old
+            // padding leaked into the inter-item gap instead of the capsule.
+            // `.menuIndicator(.hidden)` hides the default style's disclosure
+            // chevron so the pill holds just the centred ⋯ glyph. No
+            // `.fixedSize()` — its only job was collapsing the borderless
+            // chevron's phantom width; with the indicator hidden and this as
+            // its own item, it's unneeded and would re-pin the label to its
+            // intrinsic size, defeating the padding.
             .menuIndicator(.hidden)
-            .fixedSize()
-            // (2026-06-16) The `.padding(.trailing, 16)` that used to sit
-            // here aligned the GROUP's trailing edge when this group also
-            // held the Copy icon. With the ⋯ menu now the only item, that
-            // padding pushed the three dots off-centre to the left — removed
-            // so the glyph centres in its pill (toolbarIcon's symmetric 12pt
-            // + `.fixedSize()` collapsing the chevron's phantom width).
-            // Menu in macOS 26 toolbar inherits `.tint` colour for
-            // its label glyph — bypasses Image.foregroundStyle. Pin
-            // the tint locally so the ellipsis matches the other
-            // toolbar icons instead of going orange via inherited
-            // accent.
+            // Menu in a macOS 26 toolbar inherits `.tint` for its label
+            // glyph — bypasses Image.foregroundStyle. Pin the tint locally so
+            // the ellipsis matches the other toolbar text instead of going
+            // orange via the inherited accent.
             .tint(Color.daisyTextPrimary)
         }
     }
@@ -404,24 +433,23 @@ struct SessionDetailView: View {
         }
     }
 
-    /// One toolbar glyph. Uniform 6pt horizontal padding on every
-    /// icon, full stop — the shared Liquid Glass capsule supplies its
-    /// own inner inset on top of this, so each icon ends up with the
-    /// same gap to the pill edge whether it's leading, middle, or
-    /// trailing. Earlier `outerEdge` asymmetric padding only existed
-    /// to compensate for the `Menu` chevron's phantom reservation;
-    /// that's now handled at the call-site via `.fixedSize()`.
+    /// One toolbar glyph, wrapped in symmetric horizontal padding. The ⋯
+    /// Menu that uses this is a DEFAULT-styled control (see `detailToolbar`),
+    /// so its own Liquid Glass capsule auto-fits around this padded label —
+    /// the padding here is the capsule's interior breathing room, the same
+    /// way `.padding(.horizontal, 10)` widens the Summarize pill. The kebab
+    /// is the only caller now that Copy was removed, so this only affects ⋯.
     private func toolbarIcon(_ name: String) -> some View {
         Image(systemName: name)
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(Color.daisyTextPrimary)
             .font(.body.weight(.medium))
-            // 18pt horizontal so the lone ⋯ glyph's auto-fitted Liquid
-            // Glass pill reads as a proper capsule instead of a tight
-            // rounded square (Egor 2026-06-16). The kebab is the only
-            // `toolbarIcon` now that Copy was removed, so widening it
-            // only affects the ⋯. (Was 12.)
-            .padding(.horizontal, 18)
+            // Symmetric interior padding so the centred ⋯ glyph sits in a
+            // proper capsule instead of a tight rounded square. Now that the
+            // menu draws its own default-style glass background (not a
+            // borderless control inside a group), this padding genuinely
+            // widens the PILL rather than leaking into the inter-item gap.
+            .padding(.horizontal, 16)
     }
 
     // MARK: - Header (title + metadata; actions live in toolbar)
@@ -1395,6 +1423,20 @@ struct SessionDetailView: View {
                 : "Markdown copied to clipboard",
             style: .success
         )
+    }
+
+    /// Copy one section as plain markdown with a toast. Empty content
+    /// shows a warning instead of writing an empty pasteboard — mirrors
+    /// `copyPlainMarkdown`'s guard. Backs the ⋯ menu's per-section
+    /// copies (Summary / Follow-up / Transcript); the text comes from
+    /// the same closures the accordion copy buttons use.
+    private func copySection(_ text: String, label: String) {
+        guard !text.isEmpty else {
+            ToastCenter.shared.show("Nothing to copy yet", style: .warning)
+            return
+        }
+        RichClipboard.copyPlain(markdown: text)
+        ToastCenter.shared.show("\(label) copied", style: .success)
     }
 
     /// Full markdown document for the copy actions. The body is always
