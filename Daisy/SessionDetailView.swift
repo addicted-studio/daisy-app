@@ -60,6 +60,8 @@ struct SessionDetailView: View {
     /// save-on-blur idiom the title editor below uses.
     @State private var tagDraft: String = ""
     @FocusState private var tagFieldFocused: Bool
+    /// Presents the tag editor popover anchored to the toolbar tag capsule.
+    @State private var showTagPopover = false
     /// Inline-editable session title — mirrors the tag field's draft/commit
     /// pattern so you can rename a recording from the Library header (Egor
     /// 2026-06-16).
@@ -237,6 +239,11 @@ struct SessionDetailView: View {
         // rather than collapsing to icon-only — that collapse is why the old
         // `Label` showed only the sparkle. So: text title + default style =
         // proper text pill.
+        // Tag capsule — leftmost of the primary-action cluster, so it
+        // sits to the LEFT of Summarize (declaration order = left→right).
+        ToolbarItem(placement: .primaryAction) {
+            tagToolbarButton
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 attemptReSummarize()
@@ -484,10 +491,9 @@ struct SessionDetailView: View {
                 //     debt, since the user already knows they
                 //     recorded a meeting (the title literally says
                 //     "Meeting 2026-…").
-                // Removed in 1.0.6.4 — header now stays date · duration
-                // · tag, which is what users actually scan for.
-                Spacer()
-                tagField
+                // Removed in 1.0.6.4 — header now stays date · duration.
+                // Tag moved to a toolbar capsule (left of Summarize) on
+                // 2026-06-20 (Egor) — see `tagToolbarButton`.
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -513,98 +519,94 @@ struct SessionDetailView: View {
         }
     }
 
-    /// Inline tag editor in the header row. Free-text TextField for
-    /// ad-hoc tags PLUS a chevron Menu that lists every tag already
-    /// in use across the store so the user can pick instead of
-    /// re-typing (avoids "Mediacube" / "mediacube" / "Mediacube "
-    /// becoming three buckets).
-    ///
-    /// 2026-05-26 — replaced the Notion-style focus-popover with a
-    /// native chevron Menu. Pre-fix the popover opened on focus
-    /// gain via a deferred dispatch_async; clicking a suggestion
-    /// took focus away from the TextField, which triggered both
-    /// the focus-out commit AND the popover outside-click dismiss
-    /// AND the row's click action — race produced flicker, dropped
-    /// commits, and sessions where the popover wouldn't close after
-    /// a pick. The Menu is a native NSMenu — no focus dance, no
-    /// dismiss race. Trade-off: lost the inline "Create '<typed
-    /// text>'" affordance (Menu can't reflect live TextField state
-    /// in its items). Acceptable — type + Enter still creates a new
-    /// tag, which is the primary path.
+    /// Toolbar capsule (left of Summarize) that opens the tag editor in a
+    /// popover. Shows the current tag, or "Add tag…" when untagged. Uses
+    /// the DEFAULT button style so it draws its own Liquid Glass capsule
+    /// like the Summarize pill (a borderless style would suppress the
+    /// pill — see the toolbar notes). Moved out of the header row
+    /// 2026-06-20 (Egor).
     @ViewBuilder
-    private var tagField: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "tag")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-            TextField("Add tag…", text: $tagDraft)
-                .textFieldStyle(.plain)
-                .font(.caption)
-                .focused($tagFieldFocused)
-                .frame(maxWidth: 140)
-                .onSubmit {
-                    commitTag()
-                    tagFieldFocused = false
-                }
-                .onChange(of: tagFieldFocused) { _, isFocused in
-                    // Commit on blur so users who click away (rather
-                    // than press Return) still persist their edit.
-                    if !isFocused { commitTag() }
-                }
-            // Chevron Menu — present whenever there's anything to
-            // pick OR the session is currently tagged (so Remove
-            // is reachable). Mirrors the SpeakerNameRow attendee
-            // menu pattern for visual consistency across rows
-            // that have a free-text field + history picker.
-            let hasMenu = !SessionStore.shared.distinctTagsByFrequency.isEmpty
-                || !session.tag.isEmpty
-            if hasMenu {
-                Menu {
-                    tagMenuContent
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Pick from existing tags")
-            }
+    private var tagToolbarButton: some View {
+        Button {
+            tagDraft = session.tag
+            showTagPopover = true
+        } label: {
+            Text(session.tag.isEmpty ? "Add tag…" : session.tag)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+        }
+        .help("Tag this recording")
+        .popover(isPresented: $showTagPopover, arrowEdge: .bottom) {
+            tagPopoverContent
         }
     }
 
-    /// Items for the tag chevron Menu. Built fresh each time the
-    /// Menu opens (SwiftUI re-evaluates `@ViewBuilder` content on
-    /// each presentation), so newly-created tags from other
-    /// sessions appear without manual refresh.
+    /// Tag editor in the toolbar capsule's popover: a free-text field
+    /// (type + Enter creates a new tag) plus the list of tags already in
+    /// use across the store, and a Remove option when tagged.
+    ///
+    /// Commit model (avoids the 2026-05-26 focus-popover race): the field
+    /// commits only on Enter; a suggestion / Remove commits explicitly and
+    /// closes; `.onDisappear` commits the typed draft for the click-away
+    /// case. `commitTag()` no-ops when the value is unchanged, so the
+    /// overlapping calls are harmless.
     @ViewBuilder
-    private var tagMenuContent: some View {
-        let allTags = SessionStore.shared.distinctTagsByFrequency
-        // "Remove tag" — only when this session is currently tagged.
-        if !session.tag.isEmpty {
-            Button {
-                tagDraft = ""
-                commitTag()
-            } label: {
-                Label("Remove tag", systemImage: "xmark.circle")
-            }
+    private var tagPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Tag…", text: $tagDraft)
+                .textFieldStyle(.roundedBorder)
+                .focused($tagFieldFocused)
+                .frame(width: 200)
+                .onSubmit {
+                    commitTag()
+                    showTagPopover = false
+                }
+
+            let allTags = SessionStore.shared.distinctTagsByFrequency
             if !allTags.isEmpty {
                 Divider()
-            }
-        }
-        ForEach(allTags, id: \.self) { name in
-            Button {
-                tagDraft = name
-                commitTag()
-            } label: {
-                if session.tag == name {
-                    Label(name, systemImage: "checkmark")
-                } else {
-                    Text(name)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(allTags, id: \.self) { name in
+                            Button {
+                                tagDraft = name
+                                commitTag()
+                                showTagPopover = false
+                            } label: {
+                                HStack {
+                                    Text(name)
+                                    Spacer()
+                                    if name == session.tag {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.vertical, 3)
+                        }
+                    }
                 }
+                .frame(maxHeight: 160)
+            }
+
+            if !session.tag.isEmpty {
+                Divider()
+                Button(role: .destructive) {
+                    tagDraft = ""
+                    commitTag()
+                    showTagPopover = false
+                } label: {
+                    Text("Remove tag")
+                }
+                .buttonStyle(.plain)
             }
         }
+        .padding(12)
+        .frame(width: 220)
+        .onAppear { tagFieldFocused = true }
+        .onDisappear { commitTag() }
     }
 
     private func commitTag() {
@@ -1038,12 +1040,50 @@ struct SessionDetailView: View {
             }
     }
 
+    /// The transcript SECTION only, for the accordion. `transcriptText`
+    /// (and the on-disk transcript.md, written by MarkdownExporter) is the
+    /// FULL document — `# title`, a `> recorded … · duration` line, the
+    /// summary, screenshots, then the transcript under a `## Transcript`
+    /// heading. Rendering all of that here duplicated the session header
+    /// above (title + date + duration) and the Summary accordion, so slice
+    /// out just the transcript (Egor 2026-06-20). Falls back to stripping
+    /// the leading title/recorded header when the marker is absent
+    /// (MarkdownExporter always writes it today — defensive for legacy /
+    /// hand-edited files). `transcriptText` itself is untouched, so search
+    /// and the on-disk file keep the full document.
+    private var transcriptBodyForDisplay: String {
+        let full = session.transcriptText
+        // The transcript heading always sits on its own line, after the
+        // title/recorded/summary/screenshots. Match `\n## Transcript` so we
+        // don't catch a mid-line occurrence and so an empty transcript
+        // (heading with nothing after) still resolves to "".
+        if let r = full.range(of: "\n## Transcript") {
+            return String(full[r.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return Self.strippingDocHeader(full)
+    }
+
+    /// Drop a leading `# title` heading and a following `> recorded …`
+    /// quote (and the blank lines around them) — the part that duplicates
+    /// the session header. Fallback only, when no `## Transcript` marker
+    /// is present.
+    private static func strippingDocHeader(_ body: String) -> String {
+        var lines = body.components(separatedBy: "\n")
+        if lines.first?.hasPrefix("# ") == true { lines.removeFirst() }
+        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
+        if lines.first?.hasPrefix("> recorded") == true { lines.removeFirst() }
+        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
+        return lines.joined(separator: "\n")
+    }
+
     /// Substitute "Remote A" → mapped name inline. The on-disk .md
     /// stays in canonical "Remote A" form so the mapping is fully
     /// re-pluggable (just edit `daisy_speaker_map:` in frontmatter).
     private var mappedTranscriptText: String {
-        guard !session.speakerMap.isEmpty else { return session.transcriptText }
-        var text = session.transcriptText
+        let base = transcriptBodyForDisplay
+        guard !session.speakerMap.isEmpty else { return base }
+        var text = base
         for (speakerID, name) in session.speakerMap {
             text = text.replacingOccurrences(
                 of: "Remote \(speakerID)",

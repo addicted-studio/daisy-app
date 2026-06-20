@@ -81,6 +81,17 @@ final class AppSettings {
         didSet { defaults.set(voiceNoteLocale, forKey: Self.k_voiceNoteLocale) }
     }
 
+    /// Folder that auto-started / calendar-bound MEETINGS file into when
+    /// the session is still in the default Inbox (the user can always
+    /// override per-session in the UI). Stored as a slug; resolved via
+    /// `FolderStore.existingFolder(slug:)`, falling back to Inbox if the
+    /// folder was deleted. Default "work" preserves the long-standing
+    /// hardcoded behaviour. Voice notes keep their own fixed target
+    /// (Notes) — this knob is meetings only. (Egor 2026-06-20)
+    var defaultMeetingFolderSlug: String {
+        didSet { defaults.set(defaultMeetingFolderSlug, forKey: Self.k_defaultMeetingFolderSlug) }
+    }
+
     /// Dictation mode override for transcription locale. Same
     /// contract as `voiceNoteLocale` — empty falls back to the
     /// meeting default. Defaults to empty so behaviour is
@@ -794,6 +805,7 @@ final class AppSettings {
         // defaultTranscriptionLocale". Users opt into language-
         // pinned dictation/voice-note explicitly.
         self.voiceNoteLocale = defaults.string(forKey: Self.k_voiceNoteLocale) ?? ""
+        self.defaultMeetingFolderSlug = defaults.string(forKey: Self.k_defaultMeetingFolderSlug) ?? SessionFolder.work.slug
         self.dictationLocale = defaults.string(forKey: Self.k_dictationLocale) ?? ""
         // Defaults to false (Whisper) when the key is absent.
         self.dictationUseParakeet = defaults.bool(forKey: Self.k_dictationUseParakeet)
@@ -1073,6 +1085,7 @@ final class AppSettings {
     nonisolated private static let k_summaryLanguage = "daisy.summaryLanguage"
     private static let k_defaultTranscriptionLocale = "daisy.defaultTranscriptionLocale"
     private static let k_voiceNoteLocale = "daisy.voiceNoteLocale"
+    private static let k_defaultMeetingFolderSlug = "daisy.defaultMeetingFolderSlug"
     private static let k_dictationLocale = "daisy.dictationLocale"
     private static let k_dictationUseParakeet = "daisy.dictationUseParakeet"
     private static let k_dictationUseNemotronLive = "daisy.dictationUseNemotronLive"

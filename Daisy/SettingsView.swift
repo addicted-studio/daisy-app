@@ -744,6 +744,12 @@ struct SettingsView: View {
                 Text("Notifications")
             }
 
+            // ── Library folders ───────────────────────────────
+            // Create / rename / delete custom Library folders. The store
+            // + sidebar already support custom folders; this is the
+            // management UI that was missing (1.0.7.24).
+            FolderManagementSection(settings: settings)
+
             // Auto-summary lives in the Summary tab — it sits next
             // to the provider config it depends on.
 

@@ -777,7 +777,11 @@ final class RecordingSession {
         // Stash for after-reset() pickup inside start(). Setting these
         // directly here would be erased by reset().
         pendingBoundMeeting = meeting
-        pendingFolderHint = .work
+        // Meetings file into the user's configured default folder (was
+        // hardcoded `.work`); falls back to Inbox if that folder was
+        // deleted. Applied in start() only when the session is still in
+        // Inbox, so a manual folder pick still wins.
+        pendingFolderHint = FolderStore.shared.existingFolder(slug: settings.defaultMeetingFolderSlug) ?? .inbox
         // 2026-05-25: previously we set `title = meeting.title` here
         // because reset() didn't clear title. That created the bug
         // where a meeting's name leaked into a later voice-note
