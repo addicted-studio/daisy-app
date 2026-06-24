@@ -1066,6 +1066,15 @@ final class RecordingSession {
 
         let nowStarted = Date()
 
+        // P1 — write the in-progress marker so a crash / power-loss leftover
+        // is recognised as a recoverable recording (not deleted as a husk)
+        // on next launch. Only when we're actually archiving audio: in the
+        // no-audio retention mode there's nothing on disk to recover.
+        if !skipAudioArchive, let dir {
+            try? Data(ISO8601DateFormatter().string(from: nowStarted).utf8)
+                .write(to: dir.appendingPathComponent(SessionStore.recordingMarkerName))
+        }
+
         // Wire mic. Build 43: `liveTranscription` propagated from
         // AppSettings — when OFF, the transcriber accumulates audio
         // for `runFinalPass()` but doesn't fire per-window Whisper

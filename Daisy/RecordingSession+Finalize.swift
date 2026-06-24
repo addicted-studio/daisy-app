@@ -200,6 +200,13 @@ extension RecordingSession {
         signposter.endInterval("re_write_md", reWriteState)
         log.info("post-stop re_write_md: \(ms(t_reWrite), privacy: .public)ms")
 
+        // P1 — recording finished cleanly (transcript.md is final): drop the
+        // in-progress marker so this folder is a valid session, not a
+        // recoverable husk.
+        try? FileManager.default.removeItem(
+            at: directory.appendingPathComponent(SessionStore.recordingMarkerName)
+        )
+
         // Refresh History so any opened SessionDetailView re-reads
         // the freshly-written final-quality transcript instead of
         // sticking with the live snapshot it loaded a few seconds ago.

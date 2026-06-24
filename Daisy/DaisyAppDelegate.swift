@@ -73,6 +73,20 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
             enabled: UserDefaults.standard.bool(forKey: "daisy.ingestVoiceMemos")
         )
 
+        // Recover any recording interrupted by a crash / power loss: a
+        // refresh detects "audio but no transcript" folders and hands them
+        // to InterruptedRecordingRecovery. Delayed so it doesn't fight
+        // first-paint; the scan is cheap.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            await SessionStore.shared.refresh()
+        }
+
+        // Pause/save the active recording around sleep and shutdown so the
+        // archive stays consistent. (A *hard* power cut sends no warning —
+        // that's what the crash-recovery scan above is for.)
+        installPowerLifecycleObservers()
+
         DispatchQueue.main.async {
             for window in NSApp.windows where window.canBecomeMain {
                 self.applyWarmChrome(to: window)
@@ -95,6 +109,50 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // menubar appears at the top of fullscreen with its own
         // material backdrop. Our cream `containerBackground` still
         // tints everything below it.
+    }
+
+    // MARK: - Power / sleep lifecycle
+
+    /// True while we auto-paused the active recording for system sleep, so
+    /// we know to auto-resume on wake.
+    private var pausedForSleep = false
+
+    /// Pause the live recording when the Mac sleeps (flushes the archive),
+    /// resume on wake, and save on a graceful shutdown / restart / logout.
+    /// A hard power cut sends no notification — `InterruptedRecordingRecovery`
+    /// is the safety net for that.
+    private func installPowerLifecycleObservers() {
+        let wc = NSWorkspace.shared.notificationCenter
+        wc.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.handleWillSleep() }
+        }
+        wc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.handleDidWake() }
+        }
+        wc.addObserver(forName: NSWorkspace.willPowerOffNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.handleWillPowerOff() }
+        }
+    }
+
+    private func handleWillSleep() async {
+        guard let session = RecordingSession.current, session.status == .recording else { return }
+        pausedForSleep = true
+        await session.pause()
+    }
+
+    private func handleDidWake() async {
+        guard pausedForSleep else { return }
+        pausedForSleep = false
+        guard let session = RecordingSession.current, session.status == .paused else { return }
+        await session.resume()
+        ToastCenter.shared.show("Resumed recording after your Mac woke up.", style: .info)
+    }
+
+    private func handleWillPowerOff() async {
+        guard let session = RecordingSession.current,
+              session.status == .recording || session.status == .paused else { return }
+        // Graceful shutdown / restart / logout — we have time to finalize.
+        await session.stop()
     }
 
     // MARK: - Chrome
