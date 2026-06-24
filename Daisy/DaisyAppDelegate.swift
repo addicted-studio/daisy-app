@@ -63,7 +63,7 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // (Settings → "Ask before auto-stopping").
         AutoStopPromptNotification.register()
 
-        // Voice Memos import (Settings → Recording). Reads the raw
+        // Voice Memos import (Settings → Transcription). Reads the raw
         // UserDefaults bool — same rationale as `compactMenuBarOnly`
         // above: the @main App's State wiring isn't guaranteed visible
         // this early, and the persisted value is the source of truth.

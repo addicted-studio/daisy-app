@@ -279,7 +279,7 @@ struct DaisyWidget: View {
         Menu {
             Button("Hide for 15 minutes") { onHideRequest(15 * 60) }
             Button("Hide for 1 hour")     { onHideRequest(60 * 60) }
-            Button("Hide for the day")    { onHideRequest(8 * 60 * 60) }
+            Button("Hide for 24 hours")   { onHideRequest(24 * 60 * 60) }
         } label: {
             Label("Hide…", systemImage: "eye.slash")
         }

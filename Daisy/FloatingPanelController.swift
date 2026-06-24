@@ -19,8 +19,14 @@ final class FloatingPanelController {
     private var panel: NSPanel?
     private var hasPositionedOnce = false
     /// When set, the panel stays hidden until this date — regardless of
-    /// session status. Set by the right-click "Hide for…" menu.
-    private var suspendedUntil: Date?
+    /// session status. Set by the right-click "Hide for…" menu. Backed by
+    /// AppSettings so the suspension is persisted and survives an app
+    /// relaunch — it used to be in-memory only, so quitting Daisy dropped
+    /// the hide and the widget reappeared well before the chosen window.
+    private var suspendedUntil: Date? {
+        get { settings.floatingWidgetSuspendedUntil }
+        set { settings.floatingWidgetSuspendedUntil = newValue }
+    }
 
     init(session: RecordingSession, settings: AppSettings) {
         self.session = session
@@ -39,6 +45,17 @@ final class FloatingPanelController {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.ensureOnScreen()
+            }
+        }
+        // Re-arm a "Hide for…" suspension that was still pending when
+        // Daisy last quit. The deadline was restored into AppSettings,
+        // so show()'s guard already keeps the widget hidden; here we
+        // just schedule the expiry so it reappears at the original time.
+        if let until = suspendedUntil {
+            if until > Date() {
+                rearmSuspensionTimer(until: until)
+            } else {
+                suspendedUntil = nil
             }
         }
     }
@@ -66,13 +83,26 @@ final class FloatingPanelController {
     /// right-click menu. After the timer fires, visibility is re-derived
     /// from the current session status.
     func hideFor(_ duration: TimeInterval) {
-        suspendedUntil = Date().addingTimeInterval(duration)
+        let until = Date().addingTimeInterval(duration)
+        suspendedUntil = until
         hide()
+        rearmSuspensionTimer(until: until)
+    }
+
+    /// Schedule the wake-up that lifts a "Hide for…" suspension when it
+    /// expires. Shared by `hideFor` and by launch-time restoration, so a
+    /// hide chosen in a previous run still ends at its original deadline
+    /// rather than the moment Daisy was relaunched.
+    private func rearmSuspensionTimer(until: Date) {
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(duration))
+            let remaining = until.timeIntervalSinceNow
+            if remaining > 0 {
+                try? await Task.sleep(for: .seconds(remaining))
+            }
             guard let self else { return }
-            // The user may have changed their mind via "Show now" elsewhere;
-            // only re-apply if the suspension we set is still active.
+            // The user may have changed their mind via "Show now"
+            // elsewhere, or set a new, later suspension; only lift the
+            // one whose deadline has actually passed.
             if let until = self.suspendedUntil, until <= Date() {
                 self.suspendedUntil = nil
                 self.applyVisibility(for: self.session.status)

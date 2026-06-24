@@ -40,7 +40,7 @@ final class AppSettings {
     /// Opt-in: import Apple Voice Memos recordings as transcripts into a
     /// "Voice Memos" subfolder of the transcripts folder. Off by default.
     /// Reading the Voice Memos library needs Full Disk Access (the
-    /// Settings → Recording row guides the user). Drives `VoiceMemoScanner`.
+    /// Settings → Transcription row guides the user). Drives `VoiceMemoScanner`.
     var ingestVoiceMemos: Bool {
         didSet { defaults.set(ingestVoiceMemos, forKey: Self.k_ingestVoiceMemos) }
     }
@@ -614,6 +614,22 @@ final class AppSettings {
         didSet { defaults.set(floatingWidgetEnabled, forKey: Self.k_floatingWidgetEnabled) }
     }
 
+    /// Deadline for a manual "Hide for…" suspension of the floating
+    /// widget, set from the widget's right-click menu. Persisted (as
+    /// epoch seconds; nil = no suspension) so the hide survives an app
+    /// relaunch — it used to live only in FloatingPanelController's
+    /// memory, so quitting Daisy forgot it and the widget reappeared
+    /// well before the chosen window elapsed.
+    var floatingWidgetSuspendedUntil: Date? {
+        didSet {
+            if let until = floatingWidgetSuspendedUntil {
+                defaults.set(until.timeIntervalSince1970, forKey: Self.k_floatingWidgetSuspendedUntil)
+            } else {
+                defaults.removeObject(forKey: Self.k_floatingWidgetSuspendedUntil)
+            }
+        }
+    }
+
     /// When ON and the current session is bound to a calendar event,
     /// Daisy schedules an auto-stop at `meeting.endDate + grace`.
     /// A cancellable warning toast lets the user keep the session
@@ -997,6 +1013,15 @@ final class AppSettings {
         // `as? Bool ?? true` picks up explicit user choices (true OR
         // false) and falls through to true only on a clean install.
         self.floatingWidgetEnabled = defaults.object(forKey: Self.k_floatingWidgetEnabled) as? Bool ?? true
+        // Restore a still-pending "Hide for…" deadline. Stored as epoch
+        // seconds; absent/≤0 means no active suspension. FloatingPanel-
+        // Controller re-arms the expiry timer from this on launch so a
+        // hide chosen before quitting still lifts at its original time.
+        if let suspendTS = defaults.object(forKey: Self.k_floatingWidgetSuspendedUntil) as? Double, suspendTS > 0 {
+            self.floatingWidgetSuspendedUntil = Date(timeIntervalSince1970: suspendTS)
+        } else {
+            self.floatingWidgetSuspendedUntil = nil
+        }
         // Default ON. `defaults.bool(forKey:)` returns false for unset
         // keys, which meant a clean-install user never had calendar
         // auto-stop armed — combined with the "back-to-back meetings
@@ -1123,6 +1148,7 @@ final class AppSettings {
     private static let k_autoStartFromCalendar = "daisy.autoStartFromCalendar"
     private static let k_calendarAccessGranted = "daisy.calendarAccessGranted"
     private static let k_floatingWidgetEnabled = "daisy.floatingWidgetEnabled"
+    private static let k_floatingWidgetSuspendedUntil = "daisy.floatingWidgetSuspendedUntil"
     private static let k_autoStopFromCalendar = "daisy.autoStopFromCalendar"
     private static let k_autoStopGraceSec = "daisy.autoStopGraceSec"
     private static let k_autoStopPromptMode = "daisy.autoStopPromptMode"

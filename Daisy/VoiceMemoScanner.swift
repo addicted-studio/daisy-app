@@ -3,9 +3,10 @@
 //  Daisy
 //
 //  Drives Voice Memos import: a once-a-day (+ on-launch) scan that
-//  transcribes NEW recordings into `<transcripts folder>/Voice Memos/`.
-//  Opt-in via Settings → Recording. Dedup by memo id (persisted), so
-//  nothing is transcribed twice; originals are never touched.
+//  transcribes NEW recordings into the notes folder you pick (see
+//  `VoiceMemoFolder`) — directly, with no extra subfolder. Opt-in via
+//  Settings → Transcription. Dedup by memo id (persisted), so nothing
+//  is transcribed twice; originals are never touched.
 //
 //  Scheduling model (the user asked for "раз в день, и всё"): on launch
 //  we run one delayed scan and arm a 24 h repeating timer. The toggle
