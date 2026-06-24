@@ -700,6 +700,16 @@ struct SettingsView: View {
                     .fixedSize()
                     .onChange(of: settings.audioRetentionDays) { _, new in
                         AudioRetentionSweep.runIfNeeded(retentionDays: new)
+                        // Warn that the no-audio mode forfeits crash recovery:
+                        // with no .caf on disk, an interrupted session can't be
+                        // rebuilt — only finished sessions keep their transcript.
+                        if new == AppSettings.audioRetentionDoNotRecord {
+                            ToastCenter.shared.show(
+                                "Audio won't be saved to disk. If a recording is interrupted — a crash or power loss — it can't be recovered; only sessions you finish keep their transcript.",
+                                style: .warning,
+                                duration: .seconds(8)
+                            )
+                        }
                     }
                 }
             } header: {

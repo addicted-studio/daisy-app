@@ -140,6 +140,7 @@ final class SessionStore {
 
         var loaded: [StoredSession] = []
         var orphansToTrash: [URL] = []
+        var interruptedToRecover: [URL] = []
         for root in roots {
             let entries: [URL]
             do {
@@ -162,6 +163,13 @@ final class SessionStore {
                     orphansToTrash.append(url)
                 case .unreadable:
                     break
+                case .interrupted:
+                    // Crash / power-loss leftover with real audio. NEVER
+                    // delete. Skip the live recording (still being written);
+                    // queue the rest for best-effort recovery.
+                    if activeRecordingDirName != url.lastPathComponent {
+                        interruptedToRecover.append(url)
+                    }
                 }
             }
         }
@@ -194,15 +202,39 @@ final class SessionStore {
             try? FileManager.default.removeItem(at: url)
             log.info("Removed orphan session: \(url.lastPathComponent, privacy: .public)")
         }
+
+        // Best-effort recovery of interrupted recordings (audio on disk,
+        // no transcript). Idempotent — recovery dedupes folders it's
+        // already handling, and a recovered folder gains transcript.md so
+        // it classifies `.valid` (not `.interrupted`) on the next scan.
+        if !interruptedToRecover.isEmpty {
+            InterruptedRecordingRecovery.shared.recover(interruptedToRecover)
+        }
     }
 
     /// Result of classifying a directory inside `Sessions/`. Either a
     /// real session we want to show, an empty stub to clean up, or
     /// unreadable (don't touch, don't show).
+    /// Name of the marker file `RecordingSession` writes into a session
+    /// folder while capture is live (and removes on a clean Stop). Its
+    /// presence on a folder with audio but no finished transcript means
+    /// "interrupted recording — recover, never delete".
+    nonisolated static let recordingMarkerName = ".recording"
+
+    /// A `.caf` smaller than this is a throwaway stub (0-byte / a few
+    /// frames), not a recoverable recording — guards the size-based
+    /// fallback against resurrecting husks. ~256 KB ≈ ~1.4 s of 48 kHz
+    /// float-mono audio.
+    nonisolated static let minRecoverableAudioBytes: Int64 = 256 * 1024
+
     nonisolated enum ParseResult {
         case valid(StoredSession)
         case orphan
         case unreadable
+        /// Audio on disk but no finished transcript — an interrupted
+        /// recording (crash / power-loss). NEVER deleted; handed to
+        /// `InterruptedRecordingRecovery`.
+        case interrupted
     }
 
     nonisolated static func classify(directory: URL) -> ParseResult {
@@ -231,6 +263,21 @@ final class SessionStore {
             // (e.g. zero-segment recording that nonetheless completed
             // its lifecycle and deserves a History entry).
             hasMeaningfulFrontmatter = parsed.title != nil || parsed.started != nil
+        }
+
+        // Interrupted recording (crash / power-loss): real audio on disk
+        // but no FINISHED transcript. Recoverable — never delete. Identified
+        // by the in-progress marker, or (belt-and-suspenders for recordings
+        // predating the marker) by a non-trivial .caf on disk. Takes
+        // precedence over the husk shapes below.
+        let hasFinishedTranscript = hasTranscript
+            && (!transcriptBodyEmpty || hasMeaningfulFrontmatter)
+        let hasMarker = fm.fileExists(
+            atPath: directory.appendingPathComponent(recordingMarkerName).path
+        )
+        if (hasMic || hasSystem), !hasFinishedTranscript,
+           hasMarker || largestAudioBytes(mic: micURL, system: systemURL) >= minRecoverableAudioBytes {
+            return .interrupted
         }
 
         // Orphan = directory that exists on disk but represents no
@@ -286,6 +333,18 @@ final class SessionStore {
             return .unreadable
         }
         return .valid(session)
+    }
+
+    /// Largest of the mic / system `.caf` sizes in bytes (0 if neither
+    /// exists / is readable). The size-based fallback for spotting a
+    /// recoverable interrupted recording when the marker is absent.
+    nonisolated static func largestAudioBytes(mic: URL, system: URL) -> Int64 {
+        func size(_ url: URL) -> Int64 {
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let n = attrs[.size] as? Int64 else { return 0 }
+            return n
+        }
+        return max(size(mic), size(system))
     }
 
     /// Seconds since `directory` was last modified. Used as the age
