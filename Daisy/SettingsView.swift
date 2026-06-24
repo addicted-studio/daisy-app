@@ -753,8 +753,6 @@ struct SettingsView: View {
             // Auto-summary lives in the Summary tab — it sits next
             // to the provider config it depends on.
 
-            // ── Voice Memos import (bottom of General) ────────
-            VoiceMemoImportSection(settings: settings)
         }
         .formStyle(.grouped)
     }
@@ -1175,6 +1173,10 @@ struct SettingsView: View {
             } header: {
                 Text("Models")
             }
+
+            // ── Voice Memos import (moved to bottom of Transcription,
+            // 2026-06-24) ─────────────────────────────────────────
+            VoiceMemoImportSection(settings: settings)
         }
         .formStyle(.grouped)
         .task(id: cacheRefreshTick) {

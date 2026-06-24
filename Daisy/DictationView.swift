@@ -7,12 +7,13 @@
 //  Promoted out of the Settings "Dictation" tab in 1.0.7.19 so it sits
 //  alongside Home / Library / Connections in the sidebar.
 //
-//  Split into two horizontal tabs (Egor 2026-06-16) via a segmented
-//  switcher at the top — "Vocabulary" and "History" — instead of two
-//  stacked Form sections. Each tab is a `Form { Section { … } }` whose
-//  child view (`DictationDictionaryView` / `DictationHistoryView`)
-//  renders rows only. "Add word" lives in the window toolbar (top-right,
-//  Vocabulary tab only); "Clear history" in the History tab's header.
+//  Split into two tabs (Egor 2026-06-16) — "Vocabulary" and "History".
+//  Uses a native `TabView` with `.tabItem` chrome to match Settings
+//  (replaced the `.segmented` Picker 2026-06-24). Each tab is a
+//  `Form { Section { … } }` whose child view (`DictationDictionaryView`
+//  / `DictationHistoryView`) renders rows only. "Add word" lives in the
+//  window toolbar (top-right) on BOTH tabs; "Clear history" in the
+//  History tab's header.
 //
 
 import SwiftUI
@@ -31,20 +32,20 @@ struct DictationView: View {
     @Bindable private var history = DictationHistory.shared
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("Section", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
+        // Native TabView (.tabItem chrome) to match Settings — replaced
+        // the `.segmented` Picker 2026-06-24. `selection:` keeps the
+        // active tab stable across redraws and lets external surfaces
+        // deep-link if ever needed.
+        TabView(selection: $tab) {
+            vocabularyTab
+                .tag(Tab.vocabulary)
+                .tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
+                .scrollContentBackground(.hidden)
 
-            switch tab {
-            case .vocabulary: vocabularyTab
-            case .history:    historyTab
-            }
+            historyTab
+                .tag(Tab.history)
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .scrollContentBackground(.hidden)
         }
         .background(Color.daisyBgPrimary)
         .sheet(isPresented: $showingAddWord) {
@@ -52,17 +53,16 @@ struct DictationView: View {
         }
         .toolbar {
             // "Add word" in the window toolbar top-right (like the Library
-            // "Summarize" pill) — only relevant on the Vocabulary tab.
-            if tab == .vocabulary {
-                ToolbarItem(placement: .primaryAction) {
-                    Button {
-                        showingAddWord = true
-                    } label: {
-                        Text("Add word")
-                            .padding(.horizontal, 10)
-                    }
-                    .help("Add a word to your dictation vocabulary")
+            // "Summarize" pill). Shown on BOTH tabs so the affordance
+            // never disappears (Egor 2026-06-24).
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showingAddWord = true
+                } label: {
+                    Text("Add word")
+                        .padding(.horizontal, 10)
                 }
+                .help("Add a word to your dictation vocabulary")
             }
         }
     }
