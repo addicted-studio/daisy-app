@@ -732,11 +732,18 @@ struct SessionDetailView: View {
             actionItems: summary.actionItems,
             clientFollowUp: ""
         )
-        SelectableTextView(attributed: summaryAttributedString(bodySummary, compact: false))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Defense-in-depth: if a line is ever mis-measured, never paint
-            // outside the card.
-            .clipped()
+        // ScrollableTextView (not SelectableTextView) 2026-06-25: the bare
+        // intrinsic-height NSTextView mis-measured tall multi-section summaries
+        // on macOS 26 (usedRect under-report > the 1-line slack), so the bottom
+        // of a long summary was clipped under the card with no way to scroll to
+        // it (Egor). The scrollable variant lays the document out to full
+        // height internally and caps the visible pane — short summaries sit
+        // flush, long ones scroll inside the card. Same approach as Transcript.
+        ScrollableTextView(
+            attributed: summaryAttributedString(bodySummary, compact: false),
+            maxHeight: 720
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Whether the Follow-up accordion shows: there's a draft, one is being
@@ -754,13 +761,11 @@ struct SessionDetailView: View {
     @ViewBuilder
     private func followUpSection(_ summary: MeetingSummary) -> some View {
         if !summary.clientFollowUp.isEmpty && !isDraftingFollowUp {
-            // No .clipped() here (removed 2026-06-25): SelectableTextView
-            // sizes itself tall to its full content and relies on the
-            // page's outer ScrollView to reveal the overflow. .clipped()
-            // cut the follow-up off at its frame so the rest couldn't be
-            // scrolled to (tester: "рамка не позволяла ему опуститься").
-            // The summary body above renders the same way without a clip.
-            SelectableTextView(summary.clientFollowUp)
+            // ScrollableTextView (2026-06-25): same macOS-26 mis-measure that
+            // clipped the summary clipped long follow-ups under the card. The
+            // scrollable variant sizes to content up to a cap, then scrolls
+            // internally — short follow-ups sit flush, long ones stay reachable.
+            ScrollableTextView(summary.clientFollowUp, maxHeight: 600)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else if isDraftingFollowUp {
             // Drafting in flight — visible spinner so the user sees the click

@@ -314,16 +314,48 @@ struct SelectableTextView: NSViewRepresentable {
 struct ScrollableTextView: NSViewRepresentable {
     let text: String
     let font: NSFont
+    /// Non-nil ⇒ attributed mode (summary card): render this exact string.
+    /// nil ⇒ markdown mode (transcript / follow-up): render `text` through
+    /// `SelectableTextView.renderMarkdown`. Mirrors `SelectableTextView`.
+    let attributed: NSAttributedString?
+    /// Self-sizing cap (2026-06-25). `nil` = no intrinsic size: the caller
+    /// bounds the pane with `.frame` (the Transcript block does this with a
+    /// fixed 600pt). Non-nil = the pane sizes to its CONTENT up to this many
+    /// points, then scrolls internally past it. Used by the Summary + Follow-
+    /// up cards so short content sits flush (no empty pane) while long content
+    /// stops clipping. Robust where `SelectableTextView` is not: even if the
+    /// macOS-26 `usedRect` measurement under-reports, the inner NSTextView is
+    /// `isVerticallyResizable` and lays out to the TRUE content height, so the
+    /// internal scroller always reaches the real bottom — no unscrollable clip.
+    var maxHeight: CGFloat?
 
-    init(_ text: String, font: NSFont = NSFont.preferredFont(forTextStyle: .body)) {
+    init(
+        _ text: String,
+        font: NSFont = NSFont.preferredFont(forTextStyle: .body),
+        maxHeight: CGFloat? = nil
+    ) {
         self.text = text
         self.font = font
+        self.attributed = nil
+        self.maxHeight = maxHeight
+    }
+
+    init(attributed: NSAttributedString, maxHeight: CGFloat? = nil) {
+        self.text = attributed.string
+        self.font = NSFont.preferredFont(forTextStyle: .body)
+        self.attributed = attributed
+        self.maxHeight = maxHeight
+    }
+
+    private func displayString() -> NSAttributedString {
+        attributed ?? SelectableTextView.renderMarkdown(text, font: font)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
     final class Coordinator {
         var lastText: String?
         var lastFont: NSFont?
+        var lastAttributed: NSAttributedString?
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -349,7 +381,7 @@ struct ScrollableTextView: NSViewRepresentable {
         // ⌘F Find Bar inside long transcripts, same as SelectableTextView.
         tv.usesFindBar = true
         tv.isIncrementalSearchingEnabled = true
-        tv.textStorage?.setAttributedString(SelectableTextView.renderMarkdown(text, font: font))
+        tv.textStorage?.setAttributedString(displayString())
 
         let scroll = NSScrollView()
         scroll.documentView = tv
@@ -362,19 +394,51 @@ struct ScrollableTextView: NSViewRepresentable {
 
         context.coordinator.lastText = text
         context.coordinator.lastFont = font
+        context.coordinator.lastAttributed = attributed
         return scroll
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let tv = scroll.documentView as? NSTextView else { return }
-        // Rebuild only on a real change (the transcript can grow via live
-        // append before finalize replaces it).
-        guard context.coordinator.lastText != text
-            || context.coordinator.lastFont != font else { return }
+        // Rebuild only on a real change. Attributed mode (summary) re-derives
+        // the string each body pass, so compare by equality; markdown mode
+        // (transcript / follow-up) compares source text + font.
+        if let attributed {
+            guard context.coordinator.lastAttributed != attributed else { return }
+        } else {
+            guard context.coordinator.lastText != text
+                || context.coordinator.lastFont != font else { return }
+        }
         context.coordinator.lastText = text
         context.coordinator.lastFont = font
+        context.coordinator.lastAttributed = attributed
         tv.font = font
-        tv.textStorage?.setAttributedString(SelectableTextView.renderMarkdown(text, font: font))
+        tv.textStorage?.setAttributedString(displayString())
+    }
+
+    /// Self-sizing for the capped (Summary / Follow-up) case. Returns `nil`
+    /// when `maxHeight` is unset so the unbounded caller (Transcript) keeps
+    /// owning the pane height via its own `.frame`. Otherwise measures the
+    /// laid-out content at the proposed width and returns `min(content, cap)`.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        guard let maxHeight else { return nil }
+        guard let width = proposal.width, width > 0,
+              let tv = nsView.documentView as? NSTextView,
+              let container = tv.textContainer,
+              let layoutManager = tv.layoutManager else { return nil }
+        // widthTracksTextView == true → the container's wrap width follows the
+        // text view's frame width, so set the frame to the proposed width
+        // before measuring (otherwise we'd measure against a stale wrap).
+        if abs(tv.frame.width - width) > 0.5 {
+            tv.frame.size.width = width
+        }
+        layoutManager.ensureLayout(for: container)
+        let used = layoutManager.usedRect(for: container)
+        // One line of slack — macOS-26 TK1 can under-report the trailing
+        // fragment (same note as SelectableTextView.sizeThatFits).
+        let lineHeight = layoutManager.defaultLineHeight(for: font)
+        let content = ceil(used.height) + ceil(lineHeight)
+        return CGSize(width: width, height: min(content, maxHeight))
     }
 }
 
