@@ -103,5 +103,13 @@
     <string>drZN6wJxqeB0iagvo4hk1ZQhO3wceIPWoazYjMK9VFk=</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
+    <!-- Explicit scheduled-check cadence (added 2026-06-25). Without
+         this key Sparkle's automatic-check timing is undefined, which
+         is the leading suspect for "auto-update doesn't seem to run" —
+         SUEnableAutomaticChecks turns the feature ON but says nothing
+         about HOW OFTEN. 3600s = hourly: the appcast is a tiny static
+         XML on the CDN, and beta testers want new builds promptly. -->
+    <key>SUScheduledCheckInterval</key>
+    <integer>3600</integer>
 </dict>
 </plist>

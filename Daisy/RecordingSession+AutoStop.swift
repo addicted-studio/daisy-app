@@ -97,7 +97,7 @@ extension RecordingSession {
             guard let self else { return }
             Task { @MainActor in self.evaluateAutoStop() }
         }
-        autoStopLog.info("Auto-stop armed (silence-gated) for '\(meeting.title, privacy: .private)': earliest endDate+\(self.settings.autoStopGraceSec, privacy: .public)s then \(Int(Self.autoStopSilenceToStopSec), privacy: .public)s quiet; hard max endDate+\(Int(Self.autoStopMaxOverrunSec), privacy: .public)s")
+        autoStopLog.notice("Auto-stop armed (silence-gated) for '\(meeting.title, privacy: .private)': earliest endDate+\(self.settings.autoStopGraceSec, privacy: .public)s then \(Int(Self.autoStopSilenceToStopSec), privacy: .public)s quiet; hard max endDate+\(Int(Self.autoStopMaxOverrunSec), privacy: .public)s")
     }
 
     /// Try to auto-bind a calendar meeting to the current session
@@ -289,6 +289,20 @@ extension RecordingSession {
     private func armAutoStopWarningAndStop(silence: Bool, beforeScheduledEnd: Bool = false) {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
         autoStopWarned = true
+        // SURVIVABLE decision record (.notice persists; the per-tick
+        // eval line is .debug and rotates out). When a tester reports
+        // "it stopped while we were still talking", this one line says
+        // exactly which gate fired and what the two liveness signals
+        // read at fire time — micRMS (her voice) and how long ago the
+        // SYSTEM side last delivered an audible buffer (the clients).
+        // A stale `sysAudibleAgo` with the call clearly still live is
+        // the macOS-26 capture-degradation fingerprint.
+        let micRMS = Int(recorder.lastMicRMSDB)
+        let sysAgo = systemAudio.lastAudibleSampleAt.map { Int(Date().timeIntervalSince($0)) }
+        let endDelta = boundMeeting.map { Int(Date().timeIntervalSince($0.endDate)) }
+        let silentFor = Int(Date().timeIntervalSince(autoStopLastAudibleAt ?? Date()))
+        let branch = silence ? (beforeScheduledEnd ? "preEndSilence(10min)" : "postEndSilence(2min)") : "overrun/hardMax"
+        autoStopLog.notice("Auto-stop FIRING — branch=\(branch, privacy: .public) micRMS=\(micRMS, privacy: .public)dB sysAudibleAgo=\(sysAgo.map { "\($0)s" } ?? "never", privacy: .public) boundEndDelta=\(endDelta.map { "\($0)s" } ?? "n/a", privacy: .public) silentFor=\(silentFor, privacy: .public)s")
         let msg: String
         if silence && beforeScheduledEnd {
             msg = "Meeting's been silent for 10 minutes — looks like it wrapped up early. Daisy will stop & save in 30 seconds."
@@ -319,6 +333,7 @@ extension RecordingSession {
 
     private func performAutoStop() async {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
+        autoStopLog.notice("Auto-stop performing stop() — meeting auto-ended; the SESSION SUMMARY that follows is the auto-stopped one")
         ToastCenter.shared.show("Meeting ended — stopping & saving.", style: .info, duration: .seconds(2))
         let meetingTitle = boundMeeting?.title ?? title
         await stop()
@@ -372,7 +387,9 @@ extension RecordingSession {
             guard let self else { return }
             Task { @MainActor in await self.performAutoStopFromPrompt() }
         }
-        autoStopLog.info("Auto-stop prompt presented (silence=\(silence, privacy: .public), beforeScheduledEnd=\(beforeScheduledEnd, privacy: .public)) — waiting for the user")
+        let micRMS = Int(recorder.lastMicRMSDB)
+        let sysAgo = systemAudio.lastAudibleSampleAt.map { Int(Date().timeIntervalSince($0)) }
+        autoStopLog.notice("Auto-stop PROMPT presented (silence=\(silence, privacy: .public) beforeScheduledEnd=\(beforeScheduledEnd, privacy: .public)) micRMS=\(micRMS, privacy: .public)dB sysAudibleAgo=\(sysAgo.map { "\($0)s" } ?? "never", privacy: .public) — waiting for the user")
     }
 
     /// "10 / 30 more minutes" on the auto-stop prompt. Parks the

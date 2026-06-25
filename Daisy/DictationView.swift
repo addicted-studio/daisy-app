@@ -106,7 +106,9 @@ struct DictationView: View {
     }
 
     private var clearHistoryButton: some View {
-        Button(role: .destructive) {
+        // Neutral, not destructive-red — clearing a rolling 24h history is
+        // low-stakes (it auto-clears anyway), so the red read as too alarming.
+        Button {
             DictationHistory.shared.clear()
             ToastCenter.shared.show("History cleared", style: .success)
         } label: {
@@ -115,7 +117,7 @@ struct DictationView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .buttonBorderShape(.capsule)
-        .tint(Color.daisyError)
+        .tint(.secondary)
         .textCase(nil)
     }
 }
