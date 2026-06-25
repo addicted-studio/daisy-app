@@ -133,17 +133,12 @@ struct PermissionsView: View {
             // so this only hides the nag, not the actual ask.
             Toggle(isOn: $settings.suppressMeetingPermissionReminders) {
                 Text("Don't remind me")
-                Text("Hide the in-app warning that the other side isn't being captured. The macOS permission prompt still appears when you record a meeting.")
+                Text("Hide the in-app warning when the other side isn't being captured.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         } header: {
             Text("For meeting recording")
-        } footer: {
-            Text("Only needed if you also record meetings — Daisy asks for these the first time you record one, not up front.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .textCase(nil)
         }
 
         // ── Notifications ─────────────────────────────────────
@@ -170,11 +165,6 @@ struct PermissionsView: View {
                 voiceMemosFullDiskAccessRow
             } header: {
                 Text("For Voice Memos import")
-            } footer: {
-                Text("Full Disk Access lets Daisy read your Apple Voice Memos library to import recordings. Nothing else in Daisy uses it.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .textCase(nil)
             }
         }
     }
@@ -280,8 +270,8 @@ struct PermissionsView: View {
     /// Full Disk Access row — custom because FDA has no request API (you
     /// can only deep-link to System Settings) and its state is inferred
     /// from whether we can read the Voice Memos library, not from
-    /// `SystemPermissions`. Marked "Voice Memos only" since that's the
-    /// sole feature that needs it.
+    /// `SystemPermissions`. The section header ("For Voice Memos import")
+    /// carries the context; the badge just reads "Optional" like the others.
     @ViewBuilder
     private var voiceMemosFullDiskAccessRow: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -295,7 +285,7 @@ struct PermissionsView: View {
                 HStack(spacing: 6) {
                     Text("Full Disk Access")
                         .font(.callout.weight(.medium))
-                    Text("Voice Memos only")
+                    Text("Optional")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)

@@ -279,7 +279,14 @@ struct DaisyWidget: View {
         Menu {
             Button("Hide for 15 minutes") { onHideRequest(15 * 60) }
             Button("Hide for 1 hour")     { onHideRequest(60 * 60) }
-            Button("Hide for 24 hours")   { onHideRequest(24 * 60 * 60) }
+            Button("Hide for today") {
+                // Hide until the next local midnight (reappears tomorrow),
+                // not a fixed 24h window — matches the "for today" intuition.
+                let nextMidnight = Calendar.current.startOfDay(
+                    for: Date().addingTimeInterval(24 * 60 * 60)
+                )
+                onHideRequest(nextMidnight.timeIntervalSinceNow)
+            }
         } label: {
             Label("Hide…", systemImage: "eye.slash")
         }

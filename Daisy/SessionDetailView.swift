@@ -754,9 +754,14 @@ struct SessionDetailView: View {
     @ViewBuilder
     private func followUpSection(_ summary: MeetingSummary) -> some View {
         if !summary.clientFollowUp.isEmpty && !isDraftingFollowUp {
+            // No .clipped() here (removed 2026-06-25): SelectableTextView
+            // sizes itself tall to its full content and relies on the
+            // page's outer ScrollView to reveal the overflow. .clipped()
+            // cut the follow-up off at its frame so the rest couldn't be
+            // scrolled to (tester: "рамка не позволяла ему опуститься").
+            // The summary body above renders the same way without a clip.
             SelectableTextView(summary.clientFollowUp)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .clipped()
         } else if isDraftingFollowUp {
             // Drafting in flight — visible spinner so the user sees the click
             // registered (previously only a toast fired).

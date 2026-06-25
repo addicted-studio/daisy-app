@@ -132,9 +132,26 @@ enum LogReporter {
         App:        \(appVersionString)
         macOS:      \(ProcessInfo.processInfo.operatingSystemVersionString)
         Permissions: mic=\(label(permissions.microphone)) screenRec=\(label(permissions.screenRecording)) accessibility=\(label(permissions.accessibility)) calendar=\(label(permissions.calendar)) notifications=\(label(permissions.notifications))
-        Settings:   captureSystemAudio=\(settings.captureSystemAudio) autoStopFromCalendar=\(settings.autoStopFromCalendar) parakeetDictation=\(settings.dictationUseParakeet) nemotronLivePreview=\(settings.dictationUseNemotronLive)
+        Audio:      captureSystemAudio=\(settings.captureSystemAudio) liveTier=\(settings.liveTranscriptionTier) parakeetDictation=\(settings.dictationUseParakeet) nemotronLivePreview=\(settings.dictationUseNemotronLive)
+        Auto-stop:  fromCalendar=\(settings.autoStopFromCalendar) graceSec=\(settings.autoStopGraceSec) promptMode=\(settings.autoStopPromptMode) notifyOnStop=\(settings.notifyOnAutoStop)
+        Updates:    \(updaterLine())
         ─────────────────────────────────────────────────
         """
+    }
+
+    /// Sparkle updater state — the single most-asked "why didn't it
+    /// update?" follow-up, surfaced so the answer is in the report
+    /// itself: whether automatic checks are on, when the last one ran,
+    /// whether the user opted into the beta channel, and the feed URL
+    /// the app is actually pointed at. Reads `SparkleUpdater.shared`
+    /// (real impl or the no-Sparkle stub — both expose these four).
+    private static func updaterLine() -> String {
+        let u = SparkleUpdater.shared
+        let last = u.lastUpdateCheckDate.map {
+            $0.formatted(date: .abbreviated, time: .shortened)
+        } ?? "never"
+        let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String ?? "?"
+        return "autoCheck=\(u.automaticallyChecksForUpdates) betaChannel=\(u.receiveBetaUpdates) lastCheck=\(last) canCheck=\(u.canCheckForUpdates) feed=\(feed)"
     }
 
     private static var appVersionString: String {

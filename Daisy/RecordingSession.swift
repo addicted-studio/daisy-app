@@ -1527,6 +1527,21 @@ final class RecordingSession {
         log.info("post-stop archive_audit mic: \(String(describing: micStatus), privacy: .public)")
         log.info("post-stop archive_audit system: \(String(describing: sysStatus), privacy: .public)")
 
+        // One consolidated, SURVIVABLE summary per session (.notice
+        // persists to the on-disk store; the .info lines above rotate
+        // out of the in-memory window and often aren't in a tester's
+        // `log show` capture). Everything a "what happened?" report
+        // needs in one greppable line: mode, recorded length, both
+        // archive verdicts, whether the other side was ever received
+        // (separates .empty-from-silence vs .truncated-on-write), the
+        // capture setting, and how far the bound meeting's scheduled
+        // end was from this stop — the signal for "did auto-stop cut
+        // it short?". No title/transcript content — privacy-safe.
+        let durSec = startedAt.map { Int(Date().timeIntervalSince($0)) } ?? -1
+        let boundEndDelta = boundMeeting.map { Int(Date().timeIntervalSince($0.endDate)) }
+        let summary = "mode=\(currentMode) dur=\(durSec)s sys=\(String(describing: sysStatus)) mic=\(String(describing: micStatus)) sysReceived=\(hasCapturedSystemAudio) captureSysSetting=\(settings.captureSystemAudio) boundEndDelta=\(boundEndDelta.map { "\($0)s" } ?? "none")"
+        log.notice("post-stop SESSION SUMMARY — \(summary, privacy: .public)")
+
         if case .truncated(let bytes, let framesWritten, let writeErrors) = micStatus {
             log.error("Mic archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
             ToastCenter.shared.show(

@@ -58,7 +58,12 @@ struct HomeView: View {
             }
             .padding(.top, 24)
             .padding(.bottom, 32)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            // Cap the content column to match the grouped-Form pages
+            // (Settings & co. size to idealWidth 720) and centre it, instead
+            // of stretching edge-to-edge on wide windows. Home was the only
+            // hand-rolled page not using a Form, so it read wider than the rest.
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .task { await store.refresh() }
     }
