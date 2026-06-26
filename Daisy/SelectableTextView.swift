@@ -420,25 +420,39 @@ struct ScrollableTextView: NSViewRepresentable {
     /// when `maxHeight` is unset so the unbounded caller (Transcript) keeps
     /// owning the pane height via its own `.frame`. Otherwise measures the
     /// laid-out content at the proposed width and returns `min(content, cap)`.
+    ///
+    /// CRITICAL (2026-06-26): the measurement runs on a THROWAWAY TextKit
+    /// stack — never the live `nsView`. The first cut mutated the document
+    /// view's frame here (`tv.frame.size.width = width`) to force a re-wrap;
+    /// changing an NSView's geometry inside `sizeThatFits` re-dirties layout
+    /// DURING the window's layout/display cycle, so AppKit re-enters
+    /// `_layoutSubtreeWithOldSize:` recursively and then throws from
+    /// `_postWindowNeedsUpdateConstraints` → `+[NSApplication _crashOnException:]`
+    /// (b72 launch crash on macOS 26). Measuring on a detached
+    /// storage+layoutManager+container touches no view, so the layout pass
+    /// stays reentrancy-free.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
         guard let maxHeight else { return nil }
-        guard let width = proposal.width, width > 0,
-              let tv = nsView.documentView as? NSTextView,
-              let container = tv.textContainer,
-              let layoutManager = tv.layoutManager else { return nil }
-        // widthTracksTextView == true → the container's wrap width follows the
-        // text view's frame width, so set the frame to the proposed width
-        // before measuring (otherwise we'd measure against a stale wrap).
-        if abs(tv.frame.width - width) > 0.5 {
-            tv.frame.size.width = width
-        }
+        guard let width = proposal.width, width > 0 else { return nil }
+        let content = Self.measuredHeight(of: displayString(), width: width, font: font)
+        return CGSize(width: width, height: min(content, maxHeight))
+    }
+
+    /// Lay out `attributed` at `width` on a detached TextKit stack and return
+    /// its content height (+ one line of slack — macOS-26 TK1 can under-report
+    /// the trailing fragment). No live view is touched, so this is safe to call
+    /// from `sizeThatFits` inside a layout pass.
+    private static func measuredHeight(of attributed: NSAttributedString, width: CGFloat, font: NSFont) -> CGFloat {
+        let storage = NSTextStorage(attributedString: attributed)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        let layoutManager = NSLayoutManager()
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container)
-        // One line of slack — macOS-26 TK1 can under-report the trailing
-        // fragment (same note as SelectableTextView.sizeThatFits).
         let lineHeight = layoutManager.defaultLineHeight(for: font)
-        let content = ceil(used.height) + ceil(lineHeight)
-        return CGSize(width: width, height: min(content, maxHeight))
+        return ceil(used.height) + ceil(lineHeight)
     }
 }
 
