@@ -16,7 +16,7 @@
 //  making it the default or adding a UI toggle. See the research note
 //  2026-06-04-dictation-latency-optimization.
 //
-//  API note (FluidAudio 0.15.2): we deliberately drive the explicit
+//  API note (FluidAudio 0.15.4): we deliberately drive the explicit
 //  `transcribe(_ samples:decoderState:)` form with a fresh
 //  `TdtDecoderState` per one-shot dictation (no cross-utterance
 //  streaming context) rather than the convenience overloads. 0.15.x
