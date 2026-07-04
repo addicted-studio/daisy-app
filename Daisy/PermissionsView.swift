@@ -63,8 +63,8 @@ struct PermissionsView: View {
         // ── For dictation: the minimum to dictate ─────────────
         Section {
             permissionRow(
-                title: "Microphone",
-                caption: "Captures your voice",
+                title: String(localized: "Microphone"),
+                caption: String(localized: "Captures your voice"),
                 iconName: "mic.fill",
                 isRequired: true,
                 status: permissions.microphone,
@@ -73,8 +73,8 @@ struct PermissionsView: View {
             )
 
             permissionRow(
-                title: "Accessibility",
-                caption: "Lets dictation paste into any app",
+                title: String(localized: "Accessibility"),
+                caption: String(localized: "Lets dictation paste into any app"),
                 iconName: "keyboard",
                 isRequired: true,
                 status: permissions.accessibility,
@@ -104,8 +104,8 @@ struct PermissionsView: View {
         // ── For meeting recording: asked lazily on first use ──
         Section {
             permissionRow(
-                title: "Screen recording",
-                caption: "Captures the other side of meetings",
+                title: String(localized: "Screen recording"),
+                caption: String(localized: "Captures the other side of meetings"),
                 iconName: "rectangle.on.rectangle",
                 isRequired: false,
                 status: permissions.screenRecording,
@@ -114,8 +114,8 @@ struct PermissionsView: View {
             )
 
             permissionRow(
-                title: "Calendar (Apple)",
-                caption: "Auto-starts recording at meeting times",
+                title: String(localized: "Calendar (Apple)"),
+                caption: String(localized: "Auto-starts recording at meeting times"),
                 iconName: "calendar",
                 isRequired: false,
                 status: permissions.calendar,
@@ -144,8 +144,8 @@ struct PermissionsView: View {
         // ── Notifications ─────────────────────────────────────
         Section {
             permissionRow(
-                title: "Notifications",
-                caption: "Banner when Daisy auto-starts or saves",
+                title: String(localized: "Notifications"),
+                caption: String(localized: "Banner when Daisy auto-starts or saves"),
                 iconName: "bell",
                 isRequired: false,
                 status: permissions.notifications,
@@ -323,9 +323,9 @@ struct PermissionsView: View {
 
     private var voiceMemoFDACaption: String {
         switch voiceMemoAccess {
-        case .ok:                  return "Granted — Daisy can read your Voice Memos library."
-        case .needsFullDiskAccess: return "Grant Full Disk Access, then reopen this tab."
-        case .noLibrary:           return "No Voice Memos library found on this Mac."
+        case .ok:                  return String(localized: "Granted — Daisy can read your Voice Memos library.")
+        case .needsFullDiskAccess: return String(localized: "Grant Full Disk Access, then reopen this tab.")
+        case .noLibrary:           return String(localized: "No Voice Memos library found on this Mac.")
         case .error(let msg):      return msg
         }
     }

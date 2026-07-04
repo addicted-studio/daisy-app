@@ -551,12 +551,12 @@ struct DaisyWidget: View {
         // wondering "is anything still happening?".
         if case .finished = session.status,
            session.summaryGenerationState == .generating {
-            return "Generating summary…"
+            return String(localized: "Generating summary…")
         }
         switch session.status {
-        case .idle: return "Click to record"
-        case .recording: return "Click to pause"
-        case .paused: return "Click to resume · right-click for Stop & save"
+        case .idle: return String(localized: "Click to record")
+        case .recording: return String(localized: "Click to pause")
+        case .paused: return String(localized: "Click to resume · right-click for Stop & save")
         case .preparing:
             // First-record path on a fresh install spends most of its
             // wait in Whisper download/load (1-3 minutes for the 626 MB
@@ -564,17 +564,17 @@ struct DaisyWidget: View {
             // app isn't hung.
             switch WhisperEngine.shared.state {
             case .downloading(let p):
-                return "Downloading transcription model… \(Int(p * 100))%"
+                return String(localized: "Downloading transcription model… \(Int(p * 100))%")
             case .loading(let status):
-                return "Loading transcription model · \(status)"
+                return String(localized: "Loading transcription model · \(status)")
             case .notLoaded:
-                return "Setting up transcription model…"
+                return String(localized: "Setting up transcription model…")
             default:
-                return "Preparing…"
+                return String(localized: "Preparing…")
             }
-        case .stopping: return "Stopping…"
-        case .summarizing: return "Summarizing…"
-        case .finished: return "Done · click to record again"
+        case .stopping: return String(localized: "Stopping…")
+        case .summarizing: return String(localized: "Summarizing…")
+        case .finished: return String(localized: "Done · click to record again")
         case .failed(let msg): return msg
         }
     }
@@ -582,17 +582,17 @@ struct DaisyWidget: View {
     private var accessibilityLabel: String {
         if case .finished = session.status,
            session.summaryGenerationState == .generating {
-            return "Daisy. Recording finished. Summary still generating in the background."
+            return String(localized: "Daisy. Recording finished. Summary still generating in the background.")
         }
         switch session.status {
-        case .idle: return "Daisy. Start recording."
-        case .recording: return "Daisy. Recording. Tap to pause."
-        case .paused: return "Daisy. Paused. Tap to resume."
-        case .preparing: return "Daisy. Preparing to record."
-        case .stopping: return "Daisy. Stopping."
-        case .summarizing: return "Daisy. Summarizing transcript."
-        case .finished: return "Daisy. Recording finished."
-        case .failed: return "Daisy. Recording failed."
+        case .idle: return String(localized: "Daisy. Start recording.")
+        case .recording: return String(localized: "Daisy. Recording. Tap to pause.")
+        case .paused: return String(localized: "Daisy. Paused. Tap to resume.")
+        case .preparing: return String(localized: "Daisy. Preparing to record.")
+        case .stopping: return String(localized: "Daisy. Stopping.")
+        case .summarizing: return String(localized: "Daisy. Summarizing transcript.")
+        case .finished: return String(localized: "Daisy. Recording finished.")
+        case .failed: return String(localized: "Daisy. Recording failed.")
         }
     }
 

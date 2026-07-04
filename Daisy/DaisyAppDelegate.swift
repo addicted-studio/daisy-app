@@ -145,7 +145,7 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         pausedForSleep = false
         guard let session = RecordingSession.current, session.status == .paused else { return }
         await session.resume()
-        ToastCenter.shared.show("Resumed recording after your Mac woke up.", style: .info)
+        ToastCenter.shared.show(String(localized: "Resumed recording after your Mac woke up."), style: .info)
     }
 
     private func handleWillPowerOff() async {
@@ -208,11 +208,11 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
 
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "Daisy is still recording"
+        alert.messageText = String(localized: "Daisy is still recording")
         alert.informativeText =
-            "Quit and save this recording? Daisy will finalize the audio and transcript captured so far."
-        alert.addButton(withTitle: "Save & Quit")   // .alertFirstButtonReturn
-        alert.addButton(withTitle: "Cancel")         // .alertSecondButtonReturn
+            String(localized: "Quit and save this recording? Daisy will finalize the audio and transcript captured so far.")
+        alert.addButton(withTitle: String(localized: "Save & Quit"))   // .alertFirstButtonReturn
+        alert.addButton(withTitle: String(localized: "Cancel"))         // .alertSecondButtonReturn
 
         // Bring Daisy forward so the modal isn't lost behind other apps
         // (the user is likely in another window when they hit ⌘Q).

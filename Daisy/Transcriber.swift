@@ -1251,7 +1251,7 @@ final class Transcriber {
     // MARK: - Locale catalog (exposed for UI)
 
     static let availableLocales: [(id: String, label: String)] = [
-        ("auto",  "Auto-detect"),
+        ("auto",  String(localized: "Auto-detect")),
         ("en",    "English"),
         ("ru",    "Русский"),
         ("es",    "Español"),

@@ -44,8 +44,8 @@ final class WhisperEngine {
     /// sizes can be re-enabled via Advanced settings later if there's
     /// demand.
     static let availableModels: [(id: String, label: String, sizeMB: Int)] = [
-        ("large-v3-v20240930_626MB", "Standard — fast, multilingual (recommended)",  626),
-        ("large-v3-v20240930",       "Highest accuracy — large-v3 turbo, full",     1500),
+        ("large-v3-v20240930_626MB", String(localized: "Standard — fast, multilingual (recommended)"),  626),
+        ("large-v3-v20240930",       String(localized: "Highest accuracy — large-v3 turbo, full"),     1500),
     ]
 
     /// First-run default — `large-v3-v20240930_626MB`. 626 MB quantized
@@ -182,7 +182,7 @@ final class WhisperEngine {
             let neededGB = Double(Self.minRequiredDiskBytes) / 1_073_741_824.0
             let haveGB = Double(available) / 1_073_741_824.0
             let msg = String(
-                format: "Not enough disk space to download the transcription model — need %.1f GB free, only %.2f GB available. Free some space and try again.",
+                format: String(localized: "Not enough disk space to download the transcription model — need %.1f GB free, only %.2f GB available. Free some space and try again."),
                 neededGB, haveGB
             )
             log.error("Whisper download aborted — disk too full (\(available, privacy: .public) bytes free)")
@@ -209,7 +209,7 @@ final class WhisperEngine {
         }
 
         // Phase 2 — load CoreML model
-        state = .loading(status: "Initializing CoreML model…")
+        state = .loading(status: String(localized: "Initializing CoreML model…"))
         do {
             let kit = try await Self.loadKit(folder: folder)
             self.kitBox = WhisperKitBox(kit)
@@ -899,7 +899,7 @@ nonisolated enum WhisperEngineError: LocalizedError {
     case notReady
     var errorDescription: String? {
         switch self {
-        case .notReady: return "Whisper model isn't loaded yet. Open Settings → Transcription."
+        case .notReady: return String(localized: "Whisper model isn't loaded yet. Open Settings → Transcription.")
         }
     }
 }

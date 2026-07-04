@@ -89,15 +89,15 @@ struct VoiceMemoImportSection: View {
         case .ok:
             let n = scanner.importedThisRun
             ToastCenter.shared.show(
-                n > 0 ? "Imported \(n) recording\(n == 1 ? "" : "s")" : "No new recordings to import",
+                n > 0 ? String(localized: "Imported \(n) recordings") : String(localized: "No new recordings to import"),
                 style: n > 0 ? .success : .info
             )
         case .needsFullDiskAccess:
-            ToastCenter.shared.show("Needs Full Disk Access — grant it in Settings → Permissions.", style: .warning)
+            ToastCenter.shared.show(String(localized: "Needs Full Disk Access — grant it in Settings → Permissions."), style: .warning)
         case .noLibrary:
-            ToastCenter.shared.show("No Voice Memos library found on this Mac.", style: .info)
+            ToastCenter.shared.show(String(localized: "No Voice Memos library found on this Mac."), style: .info)
         case .error(let msg):
-            ToastCenter.shared.show("Import failed: \(msg)", style: .error)
+            ToastCenter.shared.show(String(localized: "Import failed: \(msg)"), style: .error)
         }
     }
 

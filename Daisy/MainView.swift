@@ -27,12 +27,12 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
-        case .home:        "Home"
-        case .library:     "Library"
-        case .dictation:   "Dictation"
-        case .connections: "Connections"
-        case .settings:    "Settings"
-        case .about:       "About"
+        case .home:        String(localized: "Home")
+        case .library:     String(localized: "Library")
+        case .dictation:   String(localized: "Dictation")
+        case .connections: String(localized: "Connections")
+        case .settings:    String(localized: "Settings")
+        case .about:       String(localized: "About")
         }
     }
 
@@ -669,15 +669,15 @@ struct ModelDownloadPill: View {
         case .checking?:
             // Eyes, not a download arrow — nothing is downloading yet,
             // Daisy is just looking around (cache check / repo resolve).
-            pill(label: "Checking models…", icon: "eyes", progress: nil)
+            pill(label: String(localized: "Checking models…"), icon: "eyes", progress: nil)
         case .downloading(let progress)?:
             pill(
-                label: "Downloading model… \(Int(progress * 100))%",
+                label: String(localized: "Downloading model… \(Int(progress * 100))%"),
                 icon: "arrow.down.circle",
                 progress: min(max(progress, 0), 1)
             )
         case .loading?:
-            pill(label: "Loading model…", icon: "arrow.down.circle", progress: nil)
+            pill(label: String(localized: "Loading model…"), icon: "arrow.down.circle", progress: nil)
         case nil:
             EmptyView()
         }

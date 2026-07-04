@@ -749,7 +749,7 @@ final class RecordingSession {
             let oldTitle = self.boundMeeting?.title ?? self.title
             log.warning("Calendar fired \(meeting.title, privacy: .private) while still recording \(oldTitle, privacy: .private). Auto-rotating sessions.")
             ToastCenter.shared.show(
-                "Previous meeting saved — starting new session for \(meeting.title).",
+                String(localized: "Previous meeting saved — starting new session for \(meeting.title)."),
                 style: .info
             )
             await stop()
@@ -821,7 +821,7 @@ final class RecordingSession {
         // mirrors the non-prompt app-launch path which just toasts.
         guard status == .idle || status == .finished || isFailed else {
             ToastCenter.shared.show(
-                "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one.",
+                String(localized: "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one."),
                 style: .info
             )
             return
@@ -979,7 +979,7 @@ final class RecordingSession {
         switch WhisperEngine.shared.state {
         case .notLoaded, .downloading, .loading:
             ToastCenter.shared.show(
-                "Setting up transcription model — first run only, about 1–3 minutes",
+                String(localized: "Setting up transcription model — first run only, about 1–3 minutes"),
                 style: .info
             )
         case .ready, .failed:
@@ -1007,11 +1007,11 @@ final class RecordingSession {
             await WhisperEngine.shared.ensureLoaded()
         }
         if case .failed(let msg) = WhisperEngine.shared.state {
-            await failFast("Whisper model failed to load: \(msg)")
+            await failFast(String(localized: "Whisper model failed to load: \(msg)"))
             return
         }
         guard WhisperEngine.shared.isReady else {
-            await failFast("Whisper model isn't ready yet — try again in a moment.")
+            await failFast(String(localized: "Whisper model isn't ready yet — try again in a moment."))
             return
         }
 
@@ -1057,7 +1057,7 @@ final class RecordingSession {
         if lowDiskAtStart {
             let freeGB = Double(freeAtStart ?? 0) / 1_073_741_824
             ToastCenter.shared.show(
-                String(format: "Low disk space (%.1f GB free) — recording transcript only this session, no audio. Free up space to record audio again.", freeGB),
+                String(format: String(localized: "Low disk space (%.1f GB free) — recording transcript only this session, no audio. Free up space to record audio again."), freeGB),
                 style: .warning,
                 duration: .seconds(6)
             )
@@ -1129,8 +1129,8 @@ final class RecordingSession {
                 systemAudioDeniedThisSession = true
                 log.warning("Screen Recording permission denied — recording mic only")
                 ToastCenter.shared.showAction(
-                    "Couldn't capture the other side — Screen Recording permission is off. Recording your voice only.",
-                    actionLabel: "Open Privacy Settings",
+                    String(localized: "Couldn't capture the other side — Screen Recording permission is off. Recording your voice only."),
+                    actionLabel: String(localized: "Open Privacy Settings"),
                     style: .warning,
                     duration: .seconds(20),
                     perform: { ScreenRecordingPermission.openSystemSettings() }
@@ -1150,7 +1150,7 @@ final class RecordingSession {
                     // need to know the remote side won't be
                     // captured.
                     ToastCenter.shared.show(
-                        "Couldn't capture the other side — recording your voice only.",
+                        String(localized: "Couldn't capture the other side — recording your voice only."),
                         style: .warning
                     )
                 }
@@ -1221,7 +1221,7 @@ final class RecordingSession {
         systemAudio.stopArchivingKeepTranscribing()
         let freeGB = Double(free) / 1_073_741_824
         ToastCenter.shared.show(
-            String(format: "Disk space critically low (%.1f GB) — switched to transcript only. Audio stopped to avoid filling your disk; the transcript keeps recording.", freeGB),
+            String(format: String(localized: "Disk space critically low (%.1f GB) — switched to transcript only. Audio stopped to avoid filling your disk; the transcript keeps recording."), freeGB),
             style: .warning,
             duration: .seconds(7)
         )
@@ -1273,7 +1273,7 @@ final class RecordingSession {
             try recorder.resume()
         } catch {
             log.error("Resume mic failed: \(error.localizedDescription, privacy: .public)")
-            status = .failed("Couldn't resume mic capture: \(error.localizedDescription)")
+            status = .failed(String(localized: "Couldn't resume mic capture: \(error.localizedDescription)"))
             return
         }
         if settings.captureSystemAudio {
@@ -1369,7 +1369,7 @@ final class RecordingSession {
             // unreliable in tester reports — keeping it in the
             // toast set a false expectation of fix-ability.
             ToastCenter.shared.show(
-                "Other side wasn't captured — only your mic was recorded this session",
+                String(localized: "Other side wasn't captured — only your mic was recorded this session"),
                 style: .warning,
                 duration: .seconds(8)
             )
@@ -1417,7 +1417,7 @@ final class RecordingSession {
                     log.info("Stop: <10s and nothing captured — removed husk")
                 }
                 ToastCenter.shared.show(
-                    "Recording too short — nothing to save",
+                    String(localized: "Recording too short — nothing to save"),
                     style: .info,
                     duration: .seconds(3)
                 )
@@ -1434,7 +1434,7 @@ final class RecordingSession {
             // just leaves an (empty) transcript.md the user can see.
             log.warning("Stop: \(self.elapsed, privacy: .public)s elapsed but no audio and no transcript — keeping session and warning (not deleting)")
             ToastCenter.shared.show(
-                "Nothing was transcribed this session — check your mic and Settings → Transcription. The recording was kept, not discarded",
+                String(localized: "Nothing was transcribed this session — check your mic and Settings → Transcription. The recording was kept, not discarded"),
                 style: .warning,
                 duration: .seconds(8)
             )
@@ -1545,7 +1545,7 @@ final class RecordingSession {
         if case .truncated(let bytes, let framesWritten, let writeErrors) = micStatus {
             log.error("Mic archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
             ToastCenter.shared.show(
-                "Mic recording is incomplete — only part of your audio made it to disk. Keep this session's folder to recover what's there.",
+                String(localized: "Mic recording is incomplete — only part of your audio made it to disk. Keep this session's folder to recover what's there."),
                 style: .error,
                 duration: .seconds(12)
             )
@@ -1553,7 +1553,7 @@ final class RecordingSession {
         if case .truncated(let bytes, let framesWritten, let writeErrors) = sysStatus {
             log.error("System audio archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
             ToastCenter.shared.show(
-                "Other-side audio is incomplete — capture started but the file didn't grow. Transcript may still be usable; raw audio is partial.",
+                String(localized: "Other-side audio is incomplete — capture started but the file didn't grow. Transcript may still be usable; raw audio is partial."),
                 style: .error,
                 duration: .seconds(12)
             )
@@ -1638,7 +1638,7 @@ final class RecordingSession {
             } catch {
                 log.error("Failed to write transcript.md: \(error.localizedDescription)")
                 ToastCenter.shared.show(
-                    "Couldn’t save transcript file. Check Console for details.",
+                    String(localized: "Couldn’t save transcript file. Check Console for details."),
                     style: .error
                 )
             }
@@ -1837,7 +1837,7 @@ final class RecordingSession {
             systemTranscriber.setLiveTier(.lite)
             log.info("Live transcription auto-downgraded Full→Lite (\(hot ? "thermal" : "low-power", privacy: .public))")
             ToastCenter.shared.show(
-                "High \(hot ? "heat" : "power") load — live transcript eased to Lite. The final transcript on Stop stays full quality.",
+                String(localized: "High \(hot ? String(localized: "heat") : String(localized: "power")) load — live transcript eased to Lite. The final transcript on Stop stays full quality."),
                 style: .info
             )
         } else if !shouldThrottle, thermalDowngradeActive {
@@ -1845,7 +1845,7 @@ final class RecordingSession {
             micTranscriber.setLiveTier(startedLiveTier)
             systemTranscriber.setLiveTier(startedLiveTier)
             log.info("Live transcription auto-restored to Full (load normalised)")
-            ToastCenter.shared.show("Load eased — live transcript back to Full.", style: .info)
+            ToastCenter.shared.show(String(localized: "Load eased — live transcript back to Full."), style: .info)
         }
     }
 

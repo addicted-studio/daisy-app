@@ -1,0 +1,46 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSCalendarsFullAccessUsageDescription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy читает ваш календарь, чтобы находить предстоящие встречи и предлагать автозапись, когда они начинаются. Данные не покидают ваш Mac."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy записывает звук встречи локально и расшифровывает его на устройстве. Аудио не покидает ваш компьютер."
+          }
+        }
+      }
+    },
+    "NSScreenCaptureUsageDescription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy захватывает системный звук встреч через «Запись экрана», чтобы расшифровывать речь других участников. Видеокадры не сохраняются и никуда не отправляются."
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy использует распознавание речи на устройстве, чтобы показывать облегчённый живой транскрипт во время записи. Всё остаётся на вашем Mac — ничего не отправляется Apple или на серверы."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

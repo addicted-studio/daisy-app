@@ -45,23 +45,23 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .appleIntelligence: return "Apple Intelligence (on-device)"
-        case .anthropic: return "Anthropic Claude API"
-        case .openai: return "OpenAI GPT API"
-        case .ollama: return "Ollama (local)"
-        case .lmStudio: return "LM Studio (local)"
-        case .mcp: return "Custom MCP server (advanced)"
+        case .appleIntelligence: return String(localized: "Apple Intelligence (on-device)")
+        case .anthropic: return String(localized: "Anthropic Claude API")
+        case .openai: return String(localized: "OpenAI GPT API")
+        case .ollama: return String(localized: "Ollama (local)")
+        case .lmStudio: return String(localized: "LM Studio (local)")
+        case .mcp: return String(localized: "Custom MCP server (advanced)")
         }
     }
 
     var shortName: String {
         switch self {
         case .appleIntelligence: return "Apple Intelligence"
-        case .anthropic: return "Anthropic"
-        case .openai: return "OpenAI"
-        case .ollama: return "Ollama"
-        case .lmStudio: return "LM Studio"
-        case .mcp: return "MCP"
+        case .anthropic: return String(localized: "Anthropic")
+        case .openai: return String(localized: "OpenAI")
+        case .ollama: return String(localized: "Ollama")
+        case .lmStudio: return String(localized: "LM Studio")
+        case .mcp: return String(localized: "MCP")
         }
     }
 
@@ -78,17 +78,17 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     var privacyTag: String {
         switch self {
         case .appleIntelligence:
-            return "On-device — nothing is sent anywhere."
+            return String(localized: "On-device — nothing is sent anywhere.")
         case .anthropic:
-            return "Sent to Anthropic over HTTPS, using your API key."
+            return String(localized: "Sent to Anthropic over HTTPS, using your API key.")
         case .openai:
-            return "Sent to OpenAI over HTTPS, using your API key."
+            return String(localized: "Sent to OpenAI over HTTPS, using your API key.")
         case .ollama:
-            return "Sent to your local Ollama on 127.0.0.1 — stays on your Mac."
+            return String(localized: "Sent to your local Ollama on 127.0.0.1 — stays on your Mac.")
         case .lmStudio:
-            return "Sent to your local LM Studio on 127.0.0.1 — stays on your Mac."
+            return String(localized: "Sent to your local LM Studio on 127.0.0.1 — stays on your Mac.")
         case .mcp:
-            return "Sent to your MCP server — stays local if it's on 127.0.0.1."
+            return String(localized: "Sent to your MCP server — stays local if it's on 127.0.0.1.")
         }
     }
 
@@ -104,12 +104,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     // applies.
 
     func displayName(ollamaModel: String?) -> String {
-        isOllamaCloud(ollamaModel) ? "Ollama (cloud model)" : displayName
+        isOllamaCloud(ollamaModel) ? String(localized: "Ollama (cloud model)") : displayName
     }
 
     func privacyTag(ollamaModel: String?) -> String {
         isOllamaCloud(ollamaModel)
-            ? "Proxied by your local Ollama out to ollama.com — transcript leaves your Mac."
+            ? String(localized: "Proxied by your local Ollama out to ollama.com — transcript leaves your Mac.")
             : privacyTag
     }
 
@@ -155,19 +155,19 @@ enum SummaryProviderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey(let p):
-            return "\(p): API key is missing. Open Settings → Summary to add it."
+            return String(localized: "\(p): API key is missing. Open Settings → Summary to add it.")
         case .invalidResponse(let p):
-            return "\(p): unexpected response from the API."
+            return String(localized: "\(p): unexpected response from the API.")
         case .httpError(let p, let code, let body):
             // Trim very long bodies for the user-visible message.
             let trimmed = body.count > 200 ? String(body.prefix(200)) + "…" : body
-            return "\(p): HTTP \(code) — \(trimmed)"
+            return String(localized: "\(p): HTTP \(code) — \(trimmed)")
         case .parseFailed(let p, let msg):
-            return "\(p): couldn't parse JSON — \(msg)"
+            return String(localized: "\(p): couldn't parse JSON — \(msg)")
         case .modelUnavailable(let p, let reason):
             return "\(p): \(reason)"
         case .transcriptTooShort:
-            return "Not enough was said yet — try a recording over a minute long."
+            return String(localized: "Not enough was said yet — try a recording over a minute long.")
         }
     }
 }

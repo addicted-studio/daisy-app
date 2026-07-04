@@ -34,7 +34,7 @@ enum AboutPanel {
             // but we override here so it stays consistent with the
             // string the in-app About view shows.
             NSApplication.AboutPanelOptionKey(rawValue: "Copyright"):
-                "Made by Addicted Studio. Open source under Apache 2.0."
+                String(localized: "Made by Addicted Studio. Open source under Apache 2.0.")
         ])
     }
 
@@ -66,11 +66,11 @@ enum AboutPanel {
         ]
         let result = NSMutableAttributedString()
         result.append(.init(
-            string: "Local meeting capture for Mac\n",
+            string: String(localized: "Local meeting capture for Mac\n"),
             attributes: base
         ))
         result.append(.init(
-            string: "Built by Addicted Studio\n",
+            string: String(localized: "Built by Addicted Studio\n"),
             attributes: base
         ))
         result.append(link("addicted.sh", url: "https://addicted.sh", base: base))

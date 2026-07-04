@@ -148,32 +148,30 @@ struct BulkDeleteRecordingsView: View {
     private func countCaption(_ count: Int) -> String {
         if count == 0 {
             if let folder = scopeFolderName {
-                return "No recordings in \(folder)"
+                return String(localized: "No recordings in \(folder)")
             }
-            return "No recordings to delete"
+            return String(localized: "No recordings to delete")
         }
-        let noun = count == 1 ? "recording" : "recordings"
         if let folder = scopeFolderName {
-            return "\(count) \(noun) in \(folder)"
+            return String(localized: "\(count) recordings in \(folder)")
         }
-        return "\(count) \(noun) across all folders"
+        return String(localized: "\(count) recordings across all folders")
     }
 
     /// Confirmation dialog title — leads with the count, names the
     /// folder when scoped so the user can't mistake which set they're
     /// about to wipe.
     private func confirmTitle(_ count: Int) -> String {
-        let noun = count == 1 ? "recording" : "recordings"
         if let folder = scopeFolderName {
-            return "Delete \(count) \(noun) in \(folder)?"
+            return String(localized: "Delete \(count) recordings in \(folder)?")
         }
-        return "Delete \(count) \(noun)?"
+        return String(localized: "Delete \(count) recordings?")
     }
 
     /// Red confirm-button label. Echoes the count so the destructive
     /// action restates exactly what it'll do at the moment of commit.
     private func confirmButtonLabel(_ count: Int) -> String {
-        count == 1 ? "Delete 1 recording" : "Delete \(count) recordings"
+        count == 1 ? String(localized: "Delete 1 recording") : String(localized: "Delete \(count) recordings")
     }
 
     // MARK: - Action

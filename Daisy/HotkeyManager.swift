@@ -479,8 +479,8 @@ final class HotkeyManager {
     private func promptForInputMonitoring(label: String) {
         log.warning("NSEvent.addGlobalMonitorForEvents returned nil — Input Monitoring denied for \(label, privacy: .public)")
         ToastCenter.shared.showAction(
-            "Daisy needs Input Monitoring to use the \(label) hotkey.",
-            actionLabel: "Open Settings",
+            String(localized: "Daisy needs Input Monitoring to use the \(label) hotkey."),
+            actionLabel: String(localized: "Open Settings"),
             style: .warning,
             perform: {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") {

@@ -46,6 +46,6 @@ enum VersionInfo {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(payload, forType: .string)
-        ToastCenter.shared.show("Copied \(payload)", style: .success)
+        ToastCenter.shared.show(String(localized: "Copied \(payload)"), style: .success)
     }
 }

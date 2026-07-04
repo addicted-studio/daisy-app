@@ -234,7 +234,7 @@ nonisolated enum ParakeetEngineError: LocalizedError {
     case notReady
     var errorDescription: String? {
         switch self {
-        case .notReady: return "Parakeet ASR isn’t available yet."
+        case .notReady: return String(localized: "Parakeet ASR isn’t available yet.")
         }
     }
 }

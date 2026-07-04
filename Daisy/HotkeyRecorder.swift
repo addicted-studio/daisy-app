@@ -97,12 +97,12 @@ struct HotkeyRecorder: View {
             .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
-        .help(isListening ? "Press the shortcut combination…" : "Click to change shortcut")
+        .help(isListening ? String(localized: "Press the shortcut combination…") : String(localized: "Click to change shortcut"))
         .onDisappear { box.stop() }
     }
 
     private var displayLabel: String {
-        if isListening { return "Press keys…" }
+        if isListening { return String(localized: "Press keys…") }
         return value.label
     }
 }

@@ -52,7 +52,7 @@ final class InterruptedRecordingRecovery {
             return
         }
 
-        ToastCenter.shared.show("Recovering an unfinished recording…", style: .info)
+        ToastCenter.shared.show(String(localized: "Recovering an unfinished recording…"), style: .info)
 
         let language = VoiceMemoScanner.whisperLanguage(
             from: UserDefaults.standard.string(forKey: "daisy.defaultTranscriptionLocale") ?? "auto"
@@ -66,7 +66,7 @@ final class InterruptedRecordingRecovery {
         guard mic != nil || system != nil else {
             log.error("Recovery: decode/transcribe failed for \(folder.lastPathComponent, privacy: .public) — left intact")
             ToastCenter.shared.show(
-                "Couldn't auto-transcribe a recovered recording — the audio is kept; open the folder to re-process it.",
+                String(localized: "Couldn't auto-transcribe a recovered recording — the audio is kept; open the folder to re-process it."),
                 style: .warning
             )
             return
@@ -93,7 +93,7 @@ final class InterruptedRecordingRecovery {
                 at: folder.appendingPathComponent(SessionStore.recordingMarkerName)
             )
             log.info("Recovered \(folder.lastPathComponent, privacy: .public) in \(Date().timeIntervalSince(started), privacy: .public)s")
-            ToastCenter.shared.show("Recovered your unfinished recording.", style: .success)
+            ToastCenter.shared.show(String(localized: "Recovered your unfinished recording."), style: .success)
             await SessionStore.shared.refresh()
         } catch {
             // Write failed → leave the audio + marker so the next scan retries.
@@ -179,25 +179,25 @@ final class InterruptedRecordingRecovery {
         lines.append("")
         lines.append("# Recovered recording — \(titleDate)")
         lines.append("")
-        lines.append("> Recovered after an interrupted session (crash or power loss). Basic transcript — no speaker labels or summary. The audio is in this folder if you want to re-process it.")
+        lines.append("> " + String(localized: "Recovered after an interrupted session (crash or power loss). Basic transcript — no speaker labels or summary. The audio is in this folder if you want to re-process it."))
         lines.append("")
 
         let micText = mic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let sysText = system?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !micText.isEmpty {
-            lines.append("## Your side")
+            lines.append("## " + String(localized: "Your side"))
             lines.append("")
             lines.append(micText)
             lines.append("")
         }
         if !sysText.isEmpty {
-            lines.append("## Other side")
+            lines.append("## " + String(localized: "Other side"))
             lines.append("")
             lines.append(sysText)
             lines.append("")
         }
         if micText.isEmpty, sysText.isEmpty {
-            lines.append("_No speech detected in the recovered audio._")
+            lines.append("_" + String(localized: "No speech detected in the recovered audio.") + "_")
             lines.append("")
         }
         return lines.joined(separator: "\n")

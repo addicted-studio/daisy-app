@@ -460,10 +460,10 @@ struct ContentView: View {
         switch CalendarService.shared.authorizationStatus {
         case .fullAccess:
             return selectedMeeting == nil
-                ? "Bind this recording to an upcoming calendar event"
-                : "Selected: \(selectedMeeting?.title ?? "")"
+                ? String(localized: "Bind this recording to an upcoming calendar event")
+                : String(localized: "Selected: \(selectedMeeting?.title ?? "")")
         default:
-            return "Connect Calendar to bind recordings to events"
+            return String(localized: "Connect Calendar to bind recordings to events")
         }
     }
 
@@ -474,13 +474,13 @@ struct ContentView: View {
         let start = f.string(from: meeting.startDate)
         let mins = Int(meeting.startDate.timeIntervalSinceNow / 60)
         if mins > 60 {
-            return "\(start) · in \(mins / 60)h \(mins % 60)m"
+            return String(localized: "\(start) · in \(mins / 60)h \(mins % 60)m")
         } else if mins > 0 {
-            return "\(start) · in \(mins)m"
+            return String(localized: "\(start) · in \(mins)m")
         } else if mins > -60 {
-            return "\(start) · now"
+            return String(localized: "\(start) · now")
         } else {
-            return "\(start) · started \(-mins)m ago"
+            return String(localized: "\(start) · started \(-mins)m ago")
         }
     }
 
@@ -543,17 +543,17 @@ struct ContentView: View {
 
     private var statusLabel: String {
         switch session.status {
-        case .idle: return "Ready"
+        case .idle: return String(localized: "Ready")
         case .preparing:
             // Surface the underlying Whisper load state so the user
             // knows what they're waiting on (mostly a slow download).
             switch WhisperEngine.shared.state {
             case .downloading(let progress):
-                return "Downloading Whisper model… \(Int(progress * 100))%"
+                return String(localized: "Downloading Whisper model… \(Int(progress * 100))%")
             case .loading(let status):
                 return status
             default:
-                return "Preparing…"
+                return String(localized: "Preparing…")
             }
         // Recording: no caption — the pulsing orange dot + running
         // timer already say it, and "Recording locally · on-device
@@ -561,10 +561,10 @@ struct ContentView: View {
         // (user feedback 2026-06-12). The consent footer keeps the
         // privacy message.
         case .recording: return ""
-        case .paused: return "Paused · capture stopped, session held"
-        case .stopping: return "Stopping…"
-        case .summarizing: return "Apple Intelligence is summarizing…"
-        case .finished: return "Done"
+        case .paused: return String(localized: "Paused · capture stopped, session held")
+        case .stopping: return String(localized: "Stopping…")
+        case .summarizing: return String(localized: "Apple Intelligence is summarizing…")
+        case .finished: return String(localized: "Done")
         case .failed(let msg): return msg
         }
     }
@@ -670,12 +670,12 @@ struct ContentView: View {
 
     private var primaryLabel: String {
         switch session.status {
-        case .recording: return "Pause"
-        case .paused: return "Resume"
-        case .preparing: return "Preparing…"
-        case .stopping:  return "Stopping…"
-        case .summarizing: return "Summarizing…"
-        default:         return "Record"
+        case .recording: return String(localized: "Pause")
+        case .paused: return String(localized: "Resume")
+        case .preparing: return String(localized: "Preparing…")
+        case .stopping:  return String(localized: "Stopping…")
+        case .summarizing: return String(localized: "Summarizing…")
+        default:         return String(localized: "Record")
         }
     }
 
@@ -779,7 +779,7 @@ struct ContentView: View {
                             // mail / Slack, verbatim text for plain
                             // targets (MarkdownClipboard.swift).
                             RichClipboard.copy(markdown: summary.clientFollowUp)
-                            ToastCenter.shared.show("Follow-up draft copied", style: .success)
+                            ToastCenter.shared.show(String(localized: "Follow-up draft copied"), style: .success)
                         } label: {
                             Label("Copy follow-up", systemImage: "envelope")
                                 .font(.caption)
@@ -826,7 +826,7 @@ struct ContentView: View {
                     .font(.subheadline.weight(.semibold))
                 Spacer()
                 if !display.isEmpty {
-                    Text("\(display.count) line\(display.count == 1 ? "" : "s")")
+                    Text(String(localized: "\(display.count) lines"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -878,12 +878,12 @@ struct ContentView: View {
 
     private var emptyStateTitle: String {
         switch session.status {
-        case .recording: return "Listening…"
-        case .finished: return "No speech was captured."
+        case .recording: return String(localized: "Listening…")
+        case .finished: return String(localized: "No speech was captured.")
         default:
             // Hotkey is already shown in the Record button's badge — no
             // need to repeat it in the empty state.
-            return "Click Record to begin."
+            return String(localized: "Click Record to begin.")
         }
     }
 
@@ -1005,7 +1005,7 @@ struct ContentView: View {
             Button {
                 let opened = ClaudeExporter.sendToClaude(data: session.exportData())
                 if !opened {
-                    sendError = "Couldn't find Claude.app — opened claude.ai in browser. Press ⌘V to paste."
+                    sendError = String(localized: "Couldn't find Claude.app — opened claude.ai in browser. Press ⌘V to paste.")
                 }
             } label: {
                 Label("Send to Claude", systemImage: "sparkles")

@@ -110,7 +110,7 @@ struct DictationView: View {
         // low-stakes (it auto-clears anyway), so the red read as too alarming.
         Button {
             DictationHistory.shared.clear()
-            ToastCenter.shared.show("History cleared", style: .success)
+            ToastCenter.shared.show(String(localized: "History cleared"), style: .success)
         } label: {
             Label("Clear history", systemImage: "trash")
         }

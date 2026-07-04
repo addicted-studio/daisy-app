@@ -139,14 +139,14 @@ struct RecordCapsule: View {
         // recording-state labels (Pause / Resume / Stop) stay as
         // standard media verbs once a session is in flight.
         switch session.status {
-        case .recording:    return "Pause"
-        case .paused:       return "Resume"
-        case .preparing:    return "Preparing…"
-        case .stopping:     return "Stopping…"
-        case .summarizing:  return "Summarizing…"
-        case .finished:     return "Record"
-        case .failed:       return "Try again"
-        case .idle:         return "Record"
+        case .recording:    return String(localized: "Pause")
+        case .paused:       return String(localized: "Resume")
+        case .preparing:    return String(localized: "Preparing…")
+        case .stopping:     return String(localized: "Stopping…")
+        case .summarizing:  return String(localized: "Summarizing…")
+        case .finished:     return String(localized: "Record")
+        case .failed:       return String(localized: "Try again")
+        case .idle:         return String(localized: "Record")
         }
     }
 
@@ -200,11 +200,11 @@ struct RecordCapsule: View {
 
     private var helpText: String {
         switch session.status {
-        case .recording:    return "Pause (Space)"
-        case .paused:       return "Resume (Space)"
-        case .idle:         return "Start a new recording (Space)"
-        case .finished:     return "Record again (Space)"
-        case .failed:       return "Try recording again"
+        case .recording:    return String(localized: "Pause (Space)")
+        case .paused:       return String(localized: "Resume (Space)")
+        case .idle:         return String(localized: "Start a new recording (Space)")
+        case .finished:     return String(localized: "Record again (Space)")
+        case .failed:       return String(localized: "Try recording again")
         default:            return ""
         }
     }

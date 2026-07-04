@@ -132,7 +132,7 @@ final class SessionStore {
         }
 
         guard !roots.isEmpty else {
-            lastError = "Couldn't resolve any sessions folder."
+            lastError = String(localized: "Couldn't resolve any sessions folder.")
             sessions = []
             searchIndexDirty = true
             return

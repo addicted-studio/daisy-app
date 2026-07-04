@@ -27,7 +27,7 @@ enum SessionsFolder {
     private static let bookmarkKey = "daisy.sessionsFolderBookmark"
 
     /// Path displayed in Settings when no folder is picked.
-    static let defaultContainerLabel = "Inside Daisy's container (default)"
+    static let defaultContainerLabel = String(localized: "Inside Daisy's container (default)")
 
     // MARK: - Persistence
 
@@ -109,9 +109,9 @@ enum SessionsFolder {
     /// (or cancels → nil).
     static func presentPicker(window: NSWindow? = nil) -> URL? {
         let panel = NSOpenPanel()
-        panel.title = "Choose a folder for Daisy sessions"
-        panel.message = "Audio, transcripts, summaries and screenshots will be saved into a `Daisy/Sessions/` subfolder here."
-        panel.prompt = "Choose"
+        panel.title = String(localized: "Choose a folder for Daisy sessions")
+        panel.message = String(localized: "Audio, transcripts, summaries and screenshots will be saved into a `Daisy/Sessions/` subfolder here.")
+        panel.prompt = String(localized: "Choose")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true

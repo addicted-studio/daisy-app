@@ -726,7 +726,7 @@ final class AppSettings {
     // Now they get a toast.
     var notionToken: String {
         didSet {
-            Self.persist(notionToken, account: SecretKey.notionToken, label: "Notion token")
+            Self.persist(notionToken, account: SecretKey.notionToken, label: String(localized: "Notion token"))
             // New token → old test result no longer reflects this
             // configuration. Force a re-test before auto-send can
             // be re-enabled.
@@ -735,19 +735,19 @@ final class AppSettings {
     }
     var notionParentID: String {
         didSet {
-            Self.persist(notionParentID, account: SecretKey.notionParentID, label: "Notion parent ID")
+            Self.persist(notionParentID, account: SecretKey.notionParentID, label: String(localized: "Notion parent ID"))
             if notionParentID != oldValue { lastNotionTestPassedAt = nil }
         }
     }
     var anthropicAPIKey: String {
         didSet {
-            Self.persist(anthropicAPIKey, account: SecretKey.anthropicAPIKey, label: "Anthropic API key")
+            Self.persist(anthropicAPIKey, account: SecretKey.anthropicAPIKey, label: String(localized: "Anthropic API key"))
             Task { @MainActor in await Summarizer.shared.refreshAvailability() }
         }
     }
     var openaiAPIKey: String {
         didSet {
-            Self.persist(openaiAPIKey, account: SecretKey.openaiAPIKey, label: "OpenAI API key")
+            Self.persist(openaiAPIKey, account: SecretKey.openaiAPIKey, label: String(localized: "OpenAI API key"))
             Task { @MainActor in await Summarizer.shared.refreshAvailability() }
         }
     }
@@ -758,7 +758,7 @@ final class AppSettings {
             try KeychainStore.set(value, account: account)
         } catch {
             Self.log.error("Keychain write failed for \(label, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            ToastCenter.shared.show("Couldn’t save \(label) — try again.", style: .error)
+            ToastCenter.shared.show(String(localized: "Couldn’t save \(label) — try again."), style: .error)
         }
     }
 
@@ -1189,10 +1189,10 @@ enum AutoStartPolicy: String, CaseIterable, Identifiable, Sendable {
     /// not the internal policy word.
     nonisolated var displayName: String {
         switch self {
-        case .always:    return "All meetings"
-        case .selective: return "Meetings with a link"
-        case .prompt:    return "Ask me first"
-        case .manual:    return "Off"
+        case .always:    return String(localized: "All meetings")
+        case .selective: return String(localized: "Meetings with a link")
+        case .prompt:    return String(localized: "Ask me first")
+        case .manual:    return String(localized: "Off")
         }
     }
 }
@@ -1225,9 +1225,9 @@ enum SpeakerMatchMode: String, CaseIterable, Identifiable, Sendable {
     /// Label for the segmented control.
     nonisolated var displayName: String {
         switch self {
-        case .off:       return "Off"
-        case .suggest:   return "Suggest"
-        case .automatic: return "Automatic"
+        case .off:       return String(localized: "Off")
+        case .suggest:   return String(localized: "Suggest")
+        case .automatic: return String(localized: "Automatic")
         }
     }
 }
@@ -1255,9 +1255,9 @@ enum LiveTranscriptionTier: String, CaseIterable, Identifiable, Sendable {
 
     nonisolated var displayName: String {
         switch self {
-        case .full: return "Full"
-        case .lite: return "Lite"
-        case .off:  return "Off"
+        case .full: return String(localized: "Full")
+        case .lite: return String(localized: "Lite")
+        case .off:  return String(localized: "Off")
         }
     }
 }
@@ -1283,7 +1283,7 @@ enum SummaryLanguage: String, CaseIterable, Identifiable, Sendable {
 
     nonisolated var displayName: String {
         switch self {
-        case .auto: return "Auto · same as transcript"
+        case .auto: return String(localized: "Auto · same as transcript")
         case .en:   return "English"
         case .ru:   return "Русский"
         case .uk:   return "Українська"

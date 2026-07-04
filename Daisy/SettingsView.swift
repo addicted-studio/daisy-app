@@ -195,12 +195,12 @@ struct SettingsView: View {
     private var presetMenuLabel: String {
         let current = settings.recordHotkey
         if current.keyCode == nil {
-            return "Choose preset"
+            return String(localized: "Choose preset")
         }
         if current.isPreset {
             return current.label
         }
-        return "Custom — \(current.label)"
+        return String(localized: "Custom — \(current.label)")
     }
 
     /// Combined recorder + preset-menu editor for ANY hotkey
@@ -375,7 +375,7 @@ struct SettingsView: View {
                 Button("Choose folder…") {
                     if SessionsFolder.presentPicker() != nil {
                         storageRefreshTick &+= 1
-                        ToastCenter.shared.show("New recordings will land here.", style: .success)
+                        ToastCenter.shared.show(String(localized: "New recordings will land here."), style: .success)
                     }
                 }
                 .buttonStyle(.bordered)
@@ -440,15 +440,15 @@ struct SettingsView: View {
         //     meeting recordings, not files. Same reason "cache" got
         //     dropped from the row title (dev word).
         let sizeText: String = {
-            if audioCacheFiles == 0 { return "No audio to delete" }
+            if audioCacheFiles == 0 { return String(localized: "No audio to delete") }
             let size: String
-            if mb < 1024 { size = String(format: "%.0f MB", mb) }
-            else { size = String(format: "%.2f GB", mb / 1024.0) }
+            if mb < 1024 { size = String(format: String(localized: "%.0f MB"), mb) }
+            else { size = String(format: String(localized: "%.2f GB"), mb / 1024.0) }
             // No recording count here — it read as a contradiction next to
             // the "Delete recordings" row's count ("1 recording" vs "26
             // recordings"). The reassurance "keeps transcripts" is what
             // actually distinguishes this row from deleting whole recordings.
-            return "\(size) · keeps transcripts"
+            return String(localized: "\(size) · keeps transcripts")
         }()
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -457,7 +457,7 @@ struct SettingsView: View {
                 // (Sessions folder / Notion). Without it the row
                 // visually deemphasised itself, like an info row
                 // instead of an actionable one.
-                Text("Delete audio files")
+                Text(String(localized: "Delete audio files"))
                     .font(.callout.weight(.medium))
                 Text(sizeText)
                     .font(.caption)
@@ -521,13 +521,13 @@ struct SettingsView: View {
                 AudioRetentionSweep.runNow { _, freedBytes in
                     let mb = Double(freedBytes) / 1_048_576.0
                     let freedText: String = {
-                        if mb < 1024 { return String(format: "%.0f MB", mb) }
-                        return String(format: "%.2f GB", mb / 1024.0)
+                        if mb < 1024 { return String(format: String(localized: "%.0f MB"), mb) }
+                        return String(format: String(localized: "%.2f GB"), mb / 1024.0)
                     }()
                     ToastCenter.shared.show(
                         freedBytes > 0
-                            ? "Freed \(freedText)"
-                            : "Nothing to clear — audio is already gone",
+                            ? String(localized: "Freed \(freedText)")
+                            : String(localized: "Nothing to clear — audio is already gone"),
                         style: .success
                     )
                     clearingAudioCache = false
@@ -705,7 +705,7 @@ struct SettingsView: View {
                         // rebuilt — only finished sessions keep their transcript.
                         if new == AppSettings.audioRetentionDoNotRecord {
                             ToastCenter.shared.show(
-                                "Audio won't be saved to disk. If a recording is interrupted — a crash or power loss — it can't be recovered; only sessions you finish keep their transcript.",
+                                String(localized: "Audio won't be saved to disk. If a recording is interrupted — a crash or power loss — it can't be recovered; only sessions you finish keep their transcript."),
                                 style: .warning,
                                 duration: .seconds(8)
                             )
@@ -922,9 +922,9 @@ struct SettingsView: View {
 
     private var systemDefaultLabel: String {
         if let current = micDevices.first(where: { $0.isSystemDefault }) {
-            return "System default (\(current.name))"
+            return String(localized: "System default (\(current.name))")
         }
-        return "System default"
+        return String(localized: "System default")
     }
 
     private func refreshMicDevices() {
@@ -987,10 +987,10 @@ struct SettingsView: View {
                 Picker(selection: $whisper.modelID) {
                     ForEach(WhisperEngine.availableModels, id: \.id) { model in
                         let size = model.sizeMB >= 1000
-                            ? String(format: "%.1f GB", Double(model.sizeMB) / 1000.0)
-                            : "\(model.sizeMB) MB"
+                            ? String(format: String(localized: "%.1f GB"), Double(model.sizeMB) / 1000.0)
+                            : String(localized: "\(model.sizeMB) MB")
                         let name = model.id == WhisperEngine.defaultModelID
-                            ? "Standard" : "Most accurate"
+                            ? "Standard" : String(localized: "Most accurate")
                         Text("\(name) · \(size)").tag(model.id)
                     }
                 } label: {
@@ -1213,7 +1213,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var modelsCacheRow: some View {
         HStack(spacing: 8) {
-            Text("\(cachedModelsCount) \(cachedModelsCount == 1 ? "model" : "models") · \(formattedCacheSize)")
+            Text("\(cachedModelsCount) models · \(formattedCacheSize)")
                 .monospacedDigit()
             Spacer()
             Button("Remove unused") {
@@ -1227,7 +1227,7 @@ struct SettingsView: View {
                     cacheRefreshTick &+= 1
                     if freed > 0 {
                         ToastCenter.shared.show(
-                            "Freed \(byteFormatter.string(fromByteCount: freed)) of model cache.",
+                            String(localized: "Freed \(byteFormatter.string(fromByteCount: freed)) of model cache."),
                             style: .success
                         )
                     }
@@ -1272,11 +1272,11 @@ struct SettingsView: View {
     private var speakerMatchModeHelp: String {
         switch settings.speakerMatchMode {
         case .automatic:
-            return "Daisy labels a recognized person automatically as soon as a recording finishes — by their voice, or by their email if the meeting came from your calendar. This is the default."
+            return String(localized: "Daisy labels a recognized person automatically as soon as a recording finishes — by their voice, or by their email if the meeting came from your calendar. This is the default.")
         case .suggest:
-            return "Daisy recognizes the person but waits — it shows the name as a suggestion in the recording's “Name the speakers” card, and you confirm before it's applied."
+            return String(localized: "Daisy recognizes the person but waits — it shows the name as a suggestion in the recording's “Name the speakers” card, and you confirm before it's applied.")
         case .off:
-            return "Daisy never auto-labels across meetings. Speakers stay “Remote A / B” until you name them by hand. Voice fingerprints are still saved when you name someone, so you can switch this back on later."
+            return String(localized: "Daisy never auto-labels across meetings. Speakers stay “Remote A / B” until you name them by hand. Voice fingerprints are still saved when you name someone, so you can switch this back on later.")
         }
     }
 
@@ -1357,8 +1357,8 @@ struct SettingsView: View {
         formatter.unitsStyle = .abbreviated
         let seen = formatter.localizedString(for: profile.lastSeenAt, relativeTo: Date())
         let count = profile.sessionCount
-        let meetings = count == 1 ? "1 meeting" : "\(count) meetings"
-        return "\(meetings) · last \(seen)"
+        let meetings = String(localized: "\(count) meetings")
+        return String(localized: "\(meetings) · last \(seen)")
     }
 
     private var whisperBadgeState: StatusBadge.State {
@@ -1376,8 +1376,8 @@ struct SettingsView: View {
     private var whisperShortStatus: String? {
         switch whisper.state {
         case .downloading(let p): return "\(Int(p * 100))%"
-        case .loading: return "Loading"
-        case .failed: return "Failed"
+        case .loading: return String(localized: "Loading")
+        case .failed: return String(localized: "Failed")
         case .ready, .notLoaded: return nil
         }
     }
@@ -1619,7 +1619,7 @@ struct SettingsView: View {
                 // the live list yet (just typed, or the server is down
                 // and we're on the static catalog).
                 if !ollamaModelChoices.contains(where: { $0.id == summarizer.ollamaModel }) {
-                    Text("Custom: \(summarizer.ollamaModel)").tag(summarizer.ollamaModel)
+                    Text(String(localized: "Custom: \(summarizer.ollamaModel)")).tag(summarizer.ollamaModel)
                 }
             }
             .pickerStyle(.menu)
@@ -1722,20 +1722,20 @@ struct SettingsView: View {
     private var summarySectionFooter: String {
         switch summarizer.providerKind {
         case .appleIntelligence:
-            return "Runs entirely on-device. Nothing about the transcript leaves your Mac. Apple's local model doesn't support every language (e.g. Russian) — for those, switch to a cloud provider."
+            return String(localized: "Runs entirely on-device. Nothing about the transcript leaves your Mac. Apple's local model doesn't support every language (e.g. Russian) — for those, switch to a cloud provider.")
         case .anthropic:
-            return "Transcripts are sent to Anthropic over HTTPS using your own API key. Create one at console.anthropic.com/settings/keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05."
+            return String(localized: "Transcripts are sent to Anthropic over HTTPS using your own API key. Create one at console.anthropic.com/settings/keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
         case .openai:
-            return "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05."
+            return String(localized: "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
         case .ollama:
             if OllamaAPISummarizer.isCloudModel(summarizer.ollamaModel) {
-                return "“\(summarizer.ollamaModel)” is an Ollama cloud model: your local Ollama daemon proxies the request to ollama.com, so the transcript LEAVES your Mac (Ollama bills the usage). For fully on-device summaries pick a model without a `:cloud`/`-cloud` tag."
+                return String(localized: "“\(summarizer.ollamaModel)” is an Ollama cloud model: your local Ollama daemon proxies the request to ollama.com, so the transcript LEAVES your Mac (Ollama bills the usage). For fully on-device summaries pick a model without a `:cloud`/`-cloud` tag.")
             }
-            return "Daisy calls your local Ollama server (`ollama serve`) over its native `/api/chat` REST. No API key, no network egress — everything stays on your Mac. Pull the model first: `ollama pull \(OllamaAPISummarizer.defaultModelID)`. Free."
+            return String(localized: "Daisy calls your local Ollama server (`ollama serve`) over its native `/api/chat` REST. No API key, no network egress — everything stays on your Mac. Pull the model first: `ollama pull \(OllamaAPISummarizer.defaultModelID)`. Free.")
         case .lmStudio:
-            return "Daisy calls your local LM Studio server over its OpenAI-compatible `/v1/chat/completions` REST. No API key, no network egress — everything stays on your Mac. Load a model in the LM Studio app and click Developer → Start. The API identifier in this picker must match the one LM Studio shows under the loaded model. Free."
+            return String(localized: "Daisy calls your local LM Studio server over its OpenAI-compatible `/v1/chat/completions` REST. No API key, no network egress — everything stays on your Mac. Load a model in the LM Studio app and click Developer → Start. The API identifier in this picker must match the one LM Studio shows under the loaded model. Free.")
         case .mcp:
-            return "Advanced — for users running a custom MCP server (Python shim, `mcp-ollama` wrapper, etc.). Daisy connects over HTTP+SSE and calls one tool per summary. For stock Ollama or LM Studio use their dedicated providers above instead — those work without an MCP shim."
+            return String(localized: "Advanced — for users running a custom MCP server (Python shim, `mcp-ollama` wrapper, etc.). Daisy connects over HTTP+SSE and calls one tool per summary. For stock Ollama or LM Studio use their dedicated providers above instead — those work without an MCP shim.")
         }
     }
 
@@ -1755,7 +1755,7 @@ struct SettingsView: View {
         )
         return ollamaInstalledModels.map { name in
             if let known = catalog[name] { return (id: name, label: known) }
-            let suffix = OllamaAPISummarizer.isCloudModel(name) ? " — cloud (ollama.com)" : ""
+            let suffix = OllamaAPISummarizer.isCloudModel(name) ? String(localized: " — cloud (ollama.com)") : ""
             return (id: name, label: name + suffix)
         }
     }
@@ -1831,15 +1831,15 @@ struct SettingsView: View {
 
     private var summarizerStatusText: String {
         switch summarizer.availability {
-        case .available: return "Available"
-        case .unavailable: return "Unavailable"
-        case .unknown: return "Checking…"
+        case .available: return String(localized: "Available")
+        case .unavailable: return String(localized: "Unavailable")
+        case .unknown: return String(localized: "Checking…")
         }
     }
 
     private var summarizerStatusBody: String {
         switch summarizer.availability {
-        case .available: return "\(summarizer.providerKind.shortName) is ready for summaries."
+        case .available: return String(localized: "\(summarizer.providerKind.shortName) is ready for summaries.")
         case .unavailable(let reason): return reason
         case .unknown: return ""
         }
@@ -1885,7 +1885,7 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.top, 6)
                     } label: {
-                        Text("Test transcript (\(Self.fixtureTitle))")
+                        Text(String(localized: "Test transcript (\(Self.fixtureTitle))"))
                             .font(.caption.weight(.medium))
                     }
 
@@ -2023,7 +2023,7 @@ struct SettingsView: View {
                 title: Self.fixtureTitle,
                 localeHint: chosenHint
             )
-            summaryTestResult = .success("Summary came through.")
+            summaryTestResult = .success(String(localized: "Summary came through."))
             summaryTestPreview = summary
         } catch {
             // Wrap the raw error — system messages from URLSession /
@@ -2032,7 +2032,7 @@ struct SettingsView: View {
             // the diagnostic info but anchors it to a recognisable
             // verb ("Test failed"), so the user knows where to
             // look without parsing system-level English.
-            summaryTestResult = .failure("Test failed — \(error.localizedDescription)")
+            summaryTestResult = .failure(String(localized: "Test failed — \(error.localizedDescription)"))
         }
     }
 
@@ -2045,7 +2045,7 @@ struct SettingsView: View {
     // can show as a "this is what a finished session looks like"
     // demo right inside Settings.
 
-    private static let fixtureTitle = "Brand site · homepage direction review"
+    private static let fixtureTitle = String(localized: "Brand site · homepage direction review")
 
     private static let fixtureTranscript = """
     [you] Thanks for jumping on. I pulled together two directions for the homepage hero based on what you mentioned last week. Want to walk through them?

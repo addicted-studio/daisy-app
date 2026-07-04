@@ -87,7 +87,7 @@ struct FolderManagementSection: View {
             Button("Cancel", role: .cancel) { }
         } message: { folder in
             let n = countFor(folder)
-            Text("\(n) recording\(n == 1 ? "" : "s") will move to Inbox. This can’t be undone.")
+            Text(String(localized: "\(n) recordings will move to Inbox. This can’t be undone."))
         }
         .sheet(item: $editing) { edit in
             switch edit {
@@ -139,7 +139,7 @@ struct FolderManagementSection: View {
             }
             .buttonStyle(.borderless)
             .disabled(isDefault)
-            .help(isDefault ? "Can’t delete the default meeting folder" : "Delete folder")
+            .help(isDefault ? String(localized: "Can’t delete the default meeting folder") : String(localized: "Delete folder"))
         }
         .padding(.vertical, 2)
     }
@@ -180,7 +180,7 @@ struct FolderManagementSection: View {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         if folders.allFolders.contains(where: { $0.slug == SessionFolder(name: trimmed).slug }) {
-            ToastCenter.shared.show("A folder named “\(trimmed)” already exists", style: .warning)
+            ToastCenter.shared.show(String(localized: "A folder named “\(trimmed)” already exists"), style: .warning)
             return false
         }
         folders.addFolder(named: trimmed)
@@ -204,7 +204,7 @@ struct FolderManagementSection: View {
 
         // Slug changes — must not collide with another existing folder.
         if folders.allFolders.contains(where: { $0.slug == new.slug }) {
-            ToastCenter.shared.show("A folder named “\(trimmed)” already exists", style: .warning)
+            ToastCenter.shared.show(String(localized: "A folder named “\(trimmed)” already exists"), style: .warning)
             return false
         }
 
@@ -326,15 +326,15 @@ private struct FolderEditSheet: View {
 
     private var titleText: String {
         switch mode {
-        case .add: return "New folder"
-        case .rename: return "Rename folder"
+        case .add: return String(localized: "New folder")
+        case .rename: return String(localized: "Rename folder")
         }
     }
 
     private var saveLabel: String {
         switch mode {
-        case .add: return "Add"
-        case .rename: return "Rename"
+        case .add: return String(localized: "Add")
+        case .rename: return String(localized: "Rename")
         }
     }
 
