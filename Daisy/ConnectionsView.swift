@@ -247,7 +247,7 @@ struct ConnectionsView: View {
         // personal voice notes off Notion.
         if settings.autoSendNotion {
             folderFilterPicker(
-                title: "Only from folders",
+                title: String(localized: "Only from folders"),
                 selection: Binding(
                     get: { settings.autoSendNotionFolders },
                     set: { settings.autoSendNotionFolders = $0 }
@@ -288,8 +288,8 @@ struct ConnectionsView: View {
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity)
                     } label: {
-                        labelWithCaption("Integration secret",
-                                         caption: "Paste your Notion integration secret.")
+                        labelWithCaption(String(localized: "Integration secret"),
+                                         caption: String(localized: "Paste your Notion integration secret."))
                     }
 
                     LabeledContent {
@@ -299,8 +299,8 @@ struct ConnectionsView: View {
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity)
                     } label: {
-                        labelWithCaption("Parent ID",
-                                         caption: "The 32-character ID at the end of the page or database URL — with or without dashes.")
+                        labelWithCaption(String(localized: "Parent ID"),
+                                         caption: String(localized: "The 32-character ID at the end of the page or database URL — with or without dashes."))
                     }
 
                     LabeledContent {
@@ -322,8 +322,8 @@ struct ConnectionsView: View {
                         .pickerStyle(.menu)
                         .fixedSize()
                     } label: {
-                        labelWithCaption("Parent type",
-                                         caption: "Page — Daisy adds the recording as a child page underneath. Database — adds a row (title column must be named \"Name\").")
+                        labelWithCaption(String(localized: "Parent type"),
+                                         caption: String(localized: "Page — Daisy adds the recording as a child page underneath. Database — adds a row (title column must be named \"Name\")."))
                     }
 
                     HStack {
@@ -383,22 +383,22 @@ struct ConnectionsView: View {
         // (secret / parent / Test connection) lives in that sheet, not
         // inline, so the copy points at the gear rather than "below".
         if !settings.hasNotionCredentials {
-            return "Send finished recordings to Notion as a child page or a database row. Set it up in the gear."
+            return String(localized: "Send finished recordings to Notion as a child page or a database row. Set it up in the gear.")
         }
         if settings.lastNotionTestPassedAt == nil {
-            return "Run Test connection in the gear first — auto-send only turns on once it passes."
+            return String(localized: "Run Test connection in the gear first — auto-send only turns on once it passes.")
         }
-        return "Sends each recording to Notion the moment you stop."
+        return String(localized: "Sends each recording to Notion the moment you stop.")
     }
 
     private var notionToggleHelp: String {
         if !settings.hasNotionCredentials {
-            return "Open Notion settings in the gear first."
+            return String(localized: "Open Notion settings in the gear first.")
         }
         if settings.lastNotionTestPassedAt == nil {
-            return "Run Test connection before enabling auto-send."
+            return String(localized: "Run Test connection before enabling auto-send.")
         }
-        return "Auto-send finished recordings to Notion."
+        return String(localized: "Auto-send finished recordings to Notion.")
     }
 
     @ViewBuilder
@@ -489,7 +489,7 @@ struct ConnectionsView: View {
         let names = allFolders.filter { slugs.contains($0.slug) }.map(\.name)
         if names.count == 1 { return names[0] }
         if names.count <= 3 { return names.joined(separator: ", ") }
-        return "\(names.count) folders"
+        return String(localized: "\(names.count) folders")
     }
 
     /// Label + caption stacked vertically in the LEADING column of
@@ -754,9 +754,9 @@ struct ConnectionsView: View {
                 StatusBadge(state: .idle, message: nil)
                 Text("Not running").font(.caption).foregroundStyle(.secondary)
             case .starting(let port):
-                StatusBadge(state: .busy, message: "Starting on port \(port)…")
+                StatusBadge(state: .busy, message: String(localized: "Starting on port \(port)…"))
             case .running(let port):
-                StatusBadge(state: .ok, message: "Listening on 127.0.0.1:\(port)")
+                StatusBadge(state: .ok, message: String(localized: "Listening on 127.0.0.1:\(port)"))
             case .failed(let msg):
                 StatusBadge(state: .err, message: msg)
             }
@@ -802,26 +802,26 @@ struct ConnectionsView: View {
     private var claudeDesktopButtonTitle: String {
         switch claudeEntryState {
         case .installed:
-            return "Reinstall"          // already correct — let them re-write anyway
+            return String(localized: "Reinstall")          // already correct — let them re-write anyway
         case .installedDifferentPort:
-            return "Update port"        // entry exists but on the wrong port
+            return String(localized: "Update port")        // entry exists but on the wrong port
         case .notInstalled, .claudeNotInstalled, .malformed:
-            return "Add to Claude Desktop"
+            return String(localized: "Add to Claude Desktop")
         }
     }
 
     private var claudeDesktopHint: String {
         switch claudeEntryState {
         case .claudeNotInstalled:
-            return "Claude Desktop doesn't look installed. Daisy can still write the config — it'll be picked up next time Claude launches."
+            return String(localized: "Claude Desktop doesn't look installed. Daisy can still write the config — it'll be picked up next time Claude launches.")
         case .notInstalled:
-            return "Writes the entry into Claude's config. Restart Claude Desktop afterwards to load Daisy's tools."
+            return String(localized: "Writes the entry into Claude's config. Restart Claude Desktop afterwards to load Daisy's tools.")
         case .installed:
-            return "Installed and pointing at port \(liveServerPort). Restart Claude Desktop if you haven't since adding it."
+            return String(localized: "Installed and pointing at port \(liveServerPort). Restart Claude Desktop if you haven't since adding it.")
         case .installedDifferentPort(let existing):
-            return "Installed, but pointing at \(existing) instead of port \(liveServerPort). Update it, then restart Claude Desktop."
+            return String(localized: "Installed, but pointing at \(existing) instead of port \(liveServerPort). Update it, then restart Claude Desktop.")
         case .malformed:
-            return "Can't read Claude's config — see below."
+            return String(localized: "Can't read Claude's config — see below.")
         }
     }
 
@@ -879,7 +879,7 @@ struct ConnectionsView: View {
             settings.mcpServerPort = p
         } else {
             mcpPortText = String(settings.mcpServerPort)
-            ToastCenter.shared.show("Port must be 1–65535", style: .warning)
+            ToastCenter.shared.show(String(localized: "Port must be 1–65535"), style: .warning)
         }
     }
 
@@ -893,12 +893,12 @@ struct ConnectionsView: View {
         switch result {
         case .installed:
             ToastCenter.shared.show(
-                "Added to Claude Desktop — restart Claude to load Daisy.",
+                String(localized: "Added to Claude Desktop — restart Claude to load Daisy."),
                 style: .success
             )
         case .failed(let message):
             ToastCenter.shared.show(
-                "Couldn't update Claude config: \(message)",
+                String(localized: "Couldn't update Claude config: \(message)"),
                 style: .warning
             )
         }
@@ -912,14 +912,14 @@ struct ConnectionsView: View {
         switch result {
         case .removed:
             ToastCenter.shared.show(
-                "Removed from Claude Desktop — restart Claude to drop Daisy.",
+                String(localized: "Removed from Claude Desktop — restart Claude to drop Daisy."),
                 style: .success
             )
         case .notPresent:
-            ToastCenter.shared.show("No Daisy entry to remove.", style: .info)
+            ToastCenter.shared.show(String(localized: "No Daisy entry to remove."), style: .info)
         case .failed(let message):
             ToastCenter.shared.show(
-                "Couldn't update Claude config: \(message)",
+                String(localized: "Couldn't update Claude config: \(message)"),
                 style: .warning
             )
         }
@@ -951,7 +951,7 @@ struct ConnectionsView: View {
                     // a direct button.
                     Button {
                         editingIntegration = MCPIntegration(
-                            name: "New integration",
+                            name: String(localized: "New integration"),
                             baseURL: "http://127.0.0.1:11436",
                             toolName: "",
                             argumentsTemplate: "{}",
@@ -1042,7 +1042,7 @@ struct ConnectionsView: View {
             }
             .buttonStyle(.borderless)
             .help("Edit")
-            .accessibilityLabel("Edit \(integration.name)")
+            .accessibilityLabel(String(localized: "Edit \(integration.name)"))
             Button(role: .destructive) {
                 integrationStore.remove(id: integration.id)
             } label: {
@@ -1050,7 +1050,7 @@ struct ConnectionsView: View {
             }
             .buttonStyle(.borderless)
             .help("Delete")
-            .accessibilityLabel("Delete \(integration.name)")
+            .accessibilityLabel(String(localized: "Delete \(integration.name)"))
         }
     }
 

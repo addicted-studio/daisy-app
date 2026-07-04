@@ -132,7 +132,7 @@ struct SessionDetailView: View {
                     CollapsibleBlock(
                         title: summaryBlockTitle,
                         storageKey: "daisy.session.detail.summaryExpanded",
-                        copyLabel: "Copy summary",
+                        copyLabel: String(localized: "Copy summary"),
                         copyText: summaryCopyText,
                         showsCopy: session.summary != nil
                     ) {
@@ -176,9 +176,9 @@ struct SessionDetailView: View {
                 // drafting → spinner.
                 if let summary = session.summary, showFollowUpBlock(summary) {
                     CollapsibleBlock(
-                        title: "Follow-up",
+                        title: String(localized: "Follow-up"),
                         storageKey: "daisy.session.detail.followUpExpanded",
-                        copyLabel: "Copy follow-up",
+                        copyLabel: String(localized: "Copy follow-up"),
                         copyText: { session.summary?.clientFollowUp ?? "" },
                         showsCopy: !(session.summary?.clientFollowUp.isEmpty ?? true)
                     ) {
@@ -382,11 +382,11 @@ struct SessionDetailView: View {
     /// no-op.
     private func attemptReSummarize() {
         if isRunningAction {
-            ToastCenter.shared.show("Already running — wait a moment", style: .info)
+            ToastCenter.shared.show(String(localized: "Already running — wait a moment"), style: .info)
             return
         }
         if session.transcriptText.isEmpty {
-            ToastCenter.shared.show("No transcript to summarize yet", style: .warning)
+            ToastCenter.shared.show(String(localized: "No transcript to summarize yet"), style: .warning)
             return
         }
         Task { await reSummarize() }
@@ -404,11 +404,11 @@ struct SessionDetailView: View {
     /// handed for one missing field.
     private func attemptDraftFollowUp() {
         if isRunningAction {
-            ToastCenter.shared.show("Already running — wait a moment", style: .info)
+            ToastCenter.shared.show(String(localized: "Already running — wait a moment"), style: .info)
             return
         }
         if session.transcriptText.isEmpty {
-            ToastCenter.shared.show("No transcript to draft from yet", style: .warning)
+            ToastCenter.shared.show(String(localized: "No transcript to draft from yet"), style: .warning)
             return
         }
         Task { await draftFollowUp() }
@@ -434,7 +434,7 @@ struct SessionDetailView: View {
                 Button {
                     Task { await MCPDispatcher.send(integration, for: session) }
                 } label: {
-                    Label("Send to \(integration.name)", systemImage: "paperplane")
+                    Label(String(localized: "Send to \(integration.name)"), systemImage: "paperplane")
                 }
             }
         }
@@ -531,7 +531,7 @@ struct SessionDetailView: View {
             tagDraft = session.tag
             showTagPopover = true
         } label: {
-            Text(session.tag.isEmpty ? "Add tag…" : session.tag)
+            Text(session.tag.isEmpty ? String(localized: "Add tag…") : session.tag)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
         }
@@ -880,7 +880,7 @@ struct SessionDetailView: View {
     // MARK: - Screenshots
 
     private var screenshotsSection: some View {
-        mdSection(title: "Screenshots (\(session.screenshotURLs.count))") {
+        mdSection(title: String(localized: "Screenshots (\(session.screenshotURLs.count))")) {
             screenshotStrip
         }
     }
@@ -1342,7 +1342,7 @@ struct SessionDetailView: View {
     private func moveTo(folder: SessionFolder) async {
         isRunningAction = true
         await SessionStore.shared.moveSession(session, to: folder)
-        ToastCenter.shared.show("Moved to \(folder.name)", style: .success)
+        ToastCenter.shared.show(String(localized: "Moved to \(folder.name)"), style: .success)
         isRunningAction = false
     }
 
@@ -1350,7 +1350,7 @@ struct SessionDetailView: View {
         guard !session.transcriptText.isEmpty else { return }
         isRunningAction = true
         ToastCenter.shared.show(
-            "Summarizing via \(Summarizer.shared.providerKind.shortName)…",
+            String(localized: "Summarizing via \(Summarizer.shared.providerKind.shortName)…"),
             style: .info
         )
 
@@ -1374,11 +1374,11 @@ struct SessionDetailView: View {
 
         if let summary = result {
             await SessionStore.shared.updateSummary(summary, for: session)
-            ToastCenter.shared.show("Summary updated", style: .success)
+            ToastCenter.shared.show(String(localized: "Summary updated"), style: .success)
         } else if let err = Summarizer.shared.lastError {
             ToastCenter.shared.show(err, style: .error)
         } else {
-            ToastCenter.shared.show("No summary returned", style: .error)
+            ToastCenter.shared.show(String(localized: "No summary returned"), style: .error)
         }
         isRunningAction = false
     }
@@ -1407,7 +1407,7 @@ struct SessionDetailView: View {
         isRunningAction = true
         isDraftingFollowUp = true
         ToastCenter.shared.show(
-            "Drafting follow-up via \(Summarizer.shared.providerKind.shortName)…",
+            String(localized: "Drafting follow-up via \(Summarizer.shared.providerKind.shortName)…"),
             style: .info
         )
 
@@ -1434,7 +1434,7 @@ struct SessionDetailView: View {
                 // Forced and still empty — the model ignored the directive
                 // (rare). Keep the existing follow-up; tell the user.
                 ToastCenter.shared.show(
-                    "Couldn't draft a follow-up for this one — try Re-summarize.",
+                    String(localized: "Couldn't draft a follow-up for this one — try Re-summarize."),
                     style: .warning
                 )
             } else {
@@ -1445,12 +1445,12 @@ struct SessionDetailView: View {
                     clientFollowUp: trimmedFollowUp
                 )
                 await SessionStore.shared.updateSummary(merged, for: session)
-                ToastCenter.shared.show("Follow-up drafted", style: .success)
+                ToastCenter.shared.show(String(localized: "Follow-up drafted"), style: .success)
             }
         } else if let err = Summarizer.shared.lastError {
             ToastCenter.shared.show(err, style: .error)
         } else {
-            ToastCenter.shared.show("No response from the model", style: .error)
+            ToastCenter.shared.show(String(localized: "No response from the model"), style: .error)
         }
         isDraftingFollowUp = false
         isRunningAction = false
@@ -1463,14 +1463,14 @@ struct SessionDetailView: View {
     /// source). `includeFrontmatter` is the Obsidian-vault variant.
     private func copyPlainMarkdown(includeFrontmatter: Bool) {
         guard !session.transcriptText.isEmpty else {
-            ToastCenter.shared.show("No transcript yet", style: .warning)
+            ToastCenter.shared.show(String(localized: "No transcript yet"), style: .warning)
             return
         }
         RichClipboard.copyPlain(markdown: markdownDocument(includeFrontmatter: includeFrontmatter))
         ToastCenter.shared.show(
             includeFrontmatter
-                ? "Markdown with frontmatter copied"
-                : "Markdown copied to clipboard",
+                ? String(localized: "Markdown with frontmatter copied")
+                : String(localized: "Markdown copied to clipboard"),
             style: .success
         )
     }
@@ -1482,11 +1482,11 @@ struct SessionDetailView: View {
     /// the same closures the accordion copy buttons use.
     private func copySection(_ text: String, label: String) {
         guard !text.isEmpty else {
-            ToastCenter.shared.show("Nothing to copy yet", style: .warning)
+            ToastCenter.shared.show(String(localized: "Nothing to copy yet"), style: .warning)
             return
         }
         RichClipboard.copyPlain(markdown: text)
-        ToastCenter.shared.show("\(label) copied", style: .success)
+        ToastCenter.shared.show(String(localized: "\(label) copied"), style: .success)
     }
 
     /// Full markdown document for the copy actions. The body is always
@@ -1579,36 +1579,36 @@ struct SessionDetailView: View {
 
     private func sendToNotion() async {
         if session.transcriptText.isEmpty {
-            ToastCenter.shared.show("No transcript to send", style: .warning)
+            ToastCenter.shared.show(String(localized: "No transcript to send"), style: .warning)
             return
         }
         if !AppSettings.notionConfigured {
-            ToastCenter.shared.show("Set Notion token in Settings first", style: .warning)
+            ToastCenter.shared.show(String(localized: "Set Notion token in Settings first"), style: .warning)
             return
         }
         isRunningAction = true
-        ToastCenter.shared.show("Sending to Notion…", style: .info)
+        ToastCenter.shared.show(String(localized: "Sending to Notion…"), style: .info)
         let data = exportData()
         do {
             let url = try await NotionExporter.shared.createMeetingPage(data)
-            ToastCenter.shared.show("Notion page created", style: .success)
+            ToastCenter.shared.show(String(localized: "Notion page created"), style: .success)
             NSWorkspace.shared.open(url)
         } catch {
-            ToastCenter.shared.show("Notion: \(error.localizedDescription)", style: .error)
+            ToastCenter.shared.show(String(localized: "Notion: \(error.localizedDescription)"), style: .error)
         }
         isRunningAction = false
     }
 
     private func sendToClaude() {
         if session.transcriptText.isEmpty {
-            ToastCenter.shared.show("No transcript to send", style: .warning)
+            ToastCenter.shared.show(String(localized: "No transcript to send"), style: .warning)
             return
         }
         let opened = ClaudeExporter.sendToClaude(data: exportData())
         if opened {
-            ToastCenter.shared.show("Prompt copied — switch to Claude and ⌘V", style: .success)
+            ToastCenter.shared.show(String(localized: "Prompt copied — switch to Claude and ⌘V"), style: .success)
         } else {
-            ToastCenter.shared.show("Prompt copied — claude.ai opened", style: .success)
+            ToastCenter.shared.show(String(localized: "Prompt copied — claude.ai opened"), style: .success)
         }
     }
 
@@ -1674,7 +1674,7 @@ struct SessionDetailView: View {
     /// EN-only UI surface (per the brand-voice memory: Daisy product
     /// UI is English only — RU bits creep in only via summary CONTENT
     /// when the user dictated in RU, never via chrome).
-    private var summaryBlockTitle: String { "Summary" }
+    private var summaryBlockTitle: String { String(localized: "Summary") }
 
     /// Markdown body of everything the Summary collapsible renders —
     /// lede paragraph, `##` topical sections with nested bullets,
@@ -1806,7 +1806,7 @@ private struct CollapsibleBlock<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(isExpanded ? "Collapse" : "Expand")
+            .help(isExpanded ? String(localized: "Collapse") : String(localized: "Expand"))
 
             Spacer()
 
@@ -1814,14 +1814,14 @@ private struct CollapsibleBlock<Content: View>: View {
                 Button {
                     let text = copyText()
                     guard !text.isEmpty else {
-                        ToastCenter.shared.show("Nothing to copy yet", style: .warning)
+                        ToastCenter.shared.show(String(localized: "Nothing to copy yet"), style: .warning)
                         return
                     }
                     // Two-flavor write (MarkdownClipboard.swift) — the
                     // closures hand us markdown; rich paste targets read
                     // the semantic-HTML render, plain ones the markdown.
                     RichClipboard.copy(markdown: text)
-                    ToastCenter.shared.show("\(title) copied", style: .success)
+                    ToastCenter.shared.show(String(localized: "\(title) copied"), style: .success)
                 } label: {
                     Image(systemName: "doc.on.doc")
                         .font(.callout)
@@ -1970,8 +1970,8 @@ private struct SpeakerNameRow: View {
                     .fixedSize()
                     .help(
                         attendeeSourceEventTitle
-                            .map { "Pick from attendees of \"\($0)\"" }
-                            ?? "Pick from event attendees"
+                            .map { String(localized: "Pick from attendees of \"\($0)\"") }
+                            ?? String(localized: "Pick from event attendees")
                     )
                 }
             }
@@ -2038,9 +2038,9 @@ private struct SpeakerNameRow: View {
     /// out of the UI copy.
     private var suggestionSourceLabel: String? {
         switch suggestionSource {
-        case "voice":       return "· heard"
-        case "email":       return "· calendar"
-        case "voice+email": return "· heard + calendar"
+        case "voice":       return String(localized: "· heard")
+        case "email":       return String(localized: "· calendar")
+        case "voice+email": return String(localized: "· heard + calendar")
         default:            return nil
         }
     }
@@ -2124,7 +2124,7 @@ private struct SpeakerNameRow: View {
     }
 
     private var segmentCountText: String {
-        segmentCount == 1 ? "1 segment" : "\(segmentCount) segments"
+        segmentCount == 1 ? String(localized: "1 segment") : String(localized: "\(segmentCount) segments")
     }
 
     private func commit() {

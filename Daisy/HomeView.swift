@@ -155,9 +155,9 @@ struct HomeView: View {
         let mic = permissions.microphone != .granted
         let acc = permissions.accessibility != .granted
         switch (mic, acc) {
-        case (true, true):   return "Microphone & Accessibility access needed"
-        case (true, false):  return "Microphone access needed"
-        case (false, true):  return "Accessibility access needed"
+        case (true, true):   return String(localized: "Microphone & Accessibility access needed")
+        case (true, false):  return String(localized: "Microphone access needed")
+        case (false, true):  return String(localized: "Accessibility access needed")
         case (false, false): return ""
         }
     }
@@ -301,8 +301,8 @@ struct HomeView: View {
 
     private var eventCountLabel: String {
         let n = todaysEvents.count
-        if n == 1 { return "1 event" }
-        return "\(n) events"
+        if n == 1 { return String(localized: "1 event") }
+        return String(localized: "\(n) events")
     }
 
     @ViewBuilder
@@ -517,7 +517,7 @@ private struct UpcomingEventRow: View {
             .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
-        .help("Start recording for “\(event.title)”")
+        .help(String(localized: "Start recording for “\(event.title)”"))
     }
 
     private var calendarDotColor: Color {

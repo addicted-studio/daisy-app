@@ -127,6 +127,6 @@ struct DictationHistoryView: View {
     private func copy(_ entry: DictationEntry) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entry.text, forType: .string)
-        ToastCenter.shared.show("Copied", style: .success)
+        ToastCenter.shared.show(String(localized: "Copied"), style: .success)
     }
 }

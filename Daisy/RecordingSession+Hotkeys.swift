@@ -53,7 +53,7 @@ extension RecordingSession {
                 await stop()
             } else {
                 ToastCenter.shared.show(
-                    "Daisy is already recording. Stop the current session first.",
+                    String(localized: "Daisy is already recording. Stop the current session first."),
                     style: .warning
                 )
             }
@@ -84,7 +84,7 @@ extension RecordingSession {
             await start()
         case .recording, .paused:
             ToastCenter.shared.show(
-                "Daisy is already recording. Stop the current session first.",
+                String(localized: "Daisy is already recording. Stop the current session first."),
                 style: .warning
             )
         case .preparing, .stopping, .summarizing:

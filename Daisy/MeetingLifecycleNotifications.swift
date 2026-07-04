@@ -101,10 +101,10 @@ enum AutoStartNotification {
 
     private static func addRequest(title: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Recording started"
+        content.title = String(localized: "Recording started")
         content.body = title.isEmpty
-            ? "Daisy is now recording your scheduled meeting."
-            : "Daisy is now recording \"\(title)\"."
+            ? String(localized: "Daisy is now recording your scheduled meeting.")
+            : String(localized: "Daisy is now recording \"\(title)\".")
         content.sound = .default
         content.categoryIdentifier = categoryID
         let request = UNNotificationRequest(
@@ -147,12 +147,12 @@ enum AutoStartPromptNotification {
         let center = UNUserNotificationCenter.current()
         let record = UNNotificationAction(
             identifier: actionRecord,
-            title: "Record",
+            title: String(localized: "Record"),
             options: [.foreground]
         )
         let ignore = UNNotificationAction(
             identifier: actionIgnore,
-            title: "Ignore",
+            title: String(localized: "Ignore"),
             options: []
         )
         let category = UNNotificationCategory(
@@ -200,10 +200,10 @@ enum AutoStartPromptNotification {
     /// Toast-based equivalent of the banner for the notifications-denied
     /// case. "Record" runs the same broadcast the banner action would.
     static func postToastFallback(subject: String) {
-        let label = subject.isEmpty ? "a meeting" : subject
+        let label = subject.isEmpty ? String(localized: "a meeting") : subject
         ToastCenter.shared.showAction(
-            "Detected \(label) — record it?",
-            actionLabel: "Record",
+            String(localized: "Detected \(label) — record it?"),
+            actionLabel: String(localized: "Record"),
             style: .info,
             duration: .seconds(20),
             perform: {
@@ -222,10 +222,10 @@ enum AutoStartPromptNotification {
 
     private static func addRequest(subject: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Record this meeting?"
+        content.title = String(localized: "Record this meeting?")
         content.body = subject.isEmpty
-            ? "Daisy detected a meeting. Record it?"
-            : "Daisy detected \"\(subject)\". Record it?"
+            ? String(localized: "Daisy detected a meeting. Record it?")
+            : String(localized: "Daisy detected \"\(subject)\". Record it?")
         content.sound = .default
         content.categoryIdentifier = categoryID
         let request = UNNotificationRequest(
@@ -289,10 +289,10 @@ enum AutoStopNotification {
 
     private static func addRequest(title: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Meeting ended"
+        content.title = String(localized: "Meeting ended")
         content.body = title.isEmpty
-            ? "Recording saved."
-            : "Recording for \"\(title)\" saved."
+            ? String(localized: "Recording saved.")
+            : String(localized: "Recording for \"\(title)\" saved.")
         content.sound = .default
         content.categoryIdentifier = categoryID
         let request = UNNotificationRequest(
@@ -349,12 +349,12 @@ enum AutoStopPromptNotification {
         )
         let snooze10 = UNNotificationAction(
             identifier: actionSnooze10,
-            title: "10 more minutes",
+            title: String(localized: "10 more minutes"),
             options: []
         )
         let snooze30 = UNNotificationAction(
             identifier: actionSnooze30,
-            title: "30 more minutes",
+            title: String(localized: "30 more minutes"),
             options: []
         )
         let category = UNNotificationCategory(
@@ -404,10 +404,10 @@ enum AutoStopPromptNotification {
 
     private static func addRequest(title: String) {
         let content = UNMutableNotificationContent()
-        content.title = "Meeting seems over"
+        content.title = String(localized: "Meeting seems over")
         content.body = title.isEmpty
-            ? "Stop & save the recording, or keep going?"
-            : "Stop & save \"\(title)\", or keep going?"
+            ? String(localized: "Stop & save the recording, or keep going?")
+            : String(localized: "Stop & save \"\(title)\", or keep going?")
         content.sound = .default
         content.categoryIdentifier = categoryID
         let request = UNNotificationRequest(

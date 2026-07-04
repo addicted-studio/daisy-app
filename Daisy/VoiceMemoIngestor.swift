@@ -95,7 +95,7 @@ enum VoiceMemoIngestor {
             .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        lines.append(body.isEmpty ? "_No speech detected._" : body)
+        lines.append(body.isEmpty ? "_" + String(localized: "No speech detected.") + "_" : body)
         lines.append("")
         return lines.joined(separator: "\n")
     }

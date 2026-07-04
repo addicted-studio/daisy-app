@@ -148,7 +148,7 @@ struct SpeakerDetailSheet: View {
                     .font(.callout.weight(.medium))
                 Spacer()
                 if !items.isEmpty {
-                    Text(items.count == 1 ? "1 recording" : "\(items.count) recordings")
+                    Text(items.count == 1 ? String(localized: "1 recording") : String(localized: "\(items.count) recordings"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -169,7 +169,7 @@ struct SpeakerDetailSheet: View {
                                 .font(.caption)
                                 .foregroundStyle(Color.daisyAccent)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(session.title.isEmpty ? "Untitled recording" : session.title)
+                                Text(session.title.isEmpty ? String(localized: "Untitled recording") : session.title)
                                     .font(.callout)
                                     .foregroundStyle(Color.daisyTextPrimary)
                                     .lineLimit(1)
@@ -188,7 +188,7 @@ struct SpeakerDetailSheet: View {
                 }
                 if items.count > appearsInLimit {
                     let extra = items.count - appearsInLimit
-                    Text("+ \(extra) earlier \(extra == 1 ? "recording" : "recordings")")
+                    Text(String(localized: "+ \(extra) earlier recordings"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -242,9 +242,9 @@ struct SpeakerDetailSheet: View {
     private var statsBlock: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let p = store.profiles[profileID] {
-                statRow("Recordings", value: p.sessionCount == 1 ? "1 meeting" : "\(p.sessionCount) meetings")
-                statRow("Last heard", value: relative(p.lastSeenAt))
-                statRow("First named", value: relative(p.createdAt))
+                statRow(String(localized: "Recordings"), value: String(localized: "\(p.sessionCount) meetings"))
+                statRow(String(localized: "Last heard"), value: relative(p.lastSeenAt))
+                statRow(String(localized: "First named"), value: relative(p.createdAt))
             }
             HStack(spacing: 6) {
                 Image(systemName: "lock.fill")
@@ -368,7 +368,7 @@ struct SpeakerDetailSheet: View {
     // MARK: - Helpers
 
     private var displayName: String {
-        store.profiles[profileID]?.name ?? "this speaker"
+        store.profiles[profileID]?.name ?? String(localized: "this speaker")
     }
 
     /// Stable binding into `emailRows` by row id (not index), so a

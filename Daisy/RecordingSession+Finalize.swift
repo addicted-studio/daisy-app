@@ -258,7 +258,7 @@ extension RecordingSession {
                 } catch {
                     log.error("Failed to write summary.json: \(error.localizedDescription, privacy: .public)")
                     ToastCenter.shared.show(
-                        "Couldn't save summary file. Check Console for details.",
+                        String(localized: "Couldn't save summary file. Check Console for details."),
                         style: .error
                     )
                 }
@@ -476,7 +476,7 @@ extension RecordingSession {
             try data.write(to: url, options: [.atomic])
             let n = byLabel.count
             ToastCenter.shared.show(
-                "Daisy recognized \(n) speaker\(n == 1 ? "" : "s") · review in History",
+                String(localized: "Daisy recognized \(n) speakers · review in History"),
                 style: .info
             )
             log.info("Wrote \(n, privacy: .public) speaker suggestion(s) for review")
@@ -511,14 +511,14 @@ extension RecordingSession {
             let export = exportData()
             do {
                 let url = try await NotionExporter.shared.createMeetingPage(export)
-                ToastCenter.shared.show("Sent to Notion · \(title)", style: .success)
+                ToastCenter.shared.show(String(localized: "Sent to Notion · \(title)"), style: .success)
                 // Notion URL stays .private — same reasoning as in
                 // NotionExporter: page ID is a capability identifier
                 // for the user's workspace.
                 log.info("Auto-sent to Notion: \(url.absoluteString, privacy: .private)")
             } catch {
                 log.error("Auto-send to Notion failed: \(error.localizedDescription, privacy: .private)")
-                ToastCenter.shared.show("Auto-send to Notion failed — retry from History", style: .warning)
+                ToastCenter.shared.show(String(localized: "Auto-send to Notion failed — retry from History"), style: .warning)
                 recordAutoSendFailure(
                     integration: "Notion",
                     kind: "notion",

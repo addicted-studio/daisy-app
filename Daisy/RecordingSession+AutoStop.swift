@@ -305,22 +305,22 @@ extension RecordingSession {
         autoStopLog.notice("Auto-stop FIRING — branch=\(branch, privacy: .public) micRMS=\(micRMS, privacy: .public)dB sysAudibleAgo=\(sysAgo.map { "\($0)s" } ?? "never", privacy: .public) boundEndDelta=\(endDelta.map { "\($0)s" } ?? "n/a", privacy: .public) silentFor=\(silentFor, privacy: .public)s")
         let msg: String
         if silence && beforeScheduledEnd {
-            msg = "Meeting's been silent for 10 minutes — looks like it wrapped up early. Daisy will stop & save in 30 seconds."
+            msg = String(localized: "Meeting's been silent for 10 minutes — looks like it wrapped up early. Daisy will stop & save in 30 seconds.")
         } else if silence {
-            msg = "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds."
+            msg = String(localized: "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds.")
         } else {
-            msg = "Meeting has run well past its end — Daisy will stop & save in 30 seconds."
+            msg = String(localized: "Meeting has run well past its end — Daisy will stop & save in 30 seconds.")
         }
         ToastCenter.shared.showAction(
             msg,
-            actionLabel: "Keep going",
+            actionLabel: String(localized: "Keep going"),
             style: .warning,
             duration: .seconds(30)
         ) { [weak self] in
             guard let self else { return }
             self.cancelAutoStop()
             self.autoStopSuppressed = true
-            ToastCenter.shared.show("Auto-stop cancelled for this session.", style: .info)
+            ToastCenter.shared.show(String(localized: "Auto-stop cancelled for this session."), style: .info)
         }
         autoStopWarningTimer = Timer.scheduledTimer(
             withTimeInterval: 30,
@@ -334,7 +334,7 @@ extension RecordingSession {
     private func performAutoStop() async {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
         autoStopLog.notice("Auto-stop performing stop() — meeting auto-ended; the SESSION SUMMARY that follows is the auto-stopped one")
-        ToastCenter.shared.show("Meeting ended — stopping & saving.", style: .info, duration: .seconds(2))
+        ToastCenter.shared.show(String(localized: "Meeting ended — stopping & saving."), style: .info, duration: .seconds(2))
         let meetingTitle = boundMeeting?.title ?? title
         await stop()
         // Banner confirms the save completed — surfaces even when
@@ -367,11 +367,11 @@ extension RecordingSession {
         autoStopLastAudibleAt = Date()
         let msg: String
         if silence && beforeScheduledEnd {
-            msg = "Meeting's been silent for 10 minutes — looks like it wrapped up early. Stop & save?"
+            msg = String(localized: "Meeting's been silent for 10 minutes — looks like it wrapped up early. Stop & save?")
         } else if silence {
-            msg = "Meeting seems over — it's been quiet for a couple of minutes. Stop & save?"
+            msg = String(localized: "Meeting seems over — it's been quiet for a couple of minutes. Stop & save?")
         } else {
-            msg = "Meeting has run well past its end. Stop & save?"
+            msg = String(localized: "Meeting has run well past its end. Stop & save?")
         }
         AutoStopPromptNotification.post(meetingTitle: boundMeeting?.title ?? title)
         // In-app twin of the banner (and the whole ask when macOS
@@ -403,7 +403,7 @@ extension RecordingSession {
         autoStopSnoozeUntil = Date().addingTimeInterval(TimeInterval(minutes * 60))
         autoStopWarned = false
         AutoStopPromptNotification.cancel()
-        ToastCenter.shared.show("Auto-stop snoozed for \(minutes) minutes.", style: .info)
+        ToastCenter.shared.show(String(localized: "Auto-stop snoozed for \(minutes) minutes."), style: .info)
         autoStopLog.info("Auto-stop snoozed for \(minutes, privacy: .public) min by prompt action")
     }
 

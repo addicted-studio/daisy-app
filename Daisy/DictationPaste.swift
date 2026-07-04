@@ -71,7 +71,7 @@ final class DictationPaste {
     func handle(transcript: String) {
         guard !transcript.isEmpty else {
             ToastCenter.shared.show(
-                "Dictation stopped — nothing was transcribed.",
+                String(localized: "Dictation stopped — nothing was transcribed."),
                 style: .warning
             )
             return
@@ -120,12 +120,12 @@ final class DictationPaste {
         let didAutoPaste = attemptAutoPaste()
         if didAutoPaste {
             ToastCenter.shared.show(
-                "Dictation pasted — clipboard reverts in \(Int(Self.retentionSeconds))s.",
+                String(localized: "Dictation pasted — clipboard reverts in \(Int(Self.retentionSeconds))s."),
                 style: .success
             )
         } else {
             ToastCenter.shared.show(
-                "Dictation copied — press ⌘V to paste. Clipboard reverts in \(Int(Self.retentionSeconds))s.",
+                String(localized: "Dictation copied — press ⌘V to paste. Clipboard reverts in \(Int(Self.retentionSeconds))s."),
                 style: .success
             )
         }

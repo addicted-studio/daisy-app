@@ -169,10 +169,10 @@ struct FirstRunView: View {
     private var micStep: some View {
         StepView(
             icon: "mic.fill",
-            title: "Microphone",
-            description: "Daisy needs to hear your voice. Audio is recorded locally and transcribed on-device — nothing about it leaves your Mac.",
+            title: String(localized: "Microphone"),
+            description: String(localized: "Daisy needs to hear your voice. Audio is recorded locally and transcribed on-device — nothing about it leaves your Mac."),
             statusGranted: micGranted,
-            primaryActionLabel: micGranted ? "Continue" : "Allow microphone",
+            primaryActionLabel: micGranted ? String(localized: "Continue") : String(localized: "Allow microphone"),
             onPrimary: {
                 if micGranted {
                     advance()
@@ -186,10 +186,10 @@ struct FirstRunView: View {
     private var screenStep: some View {
         StepView(
             icon: "rectangle.dashed.badge.record",
-            title: "Screen Recording",
-            description: "Lets Daisy hear the other side of meetings (Zoom, Meet, Teams) through the system audio loopback. Daisy never reads pixels or saves screenshots without your permission.",
+            title: String(localized: "Screen Recording"),
+            description: String(localized: "Lets Daisy hear the other side of meetings (Zoom, Meet, Teams) through the system audio loopback. Daisy never reads pixels or saves screenshots without your permission."),
             statusGranted: screenGranted,
-            primaryActionLabel: screenGranted ? "Continue" : "Allow Screen Recording",
+            primaryActionLabel: screenGranted ? String(localized: "Continue") : String(localized: "Allow Screen Recording"),
             onPrimary: {
                 if screenGranted {
                     advance()
@@ -204,9 +204,9 @@ struct FirstRunView: View {
         StepView(
             icon: "keyboard",
             title: "Accessibility",
-            description: "Required for the dictation hotkey — Daisy pastes the transcribed text into the active app via ⌘V. Without this, dictation falls back to copy-only (you have to paste yourself).",
+            description: String(localized: "Required for the dictation hotkey — Daisy pastes the transcribed text into the active app via ⌘V. Without this, dictation falls back to copy-only (you have to paste yourself)."),
             statusGranted: accessibilityGranted,
-            primaryActionLabel: accessibilityGranted ? "Continue" : "Allow Accessibility",
+            primaryActionLabel: accessibilityGranted ? String(localized: "Continue") : String(localized: "Allow Accessibility"),
             onPrimary: {
                 if accessibilityGranted {
                     advance()
@@ -234,20 +234,20 @@ struct FirstRunView: View {
 
             VStack(spacing: 10) {
                 hotkeyRow(
-                    title: "Meeting",
-                    description: "Captures mic + system audio together.",
+                    title: String(localized: "Meeting"),
+                    description: String(localized: "Captures mic + system audio together."),
                     color: .daisyRecording,
                     binding: $settings.recordHotkey
                 )
                 hotkeyRow(
-                    title: "Voice notes",
-                    description: "Quick one-off thought, mic only.",
+                    title: String(localized: "Voice notes"),
+                    description: String(localized: "Quick one-off thought, mic only."),
                     color: .daisyVoiceNote,
                     binding: $settings.voiceNoteHotkey
                 )
                 hotkeyRow(
-                    title: "Dictation",
-                    description: "Hold to talk, release to paste at cursor.",
+                    title: String(localized: "Dictation"),
+                    description: String(localized: "Hold to talk, release to paste at cursor."),
                     color: .daisyDictation,
                     binding: $settings.dictationHotkey
                 )
@@ -296,11 +296,11 @@ struct FirstRunView: View {
     private var whisperProgressLine: String? {
         switch WhisperEngine.shared.state {
         case .notLoaded:
-            return "Setting up transcription model…"
+            return String(localized: "Setting up transcription model…")
         case .downloading(let p):
-            return "Downloading transcription model · \(Int(p * 100))%"
+            return String(localized: "Downloading transcription model · \(Int(p * 100))%")
         case .loading(let status):
-            return "Loading transcription model · \(status)"
+            return String(localized: "Loading transcription model · \(status)")
         case .ready, .failed:
             return nil
         }
@@ -346,16 +346,16 @@ struct FirstRunView: View {
                     .foregroundStyle(.secondary)
                     .padding(.top, 8)
                 ctaRow(
-                    title: "Pick an AI for summaries",
-                    detail: "Apple Intelligence runs offline on macOS 26; otherwise paste an Anthropic or OpenAI key.",
+                    title: String(localized: "Pick an AI for summaries"),
+                    detail: String(localized: "Apple Intelligence runs offline on macOS 26; otherwise paste an Anthropic or OpenAI key."),
                     action: {
                         nav.openInSettings(.summary)
                         finish()
                     }
                 )
                 ctaRow(
-                    title: "Wire a destination",
-                    detail: "Auto-send finished recordings to Notion right after Stop — plus Linear, Attio, webhooks, and custom MCP wrappers.",
+                    title: String(localized: "Wire a destination"),
+                    detail: String(localized: "Auto-send finished recordings to Notion right after Stop — plus Linear, Attio, webhooks, and custom MCP wrappers."),
                     action: {
                         // 1.0.7.16: Notion moved out of Settings onto the
                         // top-level Connections page → Auto-routing tab,

@@ -80,7 +80,7 @@ nonisolated struct MeetingSummary: Codable, Sendable, Equatable {
     /// fabricating an apologetic "the recording failed" summary plus a
     /// matching client follow-up (Egor, 2026-06-13).
     static let noSpeechCaptured = MeetingSummary(
-        summary: "No speech was captured in this recording — there's nothing to summarize.",
+        summary: String(localized: "No speech was captured in this recording — there's nothing to summarize."),
         sections: [],
         actionItems: [],
         clientFollowUp: ""

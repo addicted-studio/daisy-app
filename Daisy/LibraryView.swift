@@ -172,16 +172,16 @@ struct LibraryView: View {
 
     private var deleteAlertTitle: String {
         let n = pendingDelete.count
-        if n <= 1 { return "Delete this session?" }
-        return "Delete \(n) sessions?"
+        if n <= 1 { return String(localized: "Delete this session?") }
+        return String(localized: "Delete \(n) sessions?")
     }
 
     private var deleteAlertMessage: String {
         let n = pendingDelete.count
         if n <= 1 {
-            return "Audio, transcript, summary and screenshots will be removed from disk. This can't be undone."
+            return String(localized: "Audio, transcript, summary and screenshots will be removed from disk. This can't be undone.")
         }
-        return "Audio, transcript, summary and screenshots for all \(n) sessions will be removed from disk. This can't be undone."
+        return String(localized: "Audio, transcript, summary and screenshots for all \(n) sessions will be removed from disk. This can't be undone.")
     }
 
     // MARK: - Row context menu
@@ -233,7 +233,7 @@ struct LibraryView: View {
         } label: {
             let multi = selectedIDs.count
             if multi > 1 && selectedIDs.contains(session.id) {
-                Label("Delete \(multi) selected", systemImage: "trash")
+                Label(String(localized: "Delete \(multi) selected"), systemImage: "trash")
             } else {
                 Label("Delete", systemImage: "trash")
             }
@@ -365,14 +365,14 @@ struct LibraryView: View {
 
     private var multiSelectDetail: some View {
         ContentUnavailableView {
-            Label("\(selectedIDs.count) sessions selected", systemImage: "doc.on.doc")
+            Label(String(localized: "\(selectedIDs.count) sessions selected"), systemImage: "doc.on.doc")
         } description: {
             Text("Press ⌫ to delete the selection, or click a single row to read its transcript.")
         } actions: {
             Button(role: .destructive) {
                 pendingDelete = store.sessions.filter { selectedIDs.contains($0.id) }
             } label: {
-                Label("Delete \(selectedIDs.count) sessions…", systemImage: "trash")
+                Label(String(localized: "Delete \(selectedIDs.count) sessions…"), systemImage: "trash")
             }
             .buttonStyle(.borderedProminent)
             .tint(Color.daisyError)
@@ -470,7 +470,7 @@ struct LibraryView: View {
             }
             Divider()
             ForEach(tagGroups, id: \.name) { group in
-                let displayName = group.name.isEmpty ? "Untagged" : group.name
+                let displayName = group.name.isEmpty ? String(localized: "Untagged") : group.name
                 Button {
                     tagFilter = (tagFilter == group.name) ? nil : group.name
                 } label: {
@@ -502,8 +502,8 @@ struct LibraryView: View {
 
     private var tagSelectorLabel: String {
         switch tagFilter {
-        case nil:        return "Tags"
-        case .some(""):  return "Untagged"
+        case nil:        return String(localized: "Tags")
+        case .some(""):  return String(localized: "Untagged")
         case .some(let t): return t
         }
     }
@@ -514,7 +514,7 @@ struct LibraryView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 FolderChip(
-                    label: "All",
+                    label: String(localized: "All"),
                     count: store.sessions.count,
                     isActive: folderFilter == nil
                 ) {
@@ -600,7 +600,7 @@ private struct SessionRow: View {
                 Image(systemName: "photo")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .help("\(session.screenshotURLs.count) screenshot\(session.screenshotURLs.count == 1 ? "" : "s")")
+                    .help(String(localized: "\(session.screenshotURLs.count) screenshots"))
             }
             if session.hasSummary {
                 Image(systemName: "sparkles")

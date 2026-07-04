@@ -78,7 +78,7 @@ enum SilencePromptNotification {
         // running) instead of just deferring a question.
         let snooze = UNNotificationAction(
             identifier: actionSnooze,
-            title: "Keep recording",
+            title: String(localized: "Keep recording"),
             options: []
         )
         let category = UNNotificationCategory(
@@ -140,8 +140,8 @@ enum SilencePromptNotification {
 
     private static func addRequest() {
         let content = UNMutableNotificationContent()
-        content.title = "Are we done?"
-        content.body = "It's been quiet for a while."
+        content.title = String(localized: "Are we done?")
+        content.body = String(localized: "It's been quiet for a while.")
         content.sound = .default
         content.categoryIdentifier = categoryID
         // Reuse the same identifier so a new prompt replaces any

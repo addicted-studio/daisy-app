@@ -69,17 +69,17 @@ struct IntegrationEditor: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 18) {
             field(
-                title: "Name",
-                hint: "Shown in the kebab menu as `Send to {Name}`.",
+                title: String(localized: "Name"),
+                hint: String(localized: "Shown in the kebab menu as `Send to {Name}`."),
                 control: TextField("Notion · Meeting notes", text: $draft.name)
                     .textFieldStyle(.roundedBorder)
             )
 
             field(
-                title: "Kind",
+                title: String(localized: "Kind"),
                 hint: draft.kind == .mcp
-                    ? "MCP — full JSON-RPC client, tool-name and arguments template required."
-                    : "Webhook — Daisy POSTs the rendered template directly to the URL as JSON. No tool name needed.",
+                    ? String(localized: "MCP — full JSON-RPC client, tool-name and arguments template required.")
+                    : String(localized: "Webhook — Daisy POSTs the rendered template directly to the URL as JSON. No tool name needed."),
                 // pickerStyle(.menu) instead of .segmented: macOS 26.2
                 // ships an Apple-side UAF in the Swift concurrency ↔ AppKit
                 // bridge that crashes any SwiftUI Picker(.segmented) on
@@ -100,10 +100,10 @@ struct IntegrationEditor: View {
             )
 
             field(
-                title: draft.kind == .mcp ? "Server URL" : "Webhook URL",
+                title: draft.kind == .mcp ? String(localized: "Server URL") : String(localized: "Webhook URL"),
                 hint: draft.kind == .mcp
-                    ? "HTTP+SSE base URL of your MCP server. Daisy appends `/sse` to open the stream."
-                    : "Daisy POSTs the rendered template body to this URL (Slack-style incoming webhook works out of the box).",
+                    ? String(localized: "HTTP+SSE base URL of your MCP server. Daisy appends `/sse` to open the stream.")
+                    : String(localized: "Daisy POSTs the rendered template body to this URL (Slack-style incoming webhook works out of the box)."),
                 control: TextField(
                     draft.kind == .mcp
                         ? "http://127.0.0.1:11436"
@@ -115,8 +115,8 @@ struct IntegrationEditor: View {
 
             if draft.kind == .mcp {
                 field(
-                    title: "Tool name",
-                    hint: "Exact name of the tool to call. Check your server's `tools/list` output.",
+                    title: String(localized: "Tool name"),
+                    hint: String(localized: "Exact name of the tool to call. Check your server's `tools/list` output."),
                     control: TextField("create_page", text: $draft.toolName)
                         .textFieldStyle(.roundedBorder)
                 )
@@ -126,8 +126,8 @@ struct IntegrationEditor: View {
                 // Slack / Discord / Mattermost incoming webhooks —
                 // they treat the URL itself as the credential.
                 field(
-                    title: "Bearer token (optional)",
-                    hint: "If your endpoint needs Authorization. Leave blank for Slack-style webhooks where the URL is the secret.",
+                    title: String(localized: "Bearer token (optional)"),
+                    hint: String(localized: "If your endpoint needs Authorization. Leave blank for Slack-style webhooks where the URL is the secret."),
                     control: SecureField("", text: $draft.bearerToken, prompt: Text("token…"))
                         .textFieldStyle(.roundedBorder)
                 )
@@ -178,7 +178,7 @@ struct IntegrationEditor: View {
                 // those folders, so a "Notes"-folder voice memo
                 // doesn't get pushed to a "Work" destination.
                 folderAllowListPicker(
-                    title: "Only auto-send for folders",
+                    title: String(localized: "Only auto-send for folders"),
                     selection: $draft.allowedFolders
                 )
             }
@@ -296,14 +296,14 @@ struct IntegrationEditor: View {
     private func validateTemplate() {
         let probe = Self.replaceAllPlaceholders(in: draft.argumentsTemplate, with: "")
         guard let data = probe.data(using: .utf8) else {
-            templateError = "Template isn't valid UTF-8."
+            templateError = String(localized: "Template isn't valid UTF-8.")
             return
         }
         do {
             _ = try JSONSerialization.jsonObject(with: data, options: [])
             templateError = nil
         } catch {
-            templateError = "Template isn't valid JSON: \(error.localizedDescription)"
+            templateError = String(localized: "Template isn't valid JSON: \(error.localizedDescription)")
         }
     }
 
