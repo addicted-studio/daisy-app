@@ -29,8 +29,6 @@ final class ScreenshotCapture {
     func start(intervalSec: Int, into directory: URL) async {
         guard intervalSec > 0 else { return }
         outputDir = directory
-        index = 0
-        screenshotURLs = []
         do {
             try FileManager.default.createDirectory(
                 at: directory,
@@ -40,6 +38,19 @@ final class ScreenshotCapture {
             lastError = error.localizedDescription
             return
         }
+
+        // Resume-safe: pause→resume calls start() again on the SAME
+        // directory. Continue numbering after any existing NNN.png instead
+        // of resetting to 0 and overwriting the earlier screenshots (which
+        // broke the OCR chronology). A fresh session's dir is empty → 0.
+        let existing = ((try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil
+        )) ?? [])
+            .filter { $0.pathExtension.lowercased() == "png" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        screenshotURLs = existing
+        // Next filename = (highest existing number) + 1, via %03d(index+1).
+        index = existing.compactMap { Int($0.deletingPathExtension().lastPathComponent) }.max() ?? 0
 
         // Take one right away, then schedule.
         await captureOne()

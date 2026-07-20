@@ -200,6 +200,34 @@ extension RecordingSession {
         signposter.endInterval("re_write_md", reWriteState)
         log.info("post-stop re_write_md: \(ms(t_reWrite), privacy: .public)ms")
 
+        // ── Stage 3b: Screen-content OCR ─────────────────────────────
+        //
+        // If screenshots were captured, OCR them on-device (Vision),
+        // dedup near-identical frames, and append a "## Shared on screen"
+        // section to transcript.md. Runs BEFORE the History refresh below
+        // so SessionStore parses the screen text into the session's
+        // searchable body, and BEFORE the summary (Stage 4) so a metric
+        // shown on a slide can land in the notes even if never spoken.
+        // Fully local; skipped entirely when the feature is off or
+        // nothing was captured.
+        var screenSharedText = ""
+        if settings.screenshotsEnabled {
+            let screenshotsDir = directory.appendingPathComponent("screenshots", isDirectory: true)
+            let ocrState = signposter.beginInterval("screen_ocr", id: signposter.makeSignpostID())
+            let t_ocr = Date()
+            let ocr = await ScreenTextExtractor.extract(from: screenshotsDir)
+            signposter.endInterval("screen_ocr", ocrState)
+            if !ocr.markdown.isEmpty {
+                screenSharedText = ocr.markdown
+                let mdURL = directory.appendingPathComponent("transcript.md")
+                if let existing = try? String(contentsOf: mdURL, encoding: .utf8) {
+                    let section = "\n\n## Shared on screen\n\n\(ocr.markdown)\n"
+                    try? (existing + section).write(to: mdURL, atomically: true, encoding: .utf8)
+                }
+            }
+            log.info("post-stop screen_ocr: \(ms(t_ocr), privacy: .public)ms, \(ocr.distinctScreens, privacy: .public) screens")
+        }
+
         // P1 — recording finished cleanly (transcript.md is final): drop the
         // in-progress marker so this folder is a valid session, not a
         // recoverable husk.
@@ -228,7 +256,14 @@ extension RecordingSession {
         // ones. Now both share the same source.
         var summary: MeetingSummary? = nil
         if willSummarize {
-            let transcriptText = fullTranscriptText
+            // Fold the OCR'd screen content into what the summarizer sees
+            // so slides/dashboards influence the notes (Circleback-style
+            // "captured whether said or shown"). Clearly fenced so the
+            // model treats it as shown-not-spoken context.
+            var transcriptText = fullTranscriptText
+            if !screenSharedText.isEmpty {
+                transcriptText += "\n\n[Content shared on screen during the meeting — text extracted from slides/documents shown, not spoken:]\n\(screenSharedText)"
+            }
             let summarizeState = signposter.beginInterval("summarize", id: signposter.makeSignpostID())
             let t_summarize = Date()
             summary = await summarizer.summarize(
@@ -657,6 +692,48 @@ extension RecordingSession {
     /// `StoredSession` value. Synchronous so it can serve both the
     /// post-`stop` auto-send path (called in async context) and the
     /// snapshot path used by manual Send-to.
+    /// Run the voice-polish rewrite with a hard deadline. Returns the
+    /// rewritten text, or nil if it failed OR the deadline elapsed first
+    /// (caller then keeps the un-polished dictation). Keeps the paste path
+    /// bounded regardless of provider latency.
+    nonisolated static func polishWithDeadline(text: String, instruction: String, seconds: Double) async -> String? {
+        await withTaskGroup(of: String?.self) { group in
+            group.addTask {
+                let summary = try? await Summarizer.shared.runProbe(
+                    transcript: text,
+                    title: "Dictation",
+                    localeHint: nil,
+                    task: .dictationPolish(instruction: instruction)
+                )
+                guard let polished = summary?.clientFollowUp
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !polished.isEmpty else { return nil }
+                // Sanity gate: polish preserves meaning and stays "in the
+                // same ballpark" length-wise (the prompt's own words). A
+                // result wildly shorter or longer than the input means the
+                // model did something else entirely — summarized it, or
+                // drafted an invented follow-up letter (the observed
+                // Apple-Intelligence failure mode) — and the caller is
+                // about to PASTE this over the user's own words. Reject
+                // and keep the raw dictation instead. The +40 slack keeps
+                // very short dictations from tripping the upper bound.
+                let inCount = text.count
+                let outCount = polished.count
+                guard outCount * 5 >= inCount * 2,          // ≥ 40% of input
+                      outCount <= (inCount * 5) / 2 + 40    // ≤ 250% + slack
+                else { return nil }
+                return polished
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(seconds))
+                return nil  // deadline sentinel
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
     nonisolated static func makeStoredSession(
         id: String,
         directory: URL,

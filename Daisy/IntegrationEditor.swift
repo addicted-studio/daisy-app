@@ -178,7 +178,7 @@ struct IntegrationEditor: View {
                 // those folders, so a "Notes"-folder voice memo
                 // doesn't get pushed to a "Work" destination.
                 folderAllowListPicker(
-                    title: String(localized: "Only auto-send for folders"),
+                    title: String(localized: "Only auto-send for projects"),
                     selection: $draft.allowedFolders
                 )
             }
@@ -201,7 +201,7 @@ struct IntegrationEditor: View {
                     if selection.wrappedValue.isEmpty {
                         Label("All folders", systemImage: "checkmark")
                     } else {
-                        Text("All folders")
+                        Text("All projects")
                     }
                 }
                 Divider()
@@ -228,7 +228,7 @@ struct IntegrationEditor: View {
             .menuStyle(.button)
             .buttonStyle(.bordered)
             .fixedSize()
-            Text("Empty = fire for every folder. Pick specific ones to limit auto-send to those contexts (e.g. only \"Work\" sessions go to Linear).")
+            Text("Empty = fire for every folder. Pick specific ones to limit auto-send to those contexts (e.g. only \"Work\" recordings go to Linear).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

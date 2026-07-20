@@ -47,7 +47,7 @@ struct DictationHistoryView: View {
             // One-line explainer in Daisy's plain voice — sets the privacy
             // expectation (local, auto-expiring) up front. Caption styling
             // matches the per-section helper text used elsewhere.
-            Text("Kept on your Mac for 24 hours, then deleted. Tap to copy.")
+            Text("Kept on your Mac for 24 hours, then deleted. Click to copy.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -73,15 +73,16 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
     func summarize(
         transcript: String,
         title: String,
-        localeHint: String?
+        localeHint: String?,
+        task: SummaryTask
     ) async throws -> MeetingSummary {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 40 else {
             throw SummaryProviderError.transcriptTooShort
         }
 
-        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint)
-        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed)
+        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint, task: task)
+        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed, task: task)
 
         // Request shape identical to OpenAI's chat.completions —
         // LM Studio's local server is API-compatible.

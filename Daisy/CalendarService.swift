@@ -435,7 +435,22 @@ final class CalendarService {
     /// more than this far in the past (app launched/woke too late).
     private static let autoStartLateGraceSec: TimeInterval = 120
 
+    /// Ticks between full `refresh()` calls — 20 × 15 s = every ~5 min.
+    /// EventKit changes push via EKEventStoreChanged, but the Google
+    /// OAuth path has no push channel: without this, Google events only
+    /// updated at launch or via the (now removed) manual refresh button.
+    private static let refreshEveryNTicks = 20
+    private var ticksSinceRefresh = 0
+
     private func tick() {
+        // Periodic re-fetch runs regardless of auto-start settings —
+        // it's what keeps the Home "Today/Tomorrow" list current.
+        ticksSinceRefresh += 1
+        if ticksSinceRefresh >= Self.refreshEveryNTicks {
+            ticksSinceRefresh = 0
+            refresh()
+        }
+
         guard autoStartEnabled, onMeetingStart != nil else { return }
 
         let now = Date()

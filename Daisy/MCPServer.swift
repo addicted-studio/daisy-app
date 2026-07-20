@@ -357,6 +357,21 @@ final class MCPServer {
             return
         }
 
+        // Bearer-token auth (when enabled): Host/Origin close the
+        // browser vector, but any LOCAL process could otherwise read
+        // every transcript. The friendly GET / probe stays open so
+        // pasting the URL into a browser still explains the server.
+        let isProbe = request.method.uppercased() == "GET" && request.path == "/"
+        if !isProbe, !MCPAccessToken.authorize(header: request.headers["authorization"]) {
+            Self.write(
+                status: 401,
+                body: "Unauthorized — this Daisy MCP server requires an access token. Copy it from Daisy → Connections → MCP server.",
+                on: connection,
+                closeAfter: true
+            )
+            return
+        }
+
         switch (request.method.uppercased(), request.path) {
         case ("GET", "/sse"):
             await openSSEStream(on: connection)

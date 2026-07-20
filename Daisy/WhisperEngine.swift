@@ -147,6 +147,34 @@ final class WhisperEngine {
         await ensureLoaded()
     }
 
+    /// Register a one-shot auto-retry: when the network returns, load the
+    /// model again (unless it became ready some other way). Lets an
+    /// offline-at-launch failure heal itself without user action.
+    private func scheduleReloadOnReconnect() {
+        NetworkMonitor.shared.runWhenOnline(id: "whisper.reload") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if case .ready = self.state { return }
+                self.log.info("Network back — retrying Whisper model load")
+                await self.ensureLoaded()
+            }
+        }
+    }
+
+    /// Stop an in-progress model download. Cancels the load task — the
+    /// HuggingFace download is URLSession-backed, so cooperative
+    /// cancellation aborts the network transfer — and resets state so the
+    /// UI unblocks immediately. No-op unless a download is actually
+    /// running (so it can't interrupt CoreML init or a ready model).
+    func cancelDownload() {
+        guard case .downloading = state else { return }
+        loadTask?.cancel()
+        loadTask = nil
+        state = .notLoaded
+        downloadProgress = 0
+        log.info("Whisper download cancelled by user")
+    }
+
     var isReady: Bool {
         if case .ready = state { return kitBox != nil }
         return false
@@ -190,19 +218,54 @@ final class WhisperEngine {
             return
         }
 
-        // Phase 1 — download
-        state = .downloading(progress: 0)
-        downloadProgress = 0
+        // Phase 1 — download (only if the variant isn't already on disk).
+        // A cached model must NOT flash the `.downloading` state on every
+        // launch prewarm — that's what made the app look like it was
+        // "checking / downloading models" at startup even though nothing
+        // was fetched. When cached, go straight to `.loading`; the
+        // `Self.download` call below just resolves the cached folder.
+        let alreadyCached = Self.cachedModels().contains { $0.variant == variant }
+        if alreadyCached {
+            state = .loading(status: String(localized: "Loading transcription model…"))
+        } else {
+            state = .downloading(progress: 0)
+            downloadProgress = 0
+        }
 
         let folder: URL
         do {
             folder = try await Self.download(variant: variant, repo: repo) { fraction in
                 Task { @MainActor in
+                    // Don't surface download progress for a cached model —
+                    // its callback (if any) shouldn't flip us back to
+                    // `.downloading` after we chose `.loading` above.
+                    guard !alreadyCached else { return }
                     self.downloadProgress = fraction
                     self.state = .downloading(progress: fraction)
                 }
             }
         } catch {
+            // User pressed Cancel (or the app is shutting the task down):
+            // the HuggingFace download is URLSession-backed, so cooperative
+            // cancellation aborts the transfer and surfaces here. Reset to
+            // .notLoaded (a clean "not downloaded" state the user can retry)
+            // rather than .failed (which reads like an error they must fix).
+            if error is CancellationError || Task.isCancelled {
+                log.info("Whisper download cancelled")
+                state = .notLoaded
+                downloadProgress = 0
+                return
+            }
+            // Offline (e.g. right after a restart before Wi-Fi is up):
+            // don't dead-end at a scary error. Show a clear "we'll finish
+            // when you reconnect" state and auto-retry on reconnect.
+            if NetworkMonitor.isOfflineError(error) {
+                log.error("Whisper download offline — will retry on reconnect")
+                state = .failed(String(localized: "You’re offline — Daisy will finish downloading the transcription model automatically when you reconnect."))
+                downloadProgress = 0
+                scheduleReloadOnReconnect()
+                return
+            }
             log.error("Whisper download failed: \(error.localizedDescription, privacy: .public)")
             state = .failed("Download failed: \(error.localizedDescription)")
             return

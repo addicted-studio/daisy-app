@@ -91,8 +91,12 @@ final class ParakeetEngine {
     #if canImport(FluidAudio)
     private func performLoad() async {
         if case .ready = state, manager != nil { return }
-        state = .downloading(progress: 0)
-        log.info("Parakeet: downloading/loading v3 (int8)…")
+        // Don't flash `.downloading` (which surfaces as "Checking speech
+        // models…") when the model is already on disk — only a real first
+        // download should show download UI. A cached load shows `.loading`.
+        let alreadyCached = Self.cachedModelCount() > 0
+        state = alreadyCached ? .loading : .downloading(progress: 0)
+        log.info("Parakeet: \(alreadyCached ? "loading" : "downloading") v3 (int8)…")
         do {
             // v3 = multilingual (incl. RU/UK). Default encoder precision is
             // int8; models cache on disk after the first download. The
@@ -114,7 +118,9 @@ final class ParakeetEngine {
                         let fraction = progress.fractionCompleted
                         Task { @MainActor in
                             if case .ready = self.state { return }
-                            self.state = .downloading(progress: fraction)
+                            // Cached → stay on `.loading` (compile progress
+                            // isn't a download); only a real fetch shows %.
+                            self.state = alreadyCached ? .loading : .downloading(progress: fraction)
                         }
                     }
                 )
@@ -138,11 +144,46 @@ final class ParakeetEngine {
             log.info("Parakeet ASR ready (v3)")
         } catch {
             self.manager = nil
+            // Cancel (user pressed Stop) → clean .notLoaded, not .failed.
+            if error is CancellationError || Task.isCancelled {
+                state = .notLoaded
+                log.info("Parakeet download cancelled")
+                return
+            }
+            // Offline → clear message + auto-retry when the network returns.
+            if NetworkMonitor.isOfflineError(error) || FluidAudioNetworkGuard.isOfflineRejection(error) {
+                state = .failed(String(localized: "You’re offline — Daisy will finish downloading the dictation model automatically when you reconnect."))
+                log.error("Parakeet download offline — will retry on reconnect")
+                scheduleReloadOnReconnect()
+                return
+            }
             state = .failed(error.localizedDescription)
             log.error("Parakeet load failed: \(error.localizedDescription, privacy: .public)")
         }
     }
     #endif
+
+    /// One-shot auto-retry when the network returns (offline-at-launch heal).
+    private func scheduleReloadOnReconnect() {
+        NetworkMonitor.shared.runWhenOnline(id: "parakeet.reload") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if case .ready = self.state { return }
+                self.log.info("Network back — retrying Parakeet model load")
+                await self.ensureLoaded()
+            }
+        }
+    }
+
+    /// Stop an in-progress Parakeet model download. Cancels the load task
+    /// and resets state so the UI unblocks. No-op unless downloading.
+    func cancelDownload() {
+        guard case .downloading = state else { return }
+        loadTask?.cancel()
+        loadTask = nil
+        state = .notLoaded
+        log.info("Parakeet download cancelled by user")
+    }
 
     /// Transcribe 16 kHz mono Float samples → trimmed text. Throws if the
     /// engine isn't available or the clip is too short (FluidAudio rejects

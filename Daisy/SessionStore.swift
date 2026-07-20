@@ -138,41 +138,23 @@ final class SessionStore {
             return
         }
 
-        var loaded: [StoredSession] = []
-        var orphansToTrash: [URL] = []
-        var interruptedToRecover: [URL] = []
-        for root in roots {
-            let entries: [URL]
-            do {
-                entries = try FileManager.default.contentsOfDirectory(
-                    at: root.url,
-                    includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
-                    options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
-                )
-            } catch {
-                log.error("Could not list \(root.url.path, privacy: .private): \(error.localizedDescription, privacy: .public)")
-                continue
-            }
-            for url in entries {
-                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-                guard isDir else { continue }
-                switch Self.classify(directory: url) {
-                case .valid(let session):
-                    loaded.append(session)
-                case .orphan:
-                    orphansToTrash.append(url)
-                case .unreadable:
-                    break
-                case .interrupted:
-                    // Crash / power-loss leftover with real audio. NEVER
-                    // delete. Skip the live recording (still being written);
-                    // queue the rest for best-effort recovery.
-                    if activeRecordingDirName != url.lastPathComponent {
-                        interruptedToRecover.append(url)
-                    }
-                }
-            }
-        }
+        // Heavy part OFF the MainActor. Directory enumeration + classify
+        // (which reads transcript.md / summary.json / speakers.json per
+        // session) used to run synchronously right here — with hundreds
+        // of sessions, or a user folder on iCloud/network storage, that
+        // froze the UI on every refresh (2026-07 audit, top finding).
+        // The security-scope tickets acquired above stay alive across
+        // this await (released by the defer at function exit), so the
+        // detached scan reads under scope.
+        let activeDirName = activeRecordingDirName
+        let rootURLs = roots.map(\.url)
+        let scan = await Task.detached(priority: .userInitiated) {
+            Self.scanRoots(rootURLs, activeRecordingDirName: activeDirName)
+        }.value
+        let loaded = scan.loaded
+        let orphansToTrash = scan.orphans
+        let interruptedToRecover = scan.interrupted
+        let quitSavedToFinalize = scan.quitSaved
         // Most recent first. Session ids are directory names — the
         // ISO timestamps — so cross-folder collisions are essentially
         // impossible (two recordings starting at the same millisecond
@@ -207,9 +189,93 @@ final class SessionStore {
         // no transcript). Idempotent — recovery dedupes folders it's
         // already handling, and a recovered folder gains transcript.md so
         // it classifies `.valid` (not `.interrupted`) on the next scan.
+        //
+        // Deferred while a recording (or dictation) is live: recovery's
+        // .full pass over a multi-hour archive would hold the Whisper
+        // slot for minutes, stalling live windows and the dictation
+        // paste (2026-07 audit В4 — "app looks frozen"). The refresh()
+        // that runs right after Stop re-queues it.
         if !interruptedToRecover.isEmpty {
-            InterruptedRecordingRecovery.shared.recover(interruptedToRecover)
+            if activeRecordingDirName == nil {
+                InterruptedRecordingRecovery.shared.recover(interruptedToRecover)
+            } else {
+                log.info("Deferred interrupted-recovery of \(interruptedToRecover.count, privacy: .public) folder(s) — a recording is live")
+            }
         }
+
+        // Quit-saved sessions whose final pass never ran — offer (toast
+        // with an explicit action, never silent) to re-process them.
+        if !quitSavedToFinalize.isEmpty {
+            QuitFinalizeRecovery.shared.offer(quitSavedToFinalize)
+        }
+    }
+
+    /// Everything one refresh scan produces. Assembled OFF the main
+    /// actor by `scanRoots` — plain value type, all Sendable.
+    nonisolated struct ScanResult: Sendable {
+        var loaded: [StoredSession] = []
+        var orphans: [URL] = []
+        var interrupted: [URL] = []
+        var quitSaved: [URL] = []
+    }
+
+    /// The disk-heavy half of `performRefresh`, factored out so it can
+    /// run detached: enumerate the session roots and classify every
+    /// directory. Pure with respect to store state — everything it
+    /// needs comes in as parameters, everything it learns goes out in
+    /// the `ScanResult`.
+    nonisolated static func scanRoots(
+        _ roots: [URL],
+        activeRecordingDirName: String?
+    ) -> ScanResult {
+        let scanLog = Logger(subsystem: "app.essazanov.Daisy", category: "SessionStore.scan")
+        var result = ScanResult()
+        for root in roots {
+            let entries: [URL]
+            do {
+                entries = try FileManager.default.contentsOfDirectory(
+                    at: root,
+                    includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+                    options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+                )
+            } catch {
+                scanLog.error("Could not list \(root.path, privacy: .private): \(error.localizedDescription, privacy: .public)")
+                continue
+            }
+            for url in entries {
+                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                guard isDir else { continue }
+                switch Self.classify(directory: url) {
+                case .valid(let session):
+                    result.loaded.append(session)
+                    // A .valid session still carrying the live-recording
+                    // marker was saved by Quit/shutdown DURING recording:
+                    // stop() flushed the live transcript, but the detached
+                    // finalize (full-archive pass + summary) died with the
+                    // process. Offer to finish the job — see
+                    // QuitFinalizeRecovery. (Finalize Stage 3b removes the
+                    // marker on a clean run, so its presence is the tell.)
+                    if activeRecordingDirName != url.lastPathComponent,
+                       FileManager.default.fileExists(
+                           atPath: url.appendingPathComponent(Self.recordingMarkerName).path
+                       ) {
+                        result.quitSaved.append(url)
+                    }
+                case .orphan:
+                    result.orphans.append(url)
+                case .unreadable:
+                    break
+                case .interrupted:
+                    // Crash / power-loss leftover with real audio. NEVER
+                    // delete. Skip the live recording (still being written);
+                    // queue the rest for best-effort recovery.
+                    if activeRecordingDirName != url.lastPathComponent {
+                        result.interrupted.append(url)
+                    }
+                }
+            }
+        }
+        return result
     }
 
     /// Result of classifying a directory inside `Sessions/`. Either a
@@ -314,9 +380,17 @@ final class SessionStore {
             && hasTranscript
             && transcriptBodyEmpty
             && !hasMeaningfulFrontmatter
+        // `!hasMeaningfulFrontmatter` mirrors audioPlusEmptyShell above:
+        // a transcript whose body is empty but whose frontmatter carries
+        // title/started is a REAL zero-segment session that completed its
+        // lifecycle (e.g. audio purged by delete-after-transcription) —
+        // it deserves its History entry, not husk cleanup. Caught by
+        // SessionClassifyTests 2026-07-20: without this term such
+        // sessions aged into .orphan and were deleted.
         let transcriptShellOnly = !hasMic && !hasSystem
             && hasTranscript
             && transcriptBodyEmpty
+            && !hasMeaningfulFrontmatter
 
         let isHusk = isEmpty || audioOnly || audioPlusEmptyShell || transcriptShellOnly
         if isHusk {
@@ -837,7 +911,12 @@ final class SessionStore {
         var hasher = Hasher()
         hasher.combine(session.title)
         hasher.combine(session.tag)
-        hasher.combine(session.transcriptText.utf8.count)
+        // Hash the CONTENT, not just its length — an external edit of
+        // the same byte count (Obsidian find-replace, fixing a name)
+        // previously kept the stale token set forever. The text is
+        // already in memory; hashing it is far cheaper than the
+        // tokenization this stamp exists to skip.
+        hasher.combine(session.transcriptText)
         if let s = session.summary {
             hasher.combine(s.summary)
             for item in s.actionItems { hasher.combine(item) }

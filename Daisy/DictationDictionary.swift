@@ -41,7 +41,10 @@ import SwiftUI  // for Array.move(fromOffsets:toOffset:) used in move(from:to:)
 /// model): a `.term` you teach Daisy, or a `.correction` rule.
 /// `Identifiable` so SwiftUI's `ForEach`/`.sheet(item:)` can track rows;
 /// `Equatable` so the editor can diff cheaply.
-struct DictationReplacement: Codable, Identifiable, Equatable {
+// `nonisolated` — constructed from the nonisolated `parseImport` (bulk
+// import) as well as on the main actor; plain Sendable value type, same
+// pattern as `CloudSummaryDTO`.
+nonisolated struct DictationReplacement: Codable, Identifiable, Equatable {
     /// What kind of entry this is.
     ///   • `.correction` — replace `from` (the misheard text) with `to`.
     ///     The historical behaviour; every row a pre-1.0.7.20 build saved
@@ -162,6 +165,70 @@ final class DictationDictionary {
         replacements.move(fromOffsets: source, toOffset: destination)
     }
 
+    /// Bulk-append parsed entries in ONE mutation (a single `didSet`
+    /// persist, not N). Skips exact duplicates already present
+    /// (case-insensitive on kind + from + to) so re-importing the same
+    /// list is idempotent. Returns how many were actually added.
+    @discardableResult
+    func importEntries(_ entries: [DictationReplacement]) -> Int {
+        guard !entries.isEmpty else { return 0 }
+        var working = replacements
+        var added = 0
+        for entry in entries {
+            let dup = working.contains { existing in
+                existing.kind == entry.kind
+                    && existing.from.caseInsensitiveCompare(entry.from) == .orderedSame
+                    && existing.to.caseInsensitiveCompare(entry.to) == .orderedSame
+            }
+            guard !dup else { continue }
+            working.append(entry)
+            added += 1
+        }
+        if added > 0 { replacements = working }  // one didSet → one persist
+        return added
+    }
+
+    /// Parse pasted / imported text into entries. One entry per non-empty
+    /// line; blank lines and `#` comments skipped. A line is a CORRECTION
+    /// when it carries a separator (`=>`, `→`, tab, or comma) —
+    /// `wrong <sep> right`; otherwise the whole line is a TERM (canonical
+    /// spelling Daisy should preserve/bias toward).
+    nonisolated static func parseImport(_ text: String) -> [DictationReplacement] {
+        var out: [DictationReplacement] = []
+        for rawLine in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            if let (lhs, rhs) = splitPair(line) {
+                let from = lhs.trimmingCharacters(in: .whitespaces)
+                let to = rhs.trimmingCharacters(in: .whitespaces)
+                if !from.isEmpty, !to.isEmpty {
+                    out.append(DictationReplacement(kind: .correction, from: from, to: to))
+                }
+            } else {
+                out.append(DictationReplacement(kind: .term, from: "", to: line))
+            }
+        }
+        return out
+    }
+
+    /// Split a line on the first correction separator, if any. Order:
+    /// `=>` / `→` (explicit), then tab, then comma. Returns nil for a
+    /// bare word/phrase (→ treated as a term).
+    nonisolated private static func splitPair(_ line: String) -> (String, String)? {
+        for sep in ["=>", "→"] {
+            if let r = line.range(of: sep) {
+                return (String(line[..<r.lowerBound]), String(line[r.upperBound...]))
+            }
+        }
+        if let r = line.range(of: "\t") {
+            return (String(line[..<r.lowerBound]), String(line[r.upperBound...]))
+        }
+        if let r = line.range(of: ",") {
+            return (String(line[..<r.lowerBound]), String(line[r.upperBound...]))
+        }
+        return nil
+    }
+
     // MARK: - Apply
 
     /// Run every rule against `text` and return the rewritten string.
@@ -183,7 +250,15 @@ final class DictationDictionary {
     ///
     /// Called on the MainActor from `DictationPaste.handle(transcript:)`.
     func apply(to text: String) -> String {
-        guard !text.isEmpty, !replacements.isEmpty else { return text }
+        applyCounting(to: text).text
+    }
+
+    /// Like `apply(to:)`, but also reports how many replacements were
+    /// actually MADE (a match that already read exactly as its target
+    /// doesn't count — rewriting "Claude" to "Claude" fixed nothing).
+    /// Feeds the "fixes made by Daisy" stat.
+    func applyCounting(to text: String) -> (text: String, fixes: Int) {
+        guard !text.isEmpty, !replacements.isEmpty else { return (text, 0) }
 
         // Normalise each entry to an effective (needle → replacement) pair:
         //   • correction — `from → to` with the rule's own case-sensitivity.
@@ -214,12 +289,17 @@ final class DictationDictionary {
         }
 
         var result = text
+        var fixes = 0
         for rule in ordered {
             let needle = rule.from.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !needle.isEmpty else { continue }
-            result = Self.replace(in: result, from: needle, with: rule.to, caseSensitive: rule.caseSensitive)
+            let (replaced, made) = Self.replaceCounting(
+                in: result, from: needle, with: rule.to, caseSensitive: rule.caseSensitive
+            )
+            result = replaced
+            fixes += made
         }
-        return result
+        return (result, fixes)
     }
 
     // MARK: - Whisper biasing
@@ -266,6 +346,17 @@ final class DictationDictionary {
         with replacement: String,
         caseSensitive: Bool
     ) -> String {
+        replaceCounting(in: text, from: from, with: replacement, caseSensitive: caseSensitive).text
+    }
+
+    /// `replace` + a count of matches whose text actually CHANGED (an
+    /// occurrence already spelled exactly like `replacement` isn't a fix).
+    nonisolated static func replaceCounting(
+        in text: String,
+        from: String,
+        with replacement: String,
+        caseSensitive: Bool
+    ) -> (text: String, fixes: Int) {
         let escaped = NSRegularExpression.escapedPattern(for: from)
         // Only assert a boundary on a side that ends in a word character;
         // a `\b` adjacent to punctuation/symbol would never fire.
@@ -280,20 +371,30 @@ final class DictationDictionary {
             // Shouldn't happen (the user content is escaped), but if some
             // pathological input slips through, leave the text untouched
             // rather than throwing on the paste path.
-            return text
+            return (text, 0)
         }
 
         let range = NSRange(text.startIndex..., in: text)
+
+        // Count matches whose current text differs from the target — only
+        // those are real fixes.
+        var fixes = 0
+        regex.enumerateMatches(in: text, options: [], range: range) { match, _, _ in
+            guard let match, let r = Range(match.range, in: text) else { return }
+            if String(text[r]) != replacement { fixes += 1 }
+        }
+
         // Escape `$`/`\` in the replacement so user text containing them
         // isn't reinterpreted as a capture-group template by the regex
         // engine (e.g. a rule producing "$5" or a Windows path).
         let template = NSRegularExpression.escapedTemplate(for: replacement)
-        return regex.stringByReplacingMatches(
+        let out = regex.stringByReplacingMatches(
             in: text,
             options: [],
             range: range,
             withTemplate: template
         )
+        return (out, fixes)
     }
 
     /// True when `c` is a Unicode word character (letter, digit, or

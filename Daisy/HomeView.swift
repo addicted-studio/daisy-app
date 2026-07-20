@@ -14,6 +14,7 @@ import SwiftUI
 struct HomeView: View {
     @Bindable var session: RecordingSession
     @Bindable var store = SessionStore.shared
+    @Bindable var usage = UsageStats.shared
     @Bindable var nav = AppNavigation.shared
     @Bindable var calendar = CalendarService.shared
     /// Observe Google OAuth state so the upcoming-events section
@@ -32,10 +33,6 @@ struct HomeView: View {
     /// we don't accept two settings sources of truth.
     private var settings: AppSettings { session.settings }
 
-    /// Cumulative rotation degrees for the calendar-refresh icon.
-    /// Each tap adds 360°. Keeps spinning forward (never resets to
-    /// 0) so consecutive taps animate smoothly.
-    @State private var refreshRotation: Double = 0
 
     var body: some View {
         ScrollView {
@@ -51,21 +48,30 @@ struct HomeView: View {
                     permissionsAttentionBanner
                         .padding(.horizontal, 24)
                 }
-                upcomingSection
-                recentSessionsSection
+                statsSection
+                mainColumns
                 if showDestinationsHint { destinationsHint }
                 Spacer(minLength: 0)
             }
             .padding(.top, 24)
             .padding(.bottom, 32)
-            // Cap the content column to match the grouped-Form pages
-            // (Settings & co. size to idealWidth 720) and centre it, instead
-            // of stretching edge-to-edge on wide windows. Home was the only
-            // hand-rolled page not using a Form, so it read wider than the rest.
-            .frame(maxWidth: 720, alignment: .leading)
+            // Cap the content column and centre it, instead of stretching
+            // edge-to-edge on wide windows. Was 720 to match the grouped-Form
+            // pages; widened to 1040 so the stats row (words/min · total
+            // words · activity heatmap) fits on ONE line with the 26-week
+            // heatmap taking half the width (Egor, 2026-07-14).
+            .frame(maxWidth: 1040, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
         }
-        .task { await store.refresh() }
+        .task {
+            await store.refresh()
+            // One-time: seed the usage widgets from the existing Library
+            // so long-time users don't see an empty stats block.
+            usage.backfillIfNeeded(from: store.sessions)
+            // Keep the daily morning-brief notification armed (idempotent).
+            MorningBriefStore.rescheduleNotification(settings: settings)
+        }
+        .tint(Color.daisyHomeAccent)
     }
 
     // MARK: - Permissions banner
@@ -95,7 +101,7 @@ struct HomeView: View {
             // title text — colour is decoration, not the carrier.
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
-                .foregroundStyle(Color.daisyAccent)
+                .foregroundStyle(Color.daisyHomeAccent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(missingPermissionsTitle)
                     .font(.callout.weight(.medium))
@@ -120,10 +126,11 @@ struct HomeView: View {
                 AppNavigation.shared.openInSettings(.permissions)
             } label: {
                 Text("Fix").frame(minWidth: 120)
+                    .foregroundStyle(Color.daisyTextOnAccent)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .tint(Color.daisyAccent)
+            .tint(Color.daisyHomeAccent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -139,12 +146,12 @@ struct HomeView: View {
         // family. Same colour, same opacity → fill and border merge
         // into one clean filled chip, no double-layer look.
         .background(
-            Color.daisyAccent.opacity(0.20),
+            Color.daisyHomeAccent.opacity(0.20),
             in: RoundedRectangle(cornerRadius: 8)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
         )
     }
 
@@ -183,7 +190,7 @@ struct HomeView: View {
         HStack(spacing: 10) {
             Image(systemName: "paperplane.circle.fill")
                 .font(.title3)
-                .foregroundStyle(Color.daisyAccent)
+                .foregroundStyle(Color.daisyHomeAccent)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Send recordings somewhere")
                     .font(.callout.weight(.medium))
@@ -194,12 +201,17 @@ struct HomeView: View {
             }
             Spacer(minLength: 8)
             Button {
-                AppNavigation.shared.section = .settings
+                // Deep-link straight to Connections → Auto-routing —
+                // landing on generic Settings left users hunting for
+                // where destinations actually live.
+                AppNavigation.shared.pendingConnectionsSection = .autoRouting
+                AppNavigation.shared.section = .connections
             } label: {
                 Text("Set up").frame(minWidth: 120)
+                    .foregroundStyle(Color.daisyTextOnAccent)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color.daisyAccent)
+            .tint(Color.daisyHomeAccent)
             .controlSize(.regular)
         }
         .padding(.horizontal, 12)
@@ -211,33 +223,61 @@ struct HomeView: View {
         // permissions banners in the same scroll column; the two
         // recipes read as "those two are different sections" not
         // "those are sibling info messages". One recipe, every time.
-        .background(Color.daisyAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.daisyHomeAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
         )
         .padding(.horizontal, 24)
     }
 
-    // MARK: - Upcoming (Calendar)
+    // MARK: - Two-column band: calendar ↔ recent recordings
+
+    /// Calendar events (left) and recent recordings (right), half the
+    /// content width each (Egor, 2026-07-14). When no calendar source is
+    /// connected the recordings take the full width — an empty left
+    /// column would just be dead space.
+    /// One gutter for every column split on Home (stats row + the
+    /// calendar/recordings band) so vertical boundaries align.
+    static let columnGap: CGFloat = 16
 
     @ViewBuilder
-    private var upcomingSection: some View {
-        // Calendar block shows ONLY when a calendar is actually connected
-        // (Apple EventKit OR Google OAuth). When nothing is connected we
-        // render nothing here — no "Connect Calendar" nag on Home; hooking
-        // up a calendar is discovered in Settings → Permissions (Egor,
-        // 2026-06-13). `connectCalendarCTA` / `deniedCalendarCTA` stay
-        // defined but dormant in case we want the inline prompt back.
+    private var mainColumns: some View {
         if hasAnyCalendarSource {
-            VStack(alignment: .leading, spacing: 10) {
-                sectionHeader
-                eventsBody
+            HStack(alignment: .top, spacing: Self.columnGap) {
+                dayCard
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                recentSessionsSection
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .padding(.horizontal, 24)
-            .padding(.vertical, 16)
+        } else {
+            // No calendar connected: the day card still carries the lede +
+            // open items (if any), stacked above the recordings.
+            VStack(alignment: .leading, spacing: 8) {
+                dayCard
+                recentSessionsSection
+            }
+            .padding(.horizontal, 24)
         }
     }
+
+    /// The unified "your day" card — lede + agenda (with inline Prep +
+    /// per-meeting tasks) + standalone open items. Replaces the old
+    /// morning-brief card, Today/Tomorrow column, and standalone brief card.
+    private var dayCard: some View {
+        DayCard(
+            events: displayedEvents,
+            isTomorrow: showingTomorrow,
+            settings: settings,
+            onStartMeeting: { event in
+                Task { await session.startFromMeeting(event) }
+            }
+        )
+        .padding(.vertical, 16)
+    }
+
+    // MARK: - Calendar plumbing (consumed by DayCard)
 
     /// True when at least one calendar source can deliver events
     /// — drives the source-agnostic gate above and the event-count
@@ -264,75 +304,28 @@ struct HomeView: View {
         }
     }
 
-    private var sectionHeader: some View {
-        HStack(spacing: 8) {
-            Text("Today")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
-            Spacer()
-            if hasAnyCalendarSource, !todaysEvents.isEmpty {
-                Text(eventCountLabel)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            // Manual refresh — EKEventStoreChanged occasionally misses
-            // background updates from Google Calendar sync. One-click
-            // re-fetch is cheap (local cache, ~50ms). Also the only
-            // way to pull fresh Google events on demand since we have
-            // no equivalent of EKEventStoreChanged for the OAuth path.
-            if hasAnyCalendarSource {
-                Button {
-                    calendar.refresh()
-                    withAnimation(.easeInOut(duration: 0.7)) {
-                        refreshRotation += 360
-                    }
-                } label: {
-                    Image(systemName: "arrow.trianglehead.2.clockwise")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .rotationEffect(.degrees(refreshRotation))
-                }
-                .buttonStyle(.plain)
-                .help("Refresh calendar")
-            }
-        }
+    /// Tomorrow's events (whole calendar day). Needs the 48h calendar
+    /// lookahead (see ServiceWiring) so the full day is loaded.
+    private var tomorrowsEvents: [DaisyMeeting] {
+        let cal = Calendar.current
+        guard let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) else { return [] }
+        return calendar.upcomingEvents.filter { cal.isDate($0.startDate, inSameDayAs: tomorrow) }
     }
 
-    private var eventCountLabel: String {
-        let n = todaysEvents.count
-        if n == 1 { return String(localized: "1 event") }
-        return String(localized: "\(n) events")
+    /// Once today's meetings are all done, roll the section over to show
+    /// tomorrow instead of an empty "today".
+    private var showingTomorrow: Bool {
+        todaysEvents.isEmpty && !tomorrowsEvents.isEmpty
     }
 
-    @ViewBuilder
-    private var eventsBody: some View {
-        if todaysEvents.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "calendar")
-                    .foregroundStyle(.secondary)
-                Text("Nothing else scheduled today.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            // 2026-05-25 — pad + opacity matched to UpcomingEventRow
-            // (10/8, gray .06) so the empty state slots in where the
-            // event rows would have been, no layout jump as the day
-            // empties out.
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-        } else {
-            VStack(spacing: 6) {
-                ForEach(todaysEvents) { event in
-                    UpcomingEventRow(event: event) {
-                        Task { await session.startFromMeeting(event) }
-                    }
-                }
-            }
-        }
+    /// The events actually rendered — today's if any remain, else
+    /// tomorrow's. Empty only when there's nothing in either day.
+    private var displayedEvents: [DaisyMeeting] {
+        showingTomorrow ? tomorrowsEvents : todaysEvents
     }
+
+    // (sectionHeader / eventsBody / UpcomingEventRow removed 2026-07-15 —
+    // the DayCard renders the agenda now, with inline Prep + nested tasks.)
 
     private var connectCalendarCTA: some View {
         // 2026-05-25 — synced visual treatment to match
@@ -347,7 +340,7 @@ struct HomeView: View {
         HStack(spacing: 10) {
             Image(systemName: "calendar.badge.plus")
                 .font(.title3)
-                .foregroundStyle(Color.daisyAccent)
+                .foregroundStyle(Color.daisyHomeAccent)
             VStack(alignment: .leading, spacing: 2) {
                 Text("See your meetings here")
                     .font(.callout.weight(.medium))
@@ -365,19 +358,20 @@ struct HomeView: View {
                 // and wires AppSettings + service start on its own.
             } label: {
                 Text("Connect").frame(minWidth: 120)
+                    .foregroundStyle(Color.daisyTextOnAccent)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .tint(Color.daisyAccent)
+            .tint(Color.daisyHomeAccent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         // 0.20 fill + 0.20 border — same unification as the
         // permissions banner above, see the comment there.
-        .background(Color.daisyAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.daisyHomeAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
         )
     }
 
@@ -397,7 +391,7 @@ struct HomeView: View {
             // "something's wrong" semantic; the colour is harmony.
             Image(systemName: "calendar.badge.exclamationmark")
                 .font(.title3)
-                .foregroundStyle(Color.daisyAccent)
+                .foregroundStyle(Color.daisyHomeAccent)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Calendar access is off")
                     .font(.callout.weight(.medium))
@@ -411,21 +405,137 @@ struct HomeView: View {
                 calendar.openCalendarPrivacy()
             } label: {
                 Text("Open Settings").frame(minWidth: 120)
+                    .foregroundStyle(Color.daisyTextOnAccent)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .tint(Color.daisyAccent)
+            .tint(Color.daisyHomeAccent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         // Same `daisyAccent` chip at 0.20/0.20 as the other two
         // Home banners. Semantic "calendar is denied → user action
         // needed" stays in the warning-orange icon + title text.
-        .background(Color.daisyAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.daisyHomeAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
         )
+    }
+
+    // MARK: - Usage stats (words/min · total words · activity)
+
+    /// Three Wispr-style widgets at the top of Home, all from the local
+    /// `UsageStats` tracker (dictations + recordings). Hidden until
+    /// there's at least one recorded session so a fresh install isn't
+    /// greeted by zeros.
+    @ViewBuilder
+    private var statsSection: some View {
+        if usage.totalCount > 0 {
+            // One row, 1/4 + 1/4 + 2/4: the outer HStack splits the width
+            // into two equal halves (nested pair vs heatmap), the nested
+            // HStack splits its half again — exact quarters without
+            // GeometryReader. `maxHeight: .infinity` on the number cards
+            // stretches them to the heatmap's height so the row reads as
+            // one aligned band.
+            // Gutter = `columnGap` everywhere (also mainColumns below), so
+            // the half-split boundary lines up with the calendar/recordings
+            // band and every column gap on Home reads identical.
+            HStack(alignment: .top, spacing: Self.columnGap) {
+                HStack(spacing: Self.columnGap) {
+                    fixesCard
+                    wordsCard
+                }
+                .frame(maxWidth: .infinity)
+                heatmapCard
+                    .frame(maxWidth: .infinity)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
+        }
+    }
+
+    /// Wispr-style "fixes" card: big total + breakdown (dictionary
+    /// replacements / voice-polish changes). Counters start at zero on
+    /// this build — they can't be backfilled.
+    private var fixesCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(usage.totalFixes.formatted(.number))
+                .font(.system(size: 30, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+            Text("Fixes made by Daisy")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Divider().padding(.vertical, 4)
+            HStack {
+                Text("Dictionary")
+                Spacer()
+                Text(usage.totalDictionaryFixes.formatted(.number)).monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            HStack {
+                Text("Voice polish")
+                Spacer()
+                Text(usage.totalPolishedWords.formatted(.number)).monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(16)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Combined words card: total words big, dictation words/min beneath.
+    private var wordsCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(usage.totalWords.formatted(.number))
+                .font(.system(size: 30, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
+            Text("Total words")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Divider().padding(.vertical, 4)
+            HStack {
+                Text("Words / min")
+                Spacer()
+                // "—" until the first dictation lands: WPM is dictation-
+                // only, and a literal 0 reads as broken.
+                Text(usage.averageWPM > 0 ? "\(usage.averageWPM)" : "—").monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(16)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var heatmapCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Activity")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Spacer()
+                Text(usage.currentStreak == 1
+                     ? String(localized: "1 day streak")
+                     : String(localized: "\(usage.currentStreak) day streak"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            MeetingsHeatmap(dayCounts: usage.dayCounts())
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Recent sessions
@@ -449,12 +559,13 @@ struct HomeView: View {
                 ContentUnavailableView(
                     "No recordings yet",
                     systemImage: "tray",
-                    description: Text("Click Start recording to make your first one.")
+                    description: Text("Click Record to make your first one.")
                 )
                 .frame(maxWidth: .infinity)
                 .frame(height: 160)
             } else {
-                VStack(spacing: 4) {
+                // spacing 6 = same rhythm as the events list next door.
+                VStack(spacing: 6) {
                     ForEach(Array(store.sessions.prefix(5))) { session in
                         RecentSessionRow(session: session) {
                             // Deep-link into the Library view with
@@ -466,83 +577,17 @@ struct HomeView: View {
                 }
             }
         }
-        .padding(.horizontal, 24)
+        // Horizontal inset comes from `mainColumns` — see upcomingSection.
         .padding(.vertical, 16)
     }
 
 }
 
-// MARK: - Upcoming event row
-
-private struct UpcomingEventRow: View {
-    let event: DaisyMeeting   // DaisyMeeting now represents any event
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                // Calendar dot — colour from the EKCalendar if present
-                Circle()
-                    .fill(calendarDotColor)
-                    .frame(width: 8, height: 8)
-
-                Text(event.startDate, style: .time)
-                    .font(.system(.callout, design: .monospaced))
-                    .frame(width: 56, alignment: .leading)
-                    .foregroundStyle(.secondary)
-
-                Text(event.title)
-                    .font(.callout)
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-
-                if let platform = event.meetingPlatform {
-                    Text(platform.uppercased())
-                        .font(.caption2.weight(.medium))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.daisyAccent.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(Color.daisyAccent)
-                }
-
-                Spacer()
-
-                Image(systemName: "record.circle")
-                    .font(.callout)
-                    .foregroundStyle(Color.daisyRecording)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .help(String(localized: "Start recording for “\(event.title)”"))
-    }
-
-    private var calendarDotColor: Color {
-        if let hex = event.calendarColorHex, let parsed = Color(hex: hex) {
-            return parsed
-        }
-        return Color.daisyTextTertiary
-    }
-}
-
-private extension Color {
-    /// Parse a `#RRGGBB` hex string into a Color. Returns nil on
-    /// malformed input.
-    init?(hex: String) {
-        var str = hex.trimmingCharacters(in: .whitespaces)
-        if str.hasPrefix("#") { str.removeFirst() }
-        guard str.count == 6, let value = UInt32(str, radix: 16) else { return nil }
-        let r = Double((value >> 16) & 0xFF) / 255
-        let g = Double((value >> 8) & 0xFF) / 255
-        let b = Double(value & 0xFF) / 255
-        self = Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
-    }
-}
-
 // MARK: - Recent session row
+
+/// Shared minimum content height for the Home list rows (see DayCard's
+/// agenda rows for the calendar side).
+private let homeRowMinHeight: CGFloat = 36
 
 private struct RecentSessionRow: View {
     let session: StoredSession
@@ -562,21 +607,19 @@ private struct RecentSessionRow: View {
                         if session.hasSummary {
                             Text("·")
                             Image(systemName: "sparkles")
-                                .foregroundStyle(Color.daisyAccent)
+                                .foregroundStyle(Color.daisyHomeAccent)
                         }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
+            .frame(minHeight: homeRowMinHeight)
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity)
-            .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
     }

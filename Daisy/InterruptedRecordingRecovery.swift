@@ -44,6 +44,19 @@ final class InterruptedRecordingRecovery {
     }
 
     private func recoverOne(_ folder: URL) async {
+        // Hold the sessions-folder security scope for the whole pass.
+        // The tickets `SessionStore.performRefresh` acquired are released
+        // by the time this detached recovery runs, so for sessions in a
+        // user-picked folder (Obsidian vault) every read of the .caf and
+        // the transcript.md write below would fail without our own scope
+        // — recovery then silently no-ops and re-toasts every launch.
+        guard let ticket = SessionsFolder.acquireBase() else {
+            log.error("Recovery: could not acquire sessions folder access — will retry next scan")
+            seen.remove(folder.path)
+            return
+        }
+        defer { ticket.release() }
+
         let started = Date()
         let micCafs = Self.cafParts(in: folder, prefix: "microphone")
         let systemCafs = Self.cafParts(in: folder, prefix: "system_audio")

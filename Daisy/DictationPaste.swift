@@ -55,6 +55,15 @@ final class DictationPaste {
     /// clipboard isn't permanently lost.
     static let retentionSeconds: TimeInterval = 10
 
+    /// Restore delay when the AUTO-paste succeeded: the ⌘V has already
+    /// landed, so the transcript only needs to survive in the pasteboard
+    /// long enough for the frontmost app to service the keystroke. Short
+    /// on purpose — the user's prior clipboard (logs, a link, …) comes
+    /// back almost immediately instead of being held hostage for 10 s
+    /// (Egor, 2026-07-14: "надиктовал команду → иду вставлять логи, а их
+    /// уже нет").
+    static let quickRestoreSeconds: TimeInterval = 1.5
+
     private init() {}
 
     // MARK: - Public entry
@@ -87,7 +96,9 @@ final class DictationPaste {
         // no await, no snapshot, no actor hop needed. `apply` returns the
         // input unchanged when the table is empty, so this is a no-op for
         // users who never set up a dictionary.
-        let transcript = DictationDictionary.shared.apply(to: transcript)
+        let (transcript, dictionaryFixes) = DictationDictionary.shared.applyCounting(to: transcript)
+        // Feed the Home "fixes made by Daisy" widget.
+        UsageStats.shared.recordFixes(dictionary: dictionaryFixes)
 
         // Log the final, about-to-be-pasted text to the rolling 24-hour
         // dictation history so the user can glance back / re-copy it later.
@@ -100,14 +111,34 @@ final class DictationPaste {
         // slips past the early guard above still won't pollute the log.
         DictationHistory.shared.record(transcript)
 
+        // Grow the persistent voice-profile corpus (Wispr-style: the
+        // profile unlocks once enough real dictation has accumulated).
+        // Placed before the AX/clipboard fork so every successful
+        // dictation counts regardless of how it lands in the field.
+        VoiceProfileStore.shared.appendDictation(transcript)
+
+        // 0. Best path: insert DIRECTLY into the focused text field via
+        //    the Accessibility API — the pasteboard is never touched, so
+        //    whatever the user had copied (logs, a link…) survives
+        //    untouched. Works in most native apps; web views / Electron
+        //    and secure fields often refuse, in which case we fall through
+        //    to the clipboard route below.
+        if attemptAXInsert(transcript) {
+            ToastCenter.shared.show(
+                String(localized: "Dictation inserted — clipboard untouched."),
+                style: .success
+            )
+            return
+        }
+
         // Cancel any in-flight restore from a previous dictation —
         // back-to-back dictations shouldn't restore the previous-
         // previous clipboard on top of the current transcript.
         cancelPendingRestore()
 
-        // 1. Snapshot existing pasteboard so we can put it back
-        //    after 10 s. Done BEFORE we write anything so we
-        //    capture the user's actual prior state.
+        // 1. Snapshot existing pasteboard so we can put it back.
+        //    Done BEFORE we write anything so we capture the user's
+        //    actual prior state.
         let snapshot = captureClipboard()
 
         // 2. Write the transcript.
@@ -118,9 +149,14 @@ final class DictationPaste {
         // 3. Try to auto-paste. If Accessibility permission is
         //    missing, fall back to the manual-paste toast.
         let didAutoPaste = attemptAutoPaste()
+        // 4. Schedule restore. Auto-paste already landed → the transcript
+        //    only needs to outlive the keystroke (quick restore, prior
+        //    clipboard back in ~1.5 s). Manual-paste fallback → the
+        //    transcript must stay around long enough to ⌘V by hand.
+        let restoreAfter = didAutoPaste ? Self.quickRestoreSeconds : Self.retentionSeconds
         if didAutoPaste {
             ToastCenter.shared.show(
-                String(localized: "Dictation pasted — clipboard reverts in \(Int(Self.retentionSeconds))s."),
+                String(localized: "Dictation pasted — your previous clipboard is coming right back."),
                 style: .success
             )
         } else {
@@ -130,19 +166,60 @@ final class DictationPaste {
             )
         }
 
-        // 4. Schedule restore.
         pendingSnapshot = ClipboardSnapshot(
             items: snapshot,
             changeCountAfterOurWrite: postWriteChangeCount
         )
         restoreTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.retentionSeconds,
+            withTimeInterval: restoreAfter,
             repeats: false
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.restoreClipboardIfUnchanged()
             }
         }
+    }
+
+    /// Insert `text` at the caret of the system-wide focused UI element
+    /// (replacing any selection) via the Accessibility API — no
+    /// pasteboard involvement at all. Returns false when Accessibility
+    /// isn't granted, no element has keyboard focus, or the element
+    /// doesn't accept programmatic text insertion (many web views,
+    /// secure fields) — callers then fall back to clipboard + ⌘V.
+    private func attemptAXInsert(_ text: String) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+
+        let systemWide = AXUIElementCreateSystemWide()
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            systemWide,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedRef
+        ) == .success, let focusedRef else { return false }
+        // AXUIElement is a CoreFoundation type — an unconditional
+        // downcast from CFTypeRef is the sanctioned bridge.
+        let element = focusedRef as! AXUIElement
+
+        // Only proceed when the element explicitly supports setting the
+        // selected text — writing blindly can beep or mangle state in
+        // apps that expose the attribute read-only.
+        var settable = DarwinBoolean(false)
+        guard AXUIElementIsAttributeSettable(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            &settable
+        ) == .success, settable.boolValue else { return false }
+
+        let result = AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextAttribute as CFString,
+            text as CFString
+        )
+        if result == .success {
+            log.info("Dictation inserted via AX — clipboard untouched")
+            return true
+        }
+        return false
     }
 
     // MARK: - Auto-paste

@@ -104,7 +104,7 @@ struct PermissionsView: View {
         // ── For meeting recording: asked lazily on first use ──
         Section {
             permissionRow(
-                title: String(localized: "Screen recording"),
+                title: String(localized: "Screen Recording"),
                 caption: String(localized: "Captures the other side of meetings"),
                 iconName: "rectangle.on.rectangle",
                 isRequired: false,

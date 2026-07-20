@@ -58,7 +58,14 @@ struct FirstRunView: View {
     /// lazily on the first meeting recording (its `.screenRecording` step
     /// stays defined but is intentionally absent from this list).
     private var orderedSteps: [Step] {
-        [.welcome, .microphone, .accessibility, .hotkeys, .done]
+        // Accessibility dropped from onboarding (2026-07-20): it's only
+        // needed for dictation auto-paste / rewrite, and DictationPaste
+        // already prompts lazily (AXIsProcessTrustedWithOptions) on
+        // first use, with a copy-only fallback. Asking here — before
+        // the user has even chosen to dictate — was the last
+        // permission requested ahead of its value. The `.accessibility`
+        // step stays defined for the settings-driven re-run path.
+        [.welcome, .microphone, .hotkeys, .done]
     }
 
     @State private var step: Step = .welcome
@@ -203,7 +210,7 @@ struct FirstRunView: View {
     private var accessibilityStep: some View {
         StepView(
             icon: "keyboard",
-            title: "Accessibility",
+            title: String(localized: "Accessibility"),
             description: String(localized: "Required for the dictation hotkey — Daisy pastes the transcribed text into the active app via ⌘V. Without this, dictation falls back to copy-only (you have to paste yourself)."),
             statusGranted: accessibilityGranted,
             primaryActionLabel: accessibilityGranted ? String(localized: "Continue") : String(localized: "Allow Accessibility"),
@@ -227,7 +234,7 @@ struct FirstRunView: View {
                     .font(.title2.weight(.semibold))
                 Spacer()
             }
-            Text("Pick a global shortcut for each recording mode. You can change them later in Settings → Hotkeys.")
+            Text("Pick a global shortcut for each recording mode. You can change them later in Settings → Recording → Shortcuts.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -399,6 +406,9 @@ struct FirstRunView: View {
                 Button("Get started") { advance() }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.daisyAccent)
+                    // Ink-on-accent: the system's white label fails
+                    // WCAG on the amber fill (≈2:1 in dark).
+                    .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
             case .microphone, .screenRecording, .accessibility:
                 Button("Skip for now") { advance() }
@@ -409,11 +419,13 @@ struct FirstRunView: View {
                 Button("Continue") { advance() }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.daisyAccent)
+                    .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
             case .done:
                 Button("Start using Daisy") { finish() }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.daisyAccent)
+                    .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -576,6 +588,7 @@ private struct StepView: View {
             Button(primaryActionLabel, action: onPrimary)
                 .buttonStyle(.borderedProminent)
                 .tint(Color.daisyAccent)
+                .foregroundStyle(Color.daisyTextOnAccent)
                 .controlSize(.regular)
                 .keyboardShortcut(.defaultAction)
         }

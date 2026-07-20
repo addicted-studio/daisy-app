@@ -33,7 +33,8 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
     func summarize(
         transcript: String,
         title: String,
-        localeHint: String?
+        localeHint: String?,
+        task: SummaryTask
     ) async throws -> MeetingSummary {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 40 else {
@@ -44,8 +45,8 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
             throw SummaryProviderError.missingAPIKey(provider: "OpenAI")
         }
 
-        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint)
-        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed)
+        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint, task: task)
+        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed, task: task)
 
         let body: [String: Any] = [
             "model": model,
