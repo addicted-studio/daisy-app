@@ -81,9 +81,13 @@ nonisolated struct MCPIntegration: Identifiable, Codable, Sendable, Hashable {
     /// `Authorization: Bearer <token>` on each POST. Required for
     /// REST APIs that don't accept the request without auth (Attio,
     /// Linear REST, most SaaS). Ignored for `.mcp` (MCP handles
-    /// auth differently, usually via the server config). Stored
-    /// inline in UserDefaults — same trust boundary as the rest of
-    /// `MCPIntegration`, which is fine for personal-API tokens.
+    /// auth differently, usually via the server config).
+    ///
+    /// SECURITY: this value is NOT encoded into the UserDefaults JSON
+    /// (see `encode(to:)`) — `MCPIntegrationStore` persists it in the
+    /// Keychain keyed by this integration's `id`, and hydrates it back on
+    /// load. It lives on the struct in-memory only. (Legacy records that
+    /// still carry an inline token decode it once for migration.)
     var bearerToken: String = ""
 
     init(
@@ -130,6 +134,23 @@ nonisolated struct MCPIntegration: Identifiable, Codable, Sendable, Hashable {
         self.kind = try c.decodeIfPresent(DestinationKind.self, forKey: .kind) ?? .mcp
         self.allowedFolders = try c.decodeIfPresent(Set<String>.self, forKey: .allowedFolders) ?? []
         self.bearerToken = try c.decodeIfPresent(String.self, forKey: .bearerToken) ?? ""
+    }
+
+    /// Encodes everything EXCEPT `bearerToken` — the token is a secret and
+    /// lives in the Keychain, not the UserDefaults JSON. (Decode still reads
+    /// a legacy inline token so `MCPIntegrationStore` can migrate it.)
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(baseURL, forKey: .baseURL)
+        try c.encode(toolName, forKey: .toolName)
+        try c.encode(argumentsTemplate, forKey: .argumentsTemplate)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(autoOnSave, forKey: .autoOnSave)
+        try c.encode(kind, forKey: .kind)
+        try c.encode(allowedFolders, forKey: .allowedFolders)
+        // bearerToken intentionally omitted.
     }
 
     // MARK: - Starter presets
@@ -268,10 +289,14 @@ final class MCPIntegrationStore {
 
     func remove(id: UUID) {
         integrations.removeAll(where: { $0.id == id })
+        _ = KeychainStore.remove(account: Self.tokenAccount(id))
         save()
     }
 
     func remove(at offsets: IndexSet) {
+        for i in offsets where integrations.indices.contains(i) {
+            _ = KeychainStore.remove(account: Self.tokenAccount(integrations[i].id))
+        }
         integrations.remove(atOffsets: offsets)
         save()
     }
@@ -290,10 +315,29 @@ final class MCPIntegrationStore {
 
     // MARK: - Persistence
 
+    /// Keychain account for an integration's bearer token.
+    private static func tokenAccount(_ id: UUID) -> String {
+        "daisy.mcpToken.\(id.uuidString)"
+    }
+
     private func load() {
         guard let data = defaults.data(forKey: Self.storageKey) else { return }
         do {
-            integrations = try JSONDecoder().decode([MCPIntegration].self, from: data)
+            var decoded = try JSONDecoder().decode([MCPIntegration].self, from: data)
+            var didMigrate = false
+            for i in decoded.indices {
+                let account = Self.tokenAccount(decoded[i].id)
+                if let stored = KeychainStore.get(account: account), !stored.isEmpty {
+                    decoded[i].bearerToken = stored
+                } else if !decoded[i].bearerToken.isEmpty {
+                    // Legacy inline token → move it into the Keychain, then
+                    // the save() below rewrites the JSON without it.
+                    try? KeychainStore.set(decoded[i].bearerToken, account: account)
+                    didMigrate = true
+                }
+            }
+            integrations = decoded
+            if didMigrate { save() }
         } catch {
             log.error("Failed to decode integrations: \(error.localizedDescription, privacy: .public). Resetting to empty.")
             integrations = []
@@ -301,6 +345,16 @@ final class MCPIntegrationStore {
     }
 
     private func save() {
+        // Bearer tokens go to the Keychain (never the JSON). Encode omits
+        // them via MCPIntegration.encode(to:).
+        for integration in integrations {
+            let account = Self.tokenAccount(integration.id)
+            if integration.bearerToken.isEmpty {
+                _ = KeychainStore.remove(account: account)
+            } else {
+                try? KeychainStore.set(integration.bearerToken, account: account)
+            }
+        }
         do {
             let data = try JSONEncoder().encode(integrations)
             defaults.set(data, forKey: Self.storageKey)

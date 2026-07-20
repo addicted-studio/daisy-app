@@ -271,8 +271,15 @@ final class MCPServer {
                 return
             }
 
+            // Bound the header size — a client that never sends the
+            // end-of-headers marker must not make us buffer unboundedly.
+            let maxHeaderBytes = 64 * 1024
             // Wait until we've seen the end-of-headers marker.
             guard let headerEnd = buffer.range(of: Data("\r\n\r\n".utf8)) else {
+                if buffer.count > maxHeaderBytes {
+                    Self.write(status: 431, body: "Request Header Fields Too Large", on: connection, closeAfter: true)
+                    return
+                }
                 if isComplete { connection.cancel(); return }
                 self.receiveRequest(on: connection, accumulator: buffer)
                 return
@@ -285,8 +292,24 @@ final class MCPServer {
                 return
             }
 
-            let bodyStart = headerEnd.upperBound
+            // Content-Length validation. Without this a malicious header
+            // could crash the app (negative / overflowing value → range
+            // trap on the subdata below) or exhaust memory (huge body).
+            let maxBodyBytes = 8 * 1024 * 1024
+            // Duplicate Content-Length is a request-smuggling vector.
+            let clOccurrences = headerString.lowercased().components(separatedBy: "content-length:").count - 1
+            guard clOccurrences <= 1 else {
+                Self.write(status: 400, body: "Bad Request", on: connection, closeAfter: true)
+                return
+            }
+            // `Int.init` on an over-long value returns nil → treated as 0.
             let contentLength = parsed.headers["content-length"].flatMap(Int.init) ?? 0
+            guard contentLength >= 0, contentLength <= maxBodyBytes else {
+                Self.write(status: 413, body: "Payload Too Large", on: connection, closeAfter: true)
+                return
+            }
+
+            let bodyStart = headerEnd.upperBound
             let available = buffer.count - bodyStart
 
             if available < contentLength {
@@ -295,6 +318,7 @@ final class MCPServer {
                 return
             }
 
+            // Safe now: contentLength is in 0...maxBodyBytes.
             let body = buffer.subdata(in: bodyStart..<(bodyStart + contentLength))
             Task { @MainActor in
                 await self.route(request: parsed, body: body, connection: connection)
@@ -806,6 +830,8 @@ final class MCPServer {
         case 202: return "Accepted"
         case 400: return "Bad Request"
         case 404: return "Not Found"
+        case 413: return "Payload Too Large"
+        case 431: return "Request Header Fields Too Large"
         case 500: return "Internal Server Error"
         case 503: return "Service Unavailable"
         default:  return "OK"
