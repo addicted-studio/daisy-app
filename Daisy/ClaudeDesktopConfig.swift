@@ -299,11 +299,22 @@ enum ClaudeDesktopConfig {
         //
         // Requires Node.js on the user's machine — surfaced in the
         // Connections footer so non-devs know to install it first.
+        // Version-PINNED (supply-chain): an unpinned `npx -y mcp-remote`
+        // executes whatever the registry serves at launch time — a
+        // compromised release would run inside the bridge with access to
+        // every transcript the MCP server exposes. Pin + bump manually
+        // after reviewing the diff. (0.1.38 = current as of 2026-07-20.)
         var mcpServers = root["mcpServers"] as? [String: Any] ?? [:]
+        var bridgeArgs: [String] = ["-y", "mcp-remote@0.1.38", daisyURL,
+                                    "--transport", "sse-only", "--allow-http"]
+        // When token auth is on, inject the bearer header so Claude
+        // Desktop keeps working without the user copying anything.
+        if MCPAccessToken.isRequired {
+            bridgeArgs += ["--header", "Authorization: Bearer \(MCPAccessToken.ensure())"]
+        }
         mcpServers["daisy"] = [
             "command": "npx",
-            "args": ["-y", "mcp-remote", daisyURL,
-                     "--transport", "sse-only", "--allow-http"]
+            "args": bridgeArgs
         ]
         root["mcpServers"] = mcpServers
 

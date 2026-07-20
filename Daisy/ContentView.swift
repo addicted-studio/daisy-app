@@ -563,7 +563,9 @@ struct ContentView: View {
         case .recording: return ""
         case .paused: return String(localized: "Paused · capture stopped, session held")
         case .stopping: return String(localized: "Stopping…")
-        case .summarizing: return String(localized: "Apple Intelligence is summarizing…")
+        // Provider-aware — this used to hardcode "Apple Intelligence is
+        // summarizing…" no matter which of the six providers ran.
+        case .summarizing: return String(localized: "Summarizing with \(Summarizer.shared.providerKind.shortName)…")
         case .finished: return String(localized: "Done")
         case .failed(let msg): return msg
         }
@@ -605,10 +607,8 @@ struct ContentView: View {
 
     // MARK: - Record button
 
-    /// Solid-orange capsule that mirrors the sidebar `RecordCapsule`
-    /// in the main window — same visual grammar (Apple system orange
-    /// = mic-active), so the user reads "this is THE record button"
-    /// the same way whether they're in the popover or the main app.
+    /// Charcoal at rest and orange while recording, mirroring the sidebar
+    /// `RecordCapsule` so the live-microphone signal stays unambiguous.
     private var recordButton: some View {
         Button {
             handlePrimaryAction()
@@ -692,32 +692,21 @@ struct ContentView: View {
     /// Solid capsule fill. Colour signals what happens ON CLICK,
     /// not the current state:
     ///   • Recording → the button reads "Pause"; clicking it puts
-    ///     the session into a calm paused state, so the button itself
-    ///     is grey (no urgency to act).
-    ///   • Paused → the button reads "Resume"; clicking it re-enters
-    ///     active recording, so the button is orange (warm, the
-    ///     recording dot is about to come back).
-    /// Start (idle) and resting / unknown states are a warm BEIGE
-    /// (`daisyRecordIdle`) — NOT green, NOT the recording orange —
-    /// matching `RecordCapsule.fill` in the main sidebar. Orange is
-    /// reserved for "mic is (about to be) live"; an orange idle button
-    /// read as "already recording" (user feedback, 1.0.7.18). (Was sage
-    /// green / daisySuccess through 1.0.7.21 — calm-palette pass 2026-06-15.)
+    /// Orange is reserved for actual live capture; paused is neutral and
+    /// the start button is charcoal at rest.
     private var primaryFill: Color {
         switch session.status {
-        case .recording: return .daisyPaused
-        case .paused:    return .daisyRecording
+        case .recording: return .daisyRecording
+        case .paused:    return .daisyPaused
         case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
         case .failed: return .daisyError
         default: return .daisyRecordIdle
         }
     }
 
-    /// White on sage is ~2:1 — idle/finished switch to near-black
-    /// ink (see `RecordCapsule.foreground`); live states stay white.
+    /// Every filled button state uses white ink, including charcoal idle.
     private var primaryForeground: Color {
         switch session.status {
-        case .idle, .finished: return Color.black.opacity(0.85)
         default: return .white
         }
     }
@@ -793,7 +782,9 @@ struct ContentView: View {
         } else if session.summarizer.isSummarizing {
             HStack {
                 ProgressView().controlSize(.small)
-                Text("Summarizing locally…")
+                // Provider-aware — "Summarizing locally…" was a lie for
+                // Anthropic/OpenAI (and remote-pointed MCP/Ollama).
+                Text("Summarizing with \(Summarizer.shared.providerKind.shortName)…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -869,7 +860,13 @@ struct ContentView: View {
             Text(emptyStateTitle)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
-            Text("Audio and transcription stay on your Mac. Nothing is sent to any server.")
+            // Truthful privacy footer: the blanket "nothing is sent"
+            // claim only holds when the configured summary provider is
+            // effectively local. With a cloud provider the transcript
+            // DOES leave the Mac at summarize time — say so.
+            Text(Summarizer.shared.providerIsEffectivelyLocal
+                 ? String(localized: "Audio and transcription stay on your Mac. Nothing is sent to any server.")
+                 : String(localized: "Audio and transcription stay on your Mac. Summaries use \(Summarizer.shared.providerKind.shortName) over HTTPS."))
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

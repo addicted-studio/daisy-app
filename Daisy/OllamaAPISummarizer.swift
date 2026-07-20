@@ -74,15 +74,16 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
     func summarize(
         transcript: String,
         title: String,
-        localeHint: String?
+        localeHint: String?,
+        task: SummaryTask
     ) async throws -> MeetingSummary {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count > 40 else {
             throw SummaryProviderError.transcriptTooShort
         }
 
-        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint)
-        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed)
+        let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint, task: task)
+        let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed, task: task)
 
         // Ollama /api/chat request shape:
         //   { model, messages: [{role, content}], format: "json",
@@ -95,6 +96,21 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
         // (~250MB per 8k tokens on llama3.2), but a meeting summarizer
         // is the worst case for context starvation; defaults are wrong
         // here.
+        // Dynamic context sizing. A fixed 16k num_ctx silently TRUNCATED
+        // long meetings: an hour of Russian speech is ~20-30k tokens, and
+        // Ollama drops the overflow from the TOP of the prompt — i.e. the
+        // system message with the JSON schema and safety boundary goes
+        // first, producing empty/invalid summaries with no diagnostics.
+        // Estimate ~3 chars/token (safe for Cyrillic-heavy text), pad for
+        // the response, round up to the model's likely limits. Ollama
+        // clamps num_ctx to the model's own maximum, so over-asking is
+        // safe (just RAM); under-asking is the silent-truncation bug.
+        let promptChars = systemPrompt.count + userPrompt.count
+        let estTokens = promptChars / 3 + 4_096
+        let numCtx = min(131_072, max(16_384, estTokens))
+        if estTokens > 131_072 {
+            log.warning("Ollama prompt (~\(estTokens) tokens) exceeds the 128k ceiling — the summary may be truncated. Consider a cloud provider for this recording.")
+        }
         let body: [String: Any] = [
             "model": model,
             "messages": [
@@ -104,7 +120,11 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
             "format": "json",
             "stream": false,
             "options": [
-                "num_ctx": 16384,
+                "num_ctx": numCtx,
+                // Some Ollama versions default num_predict to 128 —
+                // mid-sentence truncation of the JSON. 4k covers the
+                // largest summary the schema can produce.
+                "num_predict": 4_096,
                 "temperature": 0.4
             ]
         ]

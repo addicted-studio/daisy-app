@@ -27,6 +27,7 @@ struct DictationView: View {
 
     @State private var tab: Tab = .vocabulary
     @State private var showingAddWord = false
+    @State private var showingBulkImport = false
     // Observe history so the "Clear history" capsule appears / disappears
     // as entries are recorded or cleared.
     @Bindable private var history = DictationHistory.shared
@@ -51,7 +52,23 @@ struct DictationView: View {
         .sheet(isPresented: $showingAddWord) {
             AddVocabularyView()
         }
+        .sheet(isPresented: $showingBulkImport) {
+            BulkImportVocabularyView()
+        }
         .toolbar {
+            // Bulk import — vocabulary tab only (nothing to import into
+            // History). Sits left of "Add word".
+            if tab == .vocabulary {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingBulkImport = true
+                    } label: {
+                        Text("Bulk import")
+                            .padding(.horizontal, 10)
+                    }
+                    .help("Paste a list or import a file of words / corrections")
+                }
+            }
             // "Add word" in the window toolbar top-right (like the Library
             // "Summarize" pill). Shown on BOTH tabs so the affordance
             // never disappears (Egor 2026-06-24).
@@ -96,7 +113,7 @@ struct DictationView: View {
                     }
                 }
             } footer: {
-                Text("Last 24 hours. Tap to copy.")
+                Text("Last 24 hours. Click to copy.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

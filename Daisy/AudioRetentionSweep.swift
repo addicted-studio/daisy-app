@@ -189,6 +189,15 @@ enum AudioRetentionSweep {
     @discardableResult
     private static func sweep(cutoff: Date) async -> SweepResult {
         let fm = FileManager.default
+        // Never touch the session that's recording RIGHT NOW. The manual
+        // "Clear audio cache" path (`runNow`, cutoff = distantFuture)
+        // matches every directory including the live one — unlinking a
+        // .caf under its open write descriptor makes the audio
+        // unrecoverable and breaks the final full-archive pass on Stop.
+        // (The scheduled path was only saved by the mtime filter — an
+        // accident, not a guard.) Same data-loss class as the husk
+        // cleanup fixed in a82eab9; same guard.
+        let activeDirName = await MainActor.run { SessionStore.shared.activeRecordingDirName }
         guard let ticket = await MainActor.run(body: { SessionsFolder.acquireBase() }) else {
             log.info("retention sweep: no sessions root acquired")
             return SweepResult(purgedFiles: 0, freedBytes: 0)
@@ -209,6 +218,16 @@ enum AudioRetentionSweep {
         for sessionDir in entries {
             let isDir = (try? sessionDir.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
             guard isDir else { continue }
+
+            // Live-recording guards: the in-process active session, plus
+            // any directory still carrying the `.recording` marker (covers
+            // a crashed-but-unrecovered session, and a live session from
+            // ANOTHER Daisy instance when the folder syncs between Macs —
+            // its audio is exactly what interrupted-recovery needs).
+            if sessionDir.lastPathComponent == activeDirName { continue }
+            if fm.fileExists(
+                atPath: sessionDir.appendingPathComponent(SessionStore.recordingMarkerName).path
+            ) { continue }
 
             // Session age — use the directory's mtime as the proxy.
             // Stable across re-renames, and matches what the user

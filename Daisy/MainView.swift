@@ -21,7 +21,7 @@ import SwiftUI
 // MARK: - Section enum
 
 enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
-    case home, library, dictation, connections, settings, about
+    case home, library, dictation, voice, connections, settings, about
 
     var id: String { rawValue }
 
@@ -30,6 +30,7 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         case .home:        String(localized: "Home")
         case .library:     String(localized: "Library")
         case .dictation:   String(localized: "Dictation")
+        case .voice:       String(localized: "Voice")
         case .connections: String(localized: "Connections")
         case .settings:    String(localized: "Settings")
         case .about:       String(localized: "About")
@@ -51,6 +52,9 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         // section as "where your dictated words live" alongside the
         // Library of meetings.
         case .dictation:   "character.cursor.ibeam"
+        // waveform reads as "your voice" — pairs with the Voice section
+        // that profiles how you speak/write.
+        case .voice:       "waveform"
         // arrow.triangle.branch reads as "things diverging from a
         // central point" — same shape Notion / Linear / Raycast use
         // for their Integrations / Connections nav entries. Closest
@@ -191,6 +195,9 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
         } detail: {
             detail
+                // Keep the product accent inside the content pane. The split
+                // view itself uses a neutral tint for native sidebar selection.
+                .tint(Color.daisyAccent)
         }
         // Brand pill goes into `.principal` placement — that lives
         // over the detail pane centre, NOT over the sidebar's
@@ -264,12 +271,10 @@ struct MainView: View {
         // throughout. Recording orange + cinnamon accents land much
         // better on this base than on system gray.
         .daisyWindowBackground(Color.daisyBgPrimary)
-        // Apply soft-cinnamon tint at the NavigationSplitView root.
-        // Putting it deeper (on the inner List) didn't propagate to
-        // macOS's native sidebar selection chip — that uses the
-        // SwiftUI `.tint` from the nearest ancestor that owns the
-        // selection style.
-        .tint(Color.daisyAccentSoft)
+        // `List(.sidebar)` takes its native selection colour from the
+        // NavigationSplitView owner, not from a tint applied to the inner
+        // List. A pale neutral tint keeps that system highlight gray.
+        .tint(Color.daisySidebarSelection)
         .modifier(ToastOverlay())
         // First-run sheet — fired once via .onAppear (not on every
         // view re-render). After dismiss, `FirstRunView` flips
@@ -309,10 +314,24 @@ struct MainView: View {
     // MARK: Sidebar
 
     private var sidebar: some View {
+        // Let AppKit render sidebar selection. Keeping selection ownership in
+        // `List(selection:)` gives the sidebar its standard macOS keyboard,
+        // focus and accessibility behaviour, and prevents a second custom
+        // highlight from fighting the system-selected row.
         List(selection: $sidebarSelection) {
             Section {
                 ForEach(MainSection.allCases) { section in
-                    Label(section.title, systemImage: section.systemImage)
+                    Label {
+                        Text(section.title)
+                            .foregroundStyle(Color.daisySidebarInk)
+                    } icon: {
+                        Image(systemName: section.systemImage)
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(Color.daisySidebarInk)
+                    }
+                        // Native sidebar label styles otherwise colour the
+                        // symbol independently through the environment tint.
+                        .tint(Color.daisySidebarInk)
                         .tag(section)
                 }
             }
@@ -418,10 +437,10 @@ struct MainView: View {
             }
         }
         .listStyle(.sidebar)
-        // Override system blue → soft cinnamon. macOS uses `.tint`
-        // for List row selection fills, focus rings, and `Label`
-        // icon colour in `.sidebar` style.
-        .tint(Color.daisyAccentSoft)
+        // Keep the sidebar on the same paper surface as cards instead of
+        // letting the system material darken it against the window.
+        .scrollContentBackground(.hidden)
+        .background(Color.daisyBgSidebar)
     }
 
     // MARK: Detail
@@ -435,6 +454,8 @@ struct MainView: View {
             LibraryView()
         case .dictation:
             DictationView()
+        case .voice:
+            VoiceView(settings: settings)
         case .connections:
             ConnectionsView(settings: settings)
         case .settings:
@@ -746,6 +767,16 @@ private struct HotkeyStopWiring: ViewModifier {
                 ServiceWiring.applyAllHotkeys(settings: settings, session: session)
             }
             .onChange(of: settings.dictationHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
+            .onChange(of: settings.rewriteSelectionHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
+            // Dictation registration is deferred until first-run
+            // completes (Input Monitoring prompt timing — see
+            // ServiceWiring); re-apply the moment onboarding closes so
+            // the fresh-install Fn default goes live immediately.
+            .onChange(of: settings.hasShownFirstRun) { _, _ in
                 ServiceWiring.applyAllHotkeys(settings: settings, session: session)
             }
             // Granola-style auto-open: jump to History on the freshly

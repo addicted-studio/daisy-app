@@ -61,9 +61,15 @@ enum ServiceWiring {
                 Task { await session?.toggleVoiceNoteByHotkey() }
             }
         )
+        // Dictation registers only AFTER first-run completes. The hold
+        // path needs Input Monitoring, and macOS prompts at monitor
+        // registration — with the fresh-install Fn default that prompt
+        // would otherwise fire at first launch, BEFORE onboarding has
+        // shown the Hotkeys step that explains it. MainView re-applies
+        // hotkeys when `hasShownFirstRun` flips.
         HotkeyManager.shared.register(
             slot: .dictation,
-            choice: settings.dictationHotkey,
+            choice: settings.hasShownFirstRun ? settings.dictationHotkey : .none,
             action: .hold(
                 onPress: { [weak session] in
                     Task { await session?.startDictationHotkey() }
@@ -72,6 +78,15 @@ enum ServiceWiring {
                     Task { await session?.stopDictationHotkey() }
                 }
             )
+        )
+        // Rewrite-selection-in-my-voice — one tap grabs the selection,
+        // rewrites it via the Voice Profile, pastes it back.
+        HotkeyManager.shared.register(
+            slot: .rewrite,
+            choice: settings.rewriteSelectionHotkey,
+            action: .toggle {
+                Task { await SelectionRewrite.shared.trigger() }
+            }
         )
     }
 
@@ -147,7 +162,9 @@ enum ServiceWiring {
             return
         }
         CalendarService.shared.start(
-            lookaheadHours: 24,
+            // 48h so Home can roll over to "Tomorrow" once today's
+            // meetings are done and still show a full next day.
+            lookaheadHours: 48,
             autoStartOnMeeting: settings.autoStartFromCalendar
         ) { [weak session] meeting in
             Task { await session?.startFromMeeting(meeting) }

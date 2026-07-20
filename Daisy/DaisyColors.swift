@@ -7,10 +7,8 @@
 //  light + dark variant resolved at render time via the dynamic
 //  NSColor provider.
 //
-//  Recording / mic-active colors are deliberately locked to Apple's
-//  system orange (HIG `systemOrange`). macOS and iOS use the same hue
-//  for the Control Center "microphone in use" dot — Daisy inherits
-//  that learned affordance instead of fighting it.
+//  Daisy's warm amber signal echoes the familiar macOS recording cue and
+//  the flower's yellow-orange centre. It is reserved for live capture.
 //
 
 import SwiftUI
@@ -42,21 +40,19 @@ extension Color {
 
     // ─── Recording / mic-active ───────────────────────────────────────
     //
-    // System orange. Locked. This is the *same* hue macOS / iOS use for
-    // the Control Center mic-in-use indicator. The user sees orange and
-    // already knows "something is listening" — Daisy plugs into that.
+    // Amber recording signal. This is the sole vivid, always-live colour.
 
     /// Primary "recording in progress" color. Center of the petal widget,
     /// Stop button background, the recording status dot.
     static let daisyRecording = Color(
-        light: Color(hex: 0xFF9500),  // Apple HIG systemOrange (Light)
-        dark:  Color(hex: 0xFF9F0A)   // Apple HIG systemOrange (Dark)
+        light: Color(hex: 0xF47B20),
+        dark:  Color(hex: 0xFF9147)
     )
 
     /// Softer orange used for halos / glows around the recording center.
     static let daisyRecordingPulse = Color(
-        light: Color(hex: 0xFFB04D),
-        dark:  Color(hex: 0xFFC266)
+        light: Color(hex: 0xF8B36F),
+        dark:  Color(hex: 0xFFD3A7)
     )
 
     // ─── Dictation mode (lilac) ───────────────────────────────────────
@@ -78,14 +74,14 @@ extension Color {
         // signal on both the dark widget puck and the cream surfaces, while
         // still reading near the orange/coral siblings in weight.
         // History: original 0x8A6BC9/0xA98EE0 → pale 0xA98AD4/0xC0A8E6 → this.
-        light: Color(hex: 0x9A6FE0),
-        dark:  Color(hex: 0xB48BF2)
+        light: Color(hex: 0xB7A2FF),
+        dark:  Color(hex: 0xC9B9FF)
     )
 
     /// Halo / glow companion to `daisyDictation`.
     static let daisyDictationPulse = Color(
-        light: Color(hex: 0xB9A4DC),
-        dark:  Color(hex: 0xC9B6E8)
+        light: Color(hex: 0xD7CEFA),
+        dark:  Color(hex: 0xE4DDFF)
     )
 
     // ─── Voice-note mode (coral) ──────────────────────────────────────
@@ -103,14 +99,14 @@ extension Color {
         // L*≈62 / dark 0xF08495) so meetings / voice-note / dictation sit
         // at matched visual weight — none reads as "more important". Hue +
         // ~55% saturation intent unchanged. ⚠️ EYEBALL on device.
-        light: Color(hex: 0xEE8593),
-        dark:  Color(hex: 0xF49DAA)
+        light: Color(hex: 0xD8755C),
+        dark:  Color(hex: 0xEC9A84)
     )
 
     /// Halo / glow companion to `daisyVoiceNote`.
     static let daisyVoiceNotePulse = Color(
-        light: Color(hex: 0xF2A0AC),
-        dark:  Color(hex: 0xF5B5BE)
+        light: Color(hex: 0xE8A493),
+        dark:  Color(hex: 0xF5C0B3)
     )
 
     /// Paused state. Cool neutral gray so the widget reads as
@@ -124,134 +120,135 @@ extension Color {
 
     // ─── Brand / surfaces ─────────────────────────────────────────────
 
-    /// Main app background. Warm cream in light; deep warm-black in dark.
-    /// Cream + dark-warm is chosen so the recording orange reads as the
-    /// only saturated point on screen.
+    /// Main app background. Airy warm white in light; espresso in dark.
+    /// The low-chroma surfaces leave the amber recording state unambiguous.
     static let daisyBgPrimary = Color(
-        light: Color(hex: 0xFAF7F0),
-        dark:  Color(hex: 0x1C1A17)
+        light: Color(hex: 0xFFFEFC),
+        dark:  Color(hex: 0x0D100E)
     )
 
-    /// Sidebar / inset background — one step warmer than primary.
+    /// Shared light-theme surface for the sidebar, cards and widgets.
+    /// Keeping these surfaces identical makes the shell feel calm and unified.
     static let daisyBgSidebar = Color(
-        light: Color(hex: 0xF2EDE2),
-        dark:  Color(hex: 0x161412)
+        light: Color(hex: 0xFBF9F5),
+        dark:  Color(hex: 0x151816)
     )
 
     /// Elevated surfaces — cards, popovers, the menu-bar popover.
+    /// Matches the sidebar in light mode by design.
     static let daisyBgElevated = Color(
-        light: Color(hex: 0xFFFFFF),
-        dark:  Color(hex: 0x252220)
+        light: Color(hex: 0xFBF9F5),
+        dark:  Color(hex: 0x151816)
     )
 
     /// Subtle dividers between sections.
     static let daisyDivider = Color(
-        light: Color(hex: 0xE8E2D4),
-        dark:  Color(hex: 0x2E2A26)
+        light: Color(hex: 0xECE7DE),
+        dark:  Color(hex: 0x303531)
+    )
+
+    /// Sidebar navigation stays neutral. Icons and labels use a warm charcoal
+    /// while the current destination receives a quiet, paper-light glow.
+    static let daisySidebarInk = Color(
+        light: Color(hex: 0x282824),
+        dark:  Color(hex: 0xF4F5EF)
+    )
+
+    static let daisySidebarSelection = Color(
+        light: Color(hex: 0xF0F1F0),
+        dark:  Color(hex: 0x242825)
     )
 
     // ─── Petal mark ───────────────────────────────────────────────────
     //
-    // The flower in idle / finished state. Warm amber — distinct from
-    // recording orange so the eye knows "this is decoration, not a
-    // live signal". Recording state replaces the center with
-    // `daisyRecording` so the contrast itself communicates state.
+    // The flower in idle / finished state. Golden-orange is calmer than the
+    // vivid capture signal; recording replaces it with `daisyRecording`.
 
     /// Center disc of the petal mark when idle / finished.
     static let daisyCenterIdle = Color(
-        light: Color(hex: 0xFFB84D),
-        dark:  Color(hex: 0xFFA826)
+        light: Color(hex: 0xF5A14B),
+        dark:  Color(hex: 0xF5A14B)
     )
+
+    /// Warm, non-live accent for Home widgets and compact indicators.
+    /// It echoes the flower centre without borrowing the vivid recording hue.
+    static var daisyHomeAccent: Color { daisyCenterIdle }
 
     /// Petal fill — ink that matches the text on each appearance.
     static let daisyPetal = Color(
-        light: Color(hex: 0x1C1A17),
-        dark:  Color(hex: 0xF2EDE2)
+        light: Color(hex: 0x282824),
+        dark:  Color(hex: 0xF4F5EF)
     )
 
     // ─── Text ─────────────────────────────────────────────────────────
 
     static let daisyTextPrimary = Color(
-        light: Color(hex: 0x1C1A17),
-        dark:  Color(hex: 0xF2EDE2)
+        light: Color(hex: 0x282824),
+        dark:  Color(hex: 0xF4F5EF)
     )
 
     static let daisyTextSecondary = Color(
-        light: Color(hex: 0x5C544A),
-        dark:  Color(hex: 0xA8A096)
+        light: Color(hex: 0x62625D),
+        dark:  Color(hex: 0xBEC7BE)
     )
 
     static let daisyTextTertiary = Color(
-        light: Color(hex: 0x8C8478),
-        dark:  Color(hex: 0x6E6862)
+        light: Color(hex: 0x85857F),
+        dark:  Color(hex: 0x8F988E)
     )
 
     // ─── Status semantics ─────────────────────────────────────────────
 
     /// Success / finished / transcript ready. Sage — calm, not alarming.
     static let daisySuccess = Color(
-        light: Color(hex: 0x7BAE8E),
-        dark:  Color(hex: 0x8FC4A2)
+        light: Color(hex: 0x3D7458),
+        dark:  Color(hex: 0x93C9A5)
     )
 
     /// Warning / summarizing / pending. Warm gold — explicitly NOT
     /// orange so it doesn't get confused with the recording state.
     static let daisyWarning = Color(
-        light: Color(hex: 0xD4A24C),
-        dark:  Color(hex: 0xE0B05C)
+        light: Color(hex: 0xF5A14B),
+        dark:  Color(hex: 0xFFBF73)
     )
 
     /// Error. A red shifted toward magenta so it can't be mistaken for
     /// the recording orange even at a glance.
     static let daisyError = Color(
-        light: Color(hex: 0xC44545),
-        dark:  Color(hex: 0xE06060)
+        light: Color(hex: 0xCF684E),
+        dark:  Color(hex: 0xE98A73)
     )
 
-    /// Selection / accent / primary CTA when NOT in recording state.
-    /// Deliberately warm cinnamon — keeps the palette in the cream
-    /// family but is unambiguously distinct from `daisyRecording`
-    /// (saturated system orange) AND from `daisySuccess` (sage).
-    /// Sage was the previous accent — pulled because it read as
-    /// "Granola territory", which Daisy actively differentiates from.
+    /// Brand accent / primary CTA when NOT in recording state.
+    /// Warm amber owns general interaction; green stays semantic-only.
     static let daisyAccent = Color(
-        // 2026-06-13 — calmed from a saturated amber/gold to a light brown
-        // so the accent stops reading as "yellow" against the warm
-        // surfaces (Egor: the yellow highlights felt noisy). Held at the
-        // SAME perceived luminance as the old amber, so dark-ink text on
-        // accent-filled chips (the folder pills) keeps its contrast — only
-        // the saturation drops (~63%→~39%) and the hue browns. Stays
-        // distinct from `daisyAccentSoft` (taupe selection fill) and
-        // `daisyRecording` (system orange). History: sage → cinnamon/amber
-        // → this light brown.
-        light: Color(hex: 0x9E7338),   // muted brown (was 0xA66E2A cinnamon)
-        dark:  Color(hex: 0xC6A079)    // light brown (was 0xD4A04E amber)
+        light: Color(hex: 0xD97A28),
+        dark:  Color(hex: 0xF5A14B)
     )
 
-    /// Softer cinnamon for system-tinted backgrounds — sidebar List
-    /// selection, focus halos, anywhere the OS fills a whole element
-    /// with the tint. Pulling `daisyAccent` here would look as
-    /// "active" as `daisyRecording`, which we want to avoid:
-    /// recording orange owns the urgent / live affordance, selection
-    /// should feel like a warm presence, not a button.
+    /// Soft amber for selected backgrounds, focus halos, and controls.
     static let daisyAccentSoft = Color(
-        light: Color(hex: 0xC9986D),   // caramel-tan
-        dark:  Color(hex: 0xB89376)    // warm taupe
+        light: Color(hex: 0xF8E5D2),
+        dark:  Color(hex: 0x3A2A1E)
+    )
+
+    /// Ink for text/glyphs sitting ON an accent-filled surface —
+    /// prominent buttons tinted daisyAccent/daisyHomeAccent, the
+    /// active folder chip, the recording capsule. The system default
+    /// (white) FAILS WCAG on the amber fills: ≈2.1:1 on 0xF5A14B
+    /// (dark accent), ≈3.4:1 on 0xD97A28 (light accent). This warm
+    /// near-black clears 4.5:1 on both, and on the recording orange.
+    static let daisyTextOnAccent = Color(
+        light: Color(hex: 0x2B1A07),
+        dark:  Color(hex: 0x2B1A07)
     )
 
     // ─── Record button (idle / finished) ─────────────────────────────
     //
-    // The "Start a recording" capsule fill when nothing is live. A warm
-    // light beige in the cream brand family — replaces the old sage-green
-    // "go" button (through 1.0.7.19) after Egor asked to calm the palette
-    // (2026-06-13). Pairs with near-black ink. Deliberately NOT used for
-    // the live states: recording → grey, paused-Resume → orange, failed →
-    // red, so the capsule colour still signals what a click does. Beige
-    // (not pure white) keeps it from shouting next to those saturated
-    // state colours, and one step warmer/deeper than `daisyBgElevated`
-    // (card surface) so it still reads as a filled, tappable affordance.
+    // The "Start a recording" capsule fill when nothing is live: a warm
+    // charcoal. Solid orange is reserved for a live microphone.
     static let daisyRecordIdle = Color(
-        light: Color(hex: 0xEADCC0),   // warm light beige on cream
-        dark:  Color(hex: 0xE6DAC0)    // warm light beige on near-black
+        light: Color(hex: 0x242522),
+        dark:  Color(hex: 0x334138)
     )
 }

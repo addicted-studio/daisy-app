@@ -1315,13 +1315,20 @@ final class RecordingSession {
         // recording) and before any work finished. The "done" cue now plays
         // when `.finished` lands (SoundEffects.playFinished) — leak-safe and
         // synced to the widget's celebration pop.
-        if status == .paused {
+        // Flip to .stopping BEFORE the first await. The paused-teardown
+        // below suspends, and a second `stop()` arriving during that
+        // suspension (auto-stop timer racing a manual Stop, or
+        // willPowerOff racing the quit confirmation) would pass the
+        // guard above and run the whole finalize pipeline twice —
+        // double final pass, double summary, duplicate auto-send.
+        let wasPaused = (status == .paused)
+        status = .stopping
+        if wasPaused {
             // Make sure any half-open paused pipelines are fully
             // torn down before the final transcribe.
             recorder.stop()
             await systemAudio.stop()
         }
-        status = .stopping
 
         recorder.stop()
         await systemAudio.stop()
@@ -1580,39 +1587,10 @@ final class RecordingSession {
         // `finalizePostStop` task after `.finished` flips — that path
         // still applies, just below.
         if currentMode == .dictation {
-            let transcriptText: String
-            if settings.dictationUseParakeet,
-               let parakeetText = try? await ParakeetEngine.shared.transcribe(
-                   samples: micTranscriber.capturedSamples),
-               !parakeetText.isEmpty {
-                // Parakeet path (FluidAudio) — transcribe the captured mic
-                // buffer directly, skipping the Whisper final pass.
-                transcriptText = parakeetText
-            } else {
-                // Whisper path — default, and the automatic fallback when
-                // Parakeet is off, errored, or produced nothing (e.g. a
-                // sub-0.3 s clip FluidAudio rejects).
-                //
-                // `.dictationFinal` (lite search width + one temperature-
-                // fallback retry) instead of `.full`: this decode blocks
-                // the paste, and full-width search on a few seconds of
-                // speech is latency without measurable quality gain.
-                // Meeting/voice-note final passes keep `.full` — they run
-                // detached in finalizePostStop, off the latency path.
-                let dictFinalState = stopSignposter.beginInterval("dictation_final_pass", id: stopSignposter.makeSignpostID())
-                let t_dictFinal = Date()
-                await micTranscriber.runFinalPass(profile: .dictationFinal, biasTerms: DictationDictionary.shared.biasTerms())
-                stopSignposter.endInterval("dictation_final_pass", dictFinalState)
-                log.info("post-stop dictation_final_pass: \(ms(t_dictFinal), privacy: .public)ms")
-                transcriptText = fullTranscriptText
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            DictationPaste.shared.handle(transcript: transcriptText)
-            if let dir = sessionDirectory {
-                try? FileManager.default.removeItem(at: dir)
-            }
-            releaseSessionsFolderTicket()
-            reset()
+            // Dictation post-processing (fast-engine → Whisper fallback,
+            // optional voice polish, usage, paste, teardown) lives in
+            // RecordingSession+Dictation.swift.
+            await finishDictation(durSec: durSec)
             return
         }
 
@@ -1645,6 +1623,16 @@ final class RecordingSession {
             stopSignposter.endInterval("write_transcript_md", writeState)
             log.info("post-stop write_transcript_md: \(ms(t_write), privacy: .public)ms")
         }
+
+        // Local usage stats for meetings / voice notes (same widgets as
+        // dictation). Live-quality transcript is fine for a word count.
+        // Recorded as `.recording` so it counts toward total words + the
+        // heatmap but NOT the dictation-only WPM.
+        UsageStats.shared.record(
+            words: UsageStats.wordCount(fullTranscriptText),
+            seconds: Double(max(0, durSec)),
+            kind: .recording
+        )
 
         // ── Granola-style: status → .finished BEFORE summary ──────────
         //
@@ -2078,9 +2066,11 @@ final class RecordingSession {
     }
 
     /// Release the security-scoped folder ticket. Called from
-    /// `stop()` and `reset()` so we don't hold the user's folder
-    /// open after a session is finalised.
-    private func releaseSessionsFolderTicket() {
+    /// `stop()`, `reset()`, and the dictation finalize extension so we
+    /// don't hold the user's folder open after a session is finalised.
+    /// `internal` (not `private`) so `RecordingSession+Dictation` can
+    /// tear the session down.
+    func releaseSessionsFolderTicket() {
         sessionsFolderTicket?.release()
         sessionsFolderTicket = nil
     }

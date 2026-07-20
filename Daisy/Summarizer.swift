@@ -398,7 +398,12 @@ final class Summarizer {
     /// prefer the return value to avoid a race when a second recording
     /// starts before the first summary lands.
     @discardableResult
-    func summarize(transcript: String, title: String, localeHint: String?) async -> MeetingSummary? {
+    func summarize(
+        transcript: String,
+        title: String,
+        localeHint: String?,
+        task: SummaryTask = .standard
+    ) async -> MeetingSummary? {
         guard !transcript.isEmpty else { return nil }
         // No intelligible speech → don't hand a near-empty transcript to
         // the LLM (it fabricates an apologetic "recording failed" summary
@@ -419,7 +424,8 @@ final class Summarizer {
             let summary = try await provider.summarize(
                 transcript: transcript,
                 title: title,
-                localeHint: localeHint
+                localeHint: localeHint,
+                task: task
             )
             lastSummary = summary
             log.info("Summarized via \(self.providerKind.shortName, privacy: .public)")
@@ -457,12 +463,18 @@ final class Summarizer {
     /// Returns either the produced summary or a thrown error, so the
     /// caller can render its own one-shot preview without polluting
     /// the singleton.
-    func runProbe(transcript: String, title: String, localeHint: String?) async throws -> MeetingSummary {
+    func runProbe(
+        transcript: String,
+        title: String,
+        localeHint: String?,
+        task: SummaryTask = .standard
+    ) async throws -> MeetingSummary {
         let provider = makeProvider()
         return try await provider.summarize(
             transcript: transcript,
             title: title,
-            localeHint: localeHint
+            localeHint: localeHint,
+            task: task
         )
     }
 
@@ -477,6 +489,34 @@ final class Summarizer {
     /// or malformed we fall back to an UnavailableProvider that
     /// always fails — surfaces as a friendly error in the UI rather
     /// than a crash.
+    /// True when the currently CONFIGURED provider endpoint keeps data on
+    /// this Mac. `SummaryProviderKind.isLocal` alone LIES for
+    /// .mcp/.ollama/.lmStudio — the user can point any of them at a
+    /// remote host, and callers that auto-run generation "because the
+    /// provider is local" (pre-meeting brief, morning brief, day card)
+    /// would then ship past-session excerpts to an external server
+    /// without the per-meeting consent tap. Always prefer this over
+    /// `providerKind.isLocal` for privacy-gating decisions.
+    var providerIsEffectivelyLocal: Bool {
+        switch providerKind {
+        case .appleIntelligence: return true
+        case .anthropic, .openai: return false
+        case .ollama: return Self.isLoopbackURL(URL(string: ollamaBaseURL))
+        case .lmStudio: return Self.isLoopbackURL(URL(string: lmStudioBaseURL))
+        case .mcp:
+            let s = UserDefaults.standard.string(forKey: "daisy.mcpSummarizer.url")
+                ?? MCPSummarizer.defaultBaseURLString
+            return Self.isLoopbackURL(URL(string: s))
+        }
+    }
+
+    /// Loopback check for provider endpoints. Conservative: an
+    /// unparseable URL or missing host counts as NOT local.
+    nonisolated static func isLoopbackURL(_ url: URL?) -> Bool {
+        guard let host = url?.host?.lowercased() else { return false }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]"
+    }
+
     private func makeProvider() -> SummaryProvider {
         switch providerKind {
         case .appleIntelligence:
@@ -538,7 +578,7 @@ private nonisolated struct UnavailableMCPProvider: SummaryProvider {
 
     func isReady() async -> Bool { false }
 
-    func summarize(transcript: String, title: String, localeHint: String?) async throws -> MeetingSummary {
+    func summarize(transcript: String, title: String, localeHint: String?, task: SummaryTask) async throws -> MeetingSummary {
         throw SummaryProviderError.modelUnavailable(provider: "MCP", reason: reason)
     }
 }
@@ -552,7 +592,7 @@ private nonisolated struct UnavailableAppleIntelligenceProvider: SummaryProvider
 
     func isReady() async -> Bool { false }
 
-    func summarize(transcript: String, title: String, localeHint: String?) async throws -> MeetingSummary {
+    func summarize(transcript: String, title: String, localeHint: String?, task: SummaryTask) async throws -> MeetingSummary {
         throw SummaryProviderError.modelUnavailable(
             provider: "Apple Intelligence",
             reason: "Apple Intelligence summaries require macOS 26 (Tahoe) or newer. Open Settings → Summary and pick Anthropic, OpenAI, or your local MCP server instead."

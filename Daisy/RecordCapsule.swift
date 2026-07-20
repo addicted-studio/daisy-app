@@ -40,7 +40,9 @@ struct RecordCapsule: View {
                 if session.status == .recording || session.status == .paused {
                     Text(formatTime(session.elapsed))
                         .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.85))
+                        // Ink-on-accent: white on the recording orange
+                        // was ≈2.2:1 (WCAG fail for caption text).
+                        .foregroundStyle(Color.daisyTextOnAccent.opacity(0.9))
                 } else if let label = hotkeyLabel {
                     // Idle: show the configured global record hotkey as a
                     // chip (mirrors the popover Record button) so the
@@ -152,25 +154,14 @@ struct RecordCapsule: View {
 
     private var fill: Color {
         switch session.status {
-        // Colour signals what happens ON CLICK, not current state:
-        //   recording → label says "Pause", click moves us to a
-        //   calm paused state, so the capsule is grey (no urgency).
-        //   paused    → label says "Resume", click re-enters active
-        //   recording, so the capsule is orange (the mic dot is
-        //   about to come back).
-        case .recording:                              return .daisyPaused
-        case .paused:                                  return .daisyRecording
+        // Colour signals the state the user is currently in. Orange is a
+        // literal live-microphone signal; paused stays neutral.
+        case .recording:                              return .daisyRecording
+        case .paused:                                  return .daisyPaused
         case .preparing, .stopping, .summarizing:     return Color.gray.opacity(0.40)
         case .failed:                                  return .daisyError
-        // Idle / finished Start is a warm BEIGE (`daisyRecordIdle`) — not
-        // green, not the recording orange. Orange means "mic is (about to
-        // be) live" — paused-Resume above, the widget core, the
-        // system-audio warning — so the idle button must stay off that hue
-        // (an orange idle button reads as "already recording", 1.0.7.18
-        // feedback). Beige sits in the cream brand family and reads as a
-        // calm "go" affordance; the dark-ink label + record glyph carry
-        // the meaning. (Was sage green through 1.0.7.19 — Egor asked to
-        // calm the palette, 2026-06-13.)
+        // Idle / finished Start is charcoal; orange begins only when the
+        // microphone is actually live.
         default:                                       return .daisyRecordIdle
         }
     }
@@ -179,11 +170,8 @@ struct RecordCapsule: View {
         switch session.status {
         case .recording, .preparing, .stopping,
              .summarizing, .failed, .paused:          return .white
-        // Idle/finished sit on the light `daisyRecordIdle` beige, so the
-        // label uses near-black ink (white would vanish). Active and
-        // transitional states sit on saturated fills (orange / grey / red)
-        // and use white.
-        default:                                       return Color.black.opacity(0.85)
+        // Charcoal, live, paused, and transitional fills all use white ink.
+        default:                                       return .white
         }
     }
 

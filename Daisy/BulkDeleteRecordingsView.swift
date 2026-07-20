@@ -155,7 +155,7 @@ struct BulkDeleteRecordingsView: View {
         if let folder = scopeFolderName {
             return String(localized: "\(count) recordings in \(folder)")
         }
-        return String(localized: "\(count) recordings across all folders")
+        return String(localized: "\(count) recordings across all projects")
     }
 
     /// Confirmation dialog title — leads with the count, names the

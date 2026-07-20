@@ -70,11 +70,26 @@ extension RecordingSession {
         switch status {
         case .idle, .finished, .failed:
             pendingMode = .dictation
-            if settings.dictationUseParakeet {
-                // Warm the Parakeet model during the hold so release→paste
-                // isn't blocked on a cold load. (First-ever use still pays a
-                // one-time ~600 MB download.)
+            // Warm the selected fast dictation engine during the hold so
+            // release→paste isn't blocked on a cold load.
+            switch settings.dictationEngine {
+            case .whisper:
+                break
+            case .parakeet:
+                // First-ever use still pays a one-time ~600 MB download.
                 Task { await ParakeetEngine.shared.ensureLoaded() }
+            case .appleSpeech:
+                if #available(macOS 26, *) {
+                    let localeID = settings.dictationLocale.isEmpty
+                        ? settings.defaultTranscriptionLocale
+                        : settings.dictationLocale
+                    if localeID != "auto", !localeID.isEmpty {
+                        let locale = Locale(identifier: localeID)
+                        // Ensures the OS model is installed (background
+                        // download on first use); no in-app weight.
+                        Task { await AppleSpeechEngine.ensureModelReady(locale: locale) }
+                    }
+                }
             }
             if settings.dictationUseNemotronLive {
                 // Warm the streaming preview engine during the hold so the

@@ -222,6 +222,40 @@ if [[ -f "${APPCAST_FILE}" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
+# 0. Quality gates — run BEFORE the ~15-minute archive + notarize so a failing
+#    test or a surprising branch is caught in seconds, not after a wasted
+#    notary cycle. Unit tests are the hard gate (skip only for an emergency
+#    hotfix via DAISY_SKIP_TESTS=1); dirty-tree / branch are informational
+#    because the release flow intentionally writes pbxproj back.
+# -----------------------------------------------------------------------------
+
+echo "▸ [0/6] quality gates…"
+
+if ! git -C "${DAISY_REPO}" diff --quiet || ! git -C "${DAISY_REPO}" diff --cached --quiet; then
+    echo "  ⚠ Working tree has uncommitted changes — releasing from a dirty tree."
+fi
+CURRENT_BRANCH=$(git -C "${DAISY_REPO}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+echo "  • branch: ${CURRENT_BRANCH}"
+
+if [[ "${DAISY_SKIP_TESTS:-0}" == "1" ]]; then
+    echo "  ⚠ DAISY_SKIP_TESTS=1 — skipping unit tests (hotfix mode)."
+else
+    echo "  • running unit tests…"
+    if ! xcodebuild \
+        -project "${DAISY_REPO}/Daisy.xcodeproj" \
+        -scheme "${SCHEME}" \
+        -configuration "${CONFIGURATION}" \
+        -destination 'platform=macOS' \
+        test; then
+        echo "  ✗ Tests failed — aborting before archive." >&2
+        echo "    Fix the tests, or re-run with DAISY_SKIP_TESTS=1 for an emergency hotfix." >&2
+        exit 1
+    fi
+    echo "  ✓ tests passed"
+fi
+echo
+
+# -----------------------------------------------------------------------------
 # 1. Archive — release-config build of the Xcode project.
 # -----------------------------------------------------------------------------
 

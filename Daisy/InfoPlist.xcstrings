@@ -1,27 +1,68 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "NSCalendarsFullAccessUsageDescription" : {
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Daisy"
+          }
+        }
+      }
+    },
+    "NSCalendarsFullAccessUsageDescription" : {
+      "comment" : "Privacy - Calendars Full Access Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Daisy reads your calendar to detect upcoming meetings and offer auto-recording when one starts. Nothing is sent off your Mac."
+          }
+        },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Daisy читает ваш календарь, чтобы находить предстоящие встречи и предлагать автозапись, когда они начинаются. Данные не покидают ваш Mac."
           }
         }
       }
     },
-    "NSMicrophoneUsageDescription" : {
+    "NSHumanReadableCopyright" : {
+      "comment" : "Copyright (human-readable)",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : ""
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Daisy records meeting audio locally to transcribe it on-device. No audio leaves your computer."
+          }
+        },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Daisy записывает звук встречи локально и расшифровывает его на устройстве. Аудио не покидает ваш компьютер."
           }
         }
       }
     },
     "NSScreenCaptureUsageDescription" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -32,10 +73,18 @@
       }
     },
     "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "Privacy - Speech Recognition Usage Description",
+      "extractionState" : "extracted_with_value",
       "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Daisy uses on-device speech recognition to show a lighter live transcript while you record. Everything stays on your Mac — nothing is sent to Apple or any server."
+          }
+        },
         "ru" : {
           "stringUnit" : {
-            "state" : "translated",
+            "state" : "needs_review",
             "value" : "Daisy использует распознавание речи на устройстве, чтобы показывать облегчённый живой транскрипт во время записи. Всё остаётся на вашем Mac — ничего не отправляется Apple или на серверы."
           }
         }

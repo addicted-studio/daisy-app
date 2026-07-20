@@ -26,15 +26,10 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
         // (see DaisyApp's conditional MenuBarExtra). Dock icon + menus stay.
         NSApp.setActivationPolicy(.regular)
 
-        // Daisy ships a single DARK appearance (matches the brand site +
-        // launch cover). Force dark Aqua app-wide so every surface — the
-        // menu-bar popover, main window, Settings, the floating widget
-        // NSPanel, and AppKit alerts — renders dark regardless of the
-        // user's system appearance. All brand colours flow through the
-        // appearance-adaptive `DaisyColors` tokens (and the window's
-        // `warmCream` chrome is dynamic too), so this single line resolves
-        // every token to its dark variant.
-        NSApp.appearance = NSAppearance(named: .darkAqua)
+        // Apply the persisted System / Light / Dark preference globally.
+        // `DaisyColors` supplies paired tokens, so SwiftUI content, AppKit
+        // chrome, menu-bar popover, floating widget, and alerts move together.
+        AppearanceController.apply(AppearancePreference.stored())
 
         // FluidAudio (diarization / Silero VAD / Parakeet) network policy:
         // hard-block every download surface outside explicit, logged
@@ -164,25 +159,23 @@ final class DaisyAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificatio
     /// — Liquid Glass uses a private `_NSGlassBackdropView`, not
     /// NSVisualEffectView, so traversal couldn't touch it.
     private func applyWarmChrome(to window: NSWindow) {
-        // Pin the WINDOW (titlebar included) to dark — Daisy is dark-only.
-        // NSApp.appearance alone didn't always reach the titlebar chrome, so
-        // under a light SYSTEM appearance the transparent titlebar showed a
-        // white strip at the top (Egor 2026-06-16). Setting it on the window
-        // forces the titlebar dark too.
-        window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = Self.warmCream
+        // Keep titlebar chrome in the same appearance as the content. The
+        // background colour itself is dynamic, so its parchment and espresso
+        // variants remain aligned with `Color.daisyBgPrimary`.
+        window.appearance = nil
+        window.backgroundColor = Self.windowBackground
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
     }
 
-    /// Window background — PINNED to `daisyBgPrimary`'s dark value
-    /// (`0x1C1A17`). Daisy is a dark-only app (NSApp.appearance is forced
-    /// `.darkAqua`), so this is deliberately NOT dynamic: a dynamic color let
-    /// the transparent-titlebar strip resolve to the light/cream variant
-    /// under a LIGHT system appearance — the titlebar chrome doesn't always
-    /// honour the forced app appearance — which read as a white bar at the
-    /// top (Egor 2026-06-16). Fixed dark = the chrome always matches content.
-    private static let warmCream = NSColor(srgbRed: 0x1C/255, green: 0x1A/255, blue: 0x17/255, alpha: 1)
+    /// Dynamic AppKit counterpart to `Color.daisyBgPrimary`, including the
+    /// transparent titlebar and the macOS 14 window-background fallback.
+    private static let windowBackground = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(srgbRed: 0x0D / 255, green: 0x10 / 255, blue: 0x0E / 255, alpha: 1)
+            : NSColor(srgbRed: 0xFF / 255, green: 0xFE / 255, blue: 0xFC / 255, alpha: 1)
+    }
 
     // Keep the process alive after the last window closes — we still
     // have a menu-bar item and possibly the floating widget.

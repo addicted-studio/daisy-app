@@ -531,7 +531,7 @@ struct SessionDetailView: View {
             tagDraft = session.tag
             showTagPopover = true
         } label: {
-            Text(session.tag.isEmpty ? String(localized: "Add tag…") : session.tag)
+            Text(session.tag.isEmpty ? String(localized: "Add tag") : session.tag)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
         }
@@ -1419,13 +1419,12 @@ struct SessionDetailView: View {
 
         // Force the model to draft a follow-up even if it judges the
         // meeting internal — clicking this button IS the explicit request.
-        let result = await SummaryPrompt.$forceFollowUp.withValue(true) {
-            await Summarizer.shared.summarize(
-                transcript: session.transcriptText,
-                title: session.title,
-                localeHint: localeHint
-            )
-        }
+        let result = await Summarizer.shared.summarize(
+            transcript: session.transcriptText,
+            title: session.title,
+            localeHint: localeHint,
+            task: .meeting(forceFollowUp: true)
+        )
 
         if let fresh = result {
             let trimmedFollowUp = fresh.clientFollowUp

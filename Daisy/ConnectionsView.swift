@@ -64,6 +64,11 @@ struct ConnectionsView: View {
     /// malformed hints. Recomputed on appear, after every write, and
     /// whenever the live server port changes.
     @State private var claudeEntryState: ClaudeDesktopConfig.EntryState = .notInstalled
+    /// MCP access-control toggles — mirrors of `MCPAccessToken`'s
+    /// UserDefaults-backed flags (kept as @State because they live
+    /// outside AppSettings; onChange writes them through).
+    @State private var mcpRequireToken = MCPAccessToken.isRequired
+    @State private var mcpAllowActions = MCPAccessToken.allowExternalActions
 
     // Notion destination state — moved here from SettingsView in
     // 1.0.7.16 along with the row + sheet. `notionTestResult` drives
@@ -247,7 +252,7 @@ struct ConnectionsView: View {
         // personal voice notes off Notion.
         if settings.autoSendNotion {
             folderFilterPicker(
-                title: String(localized: "Only from folders"),
+                title: String(localized: "Only from projects"),
                 selection: Binding(
                     get: { settings.autoSendNotionFolders },
                     set: { settings.autoSendNotionFolders = $0 }
@@ -449,7 +454,7 @@ struct ConnectionsView: View {
                 if selection.wrappedValue.isEmpty {
                     Label("All folders", systemImage: "checkmark")
                 } else {
-                    Text("All folders")
+                    Text("All projects")
                 }
             }
             Divider()
@@ -489,7 +494,7 @@ struct ConnectionsView: View {
         let names = allFolders.filter { slugs.contains($0.slug) }.map(\.name)
         if names.count == 1 { return names[0] }
         if names.count <= 3 { return names.joined(separator: ", ") }
-        return String(localized: "\(names.count) folders")
+        return String(localized: "\(names.count) projects")
     }
 
     /// Label + caption stacked vertically in the LEADING column of
@@ -530,6 +535,42 @@ struct ConnectionsView: View {
                     .onSubmit { commitMCPPort() }
             }
 
+            // ── Access control ────────────────────────────────────
+            Toggle(isOn: $mcpRequireToken) {
+                Text("Require access token")
+                Text("Clients must send this token with every request — without it, any app on this Mac could read your transcripts. Daisy adds the token to the Claude Desktop config automatically; copy it for other clients.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onChange(of: mcpRequireToken) { _, new in
+                MCPAccessToken.isRequired = new
+                // Rewrite the Claude Desktop entry so it keeps working
+                // (adds or drops the Authorization header).
+                ClaudeDesktopConfig.refreshIfInstalled(port: liveServerPort)
+            }
+            if mcpRequireToken {
+                HStack {
+                    Text("Access token")
+                    Spacer()
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(MCPAccessToken.ensure(), forType: .string)
+                        ToastCenter.shared.show(String(localized: "Access token copied."), style: .success)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            Toggle(isOn: $mcpAllowActions) {
+                Text("Allow actions from MCP clients")
+                Text("Lets clients re-summarize a session (may use your cloud API key) and send sessions to your destinations. Off = clients can read and rename, nothing more.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .onChange(of: mcpAllowActions) { _, new in
+                MCPAccessToken.allowExternalActions = new
+            }
+
             // ── Connect to Claude ─────────────────────────────────
             // One-click for Claude Desktop + a copy-able command for
             // Claude Code, both pointed at the LIVE server port. Lives
@@ -558,7 +599,7 @@ struct ConnectionsView: View {
                 }
             }
         } footer: {
-            Text("Loopback-only (127.0.0.1) — the server is reachable only from this Mac. Connected clients can read your sessions and take a few safe actions (re-summarize, rename a session or speaker, send a session to a destination you've set up). They can't delete anything or change Daisy's settings. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue.")
+            Text("Loopback-only (127.0.0.1) — the server is reachable only from this Mac. Connected clients can read your sessions and rename a session or speaker. Re-summarizing and sending sessions to destinations stay off unless you enable “Allow actions from MCP clients” above. They can't delete anything or change Daisy's settings. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -836,6 +877,16 @@ struct ConnectionsView: View {
         // (`--allow-http`, otherwise mcp-remote refuses 127.0.0.1
         // since it isn't TLS). Same args work in Cursor / Cline /
         // Continue — they all accept stdio-style entries.
+        // Version pinned for supply-chain hygiene (matches
+        // ClaudeDesktopConfig); the header line appears only when the
+        // access token is required.
+        let headerLines = MCPAccessToken.isRequired
+            ? """
+            ,
+                "--header",
+                "Authorization: Bearer \(MCPAccessToken.ensure())"
+            """
+            : ""
         return """
         {
           "mcpServers": {
@@ -843,11 +894,11 @@ struct ConnectionsView: View {
               "command": "npx",
               "args": [
                 "-y",
-                "mcp-remote",
+                "mcp-remote@0.1.38",
                 "http://127.0.0.1:\(port)/sse",
                 "--transport",
                 "sse-only",
-                "--allow-http"
+                "--allow-http"\(headerLines)
               ]
             }
           }
@@ -860,7 +911,10 @@ struct ConnectionsView: View {
     /// `--transport sse` — no `mcp-remote` bridge, no extra flags. The
     /// port is the LIVE one (see `liveServerPort`).
     private var claudeCodeCommand: String {
-        "claude mcp add --transport sse daisy http://127.0.0.1:\(liveServerPort)/sse"
+        let auth = MCPAccessToken.isRequired
+            ? " --header \"Authorization: Bearer \(MCPAccessToken.ensure())\""
+            : ""
+        return "claude mcp add --transport sse daisy http://127.0.0.1:\(liveServerPort)/sse\(auth)"
     }
 
     private func copyToPasteboard(_ string: String, toast: String) {

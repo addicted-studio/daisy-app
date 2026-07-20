@@ -10,6 +10,7 @@
 //   • Notion         — token + parent ID
 //
 
+import AppKit
 import EventKit
 import SwiftUI
 
@@ -67,6 +68,71 @@ struct SettingsView: View {
     /// or a Parakeet model on disk that dictation isn't currently using.
     @State private var hasUnusedModels = false
     @State private var cacheRefreshTick: Int = 0
+
+    /// UI-language override state. Snapshot at view init so the "restart
+    /// needed" hint appears only when the pick differs from what THIS
+    /// launch is running with. `appLanguageTick` forces a re-render after
+    /// a change (UserDefaults isn't observable by SwiftUI).
+    @State private var appLanguageAtLaunch: String = Self.currentAppLanguage()
+    @State private var appLanguageTick = 0
+    /// Offer-to-restart alert shown right after the user picks a
+    /// different interface language.
+    @State private var showLanguageRestartAlert = false
+
+    /// Current `AppleLanguages` override: "system" when none is set,
+    /// else the two-letter code of the first entry.
+    private static func currentAppLanguage() -> String {
+        guard let langs = UserDefaults.standard.array(forKey: "AppleLanguages") as? [String],
+              let first = langs.first,
+              UserDefaults.standard.object(forKey: "AppleLanguagesOverridden") != nil else {
+            return "system"
+        }
+        return String(first.prefix(2))
+    }
+
+    /// Read/write binding for the language picker. "system" removes the
+    /// override (follow macOS); "en"/"ru" pin the app language. Both keys
+    /// take effect on next launch — standard AppKit behaviour.
+    private var appLanguageBinding: Binding<String> {
+        Binding(
+            get: {
+                _ = appLanguageTick  // establish dependency
+                return Self.currentAppLanguage()
+            },
+            set: { newValue in
+                let d = UserDefaults.standard
+                if newValue == "system" {
+                    d.removeObject(forKey: "AppleLanguages")
+                    d.removeObject(forKey: "AppleLanguagesOverridden")
+                } else {
+                    d.set([newValue], forKey: "AppleLanguages")
+                    // Marker so `currentAppLanguage` can tell OUR override
+                    // apart from the system-seeded AppleLanguages array
+                    // (macOS pre-populates that key with the system list).
+                    d.set(true, forKey: "AppleLanguagesOverridden")
+                }
+                appLanguageTick &+= 1
+                // Offer a restart when the pick differs from the language
+                // this launch is running with. Picking the current one
+                // back (changed their mind) needs no restart → no alert.
+                if newValue != appLanguageAtLaunch {
+                    showLanguageRestartAlert = true
+                }
+            }
+        )
+    }
+
+    /// Relaunch the app so the new `AppleLanguages` override applies:
+    /// spawn a second instance, then terminate this one. The tiny delay
+    /// lets the new instance clear the launch gate before we exit.
+    private func relaunchDaisy() {
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { _, _ in }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            NSApp.terminate(nil)
+        }
+    }
 
     /// On-disk size of all known `.caf` audio archives across
     /// every session. Drives the "Clear audio cache" row caption
@@ -604,6 +670,30 @@ struct SettingsView: View {
             // show up on screen" — independent of audio I/O or how the
             // recorder processes a session.
             Section {
+                // Interface language override. Default = follow macOS
+                // (per-app language can also be set in System Settings →
+                // Language & Region). Uses the standard `AppleLanguages`
+                // override, which only applies on the next launch.
+                Picker("Language", selection: appLanguageBinding) {
+                    Text("System").tag("system")
+                    Text("English").tag("en")
+                    Text("Русский").tag("ru")
+                }
+                .pickerStyle(.menu)
+                .alert("Restart Daisy?", isPresented: $showLanguageRestartAlert) {
+                    Button("Restart Now") { relaunchDaisy() }
+                    Button("Later", role: .cancel) {}
+                } message: {
+                    Text("The interface language changes after Daisy restarts.")
+                }
+
+                Picker("Theme", selection: $settings.appAppearance) {
+                    Text("Automatic").tag(AppearancePreference.system)
+                    Text("Light").tag(AppearancePreference.light)
+                    Text("Dark").tag(AppearancePreference.dark)
+                }
+                .pickerStyle(.segmented)
+
                 Toggle(isOn: $settings.compactMenuBarOnly) {
                     Text("Compact menu bar")
                     Text("Clicking the menu-bar icon opens a quick dropdown menu instead of the live transcription window. The Dock icon and app menus stay.")
@@ -614,39 +704,13 @@ struct SettingsView: View {
                 Toggle("Show next meeting in the menu bar", isOn: $settings.menuBarShowsNextMeeting)
                     .disabled(!hasAnyCalendarSource)
 
-                // Streaming live preview for dictation (Nemotron 3.5,
-                // on-device). The badge doubles as the model-download
-                // indicator — same pattern as the Faster engine in
-                // Transcription. Preview-only: the pasted text still comes
-                // from the dictation engine picked in Transcription.
-                Toggle(isOn: $settings.dictationUseNemotronLive) {
-                    transcriptionRowLabel(
-                        "Live preview while dictating",
-                        state: nemotronBadgeState,
-                        message: nemotronShortStatus
-                    )
-                }
-                .help("Shows your words about half a second behind your speech while you hold the dictation key. The pasted text still comes from the dictation engine above. Turning this on downloads an on-device model once.")
-                .onChange(of: settings.dictationUseNemotronLive) { _, useNemotron in
-                    if useNemotron { Task { await NemotronLiveEngine.shared.ensureLoaded() } }
-                }
-                .onAppear {
-                    if settings.dictationUseNemotronLive, !nemotron.isReady {
-                        Task { await NemotronLiveEngine.shared.ensureLoaded() }
-                    }
-                }
+                // ("Live preview while dictating" moved BACK to
+                // Transcription in 1.0.7.31 — it is an engine/performance
+                // control, not an on-screen-appearance one; the 2026-07
+                // audit flagged the mislocation.)
 
-                // Live-transcript tier — how the toolbar transcript updates
-                // during a meeting. Plain names: Default (was "Lite") is the
-                // sensible default; Full is heavier; Off transcribes once on
-                // Stop. The final saved transcript is always full quality,
-                // and dictation always runs live regardless of this.
-                Picker("Live transcript", selection: $settings.liveTranscriptionTier) {
-                    Text("Off").tag(LiveTranscriptionTier.off)
-                    Text("Standard").tag(LiveTranscriptionTier.lite)
-                    Text("Full · uses more memory").tag(LiveTranscriptionTier.full)
-                }
-                .pickerStyle(.menu)
+                // ("Live transcript" tier moved BACK to Transcription in
+                // 1.0.7.31 — same reasoning as the live-preview toggle.)
             } header: {
                 Text("Appearance")
             } footer: {
@@ -721,35 +785,28 @@ struct SettingsView: View {
             // and Meetings moved to the new "Recording" tab.)
 
             // ── Notifications ─────────────────────────────────
-            // Per-class toggles for every macOS banner Daisy posts.
-            // Surface the user can flip individual notifications off
-            // without affecting the rest — common case is "I want
-            // auto-start confirmation but the silence prompt feels
-            // nannying", or vice versa.
+            // One picker instead of four per-class toggles (2026-07
+            // audit: four separate decisions where one preset covers
+            // everyone). The four underlying settings stay the source
+            // of truth — the picker just writes presets into them, so
+            // every consumer (SoundEffects, auto-start/stop banners,
+            // SilenceMonitor) is untouched and a user who set a custom
+            // mix via an older build sees an honest "Custom" row.
             Section {
-                // Sound cues on start/pause/stop. Moved here from "Audio &
-                // devices" in 1.0.7.16 (the only audio cue, fits with the
-                // notification toggles).
-                Toggle("Notification sounds", isOn: $settings.recordingSoundsEnabled)
-
-                Toggle(isOn: $settings.notifyOnAutoStart) {
-                    Text("Recording started")
-                    Text("When a meeting auto-starts, with a Stop & save action.")
+                Picker(selection: notificationLevelBinding) {
+                    Text("All").tag(NotificationLevel.all)
+                    Text("Important only").tag(NotificationLevel.important)
+                    Text("Off").tag(NotificationLevel.off)
+                    if notificationLevelBinding.wrappedValue == .custom {
+                        Text("Custom").tag(NotificationLevel.custom)
+                    }
+                } label: {
+                    Text("Notifications")
+                    Text(notificationLevelCaption)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Toggle(isOn: $settings.notifyOnAutoStop) {
-                    Text("Meeting ended — saved")
-                    Text("When a meeting auto-stops and saves.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Toggle(isOn: $settings.silencePromptsEnabled) {
-                    Text("Long silence")
-                    Text("After a long quiet stretch, asks whether to keep going.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                .pickerStyle(.menu)
             } header: {
                 Text("Notifications")
             }
@@ -803,6 +860,11 @@ struct SettingsView: View {
                     caption: "Hold to talk, release to paste",
                     binding: $settings.dictationHotkey
                 )
+                shortcutRow(
+                    title: "Rewrite in my voice",
+                    caption: "Select text anywhere, tap to rewrite it in your tone (needs a Voice Profile)",
+                    binding: $settings.rewriteSelectionHotkey
+                )
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Shortcuts")
@@ -827,6 +889,25 @@ struct SettingsView: View {
                 // Applies to every recording (not just meetings) → ungated,
                 // above the calendar-only row.
                 Toggle("Open the session window when recording stops", isOn: $settings.showSessionAfterStop)
+
+                // Screen-content capture + on-device OCR. Off by default;
+                // needs Screen Recording permission. Reinstated with a
+                // clearer pitch after being parked (UI-only) in 1.0.7.16.
+                Toggle(isOn: $settings.screenshotsEnabled) {
+                    Text("Capture what's shared on screen")
+                    Text("Periodically captures your screen while recording, reads the text on-device (slides, dashboards, docs), and folds it into the transcript and summary — searchable even if never said aloud. Needs Screen Recording permission; stays on your Mac.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if settings.screenshotsEnabled {
+                    Picker("Capture every", selection: $settings.screenshotIntervalSec) {
+                        Text("15 seconds").tag(15)
+                        Text("30 seconds").tag(30)
+                        Text("1 minute").tag(60)
+                        Text("2 minutes").tag(120)
+                    }
+                    .pickerStyle(.menu)
+                }
 
                 // Calendar-only. Merged on/off + grace: -1 → off, 0 → stop
                 // at the scheduled end, 300 → 5 min after (the grace also
@@ -1002,9 +1083,14 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                Picker(selection: $settings.dictationUseParakeet) {
-                    Text("Standard").tag(false)
-                    Text("Faster · 600 MB").tag(true)
+                Picker(selection: $settings.dictationEngine) {
+                    Text(DictationEngine.whisper.displayName).tag(DictationEngine.whisper)
+                    Text(DictationEngine.parakeet.displayName).tag(DictationEngine.parakeet)
+                    // Apple SpeechAnalyzer only exists on macOS 26 — hide
+                    // the option below that so users can't pick a dead end.
+                    if #available(macOS 26, *) {
+                        Text(DictationEngine.appleSpeech.displayName).tag(DictationEngine.appleSpeech)
+                    }
                 } label: {
                     transcriptionRowLabel(
                         "Dictation engine",
@@ -1016,13 +1102,13 @@ struct SettingsView: View {
                 // Selecting "Faster" (or reopening Settings while it's
                 // already chosen) kicks the Parakeet download so its badge
                 // shows progress — no separate button; the badge IS the
-                // download indicator.
-                .onChange(of: settings.dictationUseParakeet) { _, useParakeet in
-                    if useParakeet { Task { await ParakeetEngine.shared.ensureLoaded() } }
+                // download indicator. Apple needs no download here (the
+                // model ships with the OS; first use pulls it in the
+                // background from the dictation path).
+                .onChange(of: settings.dictationEngine) { _, engine in
+                    if engine == .parakeet { Task { await ParakeetEngine.shared.ensureLoaded() } }
                     // Re-scan models on disk now so the "Models" row and
-                    // "Remove unused" reflect the new engine immediately
-                    // (the Parakeet model becomes used/unused right away),
-                    // instead of only after the next Settings open.
+                    // "Remove unused" reflect the new engine immediately.
                     cacheRefreshTick &+= 1
                 }
                 .onChange(of: parakeet.isReady) { _, _ in
@@ -1031,14 +1117,38 @@ struct SettingsView: View {
                     cacheRefreshTick &+= 1
                 }
                 .onAppear {
-                    if settings.dictationUseParakeet, !parakeet.isReady {
+                    if settings.dictationEngine == .parakeet, !parakeet.isReady {
                         Task { await ParakeetEngine.shared.ensureLoaded() }
                     }
                 }
+                if settings.dictationEngine == .appleSpeech {
+                    Text("Uses the speech model built into macOS 26 — no download, ~2× faster than Whisper, nothing added to Daisy’s size. Needs a specific language below (not Auto); otherwise dictation falls back to Whisper.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-                // ("Live preview while dictating" moved to General →
-                // "Appearance" in 1.0.7.19, alongside the other on-screen
-                // display settings.)
+                // Streaming live preview for dictation (Nemotron 3.5,
+                // on-device). The badge doubles as the model-download
+                // indicator — same pattern as the Faster engine in
+                // Transcription. Preview-only: the pasted text still comes
+                // from the dictation engine picked in Transcription.
+                Toggle(isOn: $settings.dictationUseNemotronLive) {
+                    transcriptionRowLabel(
+                        "Live preview while dictating",
+                        state: nemotronBadgeState,
+                        message: nemotronShortStatus
+                    )
+                }
+                .help("Shows your words about half a second behind your speech while you hold the dictation key. The pasted text still comes from the dictation engine above. Turning this on downloads an on-device model once.")
+                .onChange(of: settings.dictationUseNemotronLive) { _, useNemotron in
+                    if useNemotron { Task { await NemotronLiveEngine.shared.ensureLoaded() } }
+                }
+                .onAppear {
+                    if settings.dictationUseNemotronLive, !nemotron.isReady {
+                        Task { await NemotronLiveEngine.shared.ensureLoaded() }
+                    }
+                }
 
                 // One transcription language for everything (meetings,
                 // voice notes, dictation). Per-mode overrides were removed
@@ -1055,9 +1165,17 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.menu)
 
-                // ("Live transcript" tier moved to General → "Appearance"
-                // in 1.0.7.19, alongside the other on-screen display
-                // settings.)
+                // Live-transcript tier — how the toolbar transcript updates
+                // during a meeting. Plain names: Default (was "Lite") is the
+                // sensible default; Full is heavier; Off transcribes once on
+                // Stop. The final saved transcript is always full quality,
+                // and dictation always runs live regardless of this.
+                Picker("Live transcript", selection: $settings.liveTranscriptionTier) {
+                    Text("Off").tag(LiveTranscriptionTier.off)
+                    Text("Standard").tag(LiveTranscriptionTier.lite)
+                    Text("Full · uses more memory").tag(LiveTranscriptionTier.full)
+                }
+                .pickerStyle(.menu)
             } header: {
                 Text("Transcription")
             }
@@ -1179,9 +1297,15 @@ struct SettingsView: View {
             // On-disk model cache (maintenance) — kept last on the tab,
             // after the speaker content it used to interrupt.
             Section {
+                if isDownloadingModel { modelDownloadCancelRow }
                 modelsCacheRow
+                downloadModelsNowRow
             } header: {
                 Text("Models")
+            } footer: {
+                Text("Models update only when Daisy updates. Pull any missing ones ahead of time so a download never interrupts a recording.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
 
             // ── Voice Memos import (moved to bottom of Transcription,
@@ -1204,6 +1328,91 @@ struct SettingsView: View {
             cachedModelsBytes = w.1 + p.1
             hasUnusedModels = (w.0 > 1) || (p.0 > 0 && !settings.dictationUseParakeet)
         }
+    }
+
+    /// True while either the meeting (Whisper) or dictation (Parakeet)
+    /// model is actively downloading — drives the Stop-download row.
+    private var isDownloadingModel: Bool {
+        if case .downloading = whisper.state { return true }
+        if case .downloading = parakeet.state { return true }
+        return false
+    }
+
+    /// Progress + Stop button shown while a model download is running, so
+    /// the user can abort a slow/stuck download instead of waiting it out.
+    @ViewBuilder
+    private var modelDownloadCancelRow: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(modelDownloadLabel)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Stop") {
+                whisper.cancelDownload()
+                parakeet.cancelDownload()
+                cacheRefreshTick &+= 1
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(Color.daisyTextPrimary)
+        }
+    }
+
+    private var modelDownloadLabel: String {
+        if case .downloading(let p) = whisper.state {
+            return String(localized: "Downloading meeting model… \(Int(p * 100))%")
+        }
+        if case .downloading(let p) = parakeet.state {
+            return String(localized: "Downloading dictation model… \(Int(p * 100))%")
+        }
+        return String(localized: "Downloading model…")
+    }
+
+    /// Manually pull any missing models (meeting = Whisper, the selected
+    /// dictation engine, and the diarizer) so the app is fully offline-
+    /// ready. There's no model auto-update: model versions ride along with
+    /// Daisy app updates, so this only downloads what's missing.
+    @ViewBuilder
+    private var downloadModelsNowRow: some View {
+        Button {
+            Task { await downloadAllModels() }
+        } label: {
+            Text(isDownloadingModel
+                 ? String(localized: "Downloading…")
+                 : String(localized: "Download models now"))
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(Color.daisyTextPrimary)
+        .disabled(isDownloadingModel)
+    }
+
+    private func downloadAllModels() async {
+        await whisper.ensureLoaded()
+        switch settings.dictationEngine {
+        case .whisper:
+            break  // covered by the Whisper load above
+        case .parakeet:
+            await ParakeetEngine.shared.ensureLoaded()
+        case .appleSpeech:
+            if #available(macOS 26, *) {
+                let localeID = settings.dictationLocale.isEmpty
+                    ? settings.defaultTranscriptionLocale
+                    : settings.dictationLocale
+                if localeID != "auto", !localeID.isEmpty {
+                    _ = await AppleSpeechEngine.ensureModelReady(locale: Locale(identifier: localeID))
+                }
+            }
+        }
+        await DiarizationEngine.shared.ensureLoaded()
+        cacheRefreshTick &+= 1
+        let ok = whisper.isReady
+        ToastCenter.shared.show(
+            ok ? String(localized: "Models ready.")
+               : String(localized: "Couldn’t download some models — check your connection and try again."),
+            style: ok ? .success : .error
+        )
     }
 
     /// Models-on-disk summary row + Remove-unused action. Disabled
@@ -1420,17 +1629,88 @@ struct SettingsView: View {
     }
 
     /// The dictation row's badge follows whichever engine is selected:
-    /// Whisper → the Whisper model's state; Parakeet → Parakeet's.
+    /// Whisper → the Whisper model's state; Parakeet → Parakeet's; Apple
+    /// → always ok (ships with the OS, nothing to load in-app).
     private var dictationBadgeState: StatusBadge.State {
-        settings.dictationUseParakeet ? parakeetBadgeState : whisperBadgeState
+        switch settings.dictationEngine {
+        case .parakeet:    return parakeetBadgeState
+        case .whisper:     return whisperBadgeState
+        case .appleSpeech: return .ok
+        }
     }
 
     private var dictationShortStatus: String? {
-        settings.dictationUseParakeet ? parakeetShortStatus : whisperShortStatus
+        switch settings.dictationEngine {
+        case .parakeet:    return parakeetShortStatus
+        case .whisper:     return whisperShortStatus
+        case .appleSpeech: return nil
+        }
     }
 
     /// Streaming dictation preview (Nemotron). Badge mirrors the engine's
     /// load state; the download percentage doubles as the progress UI.
+    // MARK: - Notification level (derived preset over 4 stored settings)
+
+    /// Preset the Notifications picker exposes. NOT persisted itself —
+    /// derived from (and written into) the four underlying settings so
+    /// consumers and old installs need no migration. `.custom` appears
+    /// only when an older build's per-toggle mix doesn't match a preset.
+    enum NotificationLevel: Hashable {
+        case all, important, off, custom
+    }
+
+    private var notificationLevelBinding: Binding<NotificationLevel> {
+        Binding(
+            get: {
+                let s = settings
+                switch (s.recordingSoundsEnabled, s.notifyOnAutoStart, s.notifyOnAutoStop, s.silencePromptsEnabled) {
+                case (true, true, true, true):     return .all
+                case (false, true, true, false):   return .important
+                case (false, false, false, false): return .off
+                default:                           return .custom
+                }
+            },
+            set: { level in
+                switch level {
+                case .all:
+                    settings.recordingSoundsEnabled = true
+                    settings.notifyOnAutoStart = true
+                    settings.notifyOnAutoStop = true
+                    settings.silencePromptsEnabled = true
+                case .important:
+                    // Auto-start/stop banners carry actions and confirm
+                    // state changes the user didn't trigger by hand —
+                    // that's the "important" half. Sound cues and the
+                    // long-silence nag are the ambient half.
+                    settings.recordingSoundsEnabled = false
+                    settings.notifyOnAutoStart = true
+                    settings.notifyOnAutoStop = true
+                    settings.silencePromptsEnabled = false
+                case .off:
+                    settings.recordingSoundsEnabled = false
+                    settings.notifyOnAutoStart = false
+                    settings.notifyOnAutoStop = false
+                    settings.silencePromptsEnabled = false
+                case .custom:
+                    break   // display-only state, never written
+                }
+            }
+        )
+    }
+
+    private var notificationLevelCaption: String {
+        switch notificationLevelBinding.wrappedValue {
+        case .all:
+            return String(localized: "Sounds, auto-start/stop banners, and the long-silence check.")
+        case .important:
+            return String(localized: "Only auto-start and auto-stop banners — no sounds, no long-silence check.")
+        case .off:
+            return String(localized: "No sounds or banners. Auto-stop still saves quietly.")
+        case .custom:
+            return String(localized: "A custom per-notification mix from an earlier version. Picking a preset replaces it.")
+        }
+    }
+
     private var nemotronBadgeState: StatusBadge.State {
         switch nemotron.state {
         case .ready:                 return .ok
@@ -1558,6 +1838,59 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(Color.daisyWarning)
                 }
+
+                Toggle(isOn: $settings.morningBriefEnabled) {
+                    Text("Morning brief")
+                    Text("A card on Home each day: your meetings, open action items from recent sessions, and what to focus on.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .onChange(of: settings.morningBriefEnabled) { _, _ in
+                    MorningBriefStore.rescheduleNotification(settings: settings)
+                }
+                if settings.morningBriefEnabled {
+                    Toggle(isOn: $settings.morningBriefNotifyEnabled) {
+                        Text("Daily notification")
+                    }
+                    .onChange(of: settings.morningBriefNotifyEnabled) { _, _ in
+                        MorningBriefStore.rescheduleNotification(settings: settings)
+                    }
+                    if settings.morningBriefNotifyEnabled {
+                        Picker("At", selection: $settings.morningBriefNotifyMinutes) {
+                            ForEach([7 * 60, 8 * 60, 9 * 60, 10 * 60], id: \.self) { minutes in
+                                Text(String(format: "%02d:%02d", minutes / 60, minutes % 60)).tag(minutes)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .onChange(of: settings.morningBriefNotifyMinutes) { _, _ in
+                            MorningBriefStore.rescheduleNotification(settings: settings)
+                        }
+                    }
+                }
+
+                Toggle(isOn: $settings.preMeetingBriefEnabled) {
+                    Text("Pre-meeting brief")
+                }
+                Text("Before a calendar meeting, Home shows a short brief built from your past recordings with the same people. Runs on your chosen summary provider — fully local when that provider is local.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Toggle(isOn: $settings.preMeetingBriefResearchOnline) {
+                    Text("Research attendees online")
+                }
+                .disabled(!settings.preMeetingBriefEnabled || settings.anthropicAPIKey.isEmpty)
+                if settings.anthropicAPIKey.isEmpty {
+                    Text("Needs an Anthropic API key — the brief uses Claude’s web search. Without a key the brief stays fully local.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Adds a short web-search pass about the attendees and their company. Leaves your Mac only when this is on.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } header: {
                 Text("Summary output")
             }
@@ -1676,6 +2009,21 @@ struct SettingsView: View {
                     .labelsHidden()
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity)
+            }
+            // Egress honesty: "MCP" reads as a local option, but the URL
+            // can point anywhere. Say out loud when transcripts would
+            // leave the Mac; auto-run features (briefs) also key off
+            // this via `providerIsEffectivelyLocal`.
+            if !settings.mcpSummarizerURL.isEmpty,
+               !Summarizer.isLoopbackURL(URL(string: settings.mcpSummarizerURL)) {
+                Label {
+                    Text("This server is not on this Mac — full transcripts will be sent to it over the network. Briefs won't auto-generate with a remote endpoint.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.daisyWarning)
+                }
             }
             LabeledContent("Tool name") {
                 TextField("", text: $settings.mcpSummarizerToolName, prompt: Text("chat"))

@@ -151,18 +151,41 @@ final class GoogleAccountStore {
                 }
                 return result.accessToken
             } catch {
-                // Refresh failure usually means user revoked Daisy
-                // from their Google account page. Wipe local state
-                // so the UI flips back to "Connect" and the user
-                // can re-auth cleanly.
+                // Only wipe the token on a PERMANENT auth failure (the
+                // user revoked Daisy → invalid_grant). A transient error —
+                // offline, timeout, Google 5xx — must NOT force a full
+                // reconnect; keep the token and let the next call retry.
                 await MainActor.run {
-                    self?.handleRefreshFailure()
+                    if Self.isPermanentAuthFailure(error) {
+                        self?.handleRefreshFailure()
+                    } else {
+                        self?.refreshTask = nil
+                        self?.log.warning("Google token refresh failed transiently — keeping auth, will retry")
+                    }
                 }
                 throw error
             }
         }
         refreshTask = task
         return try await task.value
+    }
+
+    /// True only for a permanent auth failure that genuinely requires the
+    /// user to reconnect (token revoked / no longer valid). Transport
+    /// errors and server-side 5xx are transient and return false.
+    nonisolated static func isPermanentAuthFailure(_ error: Error) -> Bool {
+        if error is URLError { return false }
+        if let oauth = error as? GoogleOAuthClient.OAuthError,
+           case .refreshFailed(let msg) = oauth {
+            let m = msg.lowercased()
+            // Google returns these in the token-endpoint error body when the
+            // grant itself is dead (revoked / expired / app deauthorized).
+            return m.contains("invalid_grant")
+                || m.contains("unauthorized_client")
+                || m.contains("invalid_client")
+        }
+        // Unknown shape → conservative: treat as transient, keep the token.
+        return false
     }
 
     private func handleRefreshFailure() {

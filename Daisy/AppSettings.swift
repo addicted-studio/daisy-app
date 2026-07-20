@@ -7,9 +7,44 @@
 //  when values change.
 //
 
+import AppKit
 import Foundation
 import Observation
 import os
+
+enum AppearancePreference: String, CaseIterable, Identifiable, Sendable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    static let defaultsKey = "daisy.appAppearance"
+
+    static func stored(in defaults: UserDefaults = .standard) -> Self {
+        guard let rawValue = defaults.string(forKey: defaultsKey),
+              let preference = Self(rawValue: rawValue) else {
+            return .system
+        }
+        return preference
+    }
+}
+
+/// One AppKit appearance source for every Daisy surface: SwiftUI windows,
+/// menu-bar popover, floating panel, sheets, and native alerts.
+@MainActor
+enum AppearanceController {
+    static func apply(_ preference: AppearancePreference) {
+        switch preference {
+        case .system:
+            NSApp.appearance = nil
+        case .light:
+            NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
 
 @Observable
 @MainActor
@@ -46,6 +81,44 @@ final class AppSettings {
     }
     var autoSummarize: Bool {
         didSet { defaults.set(autoSummarize, forKey: Self.k_autoSummarize) }
+    }
+
+    /// Pre-meeting brief: when ON, Home assembles a short brief for an
+    /// upcoming calendar meeting from the user's OWN past sessions with
+    /// the same people (matched by attendee email / linked event title).
+    /// Default OFF — sending past-session excerpts to a CLOUD provider is
+    /// new data egress, so it must be opt-in (a cloud provider additionally
+    /// requires a per-meeting "Generate" tap; local providers auto-run).
+    var preMeetingBriefEnabled: Bool {
+        didSet { defaults.set(preMeetingBriefEnabled, forKey: Self.k_preMeetingBriefEnabled) }
+    }
+
+    /// Morning brief card on Home: today's meetings + open action items
+    /// + (provider permitting) an LLM "what matters today" lede. Default
+    /// ON — the card only appears when there's content, the LLM part is
+    /// consent-gated on cloud providers, and everything else is local.
+    var morningBriefEnabled: Bool {
+        didSet { defaults.set(morningBriefEnabled, forKey: Self.k_morningBriefEnabled) }
+    }
+
+    /// Daily "your brief is ready" notification. Default OFF.
+    var morningBriefNotifyEnabled: Bool {
+        didSet { defaults.set(morningBriefNotifyEnabled, forKey: Self.k_morningBriefNotifyEnabled) }
+    }
+
+    /// Notification time as minutes from local midnight (default 09:00).
+    var morningBriefNotifyMinutes: Int {
+        didSet { defaults.set(morningBriefNotifyMinutes, forKey: Self.k_morningBriefNotifyMinutes) }
+    }
+
+    /// Opt-in online research for the brief. When ON *and* an Anthropic
+    /// API key is present, the brief is augmented with a short web-search
+    /// pass about the attendees / their company (Anthropic's web_search
+    /// tool). Default OFF — keeps the brief fully local unless the user
+    /// explicitly opts into the network. No-op (silently skipped) when
+    /// there's no Anthropic key.
+    var preMeetingBriefResearchOnline: Bool {
+        didSet { defaults.set(preMeetingBriefResearchOnline, forKey: Self.k_preMeetingBriefResearchOnline) }
     }
 
     /// Language the summary itself is written in. Decoupled from
@@ -100,16 +173,32 @@ final class AppSettings {
         didSet { defaults.set(dictationLocale, forKey: Self.k_dictationLocale) }
     }
 
-    /// EXPERIMENTAL: use Parakeet (FluidAudio, on-device) instead of
-    /// Whisper for the DICTATION final pass. Streaming transducer on the
-    /// Neural Engine — much lower decode latency; multilingual incl. RU.
-    /// Default off — ships dark for A/B. Flip via:
-    ///   defaults write app.essazanov.Daisy daisy.dictationUseParakeet -bool YES
-    /// First enable triggers a one-time ~600 MB model download. Falls back
-    /// to Whisper automatically on error / empty / very short clips. See
-    /// research note 2026-06-04-dictation-latency-optimization.
-    var dictationUseParakeet: Bool {
-        didSet { defaults.set(dictationUseParakeet, forKey: Self.k_dictationUseParakeet) }
+    /// Engine used for the DICTATION final pass (the text that gets
+    /// pasted). Three choices, all on-device:
+    ///   • `.whisper`  — WhisperKit, the default/fallback (diarization-
+    ///     grade quality; carries the ~1 resident Whisper model).
+    ///   • `.parakeet` — FluidAudio Parakeet, low-latency NE transducer,
+    ///     multilingual incl. RU; one-time ~600 MB download.
+    ///   • `.appleSpeech` — Apple SpeechAnalyzer / SpeechTranscriber
+    ///     (macOS 26+). ~2× faster than Whisper turbo, model ships with
+    ///     the OS (ZERO app-bundle weight). Needs a concrete language
+    ///     (no "auto") and macOS 26; falls back to Whisper otherwise.
+    /// Migrated once from the legacy `dictationUseParakeet` bool.
+    var dictationEngine: DictationEngine {
+        didSet { defaults.set(dictationEngine.rawValue, forKey: Self.k_dictationEngine) }
+    }
+
+    /// Back-compat convenience — several read sites (MainView status,
+    /// LogReporter, dictation warm-up, Settings badge) still ask "is
+    /// Parakeet the dictation engine?". Derived from `dictationEngine`.
+    var dictationUseParakeet: Bool { dictationEngine == .parakeet }
+
+    /// When ON, each finished dictation is rewritten in the user's own
+    /// voice (via the local Voice Profile) before it's pasted. Adds one
+    /// LLM pass to the paste path, so it's opt-in and default OFF. No-op
+    /// until a voice profile has been generated (Voice section).
+    var polishDictationInMyVoice: Bool {
+        didSet { defaults.set(polishDictationInMyVoice, forKey: Self.k_polishDictationInMyVoice) }
     }
 
     /// EXPERIMENTAL: stream the DICTATION live preview through FluidAudio's
@@ -157,6 +246,19 @@ final class AppSettings {
         didSet {
             if let data = try? JSONEncoder().encode(dictationHotkey) {
                 defaults.set(data, forKey: Self.k_dictationHotkey)
+            }
+        }
+    }
+
+    /// Global hotkey for "rewrite selection in my voice" — grabs the
+    /// selected text in ANY app, rewrites it through the Voice Profile
+    /// on the selected summary provider, and pastes the result back over
+    /// the selection. `.none` (default) disables — the feature needs a
+    /// generated Voice Profile to do anything, so it's opt-in.
+    var rewriteSelectionHotkey: HotkeyChoice {
+        didSet {
+            if let data = try? JSONEncoder().encode(rewriteSelectionHotkey) {
+                defaults.set(data, forKey: Self.k_rewriteSelectionHotkey)
             }
         }
     }
@@ -461,6 +563,15 @@ final class AppSettings {
     /// Suppressed while recording (recording state takes priority).
     var menuBarShowsNextMeeting: Bool {
         didSet { defaults.set(menuBarShowsNextMeeting, forKey: Self.k_menuBarShowsNextMeeting) }
+    }
+
+    /// App-wide colour appearance. System follows the Mac automatically;
+    /// explicit light/dark choices update every Daisy window immediately.
+    var appAppearance: AppearancePreference {
+        didSet {
+            defaults.set(appAppearance.rawValue, forKey: AppearancePreference.defaultsKey)
+            AppearanceController.apply(appAppearance)
+        }
     }
 
     /// When ON, Daisy behaves as a focused menu-bar app (à la Wispr
@@ -814,7 +925,28 @@ final class AppSettings {
         // a half-configured cloud account. Off-by-default keeps the
         // first-time experience honest; the user flips it on once
         // they've set up a provider.
-        self.autoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool ?? false
+        if let storedAutoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool {
+            self.autoSummarize = storedAutoSummarize
+        } else if !defaults.bool(forKey: Self.k_hasShownFirstRun), #available(macOS 26.0, *) {
+            // Fresh install on macOS 26: the default provider is Apple
+            // Intelligence — local and key-free — so the first recording
+            // should end in a summary, not a bare transcript. The
+            // half-configured-cloud concern above doesn't apply.
+            // Existing installs keep their opt-in.
+            self.autoSummarize = true
+        } else {
+            self.autoSummarize = false
+        }
+        // Default OFF — opt-in; a cloud provider also needs a per-meeting
+        // consent tap (see PreMeetingBriefStore).
+        self.preMeetingBriefEnabled = defaults.object(forKey: Self.k_preMeetingBriefEnabled) as? Bool ?? false
+        // Default OFF — opt-in network use.
+        self.preMeetingBriefResearchOnline = defaults.bool(forKey: Self.k_preMeetingBriefResearchOnline)
+        // Morning brief: card ON (content-gated), notification OFF, 09:00.
+        self.morningBriefEnabled = defaults.object(forKey: Self.k_morningBriefEnabled) as? Bool ?? true
+        self.morningBriefNotifyEnabled = defaults.bool(forKey: Self.k_morningBriefNotifyEnabled)
+        let notifyMinutes = defaults.integer(forKey: Self.k_morningBriefNotifyMinutes)
+        self.morningBriefNotifyMinutes = notifyMinutes > 0 ? notifyMinutes : 9 * 60
         self.summaryLanguage = defaults.string(forKey: Self.k_summaryLanguage) ?? SummaryLanguage.auto.id
         self.defaultTranscriptionLocale = defaults.string(forKey: Self.k_defaultTranscriptionLocale) ?? "auto"
         // Per-mode overrides — empty string means "inherit from
@@ -823,10 +955,19 @@ final class AppSettings {
         self.voiceNoteLocale = defaults.string(forKey: Self.k_voiceNoteLocale) ?? ""
         self.defaultMeetingFolderSlug = defaults.string(forKey: Self.k_defaultMeetingFolderSlug) ?? SessionFolder.work.slug
         self.dictationLocale = defaults.string(forKey: Self.k_dictationLocale) ?? ""
-        // Defaults to false (Whisper) when the key is absent.
-        self.dictationUseParakeet = defaults.bool(forKey: Self.k_dictationUseParakeet)
+        // Dictation engine: read the new enum key; if absent, migrate
+        // once from the legacy `dictationUseParakeet` bool (true→Parakeet,
+        // else Whisper). New installs default to Whisper.
+        if let raw = defaults.string(forKey: Self.k_dictationEngine),
+           let engine = DictationEngine(rawValue: raw) {
+            self.dictationEngine = engine
+        } else {
+            self.dictationEngine = defaults.bool(forKey: Self.k_dictationUseParakeet) ? .parakeet : .whisper
+        }
         // Defaults to false (Whisper live preview) when the key is absent.
         self.dictationUseNemotronLive = defaults.bool(forKey: Self.k_dictationUseNemotronLive)
+        // Opt-in voice-polish of dictation. Default OFF.
+        self.polishDictationInMyVoice = defaults.bool(forKey: Self.k_polishDictationInMyVoice)
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will
@@ -849,8 +990,24 @@ final class AppSettings {
         if let data = defaults.data(forKey: Self.k_dictationHotkey),
            let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
             self.dictationHotkey = decoded
+        } else if !defaults.bool(forKey: Self.k_hasShownFirstRun) {
+            // Fresh install: dictation alive out of the box — Fn/globe,
+            // the key Wispr-switchers already hold to talk. Existing
+            // installs keep .none: gaining a global hotkey in an update
+            // would be a surprise. Registration is deferred until
+            // first-run completes (see ServiceWiring) so the Input
+            // Monitoring prompt lands after the Hotkeys step, not at
+            // first launch.
+            self.dictationHotkey = .fn
         } else {
             self.dictationHotkey = .none
+        }
+        // Rewrite-selection hotkey — same opt-in default as the others.
+        if let data = defaults.data(forKey: Self.k_rewriteSelectionHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
+            self.rewriteSelectionHotkey = decoded
+        } else {
+            self.rewriteSelectionHotkey = .none
         }
         // Default OFF — auto-starting a recording the moment Zoom
         // / Teams / Telegram opens is surprising on first install
@@ -942,6 +1099,7 @@ final class AppSettings {
             ?? (isFreshInstall ? Self.audioRetentionDeleteAfterTranscription : 0)
         self.recordingSoundsEnabled = defaults.object(forKey: Self.k_recordingSoundsEnabled) as? Bool ?? true
         self.menuBarShowsNextMeeting = defaults.object(forKey: Self.k_menuBarShowsNextMeeting) as? Bool ?? false
+        self.appAppearance = AppearancePreference.stored(in: defaults)
         // Default OFF — `defaults.bool(forKey:)` returns false for unset
         // keys, so a fresh install gets the historical regular-app
         // behaviour (Dock icon + main window on launch). Only an explicit
@@ -1099,6 +1257,11 @@ final class AppSettings {
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_ingestVoiceMemos = "daisy.ingestVoiceMemos"
     private static let k_autoSummarize = "daisy.autoSummarize"
+    private static let k_preMeetingBriefEnabled = "daisy.preMeetingBriefEnabled"
+    private static let k_morningBriefEnabled = "daisy.morningBriefEnabled"
+    private static let k_morningBriefNotifyEnabled = "daisy.morningBriefNotifyEnabled"
+    private static let k_morningBriefNotifyMinutes = "daisy.morningBriefNotifyMinutes"
+    private static let k_preMeetingBriefResearchOnline = "daisy.preMeetingBriefResearchOnline"
     private static let k_showSessionAfterStop = "daisy.showSessionAfterStop"
     /// `nonisolated` because `currentSummaryLanguage` (above) reads
     /// this key from a nonisolated context (SessionDetailView's
@@ -1112,11 +1275,14 @@ final class AppSettings {
     private static let k_voiceNoteLocale = "daisy.voiceNoteLocale"
     private static let k_defaultMeetingFolderSlug = "daisy.defaultMeetingFolderSlug"
     private static let k_dictationLocale = "daisy.dictationLocale"
-    private static let k_dictationUseParakeet = "daisy.dictationUseParakeet"
+    private static let k_dictationUseParakeet = "daisy.dictationUseParakeet"  // legacy — read once for migration into k_dictationEngine
+    private static let k_dictationEngine = "daisy.dictationEngine"
+    private static let k_polishDictationInMyVoice = "daisy.polishDictationInMyVoice"
     private static let k_dictationUseNemotronLive = "daisy.dictationUseNemotronLive"
     private static let k_recordHotkey = "daisy.recordHotkey"
     private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
     private static let k_dictationHotkey = "daisy.dictationHotkey"
+    private static let k_rewriteSelectionHotkey = "daisy.rewriteSelectionHotkey"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
     private static let k_autoStartPolicy = "daisy.autoStartPolicy"
     private static let k_autoStartPromptMode = "daisy.autoStartPromptMode"
@@ -1258,6 +1424,26 @@ enum LiveTranscriptionTier: String, CaseIterable, Identifiable, Sendable {
         case .full: return String(localized: "Full")
         case .lite: return String(localized: "Lite")
         case .off:  return String(localized: "Off")
+        }
+    }
+}
+
+/// Engine used for the dictation final pass. See `AppSettings.dictationEngine`.
+/// `.appleSpeech` is only offered on macOS 26+ (the UI hides it below that);
+/// if somehow selected on an older OS or with an "auto" locale, the dictation
+/// path falls back to Whisper.
+enum DictationEngine: String, CaseIterable, Identifiable, Sendable {
+    case whisper
+    case parakeet
+    case appleSpeech
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .whisper:     return String(localized: "Standard")
+        case .parakeet:    return String(localized: "Faster · 600 MB")
+        case .appleSpeech: return String(localized: "Apple · built-in")
         }
     }
 }

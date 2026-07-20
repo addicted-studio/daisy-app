@@ -172,8 +172,8 @@ struct LibraryView: View {
 
     private var deleteAlertTitle: String {
         let n = pendingDelete.count
-        if n <= 1 { return String(localized: "Delete this session?") }
-        return String(localized: "Delete \(n) sessions?")
+        if n <= 1 { return String(localized: "Delete this recording?") }
+        return String(localized: "Delete \(n) recordings?")
     }
 
     private var deleteAlertMessage: String {
@@ -365,7 +365,7 @@ struct LibraryView: View {
 
     private var multiSelectDetail: some View {
         ContentUnavailableView {
-            Label(String(localized: "\(selectedIDs.count) sessions selected"), systemImage: "doc.on.doc")
+            Label(String(localized: "\(selectedIDs.count) recordings selected"), systemImage: "doc.on.doc")
         } description: {
             Text("Press ⌫ to delete the selection, or click a single row to read its transcript.")
         } actions: {
@@ -538,7 +538,7 @@ struct LibraryView: View {
         ContentUnavailableView(
             "Select a recording",
             systemImage: "doc.text.magnifyingglass",
-            description: Text("Pick a session on the left to read its transcript and summary.")
+            description: Text("Pick a recording on the left to read its transcript and summary.")
         )
     }
 }
@@ -644,7 +644,7 @@ private struct FolderChip: View {
                 if count > 0 {
                     Text("\(count)")
                         .font(.caption2.weight(.medium))
-                        .foregroundStyle(isActive ? Color.white.opacity(0.75) : Color.daisyTextTertiary)
+                        .foregroundStyle(isActive ? Color.daisyTextOnAccent.opacity(0.75) : Color.daisyTextTertiary)
                 }
             }
             .padding(.horizontal, 10)
@@ -657,7 +657,8 @@ private struct FolderChip: View {
                 Capsule()
                     .strokeBorder(isActive ? Color.clear : Color.daisyDivider, lineWidth: 0.5)
             )
-            .foregroundStyle(isActive ? Color.white : Color.daisyTextPrimary)
+            // Ink-on-accent: white on the amber active fill was ≈2:1.
+            .foregroundStyle(isActive ? Color.daisyTextOnAccent : Color.daisyTextPrimary)
         }
         .buttonStyle(.plain)
     }

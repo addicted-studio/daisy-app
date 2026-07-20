@@ -247,6 +247,14 @@ enum MCPTools {
     /// as `MCPToolCallResult.error(_:)` rather than thrown — that
     /// surface lets the LLM-side see structured error text, which is
     /// usually more useful than a hard protocol failure.
+    /// Structured refusal for the gated external-effect tools — the
+    /// client-side LLM gets an actionable explanation instead of a
+    /// bare protocol error, and the user learns exactly where the
+    /// opt-in lives.
+    private static func externalActionsDisabled(tool: String) -> MCPToolCallResult {
+        .error("\(tool) is disabled. External actions (re-summarize, route to destination) can send transcript content to a cloud provider or an outbound destination, so they're off by default. The user can enable them in Daisy → Connections → MCP server → \"Allow actions from MCP clients\".")
+    }
+
     static func call(name: String, arguments: AnyJSON?) async -> MCPToolCallResult {
         do {
             switch name {
@@ -267,7 +275,17 @@ enum MCPTools {
                 return await listDestinations()
 
             // ── Action (write) tools ────────────────────────────────
+            // The two EXTERNAL-EFFECT tools are read-only-gated:
+            // resummarize can send the transcript to a cloud provider on
+            // the user's API key; route_session pushes it to an outbound
+            // destination. A prompt-injected client calling these turns
+            // "read my notes" into exfiltration — off unless the user
+            // opted in (Connections → MCP server). set_session_title /
+            // rename_speaker stay available: purely local edits.
             case "resummarize_session":
+                guard MCPAccessToken.allowExternalActions else {
+                    return Self.externalActionsDisabled(tool: name)
+                }
                 let args = try arguments?.decoded(as: ResummarizeArgs.self)
                     ?? { throw MCPToolError.missingArgument("id") }()
                 return await resummarizeSession(args: args)
@@ -280,6 +298,9 @@ enum MCPTools {
                     ?? { throw MCPToolError.missingArgument("id") }()
                 return await renameSpeaker(args: args)
             case "route_session_to_destination":
+                guard MCPAccessToken.allowExternalActions else {
+                    return Self.externalActionsDisabled(tool: name)
+                }
                 let args = try arguments?.decoded(as: RouteSessionArgs.self)
                     ?? { throw MCPToolError.missingArgument("id") }()
                 return await routeSessionToDestination(args: args)

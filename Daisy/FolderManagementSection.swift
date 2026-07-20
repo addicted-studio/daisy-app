@@ -51,7 +51,7 @@ struct FolderManagementSection: View {
             // session is still in Inbox. Manual recordings start in Inbox;
             // voice notes file into Notes. Resolved defensively to Inbox
             // if the chosen folder is later deleted.
-            Picker("Default folder for meetings", selection: $settings.defaultMeetingFolderSlug) {
+            Picker("Default project for meetings", selection: $settings.defaultMeetingFolderSlug) {
                 ForEach(folders.allFolders) { f in
                     Text(f.name).tag(f.slug)
                 }
@@ -70,7 +70,7 @@ struct FolderManagementSection: View {
 
             addRow
         } header: {
-            Text("Folders")
+            Text("Projects")
         }
         .confirmationDialog(
             "Delete “\(pendingDelete?.name ?? "")”?",
@@ -139,7 +139,7 @@ struct FolderManagementSection: View {
             }
             .buttonStyle(.borderless)
             .disabled(isDefault)
-            .help(isDefault ? String(localized: "Can’t delete the default meeting folder") : String(localized: "Delete folder"))
+            .help(isDefault ? String(localized: "Can’t delete the default meeting project") : String(localized: "Delete project"))
         }
         .padding(.vertical, 2)
     }
@@ -152,7 +152,7 @@ struct FolderManagementSection: View {
                 Image(systemName: "plus.circle")
                     .foregroundStyle(.secondary)
                     .frame(width: 16)
-                Text("New folder")
+                Text("New project")
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -180,7 +180,7 @@ struct FolderManagementSection: View {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         if folders.allFolders.contains(where: { $0.slug == SessionFolder(name: trimmed).slug }) {
-            ToastCenter.shared.show(String(localized: "A folder named “\(trimmed)” already exists"), style: .warning)
+            ToastCenter.shared.show(String(localized: "A project named “\(trimmed)” already exists"), style: .warning)
             return false
         }
         folders.addFolder(named: trimmed)
@@ -204,7 +204,7 @@ struct FolderManagementSection: View {
 
         // Slug changes — must not collide with another existing folder.
         if folders.allFolders.contains(where: { $0.slug == new.slug }) {
-            ToastCenter.shared.show(String(localized: "A folder named “\(trimmed)” already exists"), style: .warning)
+            ToastCenter.shared.show(String(localized: "A project named “\(trimmed)” already exists"), style: .warning)
             return false
         }
 
@@ -305,7 +305,7 @@ private struct FolderEditSheet: View {
             Text(titleText)
                 .font(.headline)
 
-            TextField("Folder name", text: $name)
+            TextField("Project name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit(submit)
@@ -326,8 +326,8 @@ private struct FolderEditSheet: View {
 
     private var titleText: String {
         switch mode {
-        case .add: return String(localized: "New folder")
-        case .rename: return String(localized: "Rename folder")
+        case .add: return String(localized: "New project")
+        case .rename: return String(localized: "Rename project")
         }
     }
 
