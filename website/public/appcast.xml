@@ -1,0 +1,1188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Daisy auto-update feed for Sparkle.
+
+  Hosted at https://mydaisy.io/appcast.xml — the Daisy app polls this
+  file daily (configurable in About → Updates) and prompts the user
+  when a newer <item> appears.
+
+  Each item carries:
+    • sparkle:shortVersionString — matches CFBundleShortVersionString
+      (the marketing version, e.g. "1.0.1") in the new build.
+    • sparkle:version            — matches CFBundleVersion (the
+      monotonic build number, e.g. "3"). Sparkle compares by build
+      number first, falls back to shortVersionString.
+    • sparkle:minimumSystemVersion — clients on older macOS skip the
+      item. Set to 14.0 to match Daisy's deployment target.
+    • <enclosure>                — URL of the signed, notarised DMG
+      together with its EdDSA signature (sparkle:edSignature) and
+      byte length (length attribute, required).
+
+  The signature is produced by Sparkle's `sign_update` CLI against
+  the EdDSA private key stored in the build-machine Keychain. The
+  matching public key lives in Daisy's Info.plist as SUPublicEDKey;
+  any DMG whose signature doesn't verify is silently rejected by
+  Sparkle on the client, preventing tampered updates.
+
+  Release flow lives in scripts/release.sh in the Daisy repo —
+  builds, notarises, signs, copies the DMG into public/downloads/,
+  generates a new <item> block to paste in here, then deploys.
+-->
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Daisy</title>
+    <link>https://mydaisy.io/appcast.xml</link>
+    <description>Updates for Daisy — local meeting capture for Mac.</description>
+    <language>en</language>
+
+    <item>
+      <title>Daisy 1.0.1</title>
+      <pubDate>Tue, 19 May 2026 10:55:22 +0000</pubDate>
+      <sparkle:version>5</sparkle:version>
+      <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.1</h3>
+        <ul>
+          <li>Auto-updates are live. Daisy now checks mydaisy.io daily and lets you install new versions in one click from Settings → Updates.</li>
+          <li>Connections moved into the sidebar — Calendar, Notion, MCP server, and auto-send destinations now share one home next to History.</li>
+          <li>Microphone hot-swap: Daisy detects when the input device changes mid-recording (AirPods reconnect, USB mic unplugged) and keeps capturing instead of dropping out.</li>
+          <li>Whisper got quieter — Silero VAD pre-pass plus tighter no-speech thresholds cut the hallucinated phrases that used to appear during long silences.</li>
+          <li>Auto-send destinations: route finished sessions to Notion, a webhook, or your MCP-connected LLM automatically — by folder or as a one-tap default in the kebab menu.</li>
+          <li>Subtle start / pause / stop sound effects (toggle in Settings → Sounds).</li>
+          <li>Security: MCP server no longer responds to cross-origin browser requests, and private data has been redacted from system logs.</li>
+          <li>Notion form polish: labels align with their fields, the Test button has proper contrast, and the first-run sheet lays out cleanly.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.1.dmg"
+        sparkle:edSignature="SPmpCNPKb1oFFsVjC8leYQ6Ht371zqJvrJtd05sIqArBX9jghrgLdhNx67S/OthOLDTejO5DxLfhcEBENX/5Dw==" length="9151097"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.2</title>
+      <pubDate>Tue, 19 May 2026 15:21:19 +0000</pubDate>
+      <sparkle:version>7</sparkle:version>
+      <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.2</h3>
+        <ul>
+          <li>Mic switch mid-recording (AirPods plug/unplug, USB mic, sound output re-route) no longer silently loses audio. If the new device has a different sample rate or channel count, Daisy continues writing into a second file alongside the original instead of dropping every buffer into a hidden error counter.</li>
+          <li>Two back-to-back calendar meetings used to silently record into one session with the first meeting&#x27;s title. Now the first meeting saves and the second starts fresh as its own session.</li>
+          <li>Calendar event auto-stop was technically wired up but never actually firing because the meeting binding got cleared during session start. Fixed — auto-stop now arms correctly when bound to a calendar event.</li>
+          <li>Auto-stop on calendar event end is on by default for new installs. If you explicitly turned it off, your choice is preserved.</li>
+          <li>&quot;Apple Calendar — Connected&quot; row no longer says &quot;Connected&quot; twice; the green badge in the section header already carries that.</li>
+          <li>Daisy warns within 30 seconds if system audio capture is on but no sound is reaching it. This usually means Bluetooth headphones — macOS can&#x27;t loop those back into Screen Capture. Use built-in speakers, wired headphones, or BlackHole if you need the remote side recorded.</li>
+          <li>One-time heads-up at session start if your default output is Bluetooth, so you can switch before the meeting begins.</li>
+          <li>If you change output device mid-session, Daisy rebuilds the system audio capture against the new default and surfaces a toast that it&#x27;s continuing.</li>
+          <li>When a meeting app (Zoom, Meet, Teams, Webex) launches while Daisy is already recording, you see a clear toast instead of silent no-op.</li>
+          <li>Empty `system_audio.caf` placeholder is created at session start, so post-session debugging can tell &quot;capture never armed&quot; from &quot;capture received nothing&quot;.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.2.dmg"
+        sparkle:edSignature="o1r6tajlfMR5R7kli1+ndpcF6sFYul+YPiGXPQ4GXFC0v+DHuS62SKH2ohPyLk/ree1a98FRRk9DaObVpY9ZDQ==" length="9263543"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.3</title>
+      <pubDate>Wed, 20 May 2026 05:13:17 +0000</pubDate>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>1.0.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.3</h3>
+        <ul>
+          <li>**Dictation mode** — hold a hotkey to talk, release to paste. The transcript lands directly into whatever app is in front (chat, email, doc) via the system clipboard, the same way Wispr Flow works. No need to switch back to Daisy and copy-paste manually. Hotkey is configurable in Settings → General; default is unbound so existing users don&#x27;t conflict with their muscle memory.</li>
+          <li>**Voice notes mode** — one-tap recording for the quick &quot;remind me later&quot; thoughts that don&#x27;t belong in a meeting transcript. Separate hotkey, separate session list section. Tap once to start, tap again to stop.</li>
+          <li>**Three recording modes are now visually distinct.** The center of the floating widget colour-codes the active mode: orange for meetings (the macOS mic indicator hue), lilac for dictation, coral for voice notes. At a glance you know which keystroke you just hit.</li>
+          <li>**Fn key as hotkey option** — for users who like the iPhone-style &quot;press the globe key to dictate&quot; gesture. Daisy can bind to Fn alone or in combination with another modifier.</li>
+          <li>**Permissions dashboard in Settings → Permissions** — single page showing live status of Microphone, Accessibility, Calendar, and Screen Recording. Each row has a Request button if not yet granted, an Open Settings… deep-link if denied, and a Revoke… link if granted. Status updates automatically when you come back from System Settings, no relaunch needed.</li>
+          <li>**Home banner** when a required permission is missing — mic or accessibility off means recording or auto-paste won&#x27;t work, and the banner now says so directly with a one-click Fix button that opens the right pane.</li>
+          <li>**Floating widget shows at app launch** even before you start recording, so you have a draggable handle to position it where you want.</li>
+          <li>**Connect Apple Calendar button no longer fails silently.** Under Hardened Runtime on macOS 14+ the system was rejecting the TCC prompt request before showing the dialog, because the corresponding entitlement was missing. Daisy never appeared in System Settings → Privacy → Calendars and no amount of clicking Connect did anything. Fixed by adding the required entitlement to the signed bundle.</li>
+          <li>**Microphone capture returning silent buffers after a TCC reset.** Same class of bug as Calendar above — Hardened Runtime requires the `audio-input` entitlement for the mic prompt to fire on macOS 14+. Without it the first call to `requestAccess` was silently denied, and subsequent recordings produced zero transcription segments.</li>
+          <li>**Voice note hotkey behaviour reverted to single-tap toggle** (it briefly was hold-to-talk, which felt wrong for the &quot;leave myself a quick thought&quot; use case). Dictation stays hold-to-talk; only voice notes are toggle.</li>
+          <li>**HotkeyRecorder now captures the Fn / globe key** correctly. Previously Fn alone produced no `.keyDown` event and the recorder ignored the press.</li>
+          <li>**Globe key shows as an SF Symbol** in the hotkey label instead of the 🌐 emoji.</li>
+          <li>**App Sandbox is now off.** Dictation needs `CGEvent.post(⌘V)` against the frontmost app, which App Sandbox blocks by design. Daisy is distributed via signed + notarised DMG with Hardened Runtime — same security posture as Wispr Flow, MacWhisper, Superwhisper. Mac App Store distribution is not planned.</li>
+          <li>Microphone, Calendar, and Network entitlements are now declared explicitly in the entitlements file (required under Hardened Runtime regardless of sandbox state). If a future build adds Contacts / Photos / Reminders / Location, the matching entitlement has to be added too — there&#x27;s a comment in `Daisy.entitlements` listing the table.</li>
+          <li>`SystemPermissions.shared` — single observable façade over `AVCaptureDevice` / `EKEventStore` / `AXIsProcessTrusted` / `CGPreflightScreenCaptureAccess`. Auto-refreshes on `NSApplication.didBecomeActiveNotification` so the UI reflects external changes in System Settings without a relaunch.</li>
+          <li>Diagnostic logging in `CalendarService.requestAccess` under the `Calendar/Perm` os_log category — surfaces pre-call / post-call status + any `requestFullAccessToEvents` throw, so support cases like the one we just hit are 30 seconds of `log stream` to diagnose instead of hours of guesswork.</li>
+          <li>Screen Recording request now uses `CGRequestScreenCaptureAccess()` (macOS 11+) which actually shows the system prompt and registers the app in Privacy → Screen Recording. Previously the button just opened System Settings, where Daisy wasn&#x27;t in the list yet.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.3.dmg"
+        sparkle:edSignature="7kjtTcPrMN4Hn0EO0BBpMYv3zAaxo+nhnjoGv0O8h9E7jQAr6Dd4vJRRlN44y1mTxHfSbniveOy8mLEq+jBzBQ==" length="9425761"
+        type="application/octet-stream" />
+    </item>
+    <item>
+      <title>Daisy 1.0.4</title>
+      <pubDate>Thu, 21 May 2026 01:35:40 +0000</pubDate>
+      <sparkle:version>9</sparkle:version>
+      <sparkle:shortVersionString>1.0.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.4</h3>
+        <ul>
+          <li>**Mid-meeting headphones don&#x27;t kill your recording anymore.** Plugging wired headphones (USB or 3.5mm) into the Mac during a session used to silently drop both microphone and the other side&#x27;s audio — the timer kept ticking but nothing was captured. The route-change recovery now always re-binds the audio engine to a concrete device (it was short-circuiting when you had &quot;System default&quot; picked), and a watchdog catches any case where the recovery looks fine but no audio actually arrives — you get a Resume toast instead of an empty file.</li>
+          <li>**Calendar auto-stop fires when you start the meeting manually.** With &quot;Stop when the event ends&quot; turned on, Daisy used to silently ignore the setting if you&#x27;d hit the record hotkey yourself before the calendar tick auto-started the session. Now the session links itself to whichever meeting is currently running and the auto-stop arms correctly.</li>
+          <li>**Settings → General Calendar section reflects live access state.** Previously the toggles could stay disabled even after granting Apple Calendar in System Settings — the gating read a stale local cache. Now it reads the same source the Permissions tab shows, so a fresh grant unlocks everything immediately when you tab back to Daisy.</li>
+          <li>**Calendar settings moved from Connections to Settings → General.** Where you turn on auto-start, auto-stop, and &quot;show next meeting in the menu bar&quot; now sits next to the other recording behaviour preferences. Granting / revoking calendar access still lives in Settings → Permissions, where you&#x27;d expect a system-level privacy toggle.</li>
+          <li>**DMG window background cleaned up.** Removed a decorative daisy graphic that was duplicating Daisy&#x27;s actual app icon — installer window now shows just the app, the Applications shortcut, and the arrow between them.</li>
+          <li>New CoreAudio property listener on `kAudioHardwarePropertyDefaultInputDevice` complements the existing output-device listener — catches mic-side route changes that `AVAudioEngineConfigurationChange` silently misses (output-only headphones on macOS 14+).</li>
+          <li>`Logger(category: &quot;AutoStop&quot;)` separates calendar-bound stop wiring from the general `Session` log. Every early-return in `scheduleAutoStopIfNeeded()` now writes a line — pre-1.0.4 four distinct failure modes all looked the same from Console.app (i.e. silent).</li>
+          <li>`release.sh` now runs a sanity check on the build number before any archive work — fails in under a second if the supplied build is `&lt;=` the last published `&lt;sparkle:version&gt;` in `appcast.xml`. Catches the class of bug that shipped 1.0.3 build 6 alongside an already-published 1.0.2 build 7, which Sparkle correctly treated as a downgrade.</li>
+          <li>`AudioRecorder.applyPreferredInputDevice(uid:)` no longer short-circuits on `uid.isEmpty`. The AUHAL is always pinned to a concrete `AudioDeviceID`, resolved via `AudioInputDevices.systemDefaultInputID()` when the user picked &quot;System default&quot;. Stops the silent-recording-after-route-change failure mode.</li>
+          <li>Recovery watchdog arms after every successful `engine.start()` in route-change recovery; falls to `.paused` (with a toast) if no audio buffer arrives within 5 seconds. Bridges from the audio render thread via an `OSAllocatedUnfairLock`-backed timestamp box.</li>
+          <li>`RecordingSession.bindCurrentMeetingIfPossible()` links a manually-started session to a calendar event that&#x27;s currently in its `-120 s … +30 s` start window, so the auto-stop pipeline works the same whether the session began from the hotkey or the calendar tick. Re-runs on `resume()` as a late-binding safety net.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.4.dmg"
+        sparkle:edSignature="EVNJp64xzdADWB4mgifmx22DWWsEZbb6q6OjeZmYMzDO6c6Ga/PdAbspeX4eiZEc7Fm0vwdeJD7SSWrW48ErAg==" length="9423867"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.5</title>
+      <pubDate>Thu, 21 May 2026 04:08:55 +0000</pubDate>
+      <sparkle:version>10</sparkle:version>
+      <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.5</h3>
+        <ul>
+          <li>**Your name in transcripts.** Settings → General → You — type your name once, and every line you speak in a meeting transcript is labelled with it instead of the generic &quot;Me&quot;. The summarizer sees your name too, so it can address you directly in multi-person meeting recaps (&quot;Maria asked Egor about pricing&quot;) instead of using a placeholder.</li>
+          <li>**Client tagging.** Sessions can now carry a free-form client tag — Daisy auto-suggests one from the dominant external attendee domain on a calendar-bound meeting (e.g. three people from `@mediacube.io` → suggested tag &quot;Mediacube&quot;). The tag is editable inline in the session header, persists into the transcript frontmatter as `daisy_client:`, and powers a new client filter row in History with live counts per tag plus an &quot;Untagged&quot; bucket.</li>
+          <li>**Auto-start notification.** When a calendar event auto-starts recording, Daisy now posts a macOS banner — &quot;Recording started — Q3 review&quot; — with an inline Stop &amp; save action so you can bail out instantly if the wrong meeting got picked up.</li>
+          <li>**Auto-stop notification.** Confirmation banner when the calendar event ends and Daisy auto-stops + saves the recording. Toggle independently in Settings.</li>
+          <li>**Per-class notification toggles.** Settings → General → Notifications gives you individual switches for &quot;Recording started&quot;, &quot;Meeting ended — saved&quot;, and the existing &quot;Long silence&quot; prompt.</li>
+          <li>**Microphone-side diarization (opt-in).** Settings → Transcription → Diarization → &quot;Diarize microphone too&quot;. Useful when remote meeting participants are heard through your speakers (in-room playback) instead of being captured separately via system-audio loopback — turns the all-&quot;Me&quot; transcript into per-speaker labels.</li>
+          <li>**Empty system-audio warning.** If you finish a meeting longer than a minute with system audio enabled but no audio actually captured (almost always Bluetooth headphones — macOS refuses to loop those into Screen Capture), Daisy now surfaces an explicit warning toast at the end of the session and writes `daisy_system_audio_status: empty` into the transcript frontmatter for grep-able diagnostics.</li>
+          <li>**⌘+Delete in History.** Standard macOS &quot;move to trash&quot; combo. Plain Backspace still works. Enter in the confirmation dialog now triggers Delete (Esc cancels).</li>
+          <li>**Notion configuration moved.** It now lives in Settings → General → Storage right next to the local sessions folder — they&#x27;re the same logical category (&quot;where Daisy sends a finished meeting&quot;). The advanced fields (secret, parent ID, Page/Database picker, Test connection) collapse into a single DisclosureGroup so the row isn&#x27;t intimidating for users who don&#x27;t wire Notion up. Connections sidebar is leaner — MCP server + Auto-routing only.</li>
+          <li>**Permissions tab — quieter.** The redundant &quot;Granted / Not requested&quot; status pills on every row are gone. State is communicated by the icon colour on the left and the action button on the right (Request / Open Settings… / Revoke…). Section-level &quot;Required permission missing&quot; header warning stays.</li>
+          <li>**Follow-up draft is now 2–4 short paragraphs.** Replaces the previous &quot;one big paragraph&quot; output — opener, recap of what was agreed, next steps with owner + timeline, optional sign-off. Existing sessions stay as-is; hit the sparkles button to re-summarize an older one in the new shape.</li>
+          <li>**Copy markdown copies the whole document.** The toolbar Copy button used to grab transcript text only; now it assembles Title → Summary → Sections → Next actions → Follow-up → Transcript into one paste-ready markdown blob. Status toast tells you what scope went on the clipboard.</li>
+          <li>**Dictation text flows naturally.** Dictation segments were joined with newlines, making the pasted result look shredded. They now join with spaces so consecutive Whisper chunks read as continuous prose, with the model&#x27;s own punctuation handling sentence boundaries.</li>
+          <li>**Follow-up draft is selectable again.** A layout issue was eating mouse hit-events over the follow-up text on macOS 26, so even though `.textSelection(.enabled)` was set, you couldn&#x27;t mouse-select and ⌘C the draft. Restructured so the text occupies the full content width with unobstructed selection while the inline copy button still sits in the corner.</li>
+          <li>**Summarizer no longer inverts customer-answer polarity.** When a customer answered &quot;no, our staff is all in Belarus&quot; to a sales rep&#x27;s diagnostic question, the model used to recast that as &quot;opportunity for future contractor payouts&quot; — flipping a constraint into an opportunity. Prompt now explicitly forbids polarity inversion and gives the model linguistic cues for inferring asker vs. answerer when diarization is missing.</li>
+          <li>New per-class macOS notification surfaces (`AutoStartNotification`, `AutoStopNotification`) with shared registration + delegate routing. Action button taps come back through Foundation NotificationCenter the same way `SilencePromptNotification` already worked.</li>
+          <li>`ClientSuggestion` pure-function module — `extractDomain` / `isFreeMailDomain` / `normalizeDisplayName` / `suggest(from:)`. Hardcoded free-mail blocklist (gmail / outlook / icloud / proton / fastmail / yandex / mail.ru / et al.) and subdomain stripping (`mail.acme.io` → `Acme`). No new entity, no CRM table — tag lives on the session.</li>
+          <li>`DaisyMeeting.attendeeEmails: [String]` projected from both EventKit and Google Calendar event payloads. Drives the client auto-suggestion and is reserved for future &quot;remember this client&#x27;s contact emails&quot; features.</li>
+          <li>`StoredSession.client: String` round-trips through `daisy_client:` frontmatter. Search box now matches against it (&quot;mediacube&quot; finds every session tagged with that client).</li>
+          <li>`SessionStore.setClient(_:for:)` writes the tag back to disk via the same upsert-frontmatter machinery `moveSession` uses for folders.</li>
+          <li>`Transcriber.diarize:` init parameter — defaults to `true` for system-audio source, `false` for microphone (overridden by `settings.diarizeMicrophone`). Decouples the diarization decision from the source enum without forcing a Transcriber→Settings dependency.</li>
+          <li>`TranscriptSegment.speakerLabel(displayName:)` overload accepts an optional override for the user&#x27;s own voice. Pass `settings.userDisplayName` to substitute &quot;Me&quot; → real name; pass nil/empty to keep the legacy label. System-source labels are unaffected.</li>
+          <li>`AudioRecorder.prewarm()` — `engine.prepare()` at app launch caches the HAL audio graph so the first user-initiated record click doesn&#x27;t pay the cold-start tax. Called from `RecordingSession.init`. No TCC prompts, no recording-light.</li>
+          <li>`RecordingSession` post-session check: if `captureSystemAudio = on`, `currentMode = .meeting`, `elapsed &gt; 60s`, and `systemAudio.hasReceivedAudio = false` → warning toast + frontmatter status.</li>
+          <li>`hasCapturedSystemAudio: Bool` proxy on RecordingSession so MarkdownExporter (and other read-only consumers) can persist the system-audio capture outcome without widening visibility of the private `systemAudio` child.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.5.dmg"
+        sparkle:edSignature="jYpruh9k7gDdg43dWSMO6aKifHmV4f8RDVQr8tTP98Wbf0MNLxgRStxVszfVIwRDIiFEFUtmo28SZUc/05ViDA==" length="9490131"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.5.1</title>
+      <pubDate>Thu, 21 May 2026 04:23:24 +0000</pubDate>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>1.0.5.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.5.1</h3>
+        <ul>
+          <li>**App no longer crashes on launch.** 1.0.5 introduced a launch-time call to `AVAudioEngine.prepare()` intended to warm up the audio graph and make the first dictation feel snappier. On macOS 26.2 that call throws an ObjC exception (`AVAudioEngineGraph::Initialize`) before microphone permission has been granted — and the exception aborts the process before SwiftUI even mounts. If you installed 1.0.5 and saw Daisy bounce in the Dock, this is the fix. Removed the launch-time prewarm; first-record latency goes back to where it was in 1.0.4.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.5.1.dmg"
+        sparkle:edSignature="MRZlhLhSXeMV5h5bQyI2b2nB19y1I2hpXHQRN4ptFzZF4vMu5QAa6ynzNlP04BWk5hhtOwiX5UA7d0uocDMZDw==" length="9490186"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6</title>
+      <pubDate>Thu, 21 May 2026 05:43:35 +0000</pubDate>
+      <sparkle:version>13</sparkle:version>
+      <sparkle:shortVersionString>1.0.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6</h3>
+        <ul>
+          <li>**Tag your sessions.** Sessions now carry an optional free-form tag — auto-suggested from the dominant external attendee domain on a calendar-bound meeting (&quot;Mediacube&quot;, &quot;Acme&quot;) — and surface as a chip next to the title. History sidebar got a tag selector (single-select dropdown) that intersects with the folder filter. The detail-view tag editor offers a chevron dropdown with every tag you&#x27;ve used before, so you pick &quot;Mediacube&quot; once instead of typing it ten times and risking three different buckets.</li>
+          <li>**Your name in transcripts.** Settings → General → You — type your name once, and every line you speak shows up as `[Egor]` instead of `[Me]`. The summarizer picks it up too, so multi-person meeting recaps can address you by name in sentences like &quot;Maria asked Egor about pricing&quot;.</li>
+          <li>**Delete old audio automatically.** Settings → General → Storage now has a &quot;Delete audio after&quot; picker — 7 / 30 / 90 / 180 / 365 days, or Keep forever (default). Removes raw `.caf` files for sessions past the cutoff; transcripts, summaries, and screenshots stay untouched. Audio dominates the on-disk footprint; this lets you trim it without losing the meeting record.</li>
+          <li>**Auto-start banner with Stop action.** When a calendar event auto-starts recording, Daisy posts a macOS banner — &quot;Recording started — Q3 review&quot; — with an inline Stop &amp; save button so you can bail if the wrong meeting got picked up.</li>
+          <li>**Auto-stop banner confirmation.** When the calendar event ends and Daisy auto-stops + saves the recording, you get a banner letting you know — Settings → General → Notifications lets you toggle each banner class independently.</li>
+          <li>**Microphone-side diarization (opt-in).** Settings → Transcription → Diarization → &quot;Diarize microphone too&quot;. Useful when remote participants are heard through your speakers (in-room playback) instead of being captured via system-audio loopback — turns the all-&quot;Me&quot; transcript into per-speaker labels.</li>
+          <li>**Notifications row in Permissions.** Settings → Permissions surfaces the macOS Notifications permission alongside Microphone / Accessibility / Calendar / Screen Recording.</li>
+          <li>**⌘+Delete in History.** Standard macOS &quot;move to trash&quot; combo. Plain Backspace still works. Enter in the confirmation dialog now triggers Delete (Esc cancels).</li>
+          <li>**Empty system-audio warning.** If you finish a longer meeting with system audio enabled but no audio actually captured (almost always Bluetooth headphones — macOS refuses to loop those through Screen Capture), Daisy surfaces an explicit warning at the end of the session and writes `daisy_system_audio_status: empty` into the transcript frontmatter for debugging.</li>
+          <li>**Settings → General is calmer.** Calendar / Auto-start / After Stop merged into a single &quot;Meetings&quot; section — same toggles, fewer headers, one mental model. Shortcuts: per-row hints instead of one wall of footer text.</li>
+          <li>**Settings → Transcription mirrors Summary.** Model status (Ready badge + Reload) sits inline under the Model picker, not in its own section. Section header on the LLM block renamed to &quot;Provider&quot;.</li>
+          <li>**Notion configuration moved.** No longer a tab in Connections — it&#x27;s now a row in Settings → General → Storage right next to the local sessions folder (same logical category: &quot;where finished meetings go&quot;). A gear icon next to the row opens a proper modal sheet with secret, parent ID, page/database toggle, and Test connection.</li>
+          <li>**Connections sidebar is leaner.** Auto-routing + MCP server only. Auto-routing is the default tab now.</li>
+          <li>**Permissions tab quieter.** Removed the per-row &quot;Granted / Not requested&quot; status pills — icon colour on the left and action button on the right already communicate state.</li>
+          <li>**Follow-up draft is now 2–4 short paragraphs.** Replaces the previous &quot;one big paragraph&quot; output: opener, recap, next steps with owner + timeline, optional sign-off. Existing sessions stay as-is; hit the sparkles button to re-summarize an older one in the new shape.</li>
+          <li>**Copy markdown copies the whole document.** The toolbar Copy button used to grab transcript text only; now it assembles Title → Summary → Sections → Next actions → Follow-up → Transcript into one paste-ready markdown blob.</li>
+          <li>**Dictation text flows naturally.** Segments now join with spaces, not newlines, so pasted dictation reads as continuous prose.</li>
+          <li>**Auto-routing templates removed for now.** Attio / Webhook / Linear preset templates are gone until they&#x27;re verified end-to-end against the real upstream services. Blank integration is the only safe path; Add-integration is a direct button instead of a menu.</li>
+          <li>**MCP connection no longer hangs after the first AI request.** The Daisy MCP server&#x27;s SSE stream had no keepalive — once idle for ~30 seconds (you finishing one Claude prompt and starting another), the loopback socket would silently go half-open and the next prompt would hang for 3+ minutes. Server now emits an SSE comment-frame ping every 15 seconds for the lifetime of the connection.</li>
+          <li>**Claude Desktop reload after a hung session works correctly.** Stale state from a previous hung MCP call no longer poisons the next Claude launch with &quot;not valid MCP server configurations: daisy&quot;.</li>
+          <li>**&quot;Add to Claude Desktop&quot; button writes a working config on the first try.** The shipped snippet now passes `--transport sse-only --allow-http` to `mcp-remote`. Without them, the bridge tried Streamable HTTP first and refused plain HTTP on loopback. Manual configs need the same two flags — see [docs/mcp](https://mydaisy.io/docs/mcp).</li>
+          <li>**Follow-up draft is selectable again.** A layout issue was eating mouse hit-events over the follow-up text on macOS 26 — restructured the layout so the text occupies the full content width with unobstructed selection.</li>
+          <li>**Summarizer no longer inverts customer-answer polarity.** When a customer answered &quot;no, our staff is all in Belarus&quot; to a sales rep&#x27;s diagnostic question, the model used to recast that as &quot;opportunity for future contractor payouts&quot; — flipping a constraint into an opportunity. Prompt now explicitly forbids polarity inversion and gives the model linguistic cues for inferring asker vs. answerer when diarization is missing.</li>
+          <li>**Calendar settings now read live permission state.** Pre-1.0.6 the Calendar toggles in General could stay disabled even after granting Apple Calendar in System Settings, because the gating read a stale UserDefaults cache. Now it reads the same source the Permissions tab shows.</li>
+          <li>**Empty row in the Storage section.** Collapsing the old Notion DisclosureGroup left a visible empty row; replacing it with a modal sheet fixes it.</li>
+          <li>Sessions tagged in 1.0.5 (which used a `client` concept) read transparently as tagged sessions in 1.0.6 and are rewritten with the new `tag` key on the next manual edit. Nothing to do.</li>
+          <li>New [docs/mcp page](https://mydaisy.io/docs/mcp) — step-by-step setup for Claude Desktop / Cursor / Cline, plus 16 example prompts grouped by use case (lookup, cross-session synthesis, drafting, analytics) and a troubleshooting block.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.dmg"
+        sparkle:edSignature="lFx5WgFpcYn86ujKmr+75vpnSwiYgcKa87PuvVswCJXob1FMKwojpavVhCJ1vdFLdK2q43QSw/nHEfDeQ5nWBw==" length="9534817"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.1</title>
+      <pubDate>Thu, 21 May 2026 07:34:32 +0000</pubDate>
+      <sparkle:version>14</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.1</h3>
+        <ul>
+          <li>**History sidebar — tag filter moved up.** Tag selector now lives in the search row next to the title, sharing the capsule region with search and tags. Removed the manual reload icon (the store auto-refreshes on focus + file changes). Padding bumped between search and folder chips so the row stops feeling cramped.</li>
+          <li>**Tag editing in session header — Notion-style autocomplete.** Click the tag field and a popover opens with every tag you&#x27;ve used before, filtered by what you type. Click a row to apply, or hit Enter to create a brand-new one. A &quot;Remove tag&quot; row clears the current value with one click. No more chevron — the field is the affordance.</li>
+          <li>**Settings → Transcription — Diarization moved above Language.** Diarization is a structural &quot;how is the audio interpreted&quot; choice (same family as Model). Language is content-level. Order now reflects that. Diarization caption shortened to one line; the long version moved to the footer.</li>
+          <li>Dead-code sweep: removed `ClientSuggestion.swift` typealias stub (post-rename from 1.0.5.2), neutered `AudioRecorder.prewarm()` method (no callers since the 1.0.5.1 crash), unused `refreshRotation` state in LibraryView. Two stale one-off docs (`_release-1.0.4-checklist.md`, `qa-1.0.4.md`) cleared from `scripts/`. DaisyUITests target dropped — was Xcode-template scaffold, never actually run; `DaisyTests` regression suite stays as the audit-recommended pure-function lock.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.1.dmg"
+        sparkle:edSignature="dyMB7RHkn0iGefanidER6gi0As8eSlkJRrDvxT0pW37CNLz5jVrRaxwFbBGEtPre+ur0w99ig/zt3Vh2PGQrCw==" length="9546479"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.2</title>
+      <pubDate>Thu, 21 May 2026 15:01:12 +0000</pubDate>
+      <sparkle:version>15</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.2</h3>
+        <ul>
+          <li>**Screen Recording permission button.** Clicking &quot;Allow Screen Recording&quot; from Settings or onboarding sometimes did nothing on macOS 14+ (`CGRequestScreenCaptureAccess` is unreliable post-Sonoma — known TCC daemon issue). Now falls back to opening System Settings → Privacy → Screen Recording directly. Status correctly reflects &quot;Denied&quot; after first attempt instead of looping on &quot;Request&quot;.</li>
+          <li>**Onboarding flow — 6 steps instead of 4.** Added explicit Accessibility step (needed for dictation auto-paste via ⌘V) and a Hotkeys step where you assign global shortcuts for Meeting / Voice notes / Dictation in one screen, with colour dots matching each mode&#x27;s widget centre. Focus observer auto-refreshes permission status when you return from System Settings, so granted permissions show up without an extra click.</li>
+          <li>**Whisper model loading UX.** First-record now shows a one-shot toast (&quot;Setting up transcription model — first run only, about 1–3 minutes&quot;). Widget centre pulses amber (instead of plain white) while loading. Tooltip surfaces real progress: &quot;Downloading transcription model · 47%&quot;. Onboarding Done step shows a progress row reading `WhisperEngine.state` directly, so the model finishes downloading while the user reads &quot;You&#x27;re set&quot;.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.2.dmg"
+        sparkle:edSignature="DxouOTM0PLqhNPbJhxds7CzgOwDystJqyG6OOGii1c2bQPXBFy1GOJa7i4o3dERnWsP/POX4/TE9OssJ1s99Cw==" length="9566332"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.3</title>
+      <pubDate>Fri, 22 May 2026 01:34:07 +0000</pubDate>
+      <sparkle:version>16</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.3</h3>
+        <ul>
+          <li>**Display name now wins in transcripts.** When mic-side diarisation tagged a solo recording&#x27;s segments with cluster label &quot;A&quot;, the transcript showed &quot;Speaker A&quot; instead of the name set in Settings → General → You. Display name now overrides the cluster label for all mic-stream segments — your name shows up wherever you spoke. Per-speaker disambiguation on multi-speaker mic streams still works via the Detail-view speaker-map UI.</li>
+          <li>**No false &quot;only your voice&quot; warning during voice notes.** Voice notes and dictation are mic-only by design — the user is the only voice that matters. The status pill was incorrectly showing a &quot;couldn&#x27;t reach the other side&quot; warning during those recordings. It now hides itself for non-meeting modes.</li>
+          <li>**Sidebar capsule polish.** Status row moved below Stop button — tap target first, info second. Copy rewritten in plain English: &quot;Recording both sides&quot; / &quot;Only your voice — Screen Recording is off&quot; / &quot;Only your voice — couldn&#x27;t reach the other side&quot;. All three states now share a consistent tinted-capsule shape so the eye lands on the same place regardless of state.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.3.dmg"
+        sparkle:edSignature="ZcVfdLBQlRsyRL3bUt/ophljjr/ZpPVrclw05fSXL1cbQTg4eoZV011PQuh0uMgiKVNHcPELiE3h31903W1IAg==" length="9569974"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.4</title>
+      <pubDate>Fri, 22 May 2026 02:37:47 +0000</pubDate>
+      <sparkle:version>17</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.4</h3>
+        <ul>
+          <li>**Daisy is now fully open source under Apache 2.0.** Switched from BUSL 1.1 — no commercial-use carve-outs, no time-bombed conversion clock, standard OSI-approved permissive licence. Read every line, build from source, fork, ship your own variant.</li>
+          <li>**Voice notes now read as voice notes.** Sessions recorded via the voice-notes hotkey were titled &quot;Meeting yyyy-mm-dd hh:mm&quot; regardless of mode. Title now reflects the actual recording mode — &quot;Voice note …&quot;, &quot;Dictation …&quot;, &quot;Meeting …&quot;.</li>
+          <li>**Cleaner session header.** Removed the AUTO/EN/RU locale chip (already controlled in Settings → Transcription) and the system-audio speaker icon (the user already knows they recorded a meeting — the title literally says so). Header is now just date · duration · tag.</li>
+          <li>**Settings → Profile.** Renamed the &quot;You&quot; section to &quot;Profile&quot; to match the macOS Settings convention.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.4.dmg"
+        sparkle:edSignature="dL6AfJAeSnW8pCJeeoluUt9H5FZ9A3DES24g6HfpfIFuH8XcJMCzPAkIKVz9NeYnrRyjpowZIf7B7aSVqjANDA==" length="9563342"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.5</title>
+      <pubDate>Fri, 22 May 2026 03:03:35 +0000</pubDate>
+      <sparkle:version>18</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.5</h3>
+        <ul>
+          <li>**Cleaner Library list rows.** Removed the system-audio speaker icon from session rows for parity with the session detail header (also dropped in 1.0.6.4). The session title already communicates whether a recording is a meeting; the duplicate icon was visual noise.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.5.dmg"
+        sparkle:edSignature="CSi02wLGQZyZ9B9fRFCxgVgPWFPOOyZpsG/+XPy+Ee2qy0qtqSimaJT532W3ia0Ol+FZrUWSht8vnbILnqAkCw==" length="9563182"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.6</title>
+      <pubDate>Fri, 22 May 2026 08:24:54 +0000</pubDate>
+      <sparkle:version>19</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.6</h3>
+        <ul>
+          <li>**Mode-aware start sound.** Pressing Fn for dictation used to play the same `Tink` cue as a meeting start — a system sound macOS also uses when you bump the volume ceiling or hit an unhandled key, which made every dictation tap feel like a mis-press. Now each mode has its own cue: meeting stays on `Tink` (the long-session &quot;armed&quot; signal), voice notes use a soft `Pop`, and dictation uses `Purr` — a short, warm &quot;listening&quot; tone. Stop sound is unchanged.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.6.dmg"
+        sparkle:edSignature="ZuycQAK09NYkEpafICjIEDeZ5xYxPX3BI0Al7DQ4g6WuvAhrvxikwZuy9L2cVyOGi9WHRIoWV7Bg0V0cz8ueDA==" length="9562538"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.7</title>
+      <pubDate>Fri, 22 May 2026 09:19:50 +0000</pubDate>
+      <sparkle:version>20</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.7</h3>
+        <ul>
+          <li>**Settings no longer crashes on macOS 26 (Tahoe).** Early Tahoe builds (26.0.1) crash inside Apple&#x27;s `DesignLibrary` framework while sizing the segmented tab control SwiftUI puts in the Settings window toolbar — `SerialExecutor.isMainExecutor` in `SystemSegmentedControl` hits a garbage witness pointer and the app dies with `SIGBUS`. On macOS 26 Daisy now renders its own tab bar instead of routing through that Apple code path. macOS 14 / 15 keep the native `TabView` (the bug doesn&#x27;t exist there).</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.7.dmg"
+        sparkle:edSignature="T3tAidGvQqqwMEdaKb7rQA+8DSfUSCukvB74bMNzNfNZlWq0ODyFKkFWAQpVrOawRRy2WCjhRISjVbNZ0hiPBA==" length="9614647"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.8</title>
+      <pubDate>Fri, 22 May 2026 10:19:36 +0000</pubDate>
+      <sparkle:version>21</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.8</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.8</h3>
+        <ul>
+          <li>**Meeting and Resume now use the same `Purr` tone as dictation.** The old `Tink` start sound reads in macOS UX as an edge-of-slider / unhandled-key ping — every recording start felt like a mis-press. Voice notes keep `Pop` so a quick tap still sounds distinct from the longer recording modes.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.8.dmg"
+        sparkle:edSignature="BtQHVqGRKfsAQV11A24irSz0nw0khHRTK6SmTTJ2o1o9RyCNFZbpSa5IZlq9AhIPM3sU2FY+Avw/OHnJSFDeAg==" length="9614663"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.9</title>
+      <pubDate>Fri, 22 May 2026 11:58:31 +0000</pubDate>
+      <sparkle:version>22</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.9</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.9</h3>
+        <ul>
+          <li>**Friendlier start cues.** Meeting and Resume now use the same warm `Purr` tone as dictation — the old `Tink` read in macOS UX as an edge-of-slider / unhandled-key ping, so every recording start felt like a mis-press. Voice notes keep `Pop` so a quick tap still sounds distinct from longer recording modes.</li>
+          <li>**Settings tabs back to native macOS chrome.** A defensive workaround that replaced the Settings tab bar with a custom HStack on macOS 26 is reverted. The crash that prompted it correlates with low disk + a partially-downloaded transcription model, not with the segmented control itself.</li>
+          <li>**Audio retention default is now 24 hours on fresh installs**, with a simpler choice in Settings → General → Storage: 24 hours / 7 days / 30 days / Keep forever. Existing users keep whatever they had — if you never touched the retention picker, your audio is still kept forever until you explicitly change it.</li>
+          <li>**Clear audio cache now.** Settings → General → Storage gets a &quot;Clear audio cache&quot; row that shows the current `.caf` footprint across every session and a one-click destructive purge with a confirm alert. Transcripts, summaries and screenshots are never touched; only raw audio is removed.</li>
+          <li>**Whisper download checks free disk space first.** If the home volume has less than 2 GB free, the model download stops immediately with a concrete error (&quot;need 2.0 GB free, have 0.8 GB&quot;) instead of silently wedging at 100% downloaded.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.9.dmg"
+        sparkle:edSignature="NBcdY3r8jIFf3hkXUhCgJngdjU7K9IHquxuS9r2K2epiVc58MPaxFfJHWQZ5eot7dsL1ZUx8A4B4y2rXQ5XWBw==" length="9581486"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.10</title>
+      <pubDate>Sat, 23 May 2026 04:27:33 +0000</pubDate>
+      <sparkle:version>23</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.10</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.10</h3>
+        <ul>
+          <li>**Google Calendar is available again as a Beta connection.** Connections → Calendar lets you connect Google Calendar (read-only, scope `calendar.readonly`) for session naming, attendee prefill, and auto-start / auto-stop around meetings — same surface Apple Calendar already powers via EventKit. While Google&#x27;s OAuth verification is in flight, the consent screen will show an &quot;App isn&#x27;t verified&quot; warning; click Advanced → Continue to proceed. The `Beta` badge and the in-tab notice come off the moment Google approves the verification request.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.10.dmg"
+        sparkle:edSignature="QWFmriFfhQZ8xqHwPWmjEC590/ASSs+lZEwhhOCCxaZ8CLfJYnVviFayjN1wZ1K/+JMkg/PK7voCQhcmZpHTDw==" length="9642002"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.11</title>
+      <pubDate>Sat, 23 May 2026 06:41:58 +0000</pubDate>
+      <sparkle:version>24</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.11</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.11</h3>
+        <ul>
+          <li>**System audio capture on macOS 26 (Tahoe).** Early Tahoe builds (26.0.x) regressed ScreenCaptureKit loopback for our default config — `SCStream` attached without error but never delivered a single audio buffer, even on built-in speakers with no Bluetooth in the picture. Switched to mono single-channel + dropped `excludesCurrentProcessAudio` on macOS 26+ (the two knobs that match the workaround pattern reported on Apple&#x27;s developer forums for Tahoe SCStream audio bugs). macOS 14 / 15 keep the year-validated 2-channel config. Filed Apple Feedback in parallel — long-term fix lives on their side.</li>
+          <li>**Misleading &quot;Likely BT output&quot; warning.** When system audio came back empty, the toast and log claimed it was probably Bluetooth — confusing for users without Bluetooth where the real cause was the Tahoe SCStream issue above. Rewritten to mention both causes neutrally.</li>
+          <li>**&quot;Other side wasn&#x27;t captured&quot; banner in session detail.** When a session&#x27;s system audio is empty, the transcript view now shows an explicit banner explaining why every line ends up labelled with your name (the microphone picks up the other side acoustically through your speakers, so it&#x27;s the only audio source Daisy has), plus two paths forward: enable Settings → Transcription → &quot;Diarize microphone too&quot; to split voices on the existing recording, and switch to built-in speakers for next time.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.11.dmg"
+        sparkle:edSignature="D7fHUemNVAvKsgpU4RSzesC9CbFbinEtQma4BLXId3Xub4AK7HNN7lMZ/3C4aQknRiVfJVr4Daw3bDZwXsuyDg==" length="9648258"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.6.12</title>
+      <pubDate>Mon, 25 May 2026 10:24:33 +0000</pubDate>
+      <sparkle:version>26</sparkle:version>
+      <sparkle:shortVersionString>1.0.6.12</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.6.12</h3>
+        <ul>
+          <li>**Voice notes no longer inherit the title of an old meeting.** Tester case: a calendar-bound meeting named &quot;Pilik&#x27;s Birthday&quot; finished and saved days earlier; a fresh voice-note hotkey hit then created a new session that was saved under the same &quot;Pilik&#x27;s Birthday&quot; title (instead of &quot;Voice note 2026-05-25 12:34&quot;). Under the hood `reset()` was clearing the meeting binding, folder and mode but not the title — so the next session&#x27;s title-generation step found a non-empty value and skipped regeneration. Title is now cleared on reset and re-generated on every start from the new session&#x27;s mode + calendar binding.</li>
+          <li>**Notion row captions referenced &quot;below&quot; after the config moved.** When Notion settings moved into a modal sheet (opened by the gear button) in 1.0.5.4, three captions in Settings → General → Storage kept saying &quot;Configure below&quot; / &quot;Configure Notion settings below first&quot; — pointing at something that wasn&#x27;t there any more. Rewritten to point at the gear.</li>
+          <li>**&quot;Other side wasn&#x27;t captured&quot; banner is shown once, not on every session.** 1.0.6.11 added a three-paragraph orange banner above the transcript on any session whose system audio capture stayed empty. For users on the macOS 26 SCStream regression that&#x27;s effectively every meeting — so opening the library after the update gave you a wall of identical paragraphs. The banner is now a single-line &quot;Other side wasn&#x27;t captured this session — mic only&quot; with a &quot;Got it&quot; dismiss that hides it for good on this device. The detailed explanation (Bluetooth output / Tahoe regression / how to enable mic diarization) still fires once as the post-stop toast, which is the right moment for it.</li>
+          <li>**Settings → Storage section copy + layout pass.** The retention picker now carries a leading icon for row-rhythm parity with Sessions folder / Clear / Notion rows. The retention caption and the Storage footer drop the `.caf` filename — engineering noise users don&#x27;t need to read. The &quot;Clear audio cache now&quot; row title is now &quot;Clear all audio now&quot; (cache is a dev word), the count next to it pluralises properly (&quot;1 recording&quot; / &quot;27 recordings&quot; instead of &quot;1 file(s)&quot;), the trailing button drops its ellipsis (no further input — the confirm alert is a yes/no, not a picker), and its disabled state no longer renders muddy peach against the cream surface (was tinted by `role: .destructive` even when off — fixed). Confirm alert says &quot;Delete all audio recordings?&quot; with a &quot;Delete&quot; button and a message that no longer leaks the `.caf` filenames. The redundant `Divider()` between Clear and Notion is gone — Form&#x27;s row separators are enough on their own.</li>
+          <li>**Permissions tab is calmer.** Every row caption was a 2-3 sentence paragraph repeating &quot;Required.&quot; or &quot;Optional.&quot; prefixes that the badge already said — now each row reads as a single short sentence naming why the permission exists. The privacy explainer (&quot;Daisy works entirely on-device…&quot;) moved from the bottom of the page up to the section header, so the reassurance arrives before the user clicks any Request button, not after.</li>
+          <li>**Bigger Start button in the sidebar.** Vertical padding on the record capsule bumped 8 → 14pt (+12pt total) so the primary action of the sidebar reads as the unambiguous primary action of the sidebar.</li>
+          <li>**About page subtitle pulls in the privacy explainer.** Previously the page had two value-prop statements ~600pt apart — one short subtitle under the title and a longer &quot;everything stays on-device&quot; paragraph at the very bottom. Merged into one subtitle directly under the Daisy mark so the on-device + opt-in story lands before you scroll five rows of links instead of after.</li>
+          <li>**New &quot;Delete after transcription&quot; retention option, set as the fresh-install default.** Settings → Storage → Delete audio after now has a fifth option at the top of the picker: &quot;After transcription&quot;. When set, Daisy purges the raw `.caf` for each session the moment the post-stop pipeline lands transcript + summary on disk — no 24h+ wait. New installs get this by default; the existing &quot;24 hours / 7 days / 30 days / Keep forever&quot; picks all preserve their behaviour, and anyone upgrading who never opened Settings → Storage stays on &quot;Keep forever&quot; so yesterday&#x27;s recordings don&#x27;t surprise-delete. Triggered by a competitor scan (Granola, Fireflies, Otter, Fathom, Read.ai, Circleback) — Granola&#x27;s &quot;audio doesn&#x27;t persist&quot; posture is table stakes in this category now, and the new mode matches it while keeping the longer-retention options for users (legal, journalists, anyone re-summarizing later) who need the audio file. Per-session purge is gated on summary-success so a failed AI call doesn&#x27;t strand the user with a transcript-only artifact they can&#x27;t redo.</li>
+          <li>**App-wide banner / chip / colour unification pass.** Colorist + UI shape audits flagged that &quot;row-level banners&quot; were rendered four different ways across Home and SessionDetail (different fills, borders, button widths, button styles), that ConnectionsView had five raw `.green` / `.red` / `.orange` leaks bypassing the brand palette (incl. a &quot;Beta&quot; pill in recording-orange that read as &quot;this connector is currently capturing&quot;), and that the in-card section chrome split radius 8 vs 10 between AboutView and SessionDetailView for the same role. Result: every row-level banner (`permissionsAttentionBanner`, `connectCalendarCTA`, `deniedCalendarCTA`, `destinationsHint`, `acousticLoopbackBanner`, `actionBanner`) is now one shape — cinnamon-or-status chip, 0.20 fill + 0.20 strokeBorder, 12/10 padding, radius 8, CTA pinned at `minWidth 88`. Five Google Calendar Connections raw colours mapped to `daisySuccess` / `daisyError` / `daisyWarning` / `daisyAccent`. `speakerMappingSection` promoted to the radius-10 section-card spec to match AboutView. AboutView icon column 22 → 18 for cross-surface row-rhythm parity with Settings + Permissions. Empty calendar-day state now matches `UpcomingEventRow` padding so the day empties out with no layout jump. Full audit reports in vault `business/research/2026-05-25-daisy-color-audit.md` + `…-ui-shape-audit.md`.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.6.12.dmg"
+        sparkle:edSignature="/oyc092F3QTfokTSFE1OwPGZqqzwJXUSBswdmQ63Wy1PHHCusVfzR+M0HYhRlhEeEohLBdjJefMF20vM21PsAA==" length="9648967"
+        type="application/octet-stream" />
+    </item>
+    <item>
+      <title>Daisy 1.0.7</title>
+      <pubDate>Mon, 25 May 2026 11:33:14 +0000</pubDate>
+      <sparkle:version>27</sparkle:version>
+      <sparkle:shortVersionString>1.0.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7</h3>
+        <ul>
+          <li>**Settings → Transcription → &quot;Speakers&quot;** picker with two modes:</li>
+          <li>**Все спикеры** (default, current behavior) — pyannote diarizes the remote stream into Bobby / Wags / Faraday / etc. Best when the meeting has distinct, well-separated voices.</li>
+          <li>**Две стороны** — Granola-style. Mic = you, system audio = &quot;Remote&quot; (one label, no clustering). Best when the meeting has rapid back-and-forth or similar-sounding voices where the auto-detector over-splits clusters. Also faster (skips pyannote on system stream entirely).</li>
+          <li>**Settings → Transcription → &quot;Suppress acoustic echo&quot;** toggle, default **on**. When user plays meeting audio through speakers (not headphones), the microphone re-captures the same audio and Whisper transcribes every line twice — once correctly attributed to &quot;Remote&quot;, once incorrectly attributed to the user. The new dedup pass walks every mic-side segment, checks for any system-side segment within ±2 seconds whose text matches by &gt;0.8 normalized Levenshtein similarity with ±20% length match, and drops the mic segment if matched. Sequential matches (3+ in a row) are treated as confirmed echo and dropped aggressively; isolated single-match segments are kept (legitimate &quot;you quoting what the other person said&quot;). Honest 90% mitigation — Apple&#x27;s voice-processing AEC at the audio-graph level would be 99%, but it requires rebuilding the AVAudioEngine + ScreenCaptureKit capture pipeline which we&#x27;re not doing pre-PH. Headphones still solve at the source.</li>
+          <li>**Manual &quot;Re-cluster speakers&quot; button in SessionDetailView** — addresses the third issue from the 2026-05-25 Billions test (live streaming diarization fragments the same voice into Remote A / Remote D / Remote G across 10-30s chunks because there&#x27;s no cross-chunk linking). Original plan was a silent auto-fire after summary; reframed as a user-triggered button to keep blast radius low — if the global pass has bugs, only sessions where the user explicitly clicks are affected, not every saved session. Background work + flag wiring (`globalReclusterAfterStop` setting in AppSettings) reserved in 1.0.7 so the migration is clean when the button lands.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.dmg"
+        sparkle:edSignature="FEN/fPaPoLAJEQvsu7CV6y8gZ9mMEqxn2L09V/MjRVJDvZ2+57+0VKPiySsUSpPGn1eRO6FBfhxHdVD9oHx7AQ==" length="9664627"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.1</title>
+      <pubDate>Mon, 25 May 2026 14:28:26 +0000</pubDate>
+      <sparkle:version>28</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.1</h3>
+        <ul>
+          <li>**Silent AVAudioFile write-death surfacing.** Pre-fix failure mode caught during a 2026-05-25 internal test: SCStream/AVAudioEngine kept delivering buffers to the live transcribe pipeline (Whisper saw the full session and produced a complete transcript), but the on-disk `.caf` archives stopped growing after some mid-session disruption. The user&#x27;s `system_audio.caf` landed as 0 bytes while the transcript covered 44 minutes; `microphone.caf` was truncated to 5% of session length. There was zero indication anything had failed — the frontmatter even stamped `daisy_system_audio_status: captured` because the in-memory `hasReceivedAudio` flag was still true (it flips on the first SCK buffer regardless of disk-write outcome). 1.0.7.1 adds a render-thread frame-write counter in both `AudioRecorder` and `SystemAudioCapture`, cross-checks it against the on-disk file size and the write-error counter at stop time, and surfaces a loud toast plus a new `truncated` frontmatter state when the disk write didn&#x27;t actually persist the audio. Users now know their session is partial before they let delete-after-transcription nuke the source files.</li>
+          <li>**Per-stage timing logs across the post-stop pipeline.** Every stage between &quot;user hit Stop&quot; and the summary task spawning now emits a `post-stop &lt;stage&gt;: Xms` line plus a matching `OSSignpost` interval under category `PostStop` (subsystem `app.essazanov.Daisy`). Stages: `final_transcribe_mic`, `final_transcribe_system`, `speaker_profile_match`, `render_markdown`, `write_transcript_md`, `session_store_refresh`, then the existing `summarize` / `write_summary` / `auto_send` in the detached finalize task. Closes the silent-stages gap that made earlier &quot;post-processing is slow&quot; reports impossible to triage: any user can now run `log show --predicate &#x27;subsystem == &quot;app.essazanov.Daisy&quot;&#x27; --last 10m --info --debug` (or System Trace → Signposts in Instruments) and see exactly which stage is eating time.</li>
+          <li>**`daisy_mic_audio_status` frontmatter line.** Symmetric to the existing `daisy_system_audio_status`. Same four states (`off` / `captured (bytes B)` / `empty` / `truncated (...)`). Lets a folder of sessions be grepped for partial-mic incidents the same way system-audio incidents already could be.</li>
+          <li>**`daisy_system_audio_status` frontmatter format.** Now includes byte count for `captured`/`truncated` states, e.g. `captured (4823041 B)` or `truncated (0 B on disk, 0 frames written, 3 write errors)`. Previously bare `captured` / `empty`. The four-state taxonomy (`off` / `captured` / `empty` / `truncated`) replaces the prior three-state one — `truncated` is new and names the failure mode 1.0.7 shipped without a name for.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.1.dmg"
+        sparkle:edSignature="mU0tDFO9sMo+X5Jer/HLyPzZYBJYEyecIVjhV46PXfqfRg7c2t+5K5QsBZY1ynbIxjusrqT/wajd8Zsn5PPqCA==" length="9687736"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.2</title>
+      <pubDate>Wed, 27 May 2026 05:23:19 +0000</pubDate>
+      <sparkle:version>29</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.2</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.2</h3>
+        <ul>
+          <li>**Consent reminder at the top of the popover.** Always-on subtle privacy line above the title field: &quot;Always get consent when transcribing others. Learn more →&quot;. The Learn-more link opens mydaisy.io/privacy. Not dismissible — this is a standing reminder that lives next to the Record button. Matches the industry-wide pattern Granola added in spring 2026 in response to EU/CA consent regulations. Daisy&#x27;s positioning leans hard on &quot;audio never leaves your Mac&quot;, but recording other PEOPLE without their knowledge is the user&#x27;s responsibility, and silently shipping a meeting-recorder with zero on-screen reminder of that read as cavalier.</li>
+          <li>**Empty-state plaque + &quot;Draft follow-up&quot; button when the model returned no client follow-up.** Pre-fix the Follow-up section just vanished when `clientFollowUp` came back empty — the model judging the conversation as internal-only (no external party) looked indistinguishable from a Daisy bug. Now the section renders a small explainer (&quot;No follow-up was drafted — the model treated this conversation as internal&quot;) with a `Draft follow-up` button that re-runs JUST the follow-up generation, merging only that field back into the existing summary. Lede, sections, action items, and any manual edits stay untouched — unlike the old Re-summarize path which blew everything away. If the model again returns empty on the second pass, a toast tells the user explicitly so the no-op isn&#x27;t silent.</li>
+          <li>**&quot;Common causes&quot; caption under the empty-system-audio banner.** Pre-fix the banner only said WHAT (&quot;mic only&quot;) without WHY, so users assumed it was a Daisy bug instead of a known macOS-side acoustic-loopback gap. Now the secondary line lists the three causes that cover ~95% of empty-audio sessions on the tester base: headphones (audio bypasses the loopback path), no app played sound during the meeting, or Screen Recording access was revoked mid-session.</li>
+          <li>**Source-event title in the speaker-mapping attendee picker.** A tester saw what looked like emails from a different meeting in the rename-this-speaker picker; root cause was the wrong calendar event being bound at session-start with no on-screen indicator. The picker menu now opens with a `From: &quot;&lt;event title&gt;&quot;` section header so the user can verify the attendee list is from the expected event.</li>
+          <li>**Inline progress banner while re-summarizing over an existing summary.** Pre-fix, hitting Re-summarize on a session that already had a summary just sat with the old content visible and no feedback for the 5–20s of LLM generation. Now a &quot;Re-summarizing locally…&quot; bar shows above the existing summary with the existing content dimmed to 0.45 opacity, so the user has both &quot;yes, your click registered&quot; feedback AND the prior summary still visible as a reference during regeneration.</li>
+          <li>**SpeakerNameRow collapsed to a single composite field.** Removed the leading &quot;Remote X&quot; chip — the speaker ID now lives as the TextField placeholder so empty rows still anchor to the cluster (&quot;Remote A&quot; greyed out until typed over). Talk-time count and the &quot;session only&quot; pill moved INTO the trailing edge of the same field, replacing the separate caption row underneath. Custom plain TextField inside a focus-aware bordered container; long names scroll inside the available width rather than pushing the meta off the trailing edge. Net result: tighter one-line rows per speaker, talk-time always visible inline.</li>
+          <li>**Tag field — popover replaced with a chevron Menu.** Pre-fix the focus-driven popover with autocomplete suggestions race-conditioned on focus loss + popover dismiss + click handler: clicking a suggestion took focus away from the TextField, which fired both the focus-out commit AND the popover outside-click dismiss AND the row&#x27;s click action. Result was flicker, dropped commits, and sessions where the popover wouldn&#x27;t close after a pick. Native macOS Menu has no focus dance and no dismiss race. Trade-off: lost the inline &quot;Create &#x27;&lt;typed text&gt;&#x27;&quot; affordance (Menu can&#x27;t reflect live TextField state in its items) — type + Enter still creates a new tag, which is the primary path.</li>
+          <li>**Picker option renamed &quot;All speakers&quot; → &quot;Split&quot;.** Two-syllable parity with &quot;Two sides&quot;, verb form matches the action (&quot;split each voice into its own row&quot;).</li>
+          <li>**Popover transcription-language picker now follows Settings.** Pre-fix `session.localeIdentifier` was baked at session-init from `settings.defaultTranscriptionLocale` and never updated again — changing the default in Settings → Transcription left the popover still showing the old language, which read as broken sync. Now the popover mirrors live changes to the default while the session is idle / finished / failed (never yanks the locale of an active recording).</li>
+          <li>**&quot;Open Settings…&quot; button in PermissionsView gained explicit ink tint.** The default `.bordered` tint on Daisy&#x27;s cream surface collapsed into the background — washed-out orange-on-cream looked unactionable. Inking the button gives it readable text + a dark outline without piling another orange element on a row that already accents in cinnamon (icon + Optional pill + title).</li>
+          <li>**Long transcripts spilled out of the Transcript collapsible&#x27;s rounded background.** Root cause in `SelectableTextView`: `isVerticallyResizable = true` allowed NSTextView to draw content taller than the frame SwiftUI computed via `sizeThatFits`. Three fixes: (1) `isVerticallyResizable = false` so NSTextView strictly respects the SwiftUI-assigned frame, (2) `layoutManager.ensureLayout(for:)` instead of `glyphRange(for:)` — the latter only generated glyph ranges and left the trailing paragraph un-laid-out on long transcripts, so `usedRect` reported a shorter height than what was actually drawn, (3) a 2pt bottom buffer to absorb sub-pixel rounding between the layout manager&#x27;s float math and SwiftUI&#x27;s integer pixel grid.</li>
+          <li>**Swift 6 default-MainActor warning on SpeakerCentroidsFile decoding.** Daisy compiles under `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, which made `SpeakerCentroidsFile`&#x27;s synthesized `Decodable` conformance main-actor-isolated. `RecordingSession.makeStoredSession` is `nonisolated static` and couldn&#x27;t reach the isolated init. Marked `SpeakerCentroidsFile` as `nonisolated struct` — safe opt-out for a pure data container with `let` fields and `Sendable` conformance already in place.</li>
+          <li>**StoredSession init missing `speakerCentroidIDs` parameter on the in-memory builder path.** Build error in `RecordingSession.makeStoredSession` — the parameter was added to StoredSession when 1.0.7.1 introduced the &quot;session only&quot; pill, but the in-memory construction path (post-stop MCP auto-send + manual Send-to snapshot) wasn&#x27;t updated. Now reads centroid IDs from `speakers.json` synchronously, falls back to empty Set when the sidecar is missing.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.2.dmg"
+        sparkle:edSignature="JPNGi3jNmUPNS+E3qd8i/43k3F+s+QNNP+7U4HitJcYgdGUnKSeN65ZS6wogHMYsUt7RdRwwtjKYFh6vG/53CA==" length="9764523"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.3</title>
+      <pubDate>Fri, 29 May 2026 05:13:27 +0000</pubDate>
+      <sparkle:version>45</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.3</h3>
+        <ul>
+          <li>**&quot;Don&#x27;t record audio&quot; mode — transcript-only (build 44).** New option at the top of Settings → Storage → Audio retention. When selected, Daisy never writes the mic or system audio to disk. Whisper still transcribes — it reads from the live in-memory PCM stream coming off the AVAudioEngine tap closure, so transcript quality is unchanged — but the `.caf` archives that would have lived in your sessions folder are simply skipped. Inspired by Granola&#x27;s audio-as-temporary-cache stance and Wispr Flow&#x27;s Privacy Mode, both of which sit at the same competitive intersection Daisy occupies. Trade-offs: no crash recovery (Daisy disappearing mid-meeting loses the in-flight transcript too) and no re-transcription with a better Whisper model after the fact. Aimed at the &quot;I want notes, not recordings&quot; majority and the privacy-conscious / regulated-environment users that Granola, Wispr Flow, Fireflies Transcript-Only Mode and Read.ai&#x27;s &quot;no A/V retention&quot; toggle all serve. Transcripts, summaries, and screenshots save normally as always.</li>
+          <li>**Deferred transcription mode — escape hatch for long meetings (build 43).** New toggle in Settings → Transcription → &quot;Show transcript live during meeting&quot; (default ON for backwards compatibility). When OFF, Whisper stays completely silent during recording — the audio archive grows on disk as before, but no per-window decode / commit / cache-invalidate / SwiftUI cascade happens on the MainActor. Transcription runs as a single full-session pass on Stop instead. Trade-off: toolbar transcript stays empty until you press Stop. Why this exists: on long sessions (1h+), live windowed transcription was the dominant source of MainActor saturation — every ~2s Whisper would commit a window, the segments cache would invalidate, every Observable consumer (toolbar marquee, widget TimelineView, transcript list, fullTranscriptText readers) would re-read and re-render, and pause/resume clicks would queue behind that cumulative work. Deferred mode removes the live commit pipeline entirely and recording becomes &quot;just write audio to disk&quot;, which is what most other recording apps do by default. Dictation always uses live mode regardless of this switch (dictation IS the live transcript — paste happens on hotkey release).</li>
+          <li>**Calendar UX unified: Apple + Google now both live in Settings → Permissions → Calendar (build 42).** Pre-build-42 Apple Calendar permission lived in `Permissions` (EventKit grant) while Google Calendar lived as a separate tab inside `Connections` (OAuth Connect/Disconnect). Two parts of Settings for what&#x27;s fundamentally one mental model — &quot;where Daisy reads calendar data from&quot;. Build 42 collapses the two: both calendar sources are rows in Permissions now, with the Apple row using the standard EventKit Request/Settings rhythm and the Google row using a custom Connect/Disconnect shape with a connected-as-email surface. Connections becomes strictly outbound integrations (Auto-routing + MCP server), which matches its conceptual scope: where Daisy SENDS data, not where it reads from. Tab count in Connections drops from 3 to 2; the `ConnectionSection.googleCalendar` enum case is removed (no external deep-link callers were using it, verified by grep). Backend (`GoogleOAuthClient` / `GoogleAccountStore` / `GoogleCalendarService`) is unchanged — only the UI surface moved.</li>
+          <li>**Resume after a mic route change no longer fails with `kAudioUnitErr_FormatNotSupported (-10868)` (build 45).** Real-world repro from `daisy-log-1054.txt` on 2026-05-29: user was recording into BT headphones at 10:46:40 — headphones swapped sample-rate mid-session (typical BT-SCO behavior, AVAudioEngine reports 48 kHz while CoreAudio reports 16 kHz on the same device ID), build 39&#x27;s full engine rebuild succeeded, but the rebuilt engine&#x27;s recovery watchdog fired at 10:46:45 with no audio buffers post-arm → session fell to paused. User then pulled the BT headphones off (system default mic returned to BuiltIn at 48 kHz) and pressed Resume. The pre-build-45 `resume()` just called `engine.start()` with whatever tap format was cached when we paused — the 16 kHz BT-SCO format from the dead device — and the next buffer arrival tripped Apple&#x27;s internal `format.sampleRate == inputHWFormat.sampleRate` assertion: `Error, formats don&#x27;t match! Input HW format: 1 ch, 48000 Hz, tap format: 1 ch, 16000 Hz` → `error -10868` → &quot;Couldn&#x27;t resume mic capture&quot; banner with no recovery path other than Stop + Record. Build 45 makes `resume()` mirror the recovery flow in `handleConfigurationChange()`: re-pin AUHAL to the current preferred (or system default) device → `engine.reset()` to flush the stale `outputFormat()` cache → re-derive the format from `inputNode.outputFormat(forBus:)` → CoreAudio cross-check via `kAudioDevicePropertyStreamFormat` → on de-sync escalate to `rebuildEngineAndRetry()` → otherwise roll the archive into a new `.partN.caf` if the format changed (existing AVAudioFile can&#x27;t accept frames in a different format than it was opened with) → install the tap with the fresh format → prepare + start. Mirrors the symmetric work `handleConfigurationChange()` already does in-place during recording; the asymmetry was the bug. Covers both the `fallToPaused()` from a route-change watchdog AND the user-intentional pause-then-swap-mic-in-Settings scenario.</li>
+          <li>**&quot;Clear audio cache&quot; was looking in the wrong directory — always reported &quot;Nothing to clear&quot; (build 44).** The Settings → Storage → &quot;Clear audio cache now&quot; button and the size caption underneath it were both walking `&lt;sessions-root&gt;/Sessions/` while every other code path — `RecordingSession.swift` when it writes a session, `SessionStore.swift` when it scans for the library list — uses `&lt;sessions-root&gt;/Daisy/Sessions/`. Real sessions live one level deeper than the sweep was looking, so `contentsOfDirectory` came back empty and the sweep believed the cache was empty even when gigabytes of `microphone.caf` / `system_audio.caf` were on disk. Surfaced when a user with definitely-existing recordings hit Clear and saw the &quot;Nothing to clear&quot; toast. Fixed by aligning `AudioRetentionSweep.currentCacheSize()` and `AudioRetentionSweep.sweep()` with the canonical `Daisy/Sessions` path the rest of the app uses. The scheduled retention sweep (the one that enforces 1/7/30-day retention in the background) was hitting the same wrong path, so any audio that was supposed to age out automatically wasn&#x27;t being touched either — that&#x27;s also fixed by this change. No data was lost; the files were always there, the sweep just couldn&#x27;t see them.</li>
+          <li>**Spectrum + level publishes coalesced to ~30 Hz (build 43).** The mic tap closure was computing FFT bands and spawning a `Task @MainActor` on every render buffer — 50-100 Hz depending on sample rate / buffer size. The widget&#x27;s TimelineView is itself 30 Hz capped, so the extra publishes were pure MainActor churn that the visual layer never consumed. Now: the tap closure compares wall clock against a static last-publish timestamp and only ships a Task if ~33 ms have elapsed. Cuts spectrum-related MainActor traffic by 2-3× for free.</li>
+          <li>**MainActor saturation on long sessions — 8-second pause/resume hang + frozen widget flower (build 41).** Real-world repro on a 53-minute Billions test: `session.segments` was a computed property doing `(mic.segments + system.segments).sorted{ ... }` on every Observable read. Widget TimelineView ticks 30 fps, toolbar marquee binds to `.last?.text` via `.onChange`, transcript list filters the full array each render — every consumer re-sorted both 1000-element transcriber arrays. On a 53-min session that&#x27;s ~32k comparisons per read × hundreds of reads/sec → main thread saturated. macOS spindump reported back-to-back 8.31s + 8.43s HID response delays at pause/resume clicks; the floating widget&#x27;s animation froze at 0 fps because TimelineView ticks queued behind the backlog. Fixed by caching the merged-sorted result behind a `(mic.segmentsVersion, system.segmentsVersion)` composite key in `RecordingSession.segments` + a single-version cache in `Transcriber.segments`. Cache is `@ObservationIgnored` so it doesn&#x27;t pollute the dependency graph; the version stamps are Observable-tracked so consumers still invalidate on real mutations. Net effect: subsequent reads inside the same render cycle are O(1); a 53-min session now sorts only when segments actually change (~2-3× per minute) instead of ~hundreds of times per second.</li>
+          <li>**Dictation captures short utterances reliably (build 41).** Pre-build-41 the dictation flow read `fullTranscriptText` immediately after `stopCapture()`, relying on the live windowed transcriber to have committed everything. But Daisy&#x27;s live transcriber requires either a 14-second VAD window OR an end-of-speech silence boundary before committing a segment — short utterances (&quot;просто для аудита&quot;, ~1.2 s) released as soon as the user lifted the hotkey never got either, the buffer flushed silently, and `DictationPaste.handle()` pasted an empty string. User feedback was direct: &quot;цветок видит, но текст не вставляется; приходится держать с тишиной&quot;. Fix: run the final Whisper pass INLINE before reading the transcript in the dictation early-return path. Adds 200-800 ms to dictation Stop for a typical &lt;30 s clip; price for short-utterance reliability. Non-dictation modes are unchanged (their final pass still runs in the detached `finalizePostStop` task).</li>
+          <li>**SCStream frame-drop error spam silenced (build 41).** SCStream cannot run audio-only — it always generates at least one video frame per `minimumFrameInterval`. We registered only `.audio` as a stream output, so every produced 2×2 video frame triggered a 1 Hz `_SCStream_RemoteVideoQueueOperationHandlerWithError ... stream output NOT found. Dropping frame` error (~3000 lines per 50-min session in the unified log; caught in the pause-hang investigation). Build 41 also registers `.screen` against the same delegate with a dedicated discard queue — our `stream(_:didOutputSampleBuffer:_:)` filters out non-audio on the first line, so video frames are immediately discarded but SCStream no longer errors. Zero meaningful work added, log noise cleaned up.</li>
+          <li>**Google Calendar OAuth verification approved — &quot;Beta&quot; badge + pre-verification notice removed (build 41).** Google&#x27;s Third Party Data Safety Team approved Daisy&#x27;s OAuth App Verification for `auth/calendar.readonly` on 2026-05-28 (Project ID `daisy-496801`). Practical consequences: the consent screen no longer shows the &quot;App isn&#x27;t verified&quot; warning, the 100-user cap that was in place during verification is lifted, and the in-app messaging that pre-warned users about that warning is no longer accurate. Removed the `Beta` tab badge and the in-tab &quot;Pre-verification&quot; notice from Settings → Connections → Calendar. The OAuth flow itself is unchanged.</li>
+          <li>**Native Ollama provider (build 40).** Settings → Summary → Provider now offers &quot;Ollama (local)&quot; as a first-class option, posting to your local `ollama serve` at `127.0.0.1:11434/api/chat` directly — no API key, no network egress, no MCP shim required. Pre-build-40 the &quot;Ollama&quot; preset was misleadingly hidden under the MCP provider with a JSON template that assumed an MCP+SSE wrapper was running; the pre-PH audit (2026-05-28) caught it as a P0 blocker because stock Ollama doesn&#x27;t speak MCP. Now: pull a model (`ollama pull llama3.2:latest`), pick Ollama in Settings, done. Recommended models pre-listed (Llama 3.2, Qwen 2.5, Mistral, Gemma 2, GPT-OSS); custom tags accepted via free-text field. Wider `num_ctx: 16384` than Ollama&#x27;s default 2048 so a 30-min meeting transcript actually fits the context window.</li>
+          <li>**Native LM Studio provider (build 40).** Same rescue as Ollama. New &quot;LM Studio (local)&quot; provider hits its OpenAI-compatible `/v1/chat/completions` REST on `127.0.0.1:1234` directly. Load a model in the LM Studio app, click Developer → Start, paste the API identifier from LM Studio&#x27;s UI into Daisy&#x27;s Settings, you&#x27;re set. No API key, no MCP. Same recommended-models list (Qwen, Llama, Mistral, Gemma) plus free-text override.</li>
+          <li>**Three audio races flagged by pre-PH macOS audit (build 40).** (1) `SystemAudioCapture.buffers` assigned/cleared `bufferContinuation` without the `outputQueue.sync` fence the other `nonisolated(unsafe)` fields used — could race a sample-buffer callback that&#x27;s mid-yield against the assignment from MainActor. Now both branches go through the queue. (2) `RecordingSession.pause()` fired an unawaited `Task { await systemAudio.pause() }` and then flipped `status = .paused` immediately — user who pause→resume&#x27;d quickly caught the detached pause Task still in flight, and `SystemAudio.resume()`&#x27;s `guard state == .paused` silently no-op&#x27;d → system audio went silent until full Stop+Start. Now `pause()` is async and awaits the systemAudio pause before flipping status. (3) Same pattern in `failFast()` (the early-exit cleanup path inside `start()`): unawaited `systemAudio.stop()` raced with the next start() if the user retried after a &quot;Whisper not ready&quot; early-exit. Now `failFast()` is async and awaits the stop.</li>
+          <li>**MCPSummarizer reachability probe (build 40).** `isReady()` was a non-empty-string check that always returned `.available`, even when the MCP server was off. User would record a 45-min meeting, hit Stop, then wait through a long handshake-timeout error. Now: 2s TCP probe against the SSE endpoint with a wall-clock deadline race so an open-but-blocking SSE stream doesn&#x27;t pin the Settings UI.</li>
+          <li>**Removed misleading Ollama / LM Studio MCP presets (build 40).** The MCP &quot;Quick setup&quot; menu used to offer Ollama / LM Studio / llama.cpp wrapper templates. Ollama and LM Studio templates dropped — those products now have dedicated native adapters that work without an MCP shim. llama.cpp&#x27;s preset stays because llama.cpp&#x27;s own REST server (`./server`) is genuinely speaking its own protocol, and users running it through an MCP wrapper is more common.</li>
+          <li>**Route-change recovery: full engine rebuild on macOS 26.5 format de-sync (build 39).** Build 34&#x27;s `engine.reset()` fix turned out to be insufficient on macOS 26.5 — Apple&#x27;s AVAudioEngine keeps the cached inputNode format across reset() when the AUHAL is swapped to a new device. Real-world repro: EarPods unplug mid-recording → ConfigurationChange fires → reset() runs → `outputFormat(forBus:)` still reports 44.1 kHz from the disconnected EarPods while CoreAudio shows the now-active BuiltIn mic at 48 kHz. The defensive cross-check guard caught the mismatch and stopped the crash (good!) but then the session fell to paused with no auto-recovery — user saw &quot;audio doesn&#x27;t record&quot; until manual Stop+Record. Fixed by adding `rebuildEngineAndRetry()`: when the de-sync guard fires, completely throw away the AVAudioEngine instance, build a new one, re-pin the device, re-install the tap, re-register the ConfigurationChange observer, and restart. The programmatic equivalent of Stop+Record. If even the rebuilt engine can&#x27;t get a coherent format → falls to paused with the existing &quot;Hit Resume to retry&quot; toast (defense in depth). Archive rolls into a new `.partN.caf` if the new device has a different sample rate, same as the in-place recovery path.</li>
+          <li>**System audio archive truncation on resume (build 39).** SystemAudio writer was hitting &quot;3,645,120 frames written, 0 write errors, 0 bytes on disk&quot; in the same build-37 crash log. Root cause: `start()` unconditionally stamped a zero-byte placeholder file via `FileManager.createFile()` on every call — including resume from `.paused`, when `archiveWriter` was still holding an open ExtAudioFile pointing at that same path. `createFile()` detaches the inode the open descriptor is writing into: writes keep returning success to ARC but they stream into an orphaned block, while the directory entry stays at the placeholder zero. Same pattern as the 1.0.7.1 mic-writer fix; this one snuck through on the system-audio side. Fix: gate the placeholder behind `isFreshStart` (only stamp on first start, not on resume) so the live writer&#x27;s file is never overwritten.</li>
+          <li>**4th macOS 26.2 UAF surface — Picker (`.inline` / `.segmented`) (build 37).** Repro: open Settings → Diarization (with the Per speaker / Me vs. others picker), bounce a recording start → silent failure → restart. Crash stack: `swift_task_isCurrentExecutor → SystemSegmentedControl._overrideSizeThatFits → DesignLibrary HStack closure → EXC_BAD_ACCESS` at an unmapped address — same Apple-side UAF in the Swift concurrency ↔ AppKit metadata bridge we&#x27;ve now hit four ways on Tahoe (sidebar toggle, MCP storm layout pressure, Liquid Glass material, now segmented-control wrappers). SwiftUI&#x27;s `.inline` and `.segmented` picker styles on macOS both render through `SystemSegmentedControl`, which is an `NSSegmentedControl` wrapper — same NSCell family. Mitigations: Diarization picker switched to `.radioGroup` (real `NSButton`s, not on any 26.x UAF stack), Notion parent-kind and MCP/Webhook kind pickers switched to `.menu` (`NSPopUpButton`, also safe family). Visual change: stacked radios for diarization, popup menu for the two settings — both read more &quot;settings&quot; anyway. Will restore segmented post-26.x once Apple ships a fix.</li>
+          <li>**UX cleanup — &quot;Split&quot; / &quot;Two sides&quot; renamed to &quot;Per speaker&quot; / &quot;Me vs. others&quot; (build 37).** Caught in the same crash thread: the diarization picker labels collided with the sidebar&#x27;s &quot;Recording both sides&quot; status pill (which describes mic + system audio being captured, totally different concept). New labels describe what shows up in the transcript — per-speaker rows vs. just me and everyone-else — without borrowing the &quot;sides&quot; vocabulary.</li>
+          <li>**Sparkle end-to-end update flow validation (build 36).** No code changes from build 35 — pure validation release so build-35 users can hit Check for Updates and empirically confirm the post-`SUEnableInstallerLauncherService`-removal install path actually works (Sparkle docs + Discussion #2477 say it should, but we want a working flow on a real machine before PH-launch traffic hits the appcast). If you&#x27;re seeing this line on disk, the download → EdDSA verify → installer relaunch path is healthy.</li>
+          <li>**Auto-update was silently broken in every release ≤ build 34 (build 35).** Sparkle&#x27;s `SUEnableInstallerLauncherService=true` was left enabled in Info.plist from a pre-sandbox-disable bootstrap. Daisy actually runs unsandboxed (Hardened Runtime only, no `com.apple.security.app-sandbox` in entitlements), but with the key on Sparkle took the sandboxed install path and tried to `bootstrap_look_up` the mach service `&lt;bundle-id&gt;-spki`. Under Hardened Runtime that requires `com.apple.security.temporary-exception.mach-lookup.global-name` in entitlements (a sandbox-only escape hatch never added to Daisy), so launchd denied bootstrap with `xpc_error=[159]` (EPERM-class policy denial). Symptom on every Sparkle prompt: &quot;An error occurred while running the updater. Please try again later.&quot; Auto-update has never worked on any installed Daisy — every user manually re-downloaded the DMG each release. Fixed by removing `SUEnableInstallerLauncherService` from Info.plist (Sparkle now takes the unsandboxed in-process install path, which is what&#x27;s documented for non-sandboxed apps) and flipping the stale `ENABLE_APP_SANDBOX=YES` in `project.pbxproj` to `NO` so the two configs stop contradicting each other. Refs: Sparkle docs at sparkle-project.org/documentation/sandboxing/, Sparkle Discussion #2477. **Users currently on builds ≤ 34 will still need to manually re-download build 35 from mydaisy.io once** — the broken Sparkle is baked into their installed `.framework`. From 35 onward auto-update works normally.</li>
+          <li>**Crash on Record after a mic route change (build 34).** AVAudioEngine&#x27;s `inputNode.outputFormat(forBus: 0)` was returning the PREVIOUS device&#x27;s cached format after we&#x27;d already pinned the AUHAL to a new device via `kAudioOutputUnitProperty_CurrentDevice`. On a setup with both BuiltIn mic (48 kHz) and EarPods (44.1 kHz) plugged in, the recovery handler would read stale 44.1 kHz, then `installTap(…, format:)` would trip Apple&#x27;s internal assertion `format.sampleRate == inputHWFormat.sampleRate` and crash the app with an Obj-C exception that punches straight through Swift&#x27;s error handling. Fix: insert `engine.stop()` (belt-and-braces — `AVAudioEngineConfigurationChange` signals config change, not necessarily a stopped engine) and `engine.reset()` between the AUHAL device pin and the format read. `reset()` forces the input AU to re-init against the now-current `AudioDeviceID`, so the subsequent `outputFormat(forBus:)` reads fresh state. Also added a defensive CoreAudio cross-check: after the format read, query `kAudioDevicePropertyStreamFormat` on the actual bound device — if the two sample rates disagree by more than 0.5 Hz, fall to paused with a &quot;Mic format changed — recording paused. Hit Resume to continue.&quot; toast rather than ship an installTap assertion to the user. Refs: Apple DevForum 680785, 683348.</li>
+          <li>**MCP server bind failure under Hardened Runtime (build 34).** Log line `MCP listener failed: The operation couldn&#x27;t be completed. (Network.NWError error 1 - Operation not permitted)` on every cold start. `NWError 1 = EPERM`, not `EADDRINUSE` — i.e. a policy denial, not a port conflict. macOS 14+ enforces `com.apple.security.network.server` for `NWListener.bind` even on loopback under Hardened Runtime non-sandboxed, which Daisy.entitlements was missing. Added the entitlement. MCP server now binds 127.0.0.1:54321 cleanly; the loopback + Host/Origin/CORS guard stack from 1.0.6.x is unchanged.</li>
+          <li>**Crash on macOS 26.2 when starting a recording.** Two-part Apple bug compounded by a third-party MCP-client misbehavior. Stack always ended in `swift_task_isCurrentExecutor → swift_getObjectType → objc_msgSend` on deallocated class metadata (use-after-free in the Swift concurrency↔AppKit bridge on 26.2 — same UAF family as the documented 26.0.1 SwiftUI Button crash). Trigger: any high-frequency layout cycle would land on the bug eventually. Two contributing sources fixed: (1) SwiftUI&#x27;s auto-generated `NavigationSplitView` sidebar toggle (backed by `NSSegmentedCell`) was a hot bug surface — hidden via `.toolbar(removing: .sidebarToggle)`. Daisy&#x27;s sidebar stays permanently visible (Home / Library / Connections / Settings / About all anchor there anyway); divider drag still resizes. (2) MCP server gained a connection-storm circuit breaker — if a client (e.g. `mcp-remote` with broken reconnect) opens &gt; 5 SSE streams in 30 seconds, the TCP listener tears down for 5 minutes with a loud log line. The storm was holding the runloop busy enough that the Apple UAF fired predictably during the next user action. Listener auto-restarts after the cooldown; if it keeps happening, support has a clear signal pointing at the misbehaving client rather than at Daisy itself.  (3) Liquid Glass material on Record button + popover capsule ( modifier) was the THIRD UAF surface — build 32 still crashed here. Disabled `daisyGlass` shim across all macOS versions; degradation is sheen-only, painted capsule + hairline stay intact. Filed as Apple feedback.</li>
+          <li>**Stop is snappy again on long sessions.** Pre-fix, hitting Stop on a 20+ min meeting could sit in &quot;Stopping…&quot; for 4 minutes — locking out the next recording while a final Whisper pass re-transcribed the full audio buffer inline. Real-world log from a 44-min Billions test session: `final_transcribe_mic: 237091ms`. The user feedback was direct: &quot;это проблема если человеку надо со звонка на звонок пойти он не может начать новую запись&quot;. New architecture splits Stop into two stages: (1) inline `stopCapture` drains live consumers + writes a live-quality `transcript.md` from already-accumulated segments + flips `status = .finished` in well under a second — user is unblocked and can start the next recording immediately; (2) a detached task runs the final Whisper pass, re-applies speaker fingerprint matching, overwrites `transcript.md` with the polished version, then continues to summary + auto-send + audio purge as before. Live-quality transcript is real Whisper output (per-window context instead of full-session); polished version lands in tens of seconds to a few minutes later and the open SessionDetailView re-reads via `SessionStore.refresh()`. Summary always uses the polished transcript. Cooperative `Task.isCancelled` checks in `runFinalTranscribe` plus `sessionDirectory` match guards in `finalizePostStop` protect against a concurrent new-session start clobbering state mid-finalize.</li>
+          <li>**&quot;Clear&quot; in the Name-the-speakers card now actually clears.** Pre-fix, clicking Clear wrote an empty `daisy_speaker_map: {}` to the transcript frontmatter, but the rendered SpeakerNameRow fields still showed the previously-typed names — and any subsequent focus blur would commit the displayed text right back into the map. Root cause: `@State private var draft` was seeded from `currentName` at init time, and SwiftUI ignores re-init of `@State` on later view updates, so the field stayed frozen with old text while the parent thought it had cleared. Added `.onChange(of: currentName)` that syncs `draft` from the parent when the field is not focused — Clear now wipes the rows visibly AND on disk.</li>
+          <li>**Toolbar transcription-language picker is now a real two-way editor.** Pre-fix, the popover LocalePicker only wrote to `session.localeIdentifier` (per-session state). Settings → Transcription was the authoritative store, and `RecordingSession.start()` re-read it on every Record press — so a toolbar pick was silently clobbered the moment you started the next recording. Net effect a tester caught: &quot;наоборот не работает и в итоге язык настроек возвращает язык в тулбаре&quot;. Now the toolbar pick propagates to the mode-appropriate Settings slot (`defaultTranscriptionLocale` for meeting, `voiceNoteLocale` for voice notes, `dictationLocale` for dictation) so it survives Record AND shows up next time you open Settings. The Settings → toolbar mirror was already in place (1.0.7.2) — now extended to listen on all three locale fields plus `currentMode` so picking a per-mode override in Settings while in that mode pulls through immediately.</li>
+          <li>**Click-to-copy on the version pill.** The `v1.0.7.3` line in the sidebar footer and the `Version 1.0.7.3 (30)` line in the About header are both tappable — clicking copies `Daisy 1.0.7.3 (30)` to clipboard with a toast confirmation. Build number comes from `CFBundleVersion` (the same value Sparkle uses to compare appcast entries), so a paste into a support thread pinpoints the exact bundle the user is running rather than the marketing version alone. No visual change to either pill — `.help()` tooltip on hover is the only affordance signal, per the &quot;no icons&quot; constraint.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.3.dmg"
+        sparkle:edSignature="ZGWwLouPyZ4tluRj1mfSY6/48bVqd8oOo9jLu91spdtqO0b/kY9kzS4q3HlYrDns/pYGqwq/8os83Q89+QDUAQ==" length="9857629"
+        type="application/octet-stream" />
+    </item>
+    <item>
+      <title>Daisy 1.0.7.4</title>
+      <pubDate>Sat, 30 May 2026 08:05:08 +0000</pubDate>
+      <sparkle:version>46</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.4</h3>
+        <ul>
+          <li>**Lighter live transcription — new &quot;Lite&quot; mode, now the default (build 46).** Settings → Transcription → Live transcription is now a three-way choice: Full / Lite / Off. Lite trims the live decode (fewer Neural Engine workers, greedy sampling, no temperature fallbacks) and runs every ~3.5s instead of every 2s — much lighter on long meetings and on battery, with a slightly rougher live preview. On macOS 26 Lite uses Apple&#x27;s on-device SpeechAnalyzer, whose model lives in the system asset catalog, so it adds nothing to Daisy&#x27;s memory; on macOS 14–15, or for languages/locales it doesn&#x27;t support, Lite transparently falls back to a light Whisper profile. The transcript written on Stop is always full-quality Whisper (with diarization) regardless of this setting, and dictation always uses live. Existing users who had live transcription on are migrated to Lite; those who had it off stay off.</li>
+          <li>**Close button on the recording window (build 46).** The menu-bar popover now has an ✕ to dismiss it. Recording keeps running in the background — reopen the window any time from the menu-bar icon.</li>
+          <li>**Consent reminder moved to the bottom of the recording window (build 46).** The &quot;Always get consent when transcribing others&quot; strip now sits at the bottom instead of pushing the transcript down from the top.</li>
+          <li>**Recording no longer goes silent when you connect Bluetooth mid-meeting (build 46).** Previously, connecting AirPods (or any Bluetooth output) while recording on the built-in mic could let macOS quietly switch the input to the Bluetooth microphone, which often captured silence — the timer kept running but your voice wasn&#x27;t recorded. Daisy now keeps recording on the microphone it started with when a Bluetooth device appears for output, and surfaces a clear warning if an input ever stops delivering audio instead of silently recording nothing. To record through a Bluetooth mic on purpose, pick it in Settings.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.4.dmg"
+        sparkle:edSignature="lAfp4Lym1xAYkxvzveeC/NVDQENz0yoknnYcLE8sAbD80bmj7hq6bdjvKpzv6PdgCeyrHqjew2ETXdayavzJAw==" length="9913317"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.5</title>
+      <pubDate>Sat, 30 May 2026 13:56:47 +0000</pubDate>
+      <sparkle:version>47</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.5</h3>
+        <ul>
+          <li>**Recordings could be discarded on Stop after a mic/route change — fixed (build 47).** When the input device changed during a session (Bluetooth connecting, or a device re-initialisation right after Start), Daisy rolls the audio into a new file part. The Stop-time &quot;did we capture anything?&quot; check only looked at the original file, so it could wrongly decide the session was empty and delete the whole thing — losing the recording **and** its transcript even though audio and a live transcript existed. Daisy now counts captured audio across all file parts, and never discards a session that produced a transcript (this also covers &quot;Don&#x27;t record audio&quot; mode, where the transcript is the whole point). If you saw a recording vanish on Stop in 1.0.7.4, this is the fix.</li>
+          <li>**Recording widget no longer flickers during &quot;Preparing&quot; (build 47).** The flower&#x27;s centre stayed a calm, static white while the petals do the loading shimmer — the brief amber blink in the middle during start-up is gone.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.5.dmg"
+        sparkle:edSignature="uOPYOZ6f7AULxpa8WOZAEw5VY66wbZdVNYq7yTLyeHGbsctVOzGQVg5GpCtAOSXQbjFX4LU64L3VHSWZjjP3Cg==" length="9911214"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.6</title>
+      <pubDate>Sun, 31 May 2026 04:19:17 +0000</pubDate>
+      <sparkle:version>48</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.6</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.6</h3>
+        <ul>
+          <li>**A recording is never silently discarded on Stop (build 48).** If a session ends with no captured audio and no transcript — for example when live transcription produced nothing — Daisy now keeps the recording and tells you, instead of quietly removing it. A genuinely empty, very short accidental tap still cleans itself up, but with a notice rather than in silence.</li>
+          <li>**Calendar picker now matches the menu bar (build 48).** The menu-bar &quot;next meeting&quot; label and the recording popover&#x27;s calendar picker now use the same look-ahead window, so an event the menu bar shows is always selectable in the picker. Previously an event roughly 6–8 hours out appeared in the menu bar but the picker reported &quot;No upcoming events.&quot;</li>
+          <li>**Bigger recording widget (build 48).** The floating daisy widget and its panel are about 10% larger.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.6.dmg"
+        sparkle:edSignature="wzvCBF0rCDwZtZPwxBG8MJqhjS2h3MpRaO+hw23qjpHBi7Im2KcljnGvXLlClcXuv/dlgKMfrJ2b1rtTUwVhDA==" length="9911945"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.7</title>
+      <pubDate>Sun, 31 May 2026 05:50:50 +0000</pubDate>
+      <sparkle:version>49</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.7</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.7</h3>
+        <ul>
+          <li>The recording flower is calmer and clearer: the loader no longer stair-steps on ProMotion displays, the centre stays steady (no flicker) while a summary is generating, and the &quot;done&quot; pop is gentler.</li>
+          <li>Daisy now respects Reduce Motion (System Settings → Accessibility → Display): the spinning loader and the celebration bounce are replaced with a calm, static state.</li>
+          <li>The three recording modes — meeting, dictation, voice note — now read at matched brightness, so no mode looks louder or dimmer than the others.</li>
+          <li>Recording sounds reworked: a clear chime now plays the moment your transcript is ready (in sync with the flower), and a distinct, gentle cue plays if a recording fails. The pause / resume / stop clicks were removed — they fired mid-recording and could leak into meetings played through speakers.</li>
+          <li>Better acoustic-echo cleanup: when you record a meeting through your speakers instead of headphones, far fewer duplicate lines slip into the transcript. Daisy now also catches echoes when one side captured a whole sentence and the other split it into pieces.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.7.dmg"
+        sparkle:edSignature="K3SMqYfnVkUCseC6jPEQceAlbNodMAyLcPU/j9YR9UO2gOlQ3s2t5UoTgQ6N2zp5t7BTQWGUyupWT5/ijOmNCw==" length="9916109"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.8</title>
+      <pubDate>Mon, 01 Jun 2026 07:39:08 +0000</pubDate>
+      <sparkle:version>50</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.8</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.8</h3>
+        <ul>
+          <li>System audio — the remote side of your meetings — is now reliably saved. Fixed a long-standing bug where the system-audio recording could end up empty (0 bytes) even though the meeting was captured.</li>
+          <li>Daisy now warns you mid-meeting if system audio is coming through silent (DRM-protected playback, or a macOS capture glitch), so you find out before the meeting ends rather than after.</li>
+          <li>Auto-stop no longer cuts you off mid-sentence. After a calendar meeting&#x27;s scheduled end, Daisy waits for a stretch of silence before it stops &amp; saves (the 30-second &quot;Keep going&quot; warning still applies).</li>
+          <li>The microphone now auto-recovers if it opens on a dead audio device at the very start of a recording, instead of silently capturing nothing.</li>
+          <li>Better acoustic-echo cleanup when you record meetings through speakers instead of headphones — far fewer duplicate lines slip into the transcript.</li>
+          <li>Starting a new recording right after stopping no longer surfaces a harmless &quot;final pass cancelled&quot; event as an error.</li>
+          <li>Low disk space is now handled gracefully: when your drive is running low, Daisy automatically records the transcript only (skipping the heavy audio file) and tells you — so a long meeting can&#x27;t fill your disk. Audio recorded before the switch is kept.</li>
+          <li>The recording flower is calmer and clearer: the loader is smooth on ProMotion displays, the centre no longer flickers, the &quot;done&quot; moment is gentler, and it now respects Reduce Motion (System Settings → Accessibility → Display).</li>
+          <li>Recording sounds reworked: a clear chime the moment your transcript is ready (in sync with the flower) and a distinct, gentle cue if a recording fails. The pause / resume / stop clicks were removed — they could leak into meetings played through speakers.</li>
+          <li>The three recording modes (meeting, dictation, voice note) now read at matched brightness, and dictation&#x27;s colour is a clearer, brighter lilac.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.8.dmg"
+        sparkle:edSignature="IEywBNdOp/F0glPY4RJQVqkRi+ni3dKHHSMH4MOkwSoK8PCDdSUst0qixRMUiGhVxt3rUtHViWPVrglwicPUAg==" length="9920567"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.10</title>
+      <pubDate>Thu, 04 Jun 2026 02:59:25 +0000</pubDate>
+      <sparkle:version>51</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.10</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.10</h3>
+        <ul>
+          <li>Recording reliably picks up your voice. Daisy captures the microphone at a lower level (Core Audio), fixing cases where a recording came back empty or missed your side — most often the built-in mic or a wired headset on macOS 26, where the audio engine could lock onto the wrong sample rate and capture nothing.</li>
+          <li>The recording flower is alive again. Its petals move with your voice while you record — under heavy live transcription they could sit frozen even though audio and the transcript were flowing; now they track the live spectrum.</li>
+          <li>Daisy can recognize people by their calendar email, not just their voice. When a recording is tied to a calendar meeting, Daisy matches an attendee to a speaker you&#x27;ve already named — by their invite address — so they&#x27;re still recognized on a day their voice sounds different (a new mic, a cold, speakerphone).</li>
+          <li>A new &quot;Match known speakers&quot; control in Settings → Speakers, with three modes. **Automatic** (the default, and how Daisy has always worked) labels a recognized person as soon as a recording finishes. **Suggest** recognizes them but waits — the name appears as a suggestion in the recording&#x27;s &quot;Name the speakers&quot; card, and you confirm before it&#x27;s applied. **Off** turns cross-meeting auto-labeling off entirely; speakers stay &quot;Remote A / B&quot; until you name them (fingerprints are still saved, so you can switch it back on anytime).</li>
+          <li>A speaker editor. Open any known speaker in Settings to add their email addresses (so calendar invites match them) and notes — role, company, how you met — or forget them. It also lists every recording where you&#x27;ve named them, so you can jump straight to a past meeting.</li>
+          <li>Smoother capture under load. The microphone&#x27;s disk writing and audio analysis run off the real-time audio thread, so heavy live transcription competes less with capture — fewer glitches on busy machines.</li>
+          <li>Each person in the Known speakers list now opens a detail card when clicked.</li>
+          <li>The &quot;only your voice&quot; notice (shown when Screen Recording is off) is now a single tap that opens the permission settings.</li>
+          <li>Your existing speakers keep working unchanged: the new fields start empty, the new setting defaults to Automatic, and voice fingerprints, emails, and notes all stay on your Mac.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.10.dmg"
+        sparkle:edSignature="1I86Hut2JiCeNlCj9FPThxQVtITzLdsM+n1MqvfQTP+pXT3HEasEdbOzWMa+UfKvH7/TtK7UD0lJcQdF3amdDQ==" length="10163113"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.11</title>
+      <pubDate>Thu, 04 Jun 2026 03:37:33 +0000</pubDate>
+      <sparkle:version>52</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.11</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.11</h3>
+        <ul>
+          <li>Switching your audio device while recording — plugging in wired headphones, connecting Bluetooth, or moving to speakers — no longer breaks transcription. Before, if the new device ran at a different sample rate (common with wired headsets), the live transcript would freeze and that stretch went missing from the saved transcript too — even though the flower showed Daisy was still hearing you. Daisy now adapts to the new device on the fly and keeps transcribing without a gap.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.11.dmg"
+        sparkle:edSignature="aYS8joC3FUX0x0XsdO1IDzz2WtXSTuXjFDBatKZKv6VzqYBcyWlwR6IzuPspckY6htnxMfy8K5pPMQA/CD2MBg==" length="10164018"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.12</title>
+      <pubDate>Thu, 04 Jun 2026 05:13:24 +0000</pubDate>
+      <sparkle:version>53</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.12</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.12</h3>
+        <ul>
+          <li>A long recording could lose its audio if something refreshed your library mid-session. A recording longer than five minutes has audio on disk but no transcript yet (the transcript is written when you press Stop), and Daisy&#x27;s &quot;tidy up leftover empty folders&quot; cleanup could mistake the in-progress recording for leftover junk and remove it — most often when another app queried Daisy through its local server (for example an AI assistant connected to Daisy), or when the History list refreshed while you were still recording. Daisy now always protects the recording in progress, so it is never cleaned up until it has been safely saved.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.12.dmg"
+        sparkle:edSignature="xOrKp8X8XoFO5yqJgLpF+p0h+iSkETRKE5v7oCUxgdsVaJBIWj7gBI0gb2Yjn/H/qOyKR2ImoNzzDSU8B30NDw==" length="10166802"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.13</title>
+      <pubDate>Fri, 05 Jun 2026 02:52:03 +0000</pubDate>
+      <sparkle:version>54</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.13</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.13</h3>
+        <ul>
+          <li>The floating widget is a bit smaller now, so it sits more quietly out of your way while you work.</li>
+          <li>If you quit Daisy while it&#x27;s still recording, it now asks you first — and if you confirm, it finalizes and saves the recording (audio and the transcript so far) before closing, instead of losing it.</li>
+          <li>&quot;Draft follow-up&quot; now always writes a follow-up when you ask for it, even for a conversation Daisy would otherwise treat as internal.</li>
+          <li>Recording from your built-in mic no longer goes silent when you&#x27;re playing audio through Bluetooth headphones — Daisy now avoids the headset&#x27;s low-quality Bluetooth mic from the start of a recording (it already switched away from it mid-recording).</li>
+          <li>Long transcript lines no longer spill past the edge of their card.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.13.dmg"
+        sparkle:edSignature="j+jY9nuFvk+Uh318aj6VePWUJk9kj0WAMsSHY+3uoR/vFVq+vOA8OdlCQsuvt/lp8b0wDTrOHsVbuTS6fiIiBQ==" length="10190083"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.14</title>
+      <pubDate>Fri, 05 Jun 2026 03:56:35 +0000</pubDate>
+      <sparkle:version>55</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.14</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.14</h3>
+        <ul>
+          <li>You can now pick which on-device model powers **dictation** in **Settings → Transcription → Dictation engine**: **Whisper** (default) or the new, experimental **Parakeet** — a faster streaming model that covers 25 European languages including Russian. Switching to Parakeet downloads its model once (~600 MB) with a visible progress bar. Meetings always use Whisper, and if Parakeet can&#x27;t run, dictation falls back to Whisper automatically.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.14.dmg"
+        sparkle:edSignature="CHYfgKVKUgxf24rEvoOrxhJBFsVlkpA2KAbaj3cbLWE23ZGzlOxtHYRcEeqoTg595YcBu5rrpshTJlblHpd0BQ==" length="10205127"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.15</title>
+      <pubDate>Fri, 05 Jun 2026 13:07:19 +0000</pubDate>
+      <sparkle:version>56</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.15</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.15</h3>
+        <ul>
+          <li>**You&#x27;ll know when the other side isn&#x27;t being recorded.** If Daisy can&#x27;t capture a meeting&#x27;s other side (Screen Recording permission missing, or audio playing to a device that can&#x27;t be captured), the floating flower&#x27;s center turns red and a banner appears in the window and the menu-bar panel — instead of quietly recording only your voice.</li>
+          <li>**Transcription settings, simplified.** Model, dictation engine, language, and live-transcript detail now live in one block with plain names (Default / Highest Accuracy, Default / Faster) and a visible model-download progress.</li>
+          <li>**Progress while summaries and follow-ups generate.** Re-summarizing or drafting a follow-up now shows an inline spinner, not just a quick toast.</li>
+          <li>Library transcript no longer spills past the edge of its card, and speaker labels render in **bold** instead of showing raw `**` asterisks.</li>
+          <li>The floating widget now matches Daisy&#x27;s logo and gently &quot;breathes&quot; while it&#x27;s working.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.15.dmg"
+        sparkle:edSignature="0hfw5/mviZdi+WX5evVRASBe9+ftLb9pWEnRXV8A4Aq/7EcoCMiysDOXTd5tfBpTVHv8EJ1gmyk2NxTFwb8yAQ==" length="10190952"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.16</title>
+      <pubDate>Sat, 06 Jun 2026 13:53:53 +0000</pubDate>
+      <sparkle:version>57</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.16</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.16</h3>
+        <ul>
+          <li>**Simpler auto-start settings.** The Always / Selective / Prompt / Manual buttons are now a single &quot;Auto-record&quot; dropdown with plain-language choices — All meetings, Meetings with a link, Ask me first, Off — living in the Meetings settings group. The fiddly &quot;Detection delay&quot; knob is gone; Daisy just starts when a meeting app opens, and if it ever jumps the gun you can stop it from the &quot;Recording started&quot; notification.</li>
+          <li>**Tidier Settings, regrouped.** Plain-language labels throughout (&quot;Capture system audio&quot; → &quot;Record the other side&quot;, &quot;Play sound…&quot; → &quot;Notification sounds&quot;, the floating recorder is just &quot;Floating widget&quot;), long sub-labels trimmed, and rows moved to where they belong — &quot;Record the other side&quot; sits with the Meetings options, &quot;Notification sounds&quot; with the other notifications, and the floating widget with Audio &amp; devices. Shortcut rows read simply too (&quot;Dictation,&quot; &quot;Hold to talk, release to paste&quot;).</li>
+          <li>**Auto-stop in one choice.** The &quot;Stop when the meeting wraps up&quot; toggle and the separate &quot;Grace period&quot; picker are now a single &quot;Stop when the meeting ends&quot; dropdown — Off, At the scheduled end, or 5 minutes after.</li>
+          <li>**Periodic screenshots paused.** The &quot;Capture screenshots periodically&quot; option has been removed for now while we rework it.</li>
+          <li>**Speaker settings, combined and in plain words.** &quot;Diarization&quot; and &quot;Speaker matching&quot; are now one &quot;Speakers&quot; block, and the jargon is gone — &quot;Diarize microphone too&quot; → &quot;Split voices in my mic&quot;, &quot;Suppress acoustic echo&quot; → &quot;Remove echo from my mic&quot;, &quot;Match known speakers&quot; → &quot;Name known people&quot;.</li>
+          <li>**Settings, reorganized for clarity.** A new **Recording** tab gathers your microphone, shortcuts, meeting auto-record, and on-screen widget in one place, so **General** is now just Profile, Storage, Privacy, and Notifications. Storage split into Storage / Privacy (&quot;Delete audio after&quot;); the &quot;Recordings folder&quot; is named for what it holds; model and engine choices read in plain words (Standard / Most accurate / Faster); and the model-cache row sits at the end of Transcription.</li>
+          <li>**Notion lives with your other connections.** Sending finished recordings to Notion now sits on the **Connections** page next to your MCP integrations, instead of buried under Settings → Storage.</li>
+          <li>**One word for a recording.** Daisy now consistently calls a saved meeting a &quot;recording&quot; (not &quot;session&quot;), and the auto-record prompt asks about a &quot;meeting&quot; rather than a &quot;call.&quot;</li>
+          <li>**Calendar auto-record now starts right on schedule.** Previously a meeting could begin recording up to ~30 seconds early and at an unpredictable moment (the calendar was only checked every 15 seconds). Daisy now arms a precise timer and starts recording exactly 5 seconds before the meeting&#x27;s scheduled start — enough to catch the opening words, without the random pre-roll. If Daisy launches or wakes after a meeting has already begun, it still starts immediately (within the first 2 minutes).</li>
+          <li>**The &quot;couldn&#x27;t reach the other side&quot; warning now clears itself.** If the other side was simply quiet for the first couple of minutes, Daisy could show the &quot;Only your voice&quot; banner — and then keep showing it even after the other side started talking. The warning now disappears the moment real audio is captured from the other side (and the floating flower&#x27;s center returns to normal).</li>
+          <li>**Transcript view renders markdown properly.** Headings, the recording subtitle, and bullet/checklist lines now display as formatted text instead of showing raw `#`, `&gt;`, and `-` characters (speaker labels were already bold).</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.16.dmg"
+        sparkle:edSignature="Xyz8iSLnAyCn9PPJIdjMG8u23eJ9W8ZKVwAp/zt66lvhVeKNkciriWrQTRRipi50/foSqtW5CVDjuXZV4TV0Aw==" length="10352963"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.17</title>
+      <pubDate>Sun, 07 Jun 2026 05:11:31 +0000</pubDate>
+      <sparkle:version>58</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.17</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.17</h3>
+        <ul>
+          <li>Long recordings no longer lose parts of the transcript. When you press Stop, Daisy now re-transcribes the complete recording from the saved audio on disk — so the final transcript and speaker labels cover the whole session, even long or fast-paced meetings where the live preview fell behind.</li>
+          <li>The offline pass on Stop now spans the entire recording (not just the most recent stretch), so summaries and &quot;who said what&quot; are built from the full conversation.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.17.dmg"
+        sparkle:edSignature="RI9UKG/30pcznPGdFTvHCGN3vb7cflgzIUGTFgJUWKHM1WHTvFaiQA/xKA20tpMScRYDgZy3KTHUh188S8G/CQ==" length="10359237"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.18</title>
+      <pubDate>Sun, 07 Jun 2026 05:54:08 +0000</pubDate>
+      <sparkle:version>59</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.18</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.18</h3>
+        <ul>
+          <li>Daisy now uses a single dark theme throughout — matching the brand. The app no longer follows your system Light/Dark appearance; it always renders dark.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.18.dmg"
+        sparkle:edSignature="0i1H8jPiAbxGAfTdhap2k1W7RZAwNCtzA53Jy73Zzx4hxyV+bZLBSHBQvhCiTp0amy4qnYSxF1EBAym5VPJ8BQ==" length="10359804"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.19</title>
+      <pubDate>Sat, 13 Jun 2026 14:00:13 +0000</pubDate>
+      <sparkle:version>60</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.19</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.19</h3>
+        <ul>
+          <li>Text selection in the summary finally works like text: drag across the lede, sections, bullets and action items in one go, ⌘A selects the whole summary, ⌘C copies clean text. Previously selection stopped at every line.</li>
+          <li>Auto-stop got a brain transplant. It now reliably notices when a meeting is over: the &quot;is anyone still talking&quot; check no longer gets stuck on a frozen system-audio level or tripped by keyboard clicks and fan noise (both could keep a finished meeting recording for an extra half-hour). It also stops after ~10 minutes of total silence even before the scheduled end — the &quot;everyone left early&quot; case.</li>
+          <li>New: &quot;Ask before auto-stopping&quot; (Settings → Recording). Instead of stopping on its own, Daisy sends a notification — Stop &amp; save, 10 more minutes, or 30 more minutes.</li>
+          <li>Meetings auto-started from your calendar now take the event&#x27;s title instead of a &quot;Meeting 2026-06-12 12:31&quot; placeholder.</li>
+          <li>Dictation is snappier on release: the model is pre-warmed at launch, the final decode uses a lighter profile tuned for dictation, and the throwaway live pass no longer delays the paste.</li>
+          <li>New: &quot;Live preview while dictating&quot; (Settings → General → Appearance) — an experimental streaming engine shows words ~0.6 s behind your speech while you hold the key (the pasted text is still produced by the main engine).</li>
+          <li>Model downloads are finally visible: the main window and the menu-bar popover now show a progress banner — checking, downloading with a percent, loading — instead of hiding it in a tooltip.</li>
+          <li>The Record button is green when idle. Orange now always means &quot;the mic is (about to be) live&quot; — pause/resume, the widget, the warnings — so a parked app no longer looks like it&#x27;s recording.</li>
+          <li>Recording shortcuts: assigning a key combo while two recorder fields were active could write the combo to the wrong action (e.g. Dictation&#x27;s combo landing on Voice note). Only one recorder listens at a time now.</li>
+          <li>The elapsed timer moved into the record button in the popover; the redundant status caption and pulsing dot are gone.</li>
+          <li>⌘R (View → Refresh Meetings) re-reads your calendar on demand — no more waiting for the next automatic tick after adding an event.</li>
+          <li>Library search is much faster on large libraries (token-index prefilter; same results).</li>
+          <li>Help → Send Log Report: collects the last 24 h of Daisy&#x27;s logs plus an environment summary and opens a pre-addressed email — you review it and press Send. For when something misbehaves and you want us to actually see why.</li>
+          <li>Settings → Summary now tells you exactly why a provider is unavailable instead of a bare &quot;Unavailable&quot;. For Apple Intelligence it names the actual cause — not turned on, still downloading, this Mac isn&#x27;t eligible, or (a common one) your Mac and Siri are set to different languages — with what to do about it.</li>
+          <li>Privacy, enforced in code: the on-device audio engines (speaker diarization, voice detection, the Parakeet dictation engine) are now hard-blocked from the network except during explicit model downloads. A damaged model cache can no longer trigger a silent re-download mid-meeting — it fails visibly instead.</li>
+          <li>The Faster dictation engine (Parakeet) picks up ~8% quicker decoding from the updated on-device audio stack.</li>
+          <li>New in About: &quot;Get beta updates&quot; — opt in to receive the newest builds first. Off by default; everyone else keeps getting stable releases only.</li>
+          <li>Copying got smart about where you paste. Every Copy button now puts two flavors on the clipboard at once: paste into Slack, Notion, Gmail or Apple Notes and it lands formatted — real headings, nested bullets, checkboxes; paste into Obsidian, Claude or any plain-text editor and you get clean markdown. Copy summary now produces proper markdown instead of an ALL-CAPS text dump, and the session ⋯ menu gains &quot;Copy as Markdown&quot; (raw markdown only) and &quot;Copy for Obsidian&quot; (with the YAML frontmatter block for vault filing).</li>
+          <li>Ollama summaries are more honest and less fiddly. The model menu now lists the models you&#x27;ve actually pulled (read live from Ollama) instead of a fixed catalog that drifted out of date. And if you pick one of Ollama&#x27;s `:cloud` models, Settings now says plainly that your local Ollama proxies the request to ollama.com — so the transcript leaves your Mac — instead of still labelling it &quot;local&quot;.</li>
+          <li>Permissions are asked only when you need them. First launch now asks for just the two things dictation needs — Microphone and Accessibility. Screen Recording (to capture the other side of a meeting) is requested the first time you actually record a meeting, and Calendar only when you connect one — so the wall of system prompts at first run is gone. Settings → Permissions is grouped to match (&quot;Enough for dictation&quot; vs &quot;For meeting recording&quot;), with a &quot;Don&#x27;t remind me&quot; toggle to mute the in-app nudge.</li>
+          <li>Dictation has its own home: a &quot;Dictation&quot; page in the sidebar with a Vocabulary you can teach (custom word replacements that fix names, brands and jargon the model mishears, applied right before the text is pasted) and a rolling 24-hour history of what you dictated — tap any entry to copy it again, auto-cleared after a day.</li>
+          <li>New: Menu-bar-only (compact) mode (Settings → General → Appearance). Daisy hides the main window and lives in the menu bar + floating widget, like a focused dictation tool; open the window any time from the menu-bar ⋯ menu, or flip it off for the full app.</li>
+          <li>New: delete recordings in bulk (Settings → General → Storage) — all of them or just one folder, with a confirmation and a live count. The audio-only row is now &quot;Delete audio files&quot; (keeps your transcripts), so the two delete actions read as clearly different.</li>
+          <li>Recordings that picked up no speech no longer get a made-up summary — instead of the model inventing an apologetic &quot;the recording failed&quot; write-up, Daisy shows a clean &quot;nothing to summarize&quot; state.</li>
+          <li>Home no longer nags you to connect a calendar: the &quot;Today&quot; block only appears once a calendar is actually connected.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.19.dmg"
+        sparkle:edSignature="plmENvKDhXhtGtR4B9FXnGYI517CvaYIu4Dhjzu/RwFYNsUMFxxcmTeZvubYJeSPtl99Ar2sVuQA9mAA2bEnAA==" length="11104445"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.20</title>
+      <pubDate>Sun, 14 Jun 2026 08:48:58 +0000</pubDate>
+      <sparkle:version>61</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.20</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.20</h3>
+        <ul>
+          <li>Dictation vocabulary now does two jobs. On the Dictation page → Vocabulary → Add word, leave the toggle off to **teach Daisy a word** — a name, brand, or piece of jargon — so it spells and capitalises it the way you want; flip &quot;Correct a misspelling&quot; on to make a **replacement rule** (misheard → fix), the way the dictionary worked before. Each entry shows which kind it is, and you can edit or delete it inline.</li>
+          <li>Words you teach don&#x27;t just get fixed after the fact — they also nudge the transcription engine to actually hear them, so a name it used to mangle comes out right more often to begin with.</li>
+          <li>Calmer colours. The bright amber accent that tinted selected filters, links and controls is now a light brown, and the Record button is a warm beige instead of green — less visual noise across the warm interface. The brown row-selection highlight is unchanged.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.20.dmg"
+        sparkle:edSignature="YGhXLw8mozQOb/saPy+FXbKKYMYGHB2cSxCH5LUZUmQ41Rz5r4yRnS3VccIqfw9rO9R7/Qqbwv1jS3OBZzNzAw==" length="11133514"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.21</title>
+      <pubDate>Mon, 15 Jun 2026 13:00:22 +0000</pubDate>
+      <sparkle:version>62</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.21</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.21</h3>
+        <ul>
+          <li>**Import from Apple Voice Memos.** Turn on Settings → Recording → &quot;Import Voice Memos&quot; and Daisy checks once a day, transcribes any new recordings on your Mac, and drops a plain-text note into a &quot;Voice Memos&quot; folder alongside your transcripts. No summaries, no cloud — the audio never leaves your Mac. iCloud recordings synced from your iPhone get picked up too.</li>
+          <li>One-time setup: Daisy needs Full Disk Access to read your Voice Memos library, and points you straight to the right System Settings pane. Already have a back catalogue? Hit &quot;Process existing recordings&quot; to transcribe everything; otherwise Daisy only imports new memos from when you switch it on.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.21.dmg"
+        sparkle:edSignature="S7Rhc78CE2Kw8Pq7WFti/qZ/1Hit+DKLeubsc1v4xZdKmunC874jYzdKYT93gJPbd5hO+OUcvqbt5WbJ1mO1Dw==" length="11197536"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.22</title>
+      <pubDate>Wed, 17 Jun 2026 12:31:07 +0000</pubDate>
+      <sparkle:version>66</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.22</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.22</h3>
+        <ul>
+          <li>**Long transcripts no longer get cut off.** A long meeting (40+ minutes) could render only partway in the Library with no way to scroll to the rest. The transcript now lives in its own scrollable pane, so you can read — and select — all of it, however long the recording.</li>
+          <li>**Compact menu bar, reworked.** With &quot;Compact menu bar&quot; on (Settings → General → Appearance), clicking the menu-bar icon now opens a quick menu — Summarize, Open Library, Settings, New recording, Quit — instead of the full transcription window. It no longer hides your Dock icon or the app menus.</li>
+          <li>**Calmer Record button, with the shortcut on it.** The Record button in the menu-bar popover is now the same warm beige as the main window (no more green), and the main window&#x27;s Record button shows your record shortcut right on it.</li>
+          <li>**Dictation page tidy.** &quot;Add word&quot; and &quot;Clear history&quot; moved to the top-right of their sections as quick capsule buttons.</li>
+          <li>**Voice Memos import: pick where it saves.** If you import Apple Voice Memos, you can now choose the exact folder the transcripts land in — separate from your meeting sessions — so they drop straight into your notes/vault.</li>
+          <li>**Rename a recording** — click its title at the top of the Library view and type a new one; it saves when you press Return or click away.</li>
+          <li>**Summary, Follow-up and Transcript are now three separate panels**, each with its own copy button — the follow-up draft got pulled out into its own section. The Summarize button now shows a spinner while it&#x27;s working.</li>
+          <li>Fixes: the Record button no longer briefly flashes a red &quot;Try again&quot; right after a cold launch; the top of the window no longer shows a white strip in light system mode; and a meeting that&#x27;s too long for Apple Intelligence&#x27;s on-device model now tells you to switch to a cloud provider instead of failing silently.</li>
+          <li>Smaller polish: the status line no longer repeats what the Record button already says, the Library toolbar drops a redundant Copy button (every copy option still lives in the ⋯ menu), and the automatic-update control is now a switch.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.22.dmg"
+        sparkle:edSignature="2Ah4j8xhXqAslng7bL5pILNMHRc63scwLnUjPFNzpuguEEIod2q7Yu0WOaaTAqAMtsdNHoUCJtU8vjmBvom6Aw==" length="11235281"
+        type="application/octet-stream" />
+    </item>
+    <item>
+      <title>Daisy 1.0.7.23</title>
+      <pubDate>Fri, 19 Jun 2026 16:10:55 +0000</pubDate>
+      <sparkle:version>67</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.23</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.23</h3>
+        <ul>
+          <li>**Copy any one part of a session.** The ⋯ menu in the Library now has **Copy Summary**, **Copy Follow-up** and **Copy Transcript** — each copies just that section as Markdown — plus **Copy all** for the whole thing. (The old &quot;Copy as Markdown / Copy for Obsidian&quot; pair is gone: the only difference between them was a metadata header, and Daisy&#x27;s routing already handles vault filing.)</li>
+          <li>**The dictation flower reacts to your voice again.** While dictating, the petals barely moved as you spoke; they now respond with the same sensitivity as meeting recording.</li>
+          <li>Smaller polish: the ⋯ button in the Library toolbar is now a proper rounded capsule instead of a tight square.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.23.dmg"
+        sparkle:edSignature="b6+pwl9FVFVBwVt1DVxpp5lmPvn4T18OVHtPgDNj4zrNuPjo2PGugzo7GWIAo3uQbDO7oyllwb6iYKhKu0s1CQ==" length="11238334"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.24</title>
+      <pubDate>Sat, 20 Jun 2026 04:00:09 +0000</pubDate>
+      <sparkle:version>68</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.24</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.24</h3>
+        <ul>
+          <li>**Custom Library folders.** Settings → General → Folders now lets you create, rename and delete your own folders. Private, Work and Calls became editable too (Inbox and Notes stay fixed). New folders show up in the sidebar and the &quot;Move to folder…&quot; menu; deleting a folder moves its recordings to Inbox.</li>
+          <li>**Pick a default folder for meetings.** Choose where calendar-bound and auto-started meetings get filed — it was always &quot;Work&quot;. The folder you pick as the default can&#x27;t be deleted until you switch the default away from it.</li>
+          <li>**The Transcript panel shows just the conversation.** It no longer repeats the recording&#x27;s title and &quot;recorded …&quot; line at the top (that&#x27;s already in the header above), and &quot;Copy Transcript&quot; copies the clean transcript.</li>
+          <li>**Tag from the toolbar.** A recording&#x27;s tag now lives in a capsule next to Summarize — click it to type a new tag or pick one you&#x27;ve used before.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.24.dmg"
+        sparkle:edSignature="RMncsIkwfM22RkXHliqRvOg35z658wPrwdJeapM+7+WpuC8q04gnsiP/ujMXYXSazrVeuMkSMWyYckLQS5ohAQ==" length="11297637"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.25</title>
+      <pubDate>Wed, 24 Jun 2026 03:14:21 +0000</pubDate>
+      <sparkle:version>69</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.25</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.25</h3>
+        <ul>
+          <li>The floating widget&#x27;s &quot;Hide for…&quot; menu now has a real **Hide for 24 hours** — the old &quot;Hide for the day&quot; actually brought the widget back after 8 hours. Hiding it now also sticks if you quit and reopen Daisy, instead of reappearing on the next launch.</li>
+          <li>The **Dictation** page now uses the same native tabs as Settings, and **Add word** is available from both the Vocabulary and History tabs (it used to disappear on History).</li>
+          <li>**Voice Memos import** moved to Settings → Transcription and got a tidier layout: the save folder and its &quot;Choose folder…&quot; picker now share one row, and **Process existing recordings** shows live progress and tells you how many it imported when it&#x27;s done.</li>
+          <li>The Full Disk Access request for Voice Memos now lives in Settings → Permissions, clearly marked as needed only for Voice Memos.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.25.dmg"
+        sparkle:edSignature="xj7qoKqYW0VGgWB/q9XEXuP/73hm8oYZPOL+6ZCAmcTW/ECsMwQL7uowvnni76dW/hAsWpiccULfu+8vomOKBA==" length="11311068"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.26</title>
+      <pubDate>Wed, 24 Jun 2026 07:58:26 +0000</pubDate>
+      <sparkle:version>70</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.26</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.26</h3>
+        <ul>
+          <li>Daisy now recovers recordings interrupted by a crash, power loss, or force-quit. If your Mac dies mid-meeting, the recording is no longer lost — on the next launch Daisy rebuilds the transcript from the audio it had already saved and adds it to your Library.</li>
+          <li>Recordings pause cleanly when your Mac goes to sleep and resume when it wakes; a graceful restart or shutdown saves the recording in progress.</li>
+          <li>If you&#x27;ve set Storage to &quot;Don&#x27;t record audio&quot;, Daisy now warns that an interrupted recording can&#x27;t be recovered in that mode — only sessions you finish keep their transcript.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.26.dmg"
+        sparkle:edSignature="VqNumhEp3rykHQWvqqKDhtLXkZZBJHiP3sIWZRjWtTartBjAdO7h8E5yMiy5UmE48TK103raMpyCJs3VjyRCCA==" length="11349599"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.27</title>
+      <pubDate>Thu, 25 Jun 2026 15:01:51 +0000</pubDate>
+      <sparkle:version>71</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.27</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.27</h3>
+        <ul>
+          <li>Automatic update checks now run on a defined hourly schedule. Previously the check cadence was unspecified, so some installs could go a long time without noticing a new build was available.</li>
+          <li>The Follow-up section now scrolls all the way through long drafts. It was being clipped at its frame, so the bottom of a longer follow-up couldn&#x27;t be reached.</li>
+          <li>The widget&#x27;s &quot;Hide for 24 hours&quot; is now &quot;Hide for today&quot; — it hides until the next midnight and comes back the following day, instead of a rolling 24-hour window.</li>
+          <li>The Home view content is now width-capped and centered to match the Settings pages, instead of stretching edge to edge.</li>
+          <li>Tidied the Permissions screen: simpler &quot;Don&#x27;t remind me&quot; wording, fewer redundant section footers, and the Full Disk Access badge now reads &quot;Optional&quot;.</li>
+          <li>The dictation history &quot;Clear&quot; button is now styled neutrally rather than as a destructive red action.</li>
+          <li>&quot;Send Log Report…&quot; now includes more diagnostics — update-checker state, per-session audio-capture outcomes, and auto-stop decisions — so problems can be pinned down from a single report.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.27.dmg"
+        sparkle:edSignature="SnLmNT8gjmKDHTIdvrY1XqVw1iRUR8IyTAqVNS3og1l4a5mOdrHSw8UJCxa0p/NLe0lmkcqFMqYKCAePcZh5Dg==" length="11359864"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.28</title>
+      <pubDate>Fri, 26 Jun 2026 07:27:50 +0000</pubDate>
+      <sparkle:version>72</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.28</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.28</h3>
+        <ul>
+          <li>Long Summary and Follow-up sections no longer get cut off at the bottom of their card. They now size to their content and scroll inside the card when long, so nothing is hidden out of reach.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.28.dmg"
+        sparkle:edSignature="KvaQAeStHmGTc1SR7GYCafhXdeKbMgbXQcyCBz68rWZj6+zdppZFnLsOXXfz2zvM4cf0JOEa1EwliSr9CcSrBw==" length="11361487"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.29</title>
+      <pubDate>Fri, 26 Jun 2026 07:42:37 +0000</pubDate>
+      <sparkle:version>73</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.29</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.29</h3>
+        <ul>
+          <li>Fixed a crash that could close Daisy during window layout (introduced in 1.0.7.28 while making Summary and Follow-up scroll). Those sections still size to their content and scroll when long — without the crash.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.29.dmg"
+        sparkle:edSignature="hNmHc+ISsIYhwyV4b5ZgJtQd2U+9MVLJTW7d9A5BKVMLyHWvbG+1rlExJNxraa+I+XSd+iPBmzy92KCRsYOnDQ==" length="11361469"
+        type="application/octet-stream" />
+    </item>
+
+    <item>
+      <title>Daisy 1.0.7.30</title>
+      <pubDate>Mon, 29 Jun 2026 02:57:55 +0000</pubDate>
+      <sparkle:version>74</sparkle:version>
+      <sparkle:shortVersionString>1.0.7.30</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <description><![CDATA[
+        <h3>What's new in 1.0.7.30</h3>
+        <ul>
+          <li>Updated the on-device speech engine (FluidAudio 0.15.4). Parakeet transcription now uses the v3 model with broader language coverage (25 languages), and speaker diarization moves to the newer pyannote Community-1 model for cleaner speaker separation. Recording and transcription work exactly as before — the underlying models are just newer and more capable. The updated models download automatically the first time they&#x27;re needed.</li>
+        </ul>
+      ]]></description>
+      <enclosure
+        url="https://mydaisy.io/downloads/Daisy-1.0.7.30.dmg"
+        sparkle:edSignature="2CQs7teROhKLPKL124flHpB0dnH/d4JPFP+H2W7f9SZMEIlH7eBtC0h5z+0MY8iJedFRGL5tZFDJh6HDn0jDCw==" length="11165153"
+        type="application/octet-stream" />
+    </item>
+
+  </channel>
+</rss>
