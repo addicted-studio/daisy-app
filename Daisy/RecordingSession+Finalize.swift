@@ -734,6 +734,108 @@ extension RecordingSession {
         }
     }
 
+    // MARK: - Side notes (voice notes layered over a meeting)
+
+    /// Split each CLOSED side-note window into its own transcript-only
+    /// session in the Notes folder: gather the meeting's segments inside
+    /// the window and write them out with a back-link to the meeting.
+    /// The same segments are cut from the meeting transcript by
+    /// `MarkdownExporter` (see `isInSideNoteWindow`). Best-effort — a
+    /// failure here must NEVER affect the meeting save, so it runs after
+    /// the meeting's transcript.md is on disk and swallows its own
+    /// errors. Called while the sessions-folder ticket is still held.
+    func writeSideNotes() {
+        let closed = sideNoteWindows.filter { $0.end != nil }
+        guard !closed.isEmpty, let meetingDir = sessionDirectory else { return }
+        let base = meetingDir.deletingLastPathComponent()   // …/Daisy/Sessions
+        let meetingID = meetingDir.lastPathComponent
+        let allSegments = segments
+        let stamp = ISO8601DateFormatter()
+        stamp.formatOptions = [.withInternetDateTime]
+        let fm = FileManager.default
+        var created = 0
+        for window in closed {
+            guard let end = window.end else { continue }
+            let inWindow = allSegments.filter { seg in
+                seg.startedAt >= window.start && seg.startedAt <= end
+                    && !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            guard !inWindow.isEmpty else { continue }
+            let safeStamp = stamp.string(from: window.start)
+                .replacingOccurrences(of: ":", with: "-")
+            let noteDir = base.appendingPathComponent(safeStamp, isDirectory: true)
+            // Never collide with the meeting's own directory or an
+            // existing one (two notes started in the same second).
+            guard noteDir.lastPathComponent != meetingID,
+                  !fm.fileExists(atPath: noteDir.path) else { continue }
+            do {
+                try fm.createDirectory(at: noteDir, withIntermediateDirectories: true)
+                let md = Self.renderSideNoteMarkdown(
+                    segments: inWindow, start: window.start, end: end,
+                    meetingID: meetingID
+                )
+                try Data(md.utf8).write(
+                    to: noteDir.appendingPathComponent("transcript.md"),
+                    options: .atomic
+                )
+                created += 1
+            } catch {
+                log.error("Side note write failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if created > 0 {
+            let n = created
+            Task { @MainActor in
+                await SessionStore.shared.refresh()
+                ToastCenter.shared.show(
+                    n == 1
+                        ? String(localized: "Saved a side note to Notes.")
+                        : String(localized: "Saved \(n) side notes to Notes."),
+                    style: .success
+                )
+            }
+        }
+    }
+
+    /// Obsidian-shaped transcript.md for a split-out side note. Minimum
+    /// frontmatter (title + started) so SessionStore classifies it
+    /// `.valid`, plus `daisy_folder: notes` and a `daisy_source_meeting`
+    /// back-link to the meeting it was captured during.
+    nonisolated static func renderSideNoteMarkdown(
+        segments: [TranscriptSegment],
+        start: Date,
+        end: Date,
+        meetingID: String
+    ) -> String {
+        let iso = ISO8601DateFormatter()
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd HH:mm"
+        let titleDate = df.string(from: start)
+        let durSec = Int(max(0, end.timeIntervalSince(start)).rounded())
+
+        var lines: [String] = []
+        lines.append("---")
+        lines.append("title: \"Side note — \(titleDate)\"")
+        lines.append("started: \(iso.string(from: start))")
+        lines.append("duration_sec: \(durSec)")
+        lines.append("daisy_folder: \(SessionFolder.notes.slug)")
+        lines.append("daisy_source_meeting: \(meetingID)")
+        lines.append("---")
+        lines.append("")
+        lines.append("# Side note — \(titleDate)")
+        lines.append("")
+        lines.append("> " + String(localized: "Captured during a meeting and split out into its own note."))
+        lines.append("")
+        for seg in segments {
+            let t = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !t.isEmpty else { continue }
+            lines.append(t)
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     nonisolated static func makeStoredSession(
         id: String,
         directory: URL,

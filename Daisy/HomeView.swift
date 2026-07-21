@@ -37,19 +37,11 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                // 2026-05-25 — permissions banner is the only top-level
-                // child rendered without going through a section wrapper,
-                // so it needs its own horizontal inset to match the
-                // calendar banner inside `upcomingSection` (which carries
-                // `.padding(.horizontal, 24)`). Pre-fix it went edge-to-
-                // edge and read as "different banner family" next to the
-                // calendar one directly below.
-                if permissions.needsAttention {
-                    permissionsAttentionBanner
-                        .padding(.horizontal, 24)
-                }
-                statsSection
-                mainColumns
+                // Permissions moved from a full-width top banner into the
+                // onboarding checklist that sits above the day card in the
+                // right column (2026-07-21) — a calmer "finish setting up"
+                // block instead of an alarm bar.
+                homeColumns
                 if showDestinationsHint { destinationsHint }
                 Spacer(minLength: 0)
             }
@@ -81,91 +73,106 @@ struct HomeView: View {
     // fail silently without them. Calendar / Screen Recording are
     // optional and don't trigger this banner.
 
-    private var permissionsAttentionBanner: some View {
-        // 2026-05-25 — synced layout to match `connectCalendarCTA`
-        // visually. Pre-fix this banner was visibly narrower than the
-        // Connect Calendar banner directly below it, because of an
-        // outer `.padding(.horizontal)` that wasn't there on the
-        // calendar one. Also switched `.stroke` → `.strokeBorder` so
-        // the 0.5pt border draws inside the rounded-rect edge (matches
-        // calendar). Now the two banners read as one design family
-        // separated by intent: orange warning chrome for required
-        // missing perms, cinnamon info chrome for optional connect-up.
-        HStack(spacing: 10) {
-            // 2026-05-25 — icon switched `Color.daisyWarning` (orange)
-            // → `Color.daisyAccent` (cinnamon) to harmonize with the
-            // cinnamon chip background. Orange triangle on cinnamon
-            // chip read as "two colours that almost match but don't",
-            // i.e. clashing. The warning semantic is carried by the
-            // glyph itself (`exclamationmark.triangle.fill`) and the
-            // title text — colour is decoration, not the carrier.
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.title3)
-                .foregroundStyle(Color.daisyHomeAccent)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(missingPermissionsTitle)
-                    .font(.callout.weight(.medium))
-                Text("Open Settings → Permissions to grant access")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 8)
-            // 2026-05-25 — minWidth lives on the LABEL inside the
-            // Button, not on the Button itself. `.frame(minWidth:)`
-            // applied to the Button only reserves layout space — the
-            // `.borderedProminent` Capsule chrome still hugs the
-            // text. Pushing minWidth INTO the Label expands the text
-            // frame the Capsule wraps around, so the chrome sizes
-            // properly. Bumped 88 → 120 the same day: the banner
-            // stretches edge-to-edge on wide windows and an 88pt CTA
-            // looked tiny against ~1000pt of empty space. 120pt
-            // gives the chrome more substantial weight without
-            // pushing toward "comically big button" territory.
-            Button {
-                AppNavigation.shared.openInSettings(.permissions)
-            } label: {
-                Text("Fix").frame(minWidth: 120)
-                    .foregroundStyle(Color.daisyTextOnAccent)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .tint(Color.daisyHomeAccent)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        // 2026-05-25 — background + border unified across all three
-        // Home banners (permissions / connectCalendar / deniedCalendar)
-        // to the same `daisyAccent` chip at 0.20 opacity. Pre-fix the
-        // permissions banner used `daisyWarning` (orange) and the
-        // calendar one `daisyAccent` (cinnamon) — close enough on the
-        // cream surface that the difference read as a rendering bug,
-        // not as two intentional semantic variants. Semantic split now
-        // lives entirely in the leading icon (warning triangle vs
-        // calendar) and title text, while the chip chrome is one
-        // family. Same colour, same opacity → fill and border merge
-        // into one clean filled chip, no double-layer look.
-        .background(
-            Color.daisyHomeAccent.opacity(0.20),
-            in: RoundedRectangle(cornerRadius: 8)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
-        )
+    // MARK: - Onboarding checklist
+    //
+    // Replaces the old full-width permissions alarm bar (2026-07-21).
+    // A calm "finish setting up Daisy" checklist that lives above the
+    // day card in the right column and disappears once everything is
+    // handled. Required rows (Microphone, Accessibility) always show
+    // until granted; optional rows (Screen Recording, Calendar) show
+    // only while still undecided (notDetermined) — once the user has
+    // acted on them, we stop nudging.
+
+    /// Show the checklist while any required permission is missing OR an
+    /// optional one hasn't been decided yet. Hidden entirely when setup
+    /// is complete so Home is clean for the everyday case.
+    private var shouldShowOnboarding: Bool {
+        permissions.microphone != .granted
+            || permissions.accessibility != .granted
+            || permissions.screenRecording == .notDetermined
+            || permissions.calendar == .notDetermined
     }
 
-    /// "Microphone access needed" / "Accessibility access needed" /
-    /// "Microphone & Accessibility access needed" — concrete enough
-    /// to tell the user what'll break if they ignore the banner.
-    private var missingPermissionsTitle: String {
-        let mic = permissions.microphone != .granted
-        let acc = permissions.accessibility != .granted
-        switch (mic, acc) {
-        case (true, true):   return String(localized: "Microphone & Accessibility access needed")
-        case (true, false):  return String(localized: "Microphone access needed")
-        case (false, true):  return String(localized: "Accessibility access needed")
-        case (false, false): return ""
+    private var onboardingChecklist: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Finish setting up Daisy")
+                .font(.callout.weight(.semibold))
+
+            onboardingRow(
+                title: String(localized: "Microphone"),
+                caption: String(localized: "Required — captures your voice"),
+                status: permissions.microphone,
+                action: { Task { await permissions.requestMicrophone() } },
+                openSettings: permissions.openMicrophoneSettings
+            )
+            onboardingRow(
+                title: String(localized: "Accessibility"),
+                caption: String(localized: "Required — lets dictation paste into any app"),
+                status: permissions.accessibility,
+                action: { permissions.requestAccessibility() },
+                openSettings: permissions.openAccessibilitySettings
+            )
+            onboardingRow(
+                title: String(localized: "Screen Recording"),
+                caption: String(localized: "Optional — captures the other side of meetings"),
+                status: permissions.screenRecording,
+                action: { permissions.requestScreenRecording() },
+                openSettings: permissions.openScreenRecordingSettings
+            )
+            onboardingRow(
+                title: String(localized: "Calendar"),
+                caption: String(localized: "Optional — auto-starts recording at meeting times"),
+                status: permissions.calendar,
+                action: { Task { await permissions.requestCalendar() } },
+                openSettings: permissions.openCalendarSettings
+            )
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// One checklist line: a status glyph (filled check when granted),
+    /// the name + one-line rationale, and a trailing action — "Allow"
+    /// when the system can still prompt, "Open Settings" once denied.
+    @ViewBuilder
+    private func onboardingRow(
+        title: String,
+        caption: String,
+        status: SystemPermissions.Status,
+        action: @escaping () -> Void,
+        openSettings: @escaping () -> Void
+    ) -> some View {
+        let granted = (status == .granted)
+        HStack(spacing: 10) {
+            Image(systemName: granted ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(granted ? Color.daisySuccess : Color.daisyTextTertiary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            if !granted {
+                switch status {
+                case .notDetermined:
+                    Button(String(localized: "Allow")) { action() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .tint(Color.daisyBannerAction)
+                        .foregroundStyle(Color.daisyBannerActionText)
+                default:
+                    // denied / restricted / insufficient — the system
+                    // won't prompt again, so send them to Settings.
+                    Button(String(localized: "Open Settings")) { openSettings() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
         }
     }
 
@@ -208,25 +215,18 @@ struct HomeView: View {
                 AppNavigation.shared.section = .connections
             } label: {
                 Text("Set up").frame(minWidth: 120)
-                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .foregroundStyle(Color.daisyBannerActionText)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color.daisyHomeAccent)
+            .tint(Color.daisyBannerAction)
             .controlSize(.regular)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        // 2026-05-25 — joined the unified banner family (cinnamon
-        // 0.20/0.20 chip) per the shape audit. Pre-fix this was
-        // 0.06 fill + 0.18 border — a quieter half-cousin of the
-        // four other Home banners. Egor sees this AND the calendar/
-        // permissions banners in the same scroll column; the two
-        // recipes read as "those two are different sections" not
-        // "those are sibling info messages". One recipe, every time.
-        .background(Color.daisyHomeAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.daisyBannerBackground, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyBannerBorder, lineWidth: 1)
         )
         .padding(.horizontal, 24)
     }
@@ -241,24 +241,60 @@ struct HomeView: View {
     /// calendar/recordings band) so vertical boundaries align.
     static let columnGap: CGFloat = 16
 
+    /// Home body layout (2026-07-21, per Egor's mock): two full-height
+    /// columns. LEFT = activity heatmap, then the fixes/words number pair,
+    /// then recent recordings. RIGHT = the DayCard (morning lede + agenda
+    /// + open items). Previously the stats sat in their own top band with
+    /// [numbers | heatmap] and the columns below were [dayCard | recent];
+    /// this pulls the heatmap up-left and moves the day card to the right.
     @ViewBuilder
-    private var mainColumns: some View {
+    private var homeColumns: some View {
         if hasAnyCalendarSource {
             HStack(alignment: .top, spacing: Self.columnGap) {
-                dayCard
+                leftColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
-                recentSessionsSection
+                dayColumn
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             .padding(.horizontal, 24)
         } else {
             // No calendar connected: the day card still carries the lede +
-            // open items (if any), stacked above the recordings.
-            VStack(alignment: .leading, spacing: 8) {
-                dayCard
-                recentSessionsSection
+            // open items (if any), stacked above the left-column content.
+            VStack(alignment: .leading, spacing: 16) {
+                dayColumn
+                leftColumn
             }
             .padding(.horizontal, 24)
+        }
+    }
+
+    /// Right column: the onboarding checklist (while setup is unfinished)
+    /// stacked above the day card.
+    @ViewBuilder
+    private var dayColumn: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if shouldShowOnboarding {
+                onboardingChecklist
+            }
+            dayCard
+        }
+    }
+
+    /// Left column stack: heatmap on top, the fixes/words number pair
+    /// beneath it, then recent recordings. Stats hide until there's at
+    /// least one session so a fresh install isn't greeted by zeros.
+    @ViewBuilder
+    private var leftColumn: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if usage.totalCount > 0 {
+                heatmapCard
+                HStack(alignment: .top, spacing: Self.columnGap) {
+                    fixesCard
+                    wordsCard
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            recentSessionsSection
         }
     }
 
@@ -328,15 +364,6 @@ struct HomeView: View {
     // the DayCard renders the agenda now, with inline Prep + nested tasks.)
 
     private var connectCalendarCTA: some View {
-        // 2026-05-25 — synced visual treatment to match
-        // `permissionsAttentionBanner` (above): same border opacity
-        // (0.25, was 0.20), explicit `.tint` on the button so it
-        // renders as cinnamon-accent regardless of any inherited
-        // system tint, caption trailing period dropped per the
-        // caption-period rule (see business/projects/daisy → Brand
-        // copy rules). Icon stays accent-cinnamon vs the permission
-        // banner's warning-orange so the semantic split (info CTA vs
-        // required-action warning) still reads.
         HStack(spacing: 10) {
             Image(systemName: "calendar.badge.plus")
                 .font(.title3)
@@ -350,45 +377,32 @@ struct HomeView: View {
                     .lineLimit(2)
             }
             Spacer(minLength: 8)
-            // minWidth inside the label — see comment on the Fix
-            // button in `permissionsAttentionBanner` for why.
+            // minWidth lives on the LABEL inside the Button (not the
+            // Button) so the bordered-prominent capsule sizes around the
+            // wider text frame rather than hugging the label.
             Button {
                 Task { _ = await calendar.requestAccess() }
                 // MainView observes CalendarService.authorizationStatus
                 // and wires AppSettings + service start on its own.
             } label: {
                 Text("Connect").frame(minWidth: 120)
-                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .foregroundStyle(Color.daisyBannerActionText)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .tint(Color.daisyHomeAccent)
+            .tint(Color.daisyBannerAction)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        // 0.20 fill + 0.20 border — same unification as the
-        // permissions banner above, see the comment there.
-        .background(Color.daisyHomeAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.daisyBannerBackground, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyBannerBorder, lineWidth: 1)
         )
     }
 
     private var deniedCalendarCTA: some View {
-        // 2026-05-25 — synced with the other two Home banners
-        // (permissions + connectCalendar). Was missing the border
-        // overlay entirely and used `.bordered` button instead of
-        // `.borderedProminent` w/ explicit tint, so it read as a
-        // visually weaker family member. Now matches the warning-
-        // family treatment (orange icon + orange-tinted background +
-        // matching border). Caption trailing period dropped per the
-        // caption-period rule.
         HStack(spacing: 10) {
-            // Icon in cinnamon to match the chip — same reasoning as
-            // `permissionsAttentionBanner`. The glyph
-            // (`calendar.badge.exclamationmark`) carries the
-            // "something's wrong" semantic; the colour is harmony.
             Image(systemName: "calendar.badge.exclamationmark")
                 .font(.title3)
                 .foregroundStyle(Color.daisyHomeAccent)
@@ -405,56 +419,22 @@ struct HomeView: View {
                 calendar.openCalendarPrivacy()
             } label: {
                 Text("Open Settings").frame(minWidth: 120)
-                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .foregroundStyle(Color.daisyBannerActionText)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
-            .tint(Color.daisyHomeAccent)
+            .tint(Color.daisyBannerAction)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        // Same `daisyAccent` chip at 0.20/0.20 as the other two
-        // Home banners. Semantic "calendar is denied → user action
-        // needed" stays in the warning-orange icon + title text.
-        .background(Color.daisyHomeAccent.opacity(0.20), in: RoundedRectangle(cornerRadius: 8))
+        .background(Color.daisyBannerBackground, in: RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyHomeAccent.opacity(0.20), lineWidth: 0.5)
+                .strokeBorder(Color.daisyBannerBorder, lineWidth: 1)
         )
     }
 
     // MARK: - Usage stats (words/min · total words · activity)
-
-    /// Three Wispr-style widgets at the top of Home, all from the local
-    /// `UsageStats` tracker (dictations + recordings). Hidden until
-    /// there's at least one recorded session so a fresh install isn't
-    /// greeted by zeros.
-    @ViewBuilder
-    private var statsSection: some View {
-        if usage.totalCount > 0 {
-            // One row, 1/4 + 1/4 + 2/4: the outer HStack splits the width
-            // into two equal halves (nested pair vs heatmap), the nested
-            // HStack splits its half again — exact quarters without
-            // GeometryReader. `maxHeight: .infinity` on the number cards
-            // stretches them to the heatmap's height so the row reads as
-            // one aligned band.
-            // Gutter = `columnGap` everywhere (also mainColumns below), so
-            // the half-split boundary lines up with the calendar/recordings
-            // band and every column gap on Home reads identical.
-            HStack(alignment: .top, spacing: Self.columnGap) {
-                HStack(spacing: Self.columnGap) {
-                    fixesCard
-                    wordsCard
-                }
-                .frame(maxWidth: .infinity)
-                heatmapCard
-                    .frame(maxWidth: .infinity)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 8)
-        }
-    }
 
     /// Wispr-style "fixes" card: big total + breakdown (dictionary
     /// replacements / voice-polish changes). Counters start at zero on
@@ -577,7 +557,8 @@ struct HomeView: View {
                 }
             }
         }
-        // Horizontal inset comes from `mainColumns` — see upcomingSection.
+        // Horizontal inset comes from `homeColumns` (the left column's
+        // parent), so this section adds only vertical padding.
         .padding(.vertical, 16)
     }
 

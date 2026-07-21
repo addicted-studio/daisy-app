@@ -21,7 +21,7 @@ import SwiftUI
 // MARK: - Section enum
 
 enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
-    case home, library, dictation, voice, connections, settings, about
+    case home, library, notes, dictation, voice, connections, settings, about
 
     var id: String { rawValue }
 
@@ -29,6 +29,7 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .home:        String(localized: "Home")
         case .library:     String(localized: "Library")
+        case .notes:       String(localized: "Notes")
         case .dictation:   String(localized: "Dictation")
         case .voice:       String(localized: "Voice")
         case .connections: String(localized: "Connections")
@@ -46,6 +47,10 @@ enum MainSection: String, Hashable, CaseIterable, Identifiable, Sendable {
         // History, which framed it as a chronological log; Library
         // reframes it as a curated collection, and the icon follows.
         case .library:     "books.vertical"
+        // note.text reads as "a jotted note" — sits below Library as
+        // the lighter, quick-capture counterpart (voice notes) to the
+        // curated meeting shelf above it.
+        case .notes:       "note.text"
         // character.cursor.ibeam reads as "type / insert text at the
         // caret" — the universal dictation/typing affordance (same
         // glyph the old Settings → Dictation tab used). Reframes this
@@ -451,7 +456,9 @@ struct MainView: View {
         case .home:
             HomeView(session: session)
         case .library:
-            LibraryView()
+            LibraryView(scope: .all)
+        case .notes:
+            LibraryView(scope: .notes)
         case .dictation:
             DictationView()
         case .voice:

@@ -133,9 +133,10 @@ nonisolated enum ScreenTextExtractor {
             log.error("Vision perform failed: \(error.localizedDescription, privacy: .public)")
             return ""
         }
-        guard let observations = request.results as? [VNRecognizedTextObservation] else {
-            return ""
-        }
+        // `request.results` is already typed `[VNRecognizedTextObservation]?`
+        // on current SDKs — the old `as? [VNRecognizedTextObservation]`
+        // downcast was a no-op (compiler warning). Nil-coalesce instead.
+        let observations = request.results ?? []
         // Preserve reading order top-to-bottom: observations come sorted
         // by confidence, so re-sort by vertical position (Vision's origin
         // is bottom-left, so higher y = higher on screen).

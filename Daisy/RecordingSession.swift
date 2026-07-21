@@ -201,6 +201,58 @@ final class RecordingSession {
     private(set) var systemArchiveURL: URL?
     private(set) var startedAt: Date?
 
+    // MARK: - Side notes (voice note layered over a live meeting)
+
+    /// A wall-clock span the user marked as a side note WHILE a meeting
+    /// was recording, via the voice-note hotkey. On finalize the meeting
+    /// transcript segments inside each span are CUT from the meeting and
+    /// written as their own note session in the Notes folder — the same
+    /// voice-note affordance, but layered over the meeting instead of
+    /// blocked by it (approach "b", 2026-07-21). Meeting-mode only.
+    struct SideNoteWindow: Sendable, Equatable {
+        let start: Date
+        var end: Date?
+    }
+    private(set) var sideNoteWindows: [SideNoteWindow] = []
+
+    /// True while a side-note window is open (started, not yet ended).
+    /// Drives the recording-capsule / toast indication.
+    var isCapturingSideNote: Bool {
+        sideNoteWindows.last.map { $0.end == nil } ?? false
+    }
+
+    /// Whether a wall-clock instant falls inside any side-note window
+    /// (an open window extends to now). `MarkdownExporter` uses it to
+    /// keep note speech OUT of the meeting transcript; finalize uses it
+    /// to gather that speech INTO the note.
+    func isInSideNoteWindow(_ date: Date) -> Bool {
+        sideNoteWindows.contains { w in
+            date >= w.start && (w.end.map { date <= $0 } ?? true)
+        }
+    }
+
+    /// Toggle side-note capture from the voice-note hotkey during a
+    /// meeting: first press opens a window, second closes it. No-op
+    /// outside an active meeting (the hotkey keeps its normal meaning
+    /// when idle or in a standalone voice-note session).
+    func toggleSideNoteCapture() {
+        guard currentMode == .meeting,
+              status == .recording || status == .paused else { return }
+        if isCapturingSideNote {
+            sideNoteWindows[sideNoteWindows.count - 1].end = Date()
+            ToastCenter.shared.show(
+                String(localized: "Side note saved — it'll be split out when you stop."),
+                style: .success
+            )
+        } else {
+            sideNoteWindows.append(SideNoteWindow(start: Date(), end: nil))
+            ToastCenter.shared.show(
+                String(localized: "Recording a side note… press the voice-note key again to end it."),
+                style: .info
+            )
+        }
+    }
+
     /// Auto-matched speaker map produced after the final diarization
     /// pass — Daisy looks up each detected speaker's centroid
     /// embedding in `SpeakerProfileStore` and pre-fills "A" → "Alex"
@@ -1323,6 +1375,11 @@ final class RecordingSession {
         // double final pass, double summary, duplicate auto-send.
         let wasPaused = (status == .paused)
         status = .stopping
+        // Close any still-open side-note window so its speech is captured
+        // up to Stop rather than being lost.
+        if isCapturingSideNote {
+            sideNoteWindows[sideNoteWindows.count - 1].end = Date()
+        }
         if wasPaused {
             // Make sure any half-open paused pipelines are fully
             // torn down before the final transcribe.
@@ -1622,6 +1679,11 @@ final class RecordingSession {
             }
             stopSignposter.endInterval("write_transcript_md", writeState)
             log.info("post-stop write_transcript_md: \(ms(t_write), privacy: .public)ms")
+
+            // Split any side notes captured during the meeting into their
+            // own Notes sessions. Best-effort and after the meeting's
+            // transcript is safely on disk — never blocks the save.
+            if !sideNoteWindows.isEmpty { writeSideNotes() }
         }
 
         // Local usage stats for meetings / voice notes (same widgets as
@@ -1858,6 +1920,7 @@ final class RecordingSession {
         micArchiveURL = nil
         systemArchiveURL = nil
         startedAt = nil
+        sideNoteWindows = []
         boundMeeting = nil
         // Tester bug 2026-05-25: a calendar-bound meeting (title set
         // to the event name, e.g. "Pilik's Birthday") completed days

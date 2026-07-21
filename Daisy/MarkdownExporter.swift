@@ -252,9 +252,15 @@ enum MarkdownExporter {
         // instead of headphones; mic re-captures + Whisper re-
         // transcribes the same audio, producing duplicate lines
         // attributed to the user). See `AcousticEchoDedup.swift`.
-        let segments = session.settings.suppressAcousticEcho
+        let baseSegments = session.settings.suppressAcousticEcho
             ? AcousticEchoDedup.filter(session.segments)
             : session.segments
+        // Cut side-note speech OUT of the meeting transcript — those
+        // segments are written into their own Notes session by finalize,
+        // and the user asked for them to live ONLY there (2026-07-21).
+        let segments = session.sideNoteWindows.isEmpty
+            ? baseSegments
+            : baseSegments.filter { !session.isInSideNoteWindow($0.startedAt) }
         for segment in segments {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
