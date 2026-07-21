@@ -159,6 +159,47 @@ extension Color {
         dark:  Color(hex: 0x242825)
     )
 
+    // ─── Informational banners ──────────────────────────────────────
+    //
+    // Home banners are quiet containers, not status fills. State remains
+    // visible in the SF Symbol while the surface stays neutral and the CTA
+    // uses high-contrast ink.
+
+    static let daisyBannerBackground = Color(
+        light: Color(hex: 0xF5F5F3),
+        dark:  Color(hex: 0x191C1A)
+    )
+
+    static let daisyBannerBorder = Color(
+        light: Color(hex: 0xDDDDD8),
+        dark:  Color(hex: 0x343836)
+    )
+
+    static let daisyBannerAction = Color(
+        light: Color(hex: 0x242522),
+        dark:  Color(hex: 0xF4F5EF)
+    )
+
+    static let daisyBannerActionText = Color(
+        light: Color(hex: 0xFFFEFC),
+        dark:  Color(hex: 0x0D100E)
+    )
+
+    // ─── Content selection ──────────────────────────────────────────
+    //
+    // Selected rows and filter chips stay neutral. Orange remains a
+    // signal colour rather than becoming generic selection chrome.
+
+    static let daisySelectionBackground = Color(
+        light: Color(hex: 0xECEDEA),
+        dark:  Color(hex: 0x242825)
+    )
+
+    static let daisySelectionBorder = Color(
+        light: Color(hex: 0xD6D8D4),
+        dark:  Color(hex: 0x3A3F3B)
+    )
+
     // ─── Petal mark ───────────────────────────────────────────────────
     //
     // The flower in idle / finished state. Golden-orange is calmer than the

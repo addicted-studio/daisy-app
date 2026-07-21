@@ -63,9 +63,11 @@ struct FolderManagementSection: View {
             }
 
             // Editable — seeded defaults (Private / Work / Calls) + user
-            // folders. Rename via pencil popup; delete via trash.
-            ForEach(folders.customFolders) { folder in
-                editableRow(folder)
+            // folders. Rendered in hierarchy order: each root project,
+            // then its child folders indented below. Rename via pencil
+            // popup; re-parent via the folder menu; delete via trash.
+            ForEach(customRows, id: \.folder.slug) { row in
+                editableRow(row.folder, isChild: row.isChild)
             }
 
             addRow
@@ -114,14 +116,32 @@ struct FolderManagementSection: View {
     }
 
     @ViewBuilder
-    private func editableRow(_ folder: SessionFolder) -> some View {
+    private func editableRow(_ folder: SessionFolder, isChild: Bool) -> some View {
         let isDefault = isDefaultMeetingFolder(folder)
         HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-                .frame(width: 16)
+            // Child folders indent + use a corner glyph so the project
+            // hierarchy reads at a glance.
+            if isChild {
+                Spacer().frame(width: 16)
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 16)
+            } else {
+                Image(systemName: "folder")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+            }
             Text(folder.name)
             Spacer(minLength: 8)
+
+            // Re-parent menu. Hidden for a folder that already has
+            // children (it's a top-level project — nesting it would make
+            // a 3rd level, which the model forbids).
+            if !folders.isParent(folder) {
+                parentMenu(for: folder)
+            }
+
             Button {
                 editing = .rename(folder)
             } label: {
@@ -144,6 +164,47 @@ struct FolderManagementSection: View {
         .padding(.vertical, 2)
     }
 
+    /// Menu to nest this folder under a parent project (or detach to
+    /// root). Candidates are root-level custom projects other than this
+    /// folder — the one-level rule means a parent can't itself be nested.
+    @ViewBuilder
+    private func parentMenu(for folder: SessionFolder) -> some View {
+        Menu {
+            Button {
+                folders.setParent(folder, to: nil)
+            } label: {
+                if folder.parentSlug == nil {
+                    Label("No parent (top level)", systemImage: "checkmark")
+                } else {
+                    Text("No parent (top level)")
+                }
+            }
+            let candidates = eligibleParents(for: folder)
+            if !candidates.isEmpty {
+                Divider()
+                ForEach(candidates) { parent in
+                    Button {
+                        folders.setParent(folder, to: parent.slug)
+                    } label: {
+                        if folder.parentSlug == parent.slug {
+                            Label(parent.name, systemImage: "checkmark")
+                        } else {
+                            Text(parent.name)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "folder.badge.gearshape")
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.borderless)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Nest under a project")
+    }
+
     private var addRow: some View {
         Button {
             editing = .add
@@ -163,6 +224,26 @@ struct FolderManagementSection: View {
     }
 
     // MARK: - Queries
+
+    /// Custom folders in hierarchy order: each root project followed by
+    /// its child folders. `isChild` drives the row indent.
+    private var customRows: [(folder: SessionFolder, isChild: Bool)] {
+        var rows: [(folder: SessionFolder, isChild: Bool)] = []
+        for root in folders.customFolders where root.parentSlug == nil {
+            rows.append((root, false))
+            for child in folders.children(of: root.slug) {
+                rows.append((child, true))
+            }
+        }
+        return rows
+    }
+
+    /// Root-level custom projects this folder could be nested under —
+    /// everything except itself (a parent can't be nested, so all roots
+    /// qualify as candidates).
+    private func eligibleParents(for folder: SessionFolder) -> [SessionFolder] {
+        folders.customFolders.filter { $0.parentSlug == nil && $0.slug != folder.slug }
+    }
 
     private func countFor(_ folder: SessionFolder) -> Int {
         store.sessions.filter { $0.folderSlug == folder.slug }.count

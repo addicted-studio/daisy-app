@@ -51,6 +51,12 @@ extension RecordingSession {
         case .recording, .paused:
             if currentMode == .voiceNote {
                 await stop()
+            } else if currentMode == .meeting {
+                // Layer a side note over the live meeting instead of
+                // refusing: mark a window now, close it on the next
+                // press. Finalize splits it into its own Notes session
+                // and cuts it from the meeting transcript.
+                toggleSideNoteCapture()
             } else {
                 ToastCenter.shared.show(
                     String(localized: "Daisy is already recording. Stop the current session first."),

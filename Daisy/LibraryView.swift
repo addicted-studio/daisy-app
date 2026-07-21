@@ -16,6 +16,16 @@ import SwiftUI
 import AppKit
 
 struct LibraryView: View {
+    /// Which slice of the corpus this instance shows. `.all` is the
+    /// Library proper (everything EXCEPT the Notes folder — voice notes
+    /// live in their own top-level Notes tab now). `.notes` is that tab:
+    /// only the Notes folder, folder chips hidden (the folder is fixed).
+    /// Same view, same model, same detail pane — just a scoped pool.
+    enum Scope: Equatable { case all, notes }
+    let scope: Scope
+
+    init(scope: Scope = .all) { self.scope = scope }
+
     @Bindable var store = SessionStore.shared
     @Bindable var folders = FolderStore.shared
     @State private var query: String = ""
@@ -197,14 +207,16 @@ struct LibraryView: View {
     @ViewBuilder
     private func sessionContextMenu(for session: StoredSession) -> some View {
         Menu {
-            ForEach(folders.allFolders) { f in
+            ForEach(moveTargets, id: \.folder.slug) { row in
+                let f = row.folder
                 Button {
                     Task { await store.moveSession(session, to: f) }
                 } label: {
+                    let label = row.isChild ? "    \(f.name)" : f.name
                     if f.slug == session.folderSlug {
-                        Label(f.name, systemImage: "checkmark")
+                        Label(label, systemImage: "checkmark")
                     } else {
-                        Text(f.name)
+                        Text(label)
                     }
                 }
             }
@@ -298,13 +310,17 @@ struct LibraryView: View {
             // "All" chip sat right under the text-field's baseline.
             .padding(.bottom, 14)
 
-            folderChips
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
+            // Folder chips only in the full Library — the Notes tab is
+            // itself a fixed-folder view, so a folder picker there is
+            // meaningless.
+            if scope == .all {
+                folderChips
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
 
-            // Manual selection model so we keep brand-coloured highlight
-            // instead of the system gray that `List(selection:)` paints
-            // on `.plain`. Shift / Cmd-click are handled here:
+            // Manual selection model keeps the custom neutral highlight
+            // while preserving Finder-style Shift / Cmd-click behaviour:
             //   • bare click  → select only this row
             //   • Cmd-click   → toggle this row in the selection
             //   • Shift-click → extend selection from anchor to this row
@@ -320,8 +336,17 @@ struct LibraryView: View {
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
                                 .fill(selectedIDs.contains(session.id)
-                                      ? Color.daisyAccent.opacity(0.18)
+                                      ? Color.daisySelectionBackground
                                       : Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(
+                                    selectedIDs.contains(session.id)
+                                        ? Color.daisySelectionBorder
+                                        : Color.clear,
+                                    lineWidth: 1
+                                )
                         )
                         .contentShape(Rectangle())
                         .gesture(rowTapGesture(for: session))
@@ -333,12 +358,20 @@ struct LibraryView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .overlay {
-                if store.sessions.isEmpty && !store.isLoading {
-                    ContentUnavailableView(
-                        "No recordings yet",
-                        systemImage: "tray",
-                        description: Text("When you stop a recording, it'll appear here.")
-                    )
+                if scopedSessions.isEmpty && !store.isLoading {
+                    if scope == .notes {
+                        ContentUnavailableView(
+                            "No notes yet",
+                            systemImage: "note.text",
+                            description: Text("Hold your dictation key, or use the voice-note shortcut, to capture a quick note. It'll land here.")
+                        )
+                    } else {
+                        ContentUnavailableView(
+                            "No recordings yet",
+                            systemImage: "tray",
+                            description: Text("When you stop a recording, it'll appear here.")
+                        )
+                    }
                 } else if filteredSessions.isEmpty && !query.isEmpty {
                     ContentUnavailableView.search(text: query)
                 } else if filteredSessions.isEmpty, let f = folderFilter {
@@ -409,11 +442,26 @@ struct LibraryView: View {
         }
     }
 
+    /// Corpus narrowed to this tab's scope, BEFORE the user's own
+    /// folder/tag/search filters. Every derived surface (list, folder
+    /// chips, tag groups, counts) reads from this so scope stays
+    /// consistent across all of them.
+    private var scopedSessions: [StoredSession] {
+        let notesSlug = SessionFolder.notes.slug
+        switch scope {
+        case .all:   return store.sessions.filter { $0.folderSlug != notesSlug }
+        case .notes: return store.sessions.filter { $0.folderSlug == notesSlug }
+        }
+    }
+
     private var filteredSessions: [StoredSession] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        var pool = store.sessions
+        var pool = scopedSessions
         if let f = folderFilter {
-            pool = pool.filter { $0.folderSlug == f.slug }
+            // Selecting a project parent aggregates its child folders'
+            // records too; a leaf folder scopes to just itself.
+            let scope = folders.slugScope(for: f)
+            pool = pool.filter { scope.contains($0.folderSlug) }
         }
         if let t = tagFilter {
             pool = pool.filter { $0.tag == t }
@@ -434,7 +482,7 @@ struct LibraryView: View {
     /// SessionDetail's tag editor.
     var tagGroups: [(name: String, count: Int)] {
         var counts: [String: Int] = [:]
-        for s in store.sessions {
+        for s in scopedSessions {
             counts[s.tag, default: 0] += 1
         }
         let tagged = counts
@@ -454,9 +502,8 @@ struct LibraryView: View {
     /// Single-selection dropdown listing every tag in use, with
     /// "All tags" reset at the top and "Untagged" demoted to the
     /// bottom. Lives inside the search-row header in 1.0.6 — compact
-    /// trigger (tag icon + label + chevron). Active filter colours
-    /// the icon orange so a user scanning the sidebar can tell at
-    /// a glance the list is filtered.
+    /// trigger (tag icon + label + chevron). An active filter gains
+    /// primary ink without borrowing the recording/brand signal colour.
     private var tagSelector: some View {
         Menu {
             Button {
@@ -485,10 +532,10 @@ struct LibraryView: View {
             HStack(spacing: 3) {
                 Image(systemName: "tag")
                     .font(.caption)
-                    .foregroundStyle(tagFilter == nil ? .secondary : Color.daisyAccent)
+                    .foregroundStyle(tagFilter == nil ? Color.daisyTextSecondary : Color.daisyTextPrimary)
                 Text(tagSelectorLabel)
                     .font(.caption)
-                    .foregroundStyle(tagFilter == nil ? .secondary : Color.daisyAccent)
+                    .foregroundStyle(tagFilter == nil ? Color.daisyTextSecondary : Color.daisyTextPrimary)
                 Image(systemName: "chevron.down")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -508,6 +555,32 @@ struct LibraryView: View {
         }
     }
 
+    /// Move-to targets in hierarchy order: every folder (incl. Notes and
+    /// Inbox), children indented under their parent project.
+    private var moveTargets: [(folder: SessionFolder, isChild: Bool)] {
+        var rows: [(folder: SessionFolder, isChild: Bool)] = []
+        for root in folders.rootFolders {
+            rows.append((root, false))
+            for child in folders.children(of: root.slug) {
+                rows.append((child, true))
+            }
+        }
+        return rows
+    }
+
+    /// Folders flattened for the chip row in hierarchy order: each root
+    /// followed by its children. Notes excluded (own tab).
+    private var chipRows: [(folder: SessionFolder, isChild: Bool)] {
+        var rows: [(folder: SessionFolder, isChild: Bool)] = []
+        for root in folders.rootFolders where root.slug != SessionFolder.notes.slug {
+            rows.append((root, false))
+            for child in folders.children(of: root.slug) {
+                rows.append((child, true))
+            }
+        }
+        return rows
+    }
+
     /// Horizontally-scrollable folder chips above the session list.
     /// "All" + each folder; counts are live per-folder.
     private var folderChips: some View {
@@ -515,15 +588,23 @@ struct LibraryView: View {
             HStack(spacing: 6) {
                 FolderChip(
                     label: String(localized: "All"),
-                    count: store.sessions.count,
+                    count: scopedSessions.count,
                     isActive: folderFilter == nil
                 ) {
                     folderFilter = nil
                 }
-                ForEach(folders.allFolders) { f in
-                    let count = store.sessions.filter { $0.folderSlug == f.slug }.count
+                // Project hierarchy, flattened for the horizontal chip
+                // row: each root, immediately followed by its child
+                // folders (prefixed "↳"). A parent's count aggregates its
+                // children (matches what selecting it shows); a leaf
+                // counts only itself. Notes has its own top-level tab, so
+                // it's dropped from the Library chips.
+                ForEach(chipRows, id: \.folder.slug) { row in
+                    let f = row.folder
+                    let scope = row.isChild ? [f.slug] : folders.slugScope(for: f)
+                    let count = scopedSessions.filter { scope.contains($0.folderSlug) }.count
                     FolderChip(
-                        label: f.name,
+                        label: row.isChild ? "↳ \(f.name)" : f.name,
                         count: count,
                         isActive: folderFilter?.slug == f.slug
                     ) {
@@ -571,10 +652,14 @@ private struct SessionRow: View {
                         .foregroundStyle(.tertiary)
                     Text(session.tag)
                         .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.daisyAccent)
+                        .foregroundStyle(Color.daisyTextSecondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.daisyAccent.opacity(0.10), in: Capsule())
+                        .background(Color.daisySelectionBackground, in: Capsule())
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(Color.daisySelectionBorder, lineWidth: 0.5)
+                        )
                 }
                 Spacer()
             }
@@ -644,21 +729,23 @@ private struct FolderChip: View {
                 if count > 0 {
                     Text("\(count)")
                         .font(.caption2.weight(.medium))
-                        .foregroundStyle(isActive ? Color.daisyTextOnAccent.opacity(0.75) : Color.daisyTextTertiary)
+                        .foregroundStyle(isActive ? Color.daisyTextSecondary : Color.daisyTextTertiary)
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(
                 Capsule()
-                    .fill(isActive ? Color.daisyAccent : Color.daisyBgSidebar.opacity(0.6))
+                    .fill(isActive ? Color.daisySelectionBackground : Color.daisyBgElevated)
             )
             .overlay(
                 Capsule()
-                    .strokeBorder(isActive ? Color.clear : Color.daisyDivider, lineWidth: 0.5)
+                    .strokeBorder(
+                        isActive ? Color.daisySelectionBorder : Color.daisyDivider,
+                        lineWidth: isActive ? 1 : 0.5
+                    )
             )
-            // Ink-on-accent: white on the amber active fill was ≈2:1.
-            .foregroundStyle(isActive ? Color.daisyTextOnAccent : Color.daisyTextPrimary)
+            .foregroundStyle(Color.daisyTextPrimary)
         }
         .buttonStyle(.plain)
     }

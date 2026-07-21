@@ -25,8 +25,25 @@ import Observation
 /// change.
 struct SessionFolder: Identifiable, Hashable, Codable, Sendable {
     let name: String
+    /// Slug of this folder's PARENT project, or nil for a root folder.
+    /// One level only — a parent can't itself have a parent (enforced in
+    /// FolderStore.setParent). System folders (Inbox / Notes) are always
+    /// roots. Optional + synthesized `decodeIfPresent` means older stored
+    /// folders (no key) decode as nil — free migration.
+    var parentSlug: String? = nil
     var id: String { slug }
     var slug: String { name.lowercased() }
+
+    /// Identity is the slug ALONE — not the parent or the name casing. A
+    /// folder that gains/loses a parent is still the same folder, and
+    /// `SessionFolder.system.contains(_:)` / `folderFilter?.slug == f.slug`
+    /// comparisons must not be perturbed by the new field.
+    static func == (lhs: SessionFolder, rhs: SessionFolder) -> Bool {
+        lhs.slug == rhs.slug
+    }
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(slug)
+    }
 }
 
 extension SessionFolder {
@@ -125,9 +142,66 @@ final class FolderStore {
 
     /// Remove a folder. System folders (Inbox / Notes) can't be removed;
     /// seeded defaults (Private / Work / Calls) and user folders can.
+    /// Any children are orphaned to root (parentSlug → nil) rather than
+    /// deleted — their sessions and identity survive.
     func removeFolder(_ folder: SessionFolder) {
         guard !SessionFolder.system.contains(folder) else { return }
+        for idx in customFolders.indices where customFolders[idx].parentSlug == folder.slug {
+            customFolders[idx].parentSlug = nil
+        }
         customFolders.removeAll { $0.slug == folder.slug }
+    }
+
+    // MARK: - Hierarchy (one level: project → child folders)
+
+    /// Root-level folders (no parent) in display order: system folders
+    /// first, then custom roots. Children are reached via `children(of:)`.
+    var rootFolders: [SessionFolder] {
+        SessionFolder.system + customFolders.filter { $0.parentSlug == nil }
+    }
+
+    /// Direct children of a parent project, in stored order.
+    func children(of parentSlug: String) -> [SessionFolder] {
+        customFolders.filter { $0.parentSlug == parentSlug.lowercased() }
+    }
+
+    /// True when this folder has at least one child — i.e. it's acting
+    /// as a project parent.
+    func isParent(_ folder: SessionFolder) -> Bool {
+        customFolders.contains { $0.parentSlug == folder.slug }
+    }
+
+    /// The folder's own slug PLUS every child's slug. Used by the Library
+    /// filter so selecting a project shows the records of all its folders.
+    func slugScope(for folder: SessionFolder) -> Set<String> {
+        var scope: Set<String> = [folder.slug]
+        scope.formUnion(children(of: folder.slug).map(\.slug))
+        return scope
+    }
+
+    /// Assign (or clear, with nil) a folder's parent project. Enforces
+    /// the one-level rule and blocks system folders on both ends. No-op
+    /// on any violation so the model can never reach an illegal shape:
+    ///   • system folders (Inbox / Notes) are never children or parents;
+    ///   • a folder that already has children can't become a child
+    ///     (would create a 3rd level);
+    ///   • the chosen parent can't itself be a child (same reason);
+    ///   • no self-parenting.
+    func setParent(_ folder: SessionFolder, to newParentSlug: String?) {
+        guard !SessionFolder.system.contains(folder),
+              let idx = customFolders.firstIndex(where: { $0.slug == folder.slug })
+        else { return }
+
+        guard let newParentSlug = newParentSlug?.lowercased() else {
+            customFolders[idx].parentSlug = nil   // detach to root
+            return
+        }
+        guard newParentSlug != folder.slug,
+              !isParent(folder),                                   // folder has no children
+              let parent = customFolders.first(where: { $0.slug == newParentSlug }),
+              parent.parentSlug == nil                             // parent is itself a root
+        else { return }
+        customFolders[idx].parentSlug = newParentSlug
     }
 
     /// Resolve a stored slug to a LIVE folder without auto-creating one
