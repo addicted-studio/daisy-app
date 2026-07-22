@@ -273,11 +273,19 @@ final class WhisperEngine {
 
         // Phase 2 — load CoreML model
         state = .loading(status: String(localized: "Initializing CoreML model…"))
+        // Wall-clock the load so cold (first ANE compile) vs warm
+        // relaunch is visible in the log report. A cold compile of
+        // large-v3 is tens of seconds; a warm relaunch (ANE cache hit)
+        // should be single-digit. A warm relaunch that stays slow means
+        // the OS aned cache is being evicted between runs — a different
+        // problem than this prewarm-doubling fix.
+        let loadStart = Date()
         do {
             let kit = try await Self.loadKit(folder: folder)
             self.kitBox = WhisperKitBox(kit)
             self.state = .ready
-            log.info("WhisperKit ready — model \(variant, privacy: .public)")
+            let loadSec = Date().timeIntervalSince(loadStart)
+            log.info("WhisperKit ready — model \(variant, privacy: .public) — CoreML load \(String(format: "%.1f", loadSec), privacy: .public)s")
         } catch {
             log.error("Whisper load failed: \(error.localizedDescription, privacy: .public)")
             state = .failed("Init failed: \(error.localizedDescription)")
@@ -514,9 +522,24 @@ final class WhisperEngine {
     /// Off-main CoreML init — heavy CPU/Neural Engine work. Stays off
     /// MainActor so it doesn't freeze the UI.
     nonisolated private static func loadKit(folder: URL) async throws -> WhisperKit {
+        // `prewarm: false` (was `true`). In WhisperKit, `prewarm` runs a
+        // SEPARATE `loadModels(prewarmMode: true)` pass BEFORE the real
+        // `loadModels()` — the 626 MB model is instantiated TWICE per
+        // launch. The ANE weight compilation that dominates a cold load
+        // happens inside `loadModels()` regardless of the flag
+        // (prewarmMode only changes timing bookkeeping + an early
+        // return), and `load: true` alone returns a fully specialized,
+        // transcribe-ready model. The old config therefore paid a whole
+        // extra model instantiation on EVERY launch for no benefit — in
+        // the 1.0.7.33 field log the "Prewarming models..." pass ate
+        // ~132 s of the 136 s startup wait, while the load that followed
+        // took 4 s (its ANE cache was warmed by that prewarm pass). We
+        // still warm the decoder off the critical path via
+        // `warmUpIfNeeded()` (Phase 4 in `performLoad`), so first-decode
+        // latency is unchanged.
         let config = WhisperKitConfig(
             modelFolder: folder.path,
-            prewarm: true,
+            prewarm: false,
             load: true,
             download: false
         )

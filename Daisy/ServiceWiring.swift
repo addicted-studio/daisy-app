@@ -15,6 +15,7 @@
 //  as services are added or their handler signatures change.
 //
 
+import EventKit
 import Foundation
 
 @MainActor
@@ -155,7 +156,26 @@ enum ServiceWiring {
         // Start the service if EITHER source is available — a
         // user might only have Google connected (no Internet
         // Accounts integration) and still want auto-start.
-        let hasEventKit = settings.calendarAccessGranted
+        // Read the LIVE EventKit status, NOT the persisted
+        // `settings.calendarAccessGranted` cache. That cache is only
+        // written when the grant happens THROUGH Daisy's own request
+        // flow (CalendarService.requestAccess -> authorizationStatus
+        // change -> CalendarServerWiring). When the OS already has
+        // Daisy granted at launch — a fresh UserDefaults after a
+        // reinstall / defaults migration, or a grant made directly in
+        // System Settings — the cache stays `false` and the reconciling
+        // onChange never fires (its trigger value is already
+        // .fullAccess and never changes), so the whole calendar goes
+        // dark on a stale `false`. SettingsView's calendar gate was
+        // moved to the live status for exactly this reason (see
+        // `hasAnyCalendarSource`); this fetch gate had been missed.
+        let liveStatus = EKEventStore.authorizationStatus(for: .event)
+        let hasEventKit = (liveStatus == .fullAccess)
+        // Keep the persisted cache reconciled so every other reader —
+        // and the MainView sync path — sees the true state.
+        if settings.calendarAccessGranted != hasEventKit {
+            settings.calendarAccessGranted = hasEventKit
+        }
         let hasGoogle = GoogleAccountStore.shared.isConnected
         guard hasEventKit || hasGoogle else {
             CalendarService.shared.stop()
