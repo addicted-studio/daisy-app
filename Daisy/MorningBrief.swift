@@ -45,14 +45,45 @@ final class MorningBriefStore {
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "MorningBrief")
     private static let generatedDayKeyKey = "daisy.morningBrief.generatedDay"
+    private static let cachedSummaryKey = "daisy.morningBrief.cachedSummary"
+    private static let cloudConsentKey = "daisy.morningBrief.cloudConsented"
 
     private init() {}
+
+    /// Once the user has generated a cloud-provider brief even once, treat
+    /// it as standing consent and auto-generate on later days — no daily
+    /// "Generate" tap. (Local providers never gate at all.) The first
+    /// cloud brief still needs one explicit tap, which sets this.
+    private var cloudBriefConsented: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.cloudConsentKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.cloudConsentKey) }
+    }
 
     /// Day key the current lede was generated for (persisted so an app
     /// relaunch the same morning doesn't spend a second LLM call).
     private var generatedDayKey: String? {
         get { UserDefaults.standard.string(forKey: Self.generatedDayKeyKey) }
         set { UserDefaults.standard.set(newValue, forKey: Self.generatedDayKeyKey) }
+    }
+
+    /// The lede generated for `generatedDayKey`, PERSISTED so relaunching
+    /// the same day restores it instead of re-running the LLM (local) or —
+    /// worse — dropping back to `.needsConsent` and forcing a second
+    /// "Generate" tap (cloud). Before this the day-key was saved but the
+    /// summary itself lived only in memory, so every relaunch looked
+    /// ungenerated. Cleared on regenerate; a new day's key sidesteps it.
+    private var cachedSummary: MeetingSummary? {
+        get {
+            guard let data = UserDefaults.standard.data(forKey: Self.cachedSummaryKey) else { return nil }
+            return try? JSONDecoder().decode(MeetingSummary.self, from: data)
+        }
+        set {
+            if let newValue, let data = try? JSONEncoder().encode(newValue) {
+                UserDefaults.standard.set(data, forKey: Self.cachedSummaryKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.cachedSummaryKey)
+            }
+        }
     }
 
     /// Idempotent daily prepare — call from the card's `.task`. Rebuilds
@@ -64,7 +95,14 @@ final class MorningBriefStore {
         ActionItemStore.shared.rebuild(from: SessionStore.shared.sessions)
 
         let today = UsageStats.dayKey(for: Date())
+        // Already have today's lede in memory — nothing to do.
         if !force, generatedDayKey == today, case .ready = ledeState { return }
+        // Relaunched the same day: restore the persisted lede instead of
+        // re-running the LLM (local) or re-prompting for consent (cloud).
+        if !force, generatedDayKey == today, let cached = cachedSummary {
+            ledeState = .ready(cached)
+            return
+        }
         if case .generating = ledeState { return }
 
         let events = Self.todaysEvents()
@@ -79,7 +117,7 @@ final class MorningBriefStore {
         // Effective-local (configured endpoint, not provider kind) —
         // remote-pointed MCP/Ollama must not auto-run. See Summarizer.
         let providerLocal = Summarizer.shared.providerIsEffectivelyLocal
-        if !providerLocal && !force {
+        if !providerLocal && !force && !cloudBriefConsented {
             ledeState = .needsConsent(Summarizer.shared.providerKind.shortName)
             return
         }
@@ -99,6 +137,9 @@ final class MorningBriefStore {
             )
             ledeState = .ready(summary)
             generatedDayKey = today
+            cachedSummary = summary
+            // First successful cloud brief = standing consent for later days.
+            if !providerLocal { cloudBriefConsented = true }
             log.info("Morning brief lede ready (\(events.count) meetings, \(openItems.count) open items)")
         } catch {
             ledeState = .unavailable
@@ -109,6 +150,7 @@ final class MorningBriefStore {
     /// Explicit tap — consent for a cloud provider / manual refresh.
     func regenerate(settings: AppSettings) async {
         generatedDayKey = nil
+        cachedSummary = nil
         ledeState = .idle
         await prepare(settings: settings, force: true)
     }

@@ -33,21 +33,17 @@ struct DictationView: View {
     @Bindable private var history = DictationHistory.shared
 
     var body: some View {
-        // Native TabView (.tabItem chrome) to match Settings — replaced
-        // the `.segmented` Picker 2026-06-24. `selection:` keeps the
-        // active tab stable across redraws and lets external surfaces
-        // deep-link if ever needed.
-        TabView(selection: $tab) {
-            vocabularyTab
-                .tag(Tab.vocabulary)
-                .tabItem { Label("Vocabulary", systemImage: "character.book.closed") }
-                .scrollContentBackground(.hidden)
-
-            historyTab
-                .tag(Tab.history)
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-                .scrollContentBackground(.hidden)
+        // Custom text-only Liquid-Glass tab strip in the window toolbar
+        // (ToolbarItem .principal below), replacing the native TabView
+        // whose per-cell padding is system-locked. `selection:` keeps the
+        // active tab stable and lets external surfaces deep-link.
+        Group {
+            switch tab {
+            case .vocabulary: vocabularyTab
+            case .history:    historyTab
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.daisyBgPrimary)
         .sheet(isPresented: $showingAddWord) {
             AddVocabularyView()
@@ -56,6 +52,16 @@ struct DictationView: View {
             BulkImportVocabularyView()
         }
         .toolbar {
+            // Text-only glass tab strip, centered at toolbar level.
+            ToolbarItem(placement: .principal) {
+                GlassSegmentedControl(
+                    selection: $tab,
+                    segments: [
+                        .init(value: .vocabulary, title: String(localized: "Vocabulary")),
+                        .init(value: .history, title: String(localized: "History")),
+                    ]
+                )
+            }
             // Bulk import — vocabulary tab only (nothing to import into
             // History). Sits left of "Add word".
             if tab == .vocabulary {
@@ -90,10 +96,6 @@ struct DictationView: View {
         Form {
             Section {
                 DictationDictionaryView()
-            } footer: {
-                Text("Fixed before pasting — names, brands, jargon.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)
@@ -112,10 +114,6 @@ struct DictationView: View {
                         clearHistoryButton
                     }
                 }
-            } footer: {
-                Text("Last 24 hours. Click to copy.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)

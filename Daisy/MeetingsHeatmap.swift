@@ -59,20 +59,19 @@ struct MeetingsHeatmap: View {
     private func legend(max: Int) -> some View {
         HStack(spacing: 6) {
             Text("Less")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             ForEach(0..<5) { level in
                 RoundedRectangle(cornerRadius: 2)
                     .fill(legendColor(level))
                     .frame(width: cell, height: cell)
             }
             Text("More")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
             Spacer()
             Text(summaryLabel(max: max))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .daisyStatLabel()
         }
     }
 

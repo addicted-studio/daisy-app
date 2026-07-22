@@ -27,7 +27,9 @@ final class RecordingSession {
     ///
     ///   - `.voiceNote` — quick personal capture. Mic only (no
     ///     system audio, no remote participants), NO LLM summary
-    ///     (just the transcript), folder forced to `.notes`.
+    ///     (just the transcript). Persisted with `daisy_kind: note`
+    ///     (SessionKind) so it surfaces in the Notes tab regardless of
+    ///     which project it lives in; defaults to Inbox like any capture.
     ///     Useful for "remember this before I forget" moments.
     ///
     ///   - `.dictation` — Wispr-Flow-lite. Mic only, no summary,
@@ -205,10 +207,12 @@ final class RecordingSession {
 
     /// A wall-clock span the user marked as a side note WHILE a meeting
     /// was recording, via the voice-note hotkey. On finalize the meeting
-    /// transcript segments inside each span are CUT from the meeting and
-    /// written as their own note session in the Notes folder — the same
-    /// voice-note affordance, but layered over the meeting instead of
-    /// blocked by it (approach "b", 2026-07-21). Meeting-mode only.
+    /// segments overlapping each span are COPIED (never cut) into their
+    /// own note session in the Notes folder, together with a matching
+    /// audio excerpt (mic + system, mixed) sliced from the meeting's own
+    /// archive — i.e. the note is a clip of the meeting, snapped to the
+    /// covered transcript-segment boundaries. The meeting itself stays
+    /// whole. ("excerpt" model, 2026-07-21.) Meeting-mode only.
     struct SideNoteWindow: Sendable, Equatable {
         let start: Date
         var end: Date?
@@ -222,9 +226,8 @@ final class RecordingSession {
     }
 
     /// Whether a wall-clock instant falls inside any side-note window
-    /// (an open window extends to now). `MarkdownExporter` uses it to
-    /// keep note speech OUT of the meeting transcript; finalize uses it
-    /// to gather that speech INTO the note.
+    /// (an open window extends to now). Finalize uses it to gather the
+    /// meeting segments that belong to each note excerpt.
     func isInSideNoteWindow(_ date: Date) -> Bool {
         sideNoteWindows.contains { w in
             date >= w.start && (w.end.map { date <= $0 } ?? true)
@@ -234,12 +237,16 @@ final class RecordingSession {
     /// Toggle side-note capture from the voice-note hotkey during a
     /// meeting: first press opens a window, second closes it. No-op
     /// outside an active meeting (the hotkey keeps its normal meaning
-    /// when idle or in a standalone voice-note session).
+    /// when idle or in a standalone voice-note session). Just drops
+    /// wall-clock markers — the audio/text excerpt is sliced from the
+    /// meeting's own recording on finalize, so nothing extra is captured
+    /// live and the meeting recording is never touched.
     func toggleSideNoteCapture() {
         guard currentMode == .meeting,
               status == .recording || status == .paused else { return }
         if isCapturingSideNote {
-            sideNoteWindows[sideNoteWindows.count - 1].end = Date()
+            let idx = sideNoteWindows.count - 1
+            sideNoteWindows[idx].end = Date()
             ToastCenter.shared.show(
                 String(localized: "Side note saved — it'll be split out when you stop."),
                 style: .success
@@ -247,7 +254,7 @@ final class RecordingSession {
         } else {
             sideNoteWindows.append(SideNoteWindow(start: Date(), end: nil))
             ToastCenter.shared.show(
-                String(localized: "Recording a side note… press the voice-note key again to end it."),
+                String(localized: "Marking a side note… press the voice-note key again to end it."),
                 style: .info
             )
         }
@@ -518,6 +525,16 @@ final class RecordingSession {
     /// to the original Daisy meeting flow unless a mode-specific
     /// hotkey set `pendingMode` first.
     private(set) var currentMode: RecordingMode = .meeting
+
+    /// How this session persists in the Library taxonomy: a `.voiceNote`
+    /// is a NOTE, everything else (meetings) is a RECORDING. Stamped into
+    /// transcript frontmatter as `daisy_kind:` (see MarkdownExporter) so
+    /// the Library/Notes tabs can split by kind rather than by folder.
+    /// `.dictation` never persists a StoredSession, so its mapping here is
+    /// irrelevant (it falls in the `.recording` default, unused).
+    var sessionKind: SessionKind {
+        currentMode == .voiceNote ? .note : .recording
+    }
 
     /// Mode the next `start()` should adopt. Set by mode-specific
     /// entry points (`toggleVoiceNoteByHotkey`, etc.) right before
@@ -948,15 +965,14 @@ final class RecordingSession {
             currentMode = .meeting
         }
 
-        // Voice notes auto-file into the Notes folder. Only override
-        // when `folder` is still the default Inbox — if the user
-        // explicitly picked another folder via UI (or a calendar
-        // hint dropped them into Work / Calls), respect that.
-        // Dictation sessions are ephemeral (no History entry) so
-        // the folder value is irrelevant for them.
-        if currentMode == .voiceNote && folder == .inbox {
-            folder = .notes
-        }
+        // Voice notes are no longer FORCED into the Notes folder: a note
+        // is now identified by `daisy_kind: note` (RecordingSession.
+        // sessionKind, written by MarkdownExporter) and can live in any
+        // project just like a recording. A fresh voice note therefore
+        // stays in the default Inbox (or whatever folder a UI pick /
+        // calendar hint chose), and the Notes tab finds it by kind, not
+        // by folder. Dictation sessions are ephemeral (no History entry),
+        // so their folder value is irrelevant either way.
 
         // Apply mode-specific transcription locale override, falling
         // back to the meeting default. Empty string in the override
@@ -1375,8 +1391,8 @@ final class RecordingSession {
         // double final pass, double summary, duplicate auto-send.
         let wasPaused = (status == .paused)
         status = .stopping
-        // Close any still-open side-note window so its speech is captured
-        // up to Stop rather than being lost.
+        // Close any still-open side-note window so its excerpt ends at
+        // Stop rather than being dropped.
         if isCapturingSideNote {
             sideNoteWindows[sideNoteWindows.count - 1].end = Date()
         }
@@ -1683,7 +1699,7 @@ final class RecordingSession {
             // Split any side notes captured during the meeting into their
             // own Notes sessions. Best-effort and after the meeting's
             // transcript is safely on disk — never blocks the save.
-            if !sideNoteWindows.isEmpty { writeSideNotes() }
+            if !sideNoteWindows.isEmpty { await writeSideNotes() }
         }
 
         // Local usage stats for meetings / voice notes (same widgets as

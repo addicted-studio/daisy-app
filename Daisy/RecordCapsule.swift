@@ -12,7 +12,8 @@
 //  States:
 //   • idle / finished / failed → accent-tinted capsule, "Record"
 //   • recording                → orange capsule, "Stop · 01:23"
-//   • preparing/stopping/sum.  → dimmed capsule with hourglass
+//   • preparing/stopping       → dimmed capsule with hourglass
+//   • summarizing              → dimmed capsule with sparkles
 //
 
 import SwiftUI
@@ -127,7 +128,10 @@ struct RecordCapsule: View {
         switch session.status {
         case .recording:                              return "pause.fill"
         case .paused:                                  return "play.fill"
-        case .preparing, .stopping, .summarizing:     return "hourglass"
+        // Summarizing = sparkles (the AI step), matching the popover
+        // record button; preparing/stopping stay the neutral hourglass.
+        case .summarizing:                             return "sparkles"
+        case .preparing, .stopping:                    return "hourglass"
         default:                                       return "record.circle"
         }
     }
@@ -166,14 +170,8 @@ struct RecordCapsule: View {
         }
     }
 
-    private var foreground: Color {
-        switch session.status {
-        case .recording, .preparing, .stopping,
-             .summarizing, .failed, .paused:          return .white
-        // Charcoal, live, paused, and transitional fills all use white ink.
-        default:                                       return .white
-        }
-    }
+    /// Every capsule fill state uses white ink, including charcoal idle.
+    private var foreground: Color { .white }
 
     private var stroke: Color {
         Color.white.opacity(0.12)

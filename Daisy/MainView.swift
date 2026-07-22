@@ -193,94 +193,25 @@ struct MainView: View {
     /// to derive a local flipped state and write through on
     /// dismiss inside `FirstRunView`.
     @State private var showFirstRun: Bool = false
+    /// Shared Library selection state, hoisted out of the (now split)
+    /// list + detail columns so both can read/write one selection. Owned
+    /// here — ABOVE the shell-arity branch — so each tab's selection,
+    /// query and filters survive the split's remount when the user
+    /// navigates away and back. One model per scope keeps Library and
+    /// Notes independent, mirroring the pre-refactor per-tab `@State`.
+    @State private var libraryModel = LibraryModel(scope: .all)
+    @State private var notesModel = LibraryModel(scope: .notes)
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            sidebar
-                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
-        } detail: {
-            detail
-                // Keep the product accent inside the content pane. The split
-                // view itself uses a neutral tint for native sidebar selection.
-                .tint(Color.daisyAccent)
-        }
-        // Brand pill goes into `.principal` placement — that lives
-        // over the detail pane centre, NOT over the sidebar's
-        // leading zone. The previous `.navigation` placement was
-        // physically occupying the slot where macOS would otherwise
-        // extend the sidebar's frosted material up to the window's
-        // top edge.
-        //
-        // Empty navigation title suppresses the system-rendered
-        // "Daisy" text that would otherwise show on the leading
-        // edge alongside our principal pill — we already provide
-        // the title via the pill itself.
-        .navigationTitle("")
-        // 2026-05-27 — remove SwiftUI's auto-generated sidebar toggle
-        // from the toolbar. Apple bug on macOS 26.2: the toggle is
-        // backed by `NSSegmentedCell`, and during layout / mouseDown
-        // processing the bridge runs `swift_task_isCurrentExecutor`
-        // → `swift_getObjectType` → `objc_msgSend` on a deallocated
-        // class metadata pointer (use-after-free in the Swift
-        // concurrency↔AppKit bridge). Reproduces on 1.0.7.3 / 26.2
-        // (25C56) every time the user starts a recording (via
-        // hotkey AND main-window button). Same UAF family as the
-        // documented 26.0.1 SwiftUI Button crash, now in
-        // SystemSegmentedControl. Hiding the toggle means SwiftUI
-        // doesn't materialize the NSSegmentedCell, so the buggy
-        // code path can't execute. Trade-off: user loses the
-        // 1-click sidebar collapse from the toolbar; they can
-        // still drag the divider, and Daisy's sidebar is
-        // permanently informative (Home / Library / Connections /
-        // Settings / About) so collapsing it wasn't a primary use
-        // case anyway.
-        .toolbar(removing: .sidebarToggle)
-        .toolbar {
-            // Leading placement on the detail-pane toolbar (right
-            // after the sidebar's right edge). Native macOS apps
-            // like Notes / Finder put back/forward buttons here.
-            // Previously this caused sidebar-to-top breakage — but
-            // that was driven by `.toolbarBackground(.visible)`,
-            // which is now removed. With the AppKit title-bar
-            // transparency in DaisyAppDelegate, leading-placement
-            // items don't push sidebar down.
-            ToolbarItem(placement: .navigation) {
-                HStack(spacing: 7) {
-                    DaisyMark(size: 14, tint: .primary)
-                    Text("Daisy")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                }
-                // Inner padding sits inside the auto-fitted Liquid
-                // Glass brand pill — bumped from 6 → 12 so the
-                // mark + wordmark have room from the pill's left
-                // and right edges instead of hugging them.
-                .padding(.horizontal, 12)
-            }
-        }
-        // `.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)`
-        // (NOT `.visible` — `.visible` paints a solid bar that
-        // breaks sidebar-to-top). `.hidden` tells macOS 26 NOT to
-        // composite its Liquid Glass material under the toolbar,
-        // which is what was leaving white strips around toolbar
-        // items + in the fullscreen aux-toolbar window. Window's
-        // own `backgroundColor` (cream, set in DaisyAppDelegate)
-        // then shows through cleanly.
-        .daisyWindowToolbarHidden()
-        .frame(minWidth: 860, minHeight: 560)
-        // Warm ivory window background — matches mydaisy.io and
-        // defeats macOS's default cool-gray windowBackgroundColor.
-        // `containerBackground(_:for: .window)` (macOS 14+) tints the
-        // window's content area; sidebar's frosted material still
-        // composes on top of this, which gives a coherent warm tone
-        // throughout. Recording orange + cinnamon accents land much
-        // better on this base than on system gray.
-        .daisyWindowBackground(Color.daisyBgPrimary)
-        // `List(.sidebar)` takes its native selection colour from the
-        // NavigationSplitView owner, not from a tint applied to the inner
-        // List. A pale neutral tint keeps that system highlight gray.
-        .tint(Color.daisySidebarSelection)
-        .modifier(ToastOverlay())
+        // The shell arity branches per section (see `splitShell`).
+        // Window / toolbar chrome that must attach to the
+        // NavigationSplitView itself lives in `MainWindowChrome`, applied
+        // inside each branch. The app-lifecycle modifiers below (first-run
+        // sheet, sidebar-selection sync, reactive service re-wiring) sit
+        // out HERE on the stable body so they survive the split subtree's
+        // remount when the user enters / leaves Library or Notes.
+        splitShell
+            .modifier(ToastOverlay())
         // First-run sheet — fired once via .onAppear (not on every
         // view re-render). After dismiss, `FirstRunView` flips
         // `settings.hasShownFirstRun = true` so the sheet doesn't
@@ -314,6 +245,77 @@ struct MainView: View {
         .modifier(HotkeyStopWiring(settings: settings, session: session))
         .modifier(AutoStartWiring(settings: settings, session: session))
         .modifier(CalendarServerWiring(settings: settings, session: session))
+    }
+
+    // MARK: Shell arity
+
+    /// Library and Notes render as a GENUINE three-column split so the
+    /// window's Liquid Glass toolbar breaks into column-aligned sections
+    /// (Daisy pill over the sidebar, Tags pill over the list, the detail
+    /// action pills over the detail). Every other section keeps the
+    /// original TWO-column split (a full-width page in the detail column,
+    /// no dead middle band — `NavigationSplitViewVisibility` has no
+    /// "hide the middle column only" state, which is exactly why a
+    /// single always-3-column shell can't work for the full-width pages).
+    ///
+    /// The two branches use different `NavigationSplitView` initializers,
+    /// so switching between them remounts the split subtree. That's
+    /// acceptable: it only happens on a section navigation, and the state
+    /// that must survive (sidebar selection + the two Library models) is
+    /// owned by MainView, above the branch.
+    @ViewBuilder
+    private var splitShell: some View {
+        if nav.section == .library || nav.section == .notes {
+            threeColumnSplit
+        } else {
+            twoColumnSplit
+        }
+    }
+
+    /// Full-width sections (Home / Dictation / Voice / Connections /
+    /// Settings / About). Unchanged from the pre-refactor shell: a
+    /// sidebar and a single detail column.
+    private var twoColumnSplit: some View {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+        } detail: {
+            detail
+                // Keep the product accent inside the content pane. The split
+                // view itself uses a neutral tint for native sidebar selection.
+                .tint(Color.daisyAccent)
+        }
+        .modifier(MainWindowChrome())
+    }
+
+    /// Library / Notes: [sidebar] | [session list] | [session detail].
+    /// The list is the CONTENT column so its toolbar items (Tags pill)
+    /// land in the list region of the window toolbar; the detail column
+    /// carries `SessionDetailView` and its trailing action pills in the
+    /// detail region. `.id(nav.section)` gives Library and Notes distinct
+    /// identities so switching between the two cleanly re-runs the list
+    /// column's default-selection / deep-link `onAppear` — the shared
+    /// models, owned above, still persist each tab's selection.
+    private var threeColumnSplit: some View {
+        let model = (nav.section == .notes) ? notesModel : libraryModel
+        return NavigationSplitView(columnVisibility: $columnVisibility) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+        } content: {
+            LibraryListColumn(model: model)
+                // Fixed width (single value) → the list/detail divider is
+                // not draggable; the centre column stays put (Egor).
+                .navigationSplitViewColumnWidth(320)
+                .id(nav.section)
+        } detail: {
+            LibraryDetailColumn(model: model)
+                // Sane minimum so the transcript pane isn't over-wide at
+                // its floor; flexes to fill the remaining window width.
+                .navigationSplitViewColumnWidth(min: 420, ideal: 640)
+                .tint(Color.daisyAccent)
+                .id(nav.section)
+        }
+        .modifier(MainWindowChrome())
     }
 
     // MARK: Sidebar
@@ -470,6 +472,64 @@ struct MainView: View {
         case .about:
             AboutView()
         }
+    }
+}
+
+// MARK: - Main window chrome
+
+/// Window- and toolbar-level chrome shared by both shell branches
+/// (`twoColumnSplit` / `threeColumnSplit`). Bundled into a ViewModifier
+/// so it's declared once but applied DIRECTLY to each `NavigationSplitView`:
+/// a `.toolbar` must attach to the split view itself to populate the
+/// window toolbar, so this can't move above the shell-arity branch.
+private struct MainWindowChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            // Brand pill goes into `.navigation` placement — the leading
+            // zone of the window toolbar (over the sidebar). Empty
+            // navigation title suppresses the system-rendered "Daisy"
+            // text that would otherwise show alongside our pill.
+            .navigationTitle("")
+            // 2026-05-27 — remove SwiftUI's auto-generated sidebar toggle.
+            // Apple macOS-26 UAF: the toggle's backing `NSSegmentedCell`
+            // dereferences deallocated class metadata during layout /
+            // mouseDown (same Swift-concurrency↔AppKit bridge UAF family
+            // as the documented 26.0.1 Button crash), reproducing every
+            // time a recording starts on 1.0.7.3 / 26.2. Hiding the
+            // toggle means SwiftUI never materializes the buggy cell.
+            .toolbar(removing: .sidebarToggle)
+            .toolbar {
+                // Leading placement — native macOS apps put back/forward
+                // here. With the AppKit title-bar transparency in
+                // DaisyAppDelegate + the hidden toolbar background below,
+                // leading-placement items don't push the sidebar down.
+                ToolbarItem(placement: .navigation) {
+                    // Wordmark only — the DaisyMark glyph was dropped here
+                    // (Egor, 2026-07-21) so the brand pill is just the name.
+                    Text("Daisy")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        // Inner padding sits inside the auto-fitted Liquid
+                        // Glass brand pill so the wordmark has room from the
+                        // pill's left and right edges instead of hugging them.
+                        .padding(.horizontal, 12)
+                }
+            }
+            // `.hidden` (NOT `.visible` — `.visible` paints a solid bar
+            // that breaks sidebar-to-top). `.hidden` tells macOS 26 not to
+            // composite its Liquid Glass material under the toolbar, which
+            // was leaving white strips around toolbar items; the window's
+            // own cream `backgroundColor` (DaisyAppDelegate) shows through.
+            .daisyWindowToolbarHidden()
+            .frame(minWidth: 860, minHeight: 560)
+            // Warm ivory window background — matches mydaisy.io and defeats
+            // macOS's default cool-gray windowBackgroundColor. Sidebar's
+            // frosted material still composes on top of this warm base.
+            .daisyWindowBackground(Color.daisyBgPrimary)
+            // `List(.sidebar)` takes its native selection colour from the
+            // NavigationSplitView owner, not from a tint on the inner List.
+            // A pale neutral tint keeps that system highlight gray.
+            .tint(Color.daisySidebarSelection)
     }
 }
 

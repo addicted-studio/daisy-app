@@ -23,7 +23,7 @@ import Observation
 /// frontmatter persistence and equality. Using a struct instead of an
 /// enum lets users add custom folders without us shipping a code
 /// change.
-struct SessionFolder: Identifiable, Hashable, Codable, Sendable {
+nonisolated struct SessionFolder: Identifiable, Hashable, Codable, Sendable {
     let name: String
     /// Slug of this folder's PARENT project, or nil for a root folder.
     /// One level only — a parent can't itself have a parent (enforced in
@@ -47,20 +47,27 @@ struct SessionFolder: Identifiable, Hashable, Codable, Sendable {
 }
 
 extension SessionFolder {
-    static let inbox   = SessionFolder(name: "Inbox")
-    static let notes   = SessionFolder(name: "Notes")
-    static let private_ = SessionFolder(name: "Private")
-    static let work    = SessionFolder(name: "Work")
-    static let calls   = SessionFolder(name: "Calls")
+    nonisolated static let inbox   = SessionFolder(name: "Inbox")
+    nonisolated static let notes   = SessionFolder(name: "Notes")
+    nonisolated static let private_ = SessionFolder(name: "Private")
+    nonisolated static let work    = SessionFolder(name: "Work")
+    nonisolated static let calls   = SessionFolder(name: "Calls")
 
     /// System folders — ALWAYS present, never editable or removable.
-    /// Both are structurally load-bearing: `inbox` is the fallback for
-    /// unknown/cleared slugs AND the destination when a custom folder is
-    /// deleted; `notes` is the forced target for voice-note / dictation
-    /// recordings (see RecordingSession). `Notes` was added 2026-05-18 —
-    /// Daisy doubles as a voice-memo recorder, and a permanent folder
-    /// surfaces that use case in the sidebar.
-    static let system: [SessionFolder] = [.inbox, .notes]
+    /// `inbox` is the fallback for unknown/cleared slugs AND the
+    /// destination when a custom folder is deleted; it's also the default
+    /// project for new notes and recordings alike.
+    ///
+    /// `notes` is RETAINED as a permanent folder but is no longer special
+    /// for identity: notes vs recordings are now distinguished by
+    /// `StoredSession.kind` / `daisy_kind:` (see SessionKind), not by
+    /// living here. It's kept in `system` only so that the pre-split notes
+    /// that DO carry `daisy_folder: notes` still resolve to a real,
+    /// named, undeletable folder (labels, move targets, counts) — removing
+    /// it would strand those slugs / auto-create a stray custom folder.
+    /// New notes default to Inbox; this folder is a legacy home + an
+    /// optional manual destination.
+    nonisolated static let system: [SessionFolder] = [.inbox, .notes]
 
     /// Default buckets SEEDED once into the user's editable folder list
     /// (see `FolderStore.seedDefaultFoldersIfNeeded`). They're present
@@ -69,10 +76,10 @@ extension SessionFolder {
     /// folder (Egor 2026-06-20, was hardcoded built-in). `.work` is still
     /// a routing default in RecordingSession; that constant stays valid
     /// even if the user removes the folder.
-    static let seededDefaults: [SessionFolder] = [.private_, .work, .calls]
+    nonisolated static let seededDefaults: [SessionFolder] = [.private_, .work, .calls]
 
     /// Everything that exists on a fresh install (system + seeded).
-    static let builtIn: [SessionFolder] = system + seededDefaults
+    nonisolated static let builtIn: [SessionFolder] = system + seededDefaults
 }
 
 // MARK: - Store

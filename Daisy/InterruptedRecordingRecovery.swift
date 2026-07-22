@@ -184,6 +184,10 @@ final class InterruptedRecordingRecovery {
         lines.append("title: \"Recovered recording — \(titleDate)\"")
         lines.append("started: \(iso.string(from: startDate))")
         lines.append("daisy_recovered: true")
+        // A recovered interrupted session is a full recording, never a
+        // note — stamp it so it lands in the Library tab (matches the
+        // legacy inference: recoveries have never used the Notes folder).
+        lines.append("daisy_kind: \(SessionKind.recording.rawValue)")
         lines.append("duration_sec: \(Int(durationSec.rounded()))")
         if let slug = UserDefaults.standard.string(forKey: "daisy.defaultMeetingFolderSlug"), !slug.isEmpty {
             lines.append("daisy_folder: \(slug)")

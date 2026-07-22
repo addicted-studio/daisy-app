@@ -23,9 +23,17 @@ struct VoiceImportView: View {
         var id: String { rawValue }
     }
 
-    @State private var mode: Mode = .samples
-    @State private var text = ""
+    @State private var mode: Mode
+    @State private var text: String
     @State private var showingFileImporter = false
+
+    /// `initialText` pre-fills the editor (e.g. the current profile's style
+    /// instruction, for editing/replacing); `startInStylePrompt` opens
+    /// straight in the "Style prompt" tab. Both default to fresh-import.
+    init(initialText: String = "", startInStylePrompt: Bool = false) {
+        _text = State(initialValue: initialText)
+        _mode = State(initialValue: startInStylePrompt ? .instruction : .samples)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
