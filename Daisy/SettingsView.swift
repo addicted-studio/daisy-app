@@ -1808,12 +1808,30 @@ struct SettingsView: View {
             summaryTestPreviewSection
 
             Section {
+                // With Apple Intelligence the list shrinks to languages the
+                // on-device model can actually WRITE (asking for e.g.
+                // Russian silently yields English). The stored choice stays
+                // listed even if unsupported — so the picker never shows a
+                // blank value — with an explicit warning underneath.
+                let aiProvider = summarizer.providerKind == .appleIntelligence
                 Picker("Summary language", selection: $settings.summaryLanguage) {
-                    ForEach(SummaryLanguage.allCases) { lang in
+                    ForEach(SummaryLanguage.allCases.filter {
+                        !aiProvider
+                            || $0.supportedByAppleIntelligence
+                            || $0.id == settings.summaryLanguage
+                    }) { lang in
                         Text(lang.displayName).tag(lang.id)
                     }
                 }
                 .pickerStyle(.menu)
+                if aiProvider,
+                   let lang = SummaryLanguage(rawValue: settings.summaryLanguage),
+                   !lang.supportedByAppleIntelligence {
+                    Text("Apple Intelligence can't write summaries in \(lang.displayName) — they'll come out in English. Pick a supported language or switch to a cloud provider.")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyWarning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Toggle(isOn: $settings.autoSummarize) {
                     Text("Summarize when recording stops")
