@@ -46,6 +46,12 @@ struct DaisyApp: App {
         // the user flips the relevant setting. Centralised in
         // `ServiceWiring` so both call sites can't drift apart.
         ServiceWiring.applyAll(settings: s, session: sess)
+
+        // Light the sidebar "update available" badge shortly after launch
+        // instead of waiting for Sparkle's next scheduled automatic check.
+        // Silent (no UI); self-guards on the auto-check preference + a 1h
+        // throttle so rapid relaunches don't re-poll the appcast.
+        SparkleUpdater.shared.refreshAvailableUpdateSilently()
     }
 
     var body: some Scene {

@@ -34,6 +34,19 @@
 import Foundation
 import SwiftUI
 
+/// A pending update Daisy has been told about by Sparkle but that the
+/// user hasn't installed yet. Drives the quiet "Обновиться" affordance in
+/// the sidebar (a non-modal complement to Sparkle's own prompt — it stays
+/// put after "Remind Me Later"). Cleared when a check finds nothing (also
+/// covers the user "Skip"-ing a version, and the relaunch into the new
+/// build where the appcast no longer offers it).
+struct AvailableUpdate: Equatable, Sendable {
+    /// Marketing version, e.g. "1.0.7.35" (SUAppcastItem.displayVersionString).
+    let shortVersion: String
+    /// CFBundleVersion / build, e.g. "79" (SUAppcastItem.versionString).
+    let build: String
+}
+
 #if canImport(Sparkle)
 import Sparkle
 
@@ -65,6 +78,14 @@ final class SparkleUpdater {
         get { UserDefaults.standard.bool(forKey: "daisy.updates.betaChannel") }
         set { UserDefaults.standard.set(newValue, forKey: "daisy.updates.betaChannel") }
     }
+
+    /// The update Sparkle most recently found and hasn't installed yet, or
+    /// nil when the app is up to date. Set by `DaisyUpdaterDelegate` on the
+    /// `didFindValidUpdate` / `updaterDidNotFindUpdate` callbacks (which fire
+    /// on BOTH automatic and manual checks), so any SwiftUI surface can bind
+    /// to it for a quiet "update available" badge. `fileprivate(set)` so the
+    /// delegate in this file can write it while callers stay read-only.
+    fileprivate(set) var availableUpdate: AvailableUpdate?
 
     /// Mirrored from `updater.automaticallyChecksForUpdates` so SwiftUI
     /// can observe the toggle and re-render the Settings row when
@@ -106,6 +127,25 @@ final class SparkleUpdater {
     func checkForUpdates() {
         controller.checkForUpdates(nil)
     }
+
+    /// SILENT background update check — NO UI, even when an update is found.
+    /// Unlike `checkForUpdates()` (which drives Sparkle's visible progress +
+    /// prompt), `checkForUpdateInformation()` just fetches the appcast and
+    /// fires the delegate's `didFindValidUpdate` / `updaterDidNotFindUpdate`
+    /// callbacks — which is exactly what populates `availableUpdate`. Called
+    /// once at launch so the sidebar badge lights up shortly after start
+    /// instead of waiting for Sparkle's next SCHEDULED automatic check.
+    ///
+    /// Guards: honours the user's automatic-check preference (if they turned
+    /// auto-updates off, we don't silently phone home), and self-throttles on
+    /// `lastUpdateCheckDate` so rapid relaunches don't re-poll the appcast
+    /// every single time.
+    func refreshAvailableUpdateSilently() {
+        guard automaticallyChecksForUpdates else { return }
+        if let last = lastUpdateCheckDate,
+           Date().timeIntervalSince(last) < 3600 { return }
+        controller.updater.checkForUpdateInformation()
+    }
 }
 
 /// Scopes Daisy's updater to Sparkle channels (2026-06-08). Stable =
@@ -119,6 +159,22 @@ final class SparkleUpdater {
 private final class DaisyUpdaterDelegate: NSObject, SPUUpdaterDelegate {
     nonisolated func allowedChannels(for updater: SPUUpdater) -> Set<String> {
         UserDefaults.standard.bool(forKey: "daisy.updates.betaChannel") ? ["beta"] : []
+    }
+
+    /// Sparkle found a valid update (automatic or manual check). Capture its
+    /// version for the sidebar badge and hop to the main actor to publish it.
+    /// The Standard user driver still shows its own prompt; the badge is the
+    /// persistent, non-modal complement.
+    nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        let found = AvailableUpdate(shortVersion: item.displayVersionString,
+                                    build: item.versionString)
+        Task { @MainActor in SparkleUpdater.shared.availableUpdate = found }
+    }
+
+    /// No update available (including after the user chose "Skip" for the
+    /// offered version, or once we've relaunched into it) — clear the badge.
+    nonisolated func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        Task { @MainActor in SparkleUpdater.shared.availableUpdate = nil }
     }
 }
 
@@ -140,6 +196,7 @@ final class SparkleUpdater {
     var receiveBetaUpdates: Bool = false
     let canCheckForUpdates: Bool = false
     let lastUpdateCheckDate: Date? = nil
+    let availableUpdate: AvailableUpdate? = nil
 
     private init() {}
 
@@ -148,6 +205,9 @@ final class SparkleUpdater {
         // disabled via `canCheckForUpdates == false` until Sparkle is
         // added as an SPM dependency.
     }
+
+    /// No-op until Sparkle is linked (see the real implementation).
+    func refreshAvailableUpdateSilently() {}
 }
 
 #endif
