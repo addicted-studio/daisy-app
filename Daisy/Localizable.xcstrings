@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "This recording captured almost no audio — a Bluetooth headset (e.g. AirPods) likely took over the mic and system audio. The transcript is empty or unreliable, so no summary was generated. Use the built-in mic and speakers for meetings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта запись почти не захватила звук — вероятно, Bluetooth-гарнитура (например, AirPods) перехватила микрофон и системный звук. Транскрипт пустой или недостоверный, поэтому саммари не создавалось. Для встреч используйте встроенные микрофон и динамики."
+          }
+        }
+      }
+    },
     "" : {
 
     },

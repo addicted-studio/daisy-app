@@ -234,6 +234,46 @@ enum AudioInputDevices {
         return status == noErr ? id : 0
     }
 
+    /// The system default OUTPUT device id (0 if CoreAudio refuses).
+    /// Only used for diagnostics: a Bluetooth OUTPUT is the tell-tale
+    /// for the AirPods capture failure — the system-audio loopback goes
+    /// silent and the SCO mic drops out, so a meeting records near-empty.
+    static func systemDefaultOutputID() -> AudioDeviceID {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var id: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id
+        )
+        return status == noErr ? id : 0
+    }
+
+    /// One-line audio-route snapshot for the log report: the pinned mic
+    /// (or "system default"), the live default input, and the live
+    /// default OUTPUT — each flagged `[BT]` when Bluetooth. Bluetooth
+    /// output/input is the signature of the AirPods capture failure, so
+    /// support reports need it to diagnose "recorded empty / garbage".
+    static func routeDiagnostics(selectedMicUID: String) -> String {
+        func describe(_ id: AudioDeviceID) -> String {
+            guard id != 0 else { return "none" }
+            let name = deviceName(id) ?? "?"
+            return isBluetooth(id) ? "\(name) [BT]" : name
+        }
+        let pinned: String
+        if selectedMicUID.isEmpty {
+            pinned = "system default"
+        } else if let pinnedID = deviceID(forUID: selectedMicUID) {
+            pinned = describe(pinnedID)
+        } else {
+            pinned = "pinned-but-offline"
+        }
+        return "mic=\(pinned) defaultIn=\(describe(systemDefaultInputID())) defaultOut=\(describe(systemDefaultOutputID()))"
+    }
+
     /// Read the *actual* hardware stream sample rate from CoreAudio.
     /// Used as a defensive cross-check against `AVAudioNode.outputFormat(forBus:)`
     /// inside the route-change recovery path — after pinning the AUHAL
