@@ -4448,12 +4448,12 @@
         }
       }
     },
-    "Empty recording — nothing was transcribed." : {
+    "Empty recording — nothing was transcribed" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Пустая запись — расшифровывать нечего."
+            "value" : "Пустая запись — расшифровывать нечего"
           }
         }
       }
