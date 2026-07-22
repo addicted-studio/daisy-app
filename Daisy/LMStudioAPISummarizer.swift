@@ -86,17 +86,22 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
 
         // Request shape identical to OpenAI's chat.completions —
         // LM Studio's local server is API-compatible.
+        // NOTE — deliberately NO `response_format`. LM Studio's newer
+        // server builds reject `{"type":"json_object"}` outright with
+        // HTTP 400 (`'response_format.type' must be 'json_schema' or
+        // 'text'`) — the OpenAI-style json_object mode simply isn't a
+        // valid value there (GitHub #5). Rather than pin a brittle,
+        // version-specific `json_schema` (unsupported on older builds),
+        // we rely entirely on the prompt's JSON instructions plus the
+        // tolerant `CloudSummaryDTO.decode` (fence-stripping + balanced-
+        // brace extraction + alias retry), which is what actually parses
+        // every local provider's output anyway.
         let body: [String: Any] = [
             "model": model,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user",   "content": userPrompt]
             ],
-            // JSON mode — LM Studio respects response_format on most
-            // recent llama.cpp-backed models. Older builds silently
-            // ignore it; we lean on the prompt's JSON instructions as
-            // belt-and-braces.
-            "response_format": ["type": "json_object"],
             "max_tokens": 4096,
             "temperature": 0.4,
             "stream": false

@@ -112,7 +112,16 @@ struct DayCard: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
-        .task { await brief.prepare(settings: settings) }
+        // Re-key on the data the brief depends on: on a cold launch the
+        // card's .task can fire BEFORE the calendar + action items finish
+        // loading, hit prepare()'s "nothing to brief" guard, park at
+        // .unavailable, and never re-run — so the lede stayed blank even
+        // once the meeting + open items appeared (Egor 2026-07-22). Keying
+        // the task on their counts re-invokes prepare() when they populate;
+        // prepare() is idempotent (returns early once today's lede is ready).
+        .task(id: "\(events.count)-\(actionItems.openCount)") {
+            await brief.prepare(settings: settings)
+        }
     }
 
     /// Shared uppercase section label ("To close", "Overdue") — the same

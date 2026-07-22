@@ -317,7 +317,38 @@
       }
     },
     "%lld day streak" : {
-
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld день подряд"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld дня подряд"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld дней подряд"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld дня подряд"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld events" : {
       "extractionState" : "stale",
@@ -568,7 +599,56 @@
       }
     },
     "%lld open items" : {
-
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld open item"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld open items"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld открытая задача"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld открытые задачи"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld открытых задач"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld открытой задачи"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld projects" : {
 
@@ -870,7 +950,56 @@
       }
     },
     "%lld sessions" : {
-
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld session"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld sessions"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сессия"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сессии"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сессий"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сессии"
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "%lld sessions selected" : {
       "extractionState" : "stale",
@@ -976,7 +1105,14 @@
       }
     },
     "1 day streak" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 день подряд"
+          }
+        }
+      }
     },
     "1 event" : {
       "extractionState" : "stale",
@@ -990,13 +1126,27 @@
       }
     },
     "1 meeting" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 встреча"
+          }
+        }
+      }
     },
     "1 minute" : {
 
     },
     "1 open item" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 открытая задача"
+          }
+        }
+      }
     },
     "1 recording" : {
       "localizations" : {
@@ -1142,12 +1292,12 @@
         }
       }
     },
-    "A profile of how you write, built from your dictations." : {
+    "A profile of how you write, built from your dictations" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Профиль того, как вы пишете, — на основе ваших диктовок."
+            "value" : "Профиль того, как вы пишете, — на основе ваших диктовок"
           }
         }
       }
@@ -1162,6 +1312,16 @@
     "a1b2c3d4…" : {
       "comment" : "A placeholder for a Notion page or database ID.",
       "isCommentAutoGenerated" : true
+    },
+    "Empty recording — nothing was transcribed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пустая запись — расшифровывать нечего."
+          }
+        }
+      }
     },
     "About" : {
       "localizations" : {
@@ -3899,7 +4059,14 @@
       }
     },
     "Dictionary" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Словарь"
+          }
+        }
+      }
     },
     "Disabled" : {
       "extractionState" : "stale",
@@ -4162,7 +4329,15 @@
     },
     "Edit your profile text, or paste one carried over from another app (Granola, Wispr Flow…)" : {
       "comment" : "A description of the voice import sheet.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отредактируйте текст профиля или вставьте перенесённый из другого приложения (Granola, Wispr Flow…)"
+          }
+        }
+      }
     },
     "Emails" : {
       "localizations" : {
@@ -4351,7 +4526,14 @@
       }
     },
     "Fixes made by Daisy" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправлений от Daisy"
+          }
+        }
+      }
     },
     "Floating widget" : {
       "localizations" : {
@@ -5234,7 +5416,15 @@
     },
     "Less" : {
       "comment" : "A label displayed on the left of a heatmap legend.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Меньше"
+          }
+        }
+      }
     },
     "Let AI clients read your sessions" : {
       "localizations" : {
@@ -6825,7 +7015,15 @@
     },
     "Overdue" : {
       "comment" : "A section header for overdue tasks.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Просрочено"
+          }
+        }
+      }
     },
     "Page" : {
       "localizations" : {
@@ -7059,7 +7257,15 @@
     },
     "Polish in my voice" : {
       "comment" : "A button that lets the user rewrite their dictations in their voice.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Полировать в моём стиле"
+          }
+        }
+      }
     },
     "Port" : {
       "localizations" : {
@@ -7398,7 +7604,15 @@
     },
     "Rebuild your profile from your latest dictations" : {
       "comment" : "A button that rebuilds the user's voice profile from their dictations.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пересобрать профиль из ваших последних диктовок"
+          }
+        }
+      }
     },
     "Recent dictations" : {
       "localizations" : {
@@ -7881,7 +8095,14 @@
       }
     },
     "Rewrite each dictation in your voice before it's pasted" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переписывать каждую диктовку в вашем стиле перед вставкой"
+          }
+        }
+      }
     },
     "Rewriting in your voice…" : {
       "comment" : "Text displayed in a toast when the user is being rewritten.",
@@ -9007,7 +9228,7 @@
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Закрыть"
+            "value" : "К закрытию"
           }
         }
       }
@@ -9305,7 +9526,14 @@
       }
     },
     "Voice polish" : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Полировка стиля"
+          }
+        }
+      }
     },
     "We'll set up only what you need — you can enable the rest anytime." : {
       "comment" : "A description of the setup process.",
@@ -9354,11 +9582,27 @@
     },
     "Welcome back" : {
       "comment" : "A greeting that welcomes the user back to the app.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С возвращением"
+          }
+        }
+      }
     },
     "Welcome back, %@" : {
       "comment" : "A greeting that welcomes a user back to the app. The argument is the user's display name.",
-      "isCommentAutoGenerated" : true
+      "isCommentAutoGenerated" : true,
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С возвращением, %@"
+          }
+        }
+      }
     },
     "Welcome to Daisy" : {
       "localizations" : {

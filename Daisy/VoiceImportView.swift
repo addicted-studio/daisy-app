@@ -24,15 +24,27 @@ struct VoiceImportView: View {
     }
 
     @State private var mode: Mode
-    @State private var text: String
+    // Each tab keeps its OWN text: pasting writing samples must not bleed
+    // into the style-prompt field (or vice versa) — they're different
+    // inputs (Egor 2026-07-22). Was a single shared `text`, which made
+    // both tabs show the same content.
+    @State private var samplesText: String
+    @State private var instructionText: String
     @State private var showingFileImporter = false
 
     /// `initialText` pre-fills the editor (e.g. the current profile's style
     /// instruction, for editing/replacing); `startInStylePrompt` opens
-    /// straight in the "Style prompt" tab. Both default to fresh-import.
+    /// straight in the "Style prompt" tab and seeds THAT tab. Both default
+    /// to fresh-import (empty).
     init(initialText: String = "", startInStylePrompt: Bool = false) {
-        _text = State(initialValue: initialText)
         _mode = State(initialValue: startInStylePrompt ? .instruction : .samples)
+        _instructionText = State(initialValue: startInStylePrompt ? initialText : "")
+        _samplesText = State(initialValue: startInStylePrompt ? "" : initialText)
+    }
+
+    /// The text field for the currently-selected tab.
+    private var activeText: Binding<String> {
+        mode == .samples ? $samplesText : $instructionText
     }
 
     var body: some View {
@@ -40,12 +52,16 @@ struct VoiceImportView: View {
             Text("Set up your Voice Profile")
                 .font(.title3.weight(.semibold))
 
-            Picker("", selection: $mode) {
-                Text("My writing").tag(Mode.samples)
-                Text("Style prompt").tag(Mode.instruction)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            // Same glass tab strip as the rest of the app (Dictation /
+            // Connections / Settings) — a plain View, so it works inline in
+            // this sheet too, not just in a window toolbar.
+            GlassSegmentedControl(
+                selection: $mode,
+                segments: [
+                    .init(value: .samples, title: String(localized: "My writing")),
+                    .init(value: .instruction, title: String(localized: "Style prompt")),
+                ]
+            )
 
             Text(mode == .samples
                  ? "Paste your own writing — emails, posts, notes, or an export from another dictation app. Daisy learns your voice from it, same as from dictation."
@@ -54,7 +70,7 @@ struct VoiceImportView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            TextEditor(text: $text)
+            TextEditor(text: activeText)
                 .font(.body)
                 .frame(minHeight: 180)
                 .padding(6)
@@ -71,18 +87,22 @@ struct VoiceImportView: View {
                         Label("Import file…", systemImage: "doc")
                     }
                     .buttonStyle(.bordered)
+                    .tint(Color.daisyTextPrimary)
                     .controlSize(.small)
                 }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    // Neutral grey label (was the app's orange accent tint).
+                    .tint(Color.daisyTextSecondary)
                 Button(mode == .samples ? "Add to profile" : "Use as profile") {
                     apply()
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .tint(Color.daisyAccent)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                // Neutral prominent (was orange accent).
+                .tint(Color.daisyTextPrimary)
+                .disabled(activeText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(20)
@@ -99,7 +119,8 @@ struct VoiceImportView: View {
                 ToastCenter.shared.show(String(localized: "Couldn't read that file."), style: .error)
                 return
             }
-            text = text.isEmpty ? content : text + "\n\n" + content
+            // Import only appears in the "My writing" tab → append there.
+            samplesText = samplesText.isEmpty ? content : samplesText + "\n\n" + content
         }
     }
 
@@ -107,7 +128,7 @@ struct VoiceImportView: View {
         let store = VoiceProfileStore.shared
         switch mode {
         case .samples:
-            let added = store.importSamples(text)
+            let added = store.importSamples(samplesText)
             if store.isUnlocked {
                 ToastCenter.shared.show(
                     String(localized: "Added \(added) words — your Voice Profile is ready to generate."),
@@ -120,7 +141,7 @@ struct VoiceImportView: View {
                 )
             }
         case .instruction:
-            store.setCustomInstruction(text)
+            store.setCustomInstruction(instructionText)
             ToastCenter.shared.show(
                 String(localized: "Style prompt installed — Daisy will polish in this voice."),
                 style: .success

@@ -365,14 +365,16 @@ struct SettingsView: View {
                 }
                 """
             case .lmStudio:
+                // No `response_format`: newer LM Studio rejects
+                // `{"type":"json_object"}` with HTTP 400 (GitHub #5).
+                // The prompt drives JSON; the decoder tolerates prose.
                 return """
                 {
                   "model": "qwen2.5-7b-instruct",
                   "messages": [
                     {"role": "system", "content": "{{system}}"},
                     {"role": "user", "content": "{{transcript}}"}
-                  ],
-                  "response_format": {"type": "json_object"}
+                  ]
                 }
                 """
             case .llamaCpp:
