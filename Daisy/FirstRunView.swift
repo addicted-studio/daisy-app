@@ -29,6 +29,7 @@
 //
 
 import SwiftUI
+import AppKit
 import AVFoundation
 import CoreGraphics
 import ApplicationServices
@@ -1033,6 +1034,24 @@ struct FirstRunView: View {
 
     private func finish() {
         settings.hasShownFirstRun = true
+        // Changing AppleLanguages does not refresh Bundle.main in the
+        // running process. Relaunch when onboarding selected a different
+        // interface language, so the rest of the app does not stay English.
+        let activeLanguage = Bundle.main.preferredLocalizations.first?
+            .prefix(2)
+            .lowercased()
+        if activeLanguage != uiLanguage {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.createsNewApplicationInstance = true
+            NSWorkspace.shared.openApplication(
+                at: Bundle.main.bundleURL,
+                configuration: configuration,
+            ) { _, _ in }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                NSApp.terminate(nil)
+            }
+            return
+        }
         dismiss()
     }
 }
