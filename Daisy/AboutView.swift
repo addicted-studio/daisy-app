@@ -25,6 +25,7 @@ import AppKit
 import SwiftUI
 
 struct AboutView: View {
+    let settings: AppSettings
     @Bindable private var updater = SparkleUpdater.shared
 
     var body: some View {
@@ -148,6 +149,37 @@ struct AboutView: View {
                 Text("Links")
             }
 
+            // Same tester feedback channel as Help → "Send Log Report…":
+            // collects the last 24 h of Daisy's own logs + an environment
+            // header and opens a pre-addressed Mail compose (LogReporter).
+            Section {
+                LabeledContent {
+                    Button {
+                        LogReporter.sendReport(settings: settings)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Send Log Report…")
+                            Image(systemName: "envelope")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(Color.daisyAccent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Report a bug: send a log report")
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "ladybug")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text("Report a bug")
+                    }
+                }
+            } header: {
+                Text("Feedback")
+            } footer: {
+                Text("Attaches the last 24 hours of Daisy's logs. Review in Mail before sending — nothing is sent automatically.")
+            }
+
             Section {
                 aboutLinkRow(
                     icon: "building.2",
@@ -211,6 +243,6 @@ struct AboutView: View {
 }
 
 #Preview {
-    AboutView()
+    AboutView(settings: AppSettings())
         .frame(width: 640, height: 720)
 }

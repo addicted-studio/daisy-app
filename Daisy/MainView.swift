@@ -470,7 +470,7 @@ struct MainView: View {
         case .settings:
             SettingsView(settings: settings)
         case .about:
-            AboutView()
+            AboutView(settings: settings)
         }
     }
 }
