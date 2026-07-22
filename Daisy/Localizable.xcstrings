@@ -1,160 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "%lld term(s) added" : {
-      "localizations" : {
-        "ru" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "добавлен %lld термин"
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "добавлено %lld термина"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "добавлено %lld терминов"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "добавлено %lld термина"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "Choose the AI that writes your meeting summaries. You can change it or add other providers later in Settings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите ИИ, который пишет саммари встреч. Изменить или добавить других провайдеров можно позже в Настройках."
-          }
-        }
-      }
-    },
-    "Choose where Daisy saves your recordings, transcripts and summaries. Leave the default to keep everything inside Daisy's own folder." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите, куда Daisy сохраняет записи, расшифровки и саммари. Оставьте по умолчанию, чтобы хранить всё в собственной папке Daisy."
-          }
-        }
-      }
-    },
-    "Connect calendar" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключить календарь"
-          }
-        }
-      }
-    },
-    "Connect your calendar so Daisy can start recording automatically when a meeting begins. You can change this anytime in Settings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключите календарь, чтобы Daisy запускала запись автоматически в начале встречи. Это можно изменить в любой момент в Настройках."
-          }
-        }
-      }
-    },
-    "Dictation vocabulary" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Словарь диктовки"
-          }
-        }
-      }
-    },
-    "Heard as…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Как слышится…"
-          }
-        }
-      }
-    },
-    "Optionally paste a short description of your writing style. Daisy can use it to polish dictated text in your voice." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "По желанию вставьте короткое описание вашего стиля письма. Daisy сможет использовать его, чтобы полировать надиктованный текст в вашем стиле."
-          }
-        }
-      }
-    },
-    "Runs on-device — no API key needed." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Работает на устройстве — API-ключ не нужен."
-          }
-        }
-      }
-    },
-    "Save style" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сохранить стиль"
-          }
-        }
-      }
-    },
-    "Should be…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Как надо…"
-          }
-        }
-      }
-    },
-    "Summaries" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Саммари"
-          }
-        }
-      }
-    },
-    "Teach Daisy special terms it tends to mishear — a name, brand or bit of jargon — so dictation spells them your way." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Научите Daisy особым терминам, которые она часто распознаёт неверно — имя, бренд или жаргон — чтобы диктовка писала их по-вашему."
-          }
-        }
-      }
-    },
     "" : {
 
     },
@@ -475,12 +321,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld день подряд"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -491,6 +331,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld дней подряд"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld день подряд"
                 }
               },
               "other" : {
@@ -775,12 +621,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld открытая задача"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -791,6 +631,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld открытых задач"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld открытая задача"
                 }
               },
               "other" : {
@@ -1126,12 +972,6 @@
         "ru" : {
           "variations" : {
             "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld сессия"
-                }
-              },
               "few" : {
                 "stringUnit" : {
                   "state" : "translated",
@@ -1142,6 +982,12 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "%lld сессий"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld сессия"
                 }
               },
               "other" : {
@@ -1183,6 +1029,40 @@
                 "stringUnit" : {
                   "state" : "translated",
                   "value" : "Выбрано %lld записи"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld term(s) added" : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлено %lld термина"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлено %lld терминов"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлен %lld термин"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлено %lld термина"
                 }
               }
             }
@@ -1466,26 +1346,6 @@
     "a1b2c3d4…" : {
       "comment" : "A placeholder for a Notion page or database ID.",
       "isCommentAutoGenerated" : true
-    },
-    "Attaches the last 24 hours of Daisy's logs. Review in Mail before sending — nothing is sent automatically." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прикрепит логи Daisy за последние 24 часа. Проверьте в Почте перед отправкой — ничего не отправляется автоматически."
-          }
-        }
-      }
-    },
-    "Empty recording — nothing was transcribed." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пустая запись — расшифровывать нечего."
-          }
-        }
-      }
     },
     "About" : {
       "localizations" : {
@@ -2084,6 +1944,16 @@
         }
       }
     },
+    "Attaches the last 24 hours of Daisy's logs. Review in Mail before sending — nothing is sent automatically." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикрепит логи Daisy за последние 24 часа. Проверьте в Почте перед отправкой — ничего не отправляется автоматически."
+          }
+        }
+      }
+    },
     "Audio" : {
       "localizations" : {
         "ru" : {
@@ -2654,9 +2524,29 @@
         }
       }
     },
+    "Choose the AI that writes your meeting summaries. You can change it or add other providers later in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите ИИ, который пишет саммари встреч. Изменить или добавить других провайдеров можно позже в Настройках."
+          }
+        }
+      }
+    },
     "Choose the language for Daisy's interface. You can change it later in Settings." : {
       "comment" : "A description of the language selection step.",
       "isCommentAutoGenerated" : true
+    },
+    "Choose where Daisy saves your recordings, transcripts and summaries. Leave the default to keep everything inside Daisy's own folder." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, куда Daisy сохраняет записи, расшифровки и саммари. Оставьте по умолчанию, чтобы хранить всё в собственной папке Daisy."
+          }
+        }
+      }
     },
     "Claude can only connect while Daisy's MCP server is listening. Turn it on, then connect." : {
       "localizations" : {
@@ -2887,6 +2777,16 @@
         }
       }
     },
+    "Connect calendar" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить календарь"
+          }
+        }
+      }
+    },
     "Connect Calendar in Settings…" : {
       "localizations" : {
         "ru" : {
@@ -2924,6 +2824,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Подключить Notion в Настройках…"
+          }
+        }
+      }
+    },
+    "Connect your calendar so Daisy can start recording automatically when a meeting begins. You can change this anytime in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите календарь, чтобы Daisy запускала запись автоматически в начале встречи. Это можно изменить в любой момент в Настройках."
           }
         }
       }
@@ -4222,6 +4132,16 @@
         }
       }
     },
+    "Dictation vocabulary" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Словарь диктовки"
+          }
+        }
+      }
+    },
     "Dictionary" : {
       "localizations" : {
         "ru" : {
@@ -4528,6 +4448,16 @@
         }
       }
     },
+    "Empty recording — nothing was transcribed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пустая запись — расшифровывать нечего."
+          }
+        }
+      }
+    },
     "Enabled" : {
       "localizations" : {
         "ru" : {
@@ -4611,6 +4541,16 @@
         }
       }
     },
+    "Feedback" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обратная связь"
+          }
+        }
+      }
+    },
     "Fills the URL, tool name, and arguments template with sensible defaults for that wrapper. For stock Ollama or LM Studio, switch the provider above instead — those have dedicated adapters that work without an MCP shim." : {
       "localizations" : {
         "ru" : {
@@ -4685,16 +4625,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Исправляется перед вставкой — имена, бренды, жаргон."
-          }
-        }
-      }
-    },
-    "Feedback" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обратная связь"
           }
         }
       }
@@ -5068,6 +4998,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Есть саммари от ИИ"
+          }
+        }
+      }
+    },
+    "Heard as…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как слышится…"
           }
         }
       }
@@ -6554,6 +6494,7 @@
       }
     },
     "No transcript text on disk." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7140,6 +7081,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Дополнительная настройка"
+          }
+        }
+      }
+    },
+    "Optionally paste a short description of your writing style. Daisy can use it to polish dictated text in your voice." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По желанию вставьте короткое описание вашего стиля письма. Daisy сможет использовать его, чтобы полировать надиктованный текст в вашем стиле."
           }
         }
       }
@@ -7788,26 +7739,6 @@
         }
       }
     },
-    "Report a bug" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сообщить об ошибке"
-          }
-        }
-      }
-    },
-    "Report a bug: send a log report" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сообщить об ошибке: отправить отчёт с логами"
-          }
-        }
-      }
-    },
     "Recent dictations" : {
       "localizations" : {
         "ru" : {
@@ -8157,6 +8088,26 @@
         }
       }
     },
+    "Report a bug" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщить об ошибке"
+          }
+        }
+      }
+    },
+    "Report a bug: send a log report" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщить об ошибке: отправить отчёт с логами"
+          }
+        }
+      }
+    },
     "Request" : {
       "localizations" : {
         "ru" : {
@@ -8370,6 +8321,16 @@
         }
       }
     },
+    "Runs on-device — no API key needed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает на устройстве — API-ключ не нужен."
+          }
+        }
+      }
+    },
     "Save" : {
       "localizations" : {
         "ru" : {
@@ -8386,6 +8347,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сохранить и завершить"
+          }
+        }
+      }
+    },
+    "Save style" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить стиль"
           }
         }
       }
@@ -8767,6 +8738,16 @@
         }
       }
     },
+    "Should be…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как надо…"
+          }
+        }
+      }
+    },
     "Show next meeting in the menu bar" : {
       "localizations" : {
         "ru" : {
@@ -9081,6 +9062,16 @@
         }
       }
     },
+    "Summaries" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Саммари"
+          }
+        }
+      }
+    },
     "Summarize" : {
       "localizations" : {
         "ru" : {
@@ -9287,6 +9278,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нажмите раз, чтобы начать, ещё раз — чтобы остановить"
+          }
+        }
+      }
+    },
+    "Teach Daisy special terms it tends to mishear — a name, brand or bit of jargon — so dictation spells them your way." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Научите Daisy особым терминам, которые она часто распознаёт неверно — имя, бренд или жаргон — чтобы диктовка писала их по-вашему."
           }
         }
       }
