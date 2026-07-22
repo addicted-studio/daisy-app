@@ -1,6 +1,160 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%lld term(s) added" : {
+      "localizations" : {
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлен %lld термин"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлено %lld термина"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлено %lld терминов"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "добавлено %lld термина"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Choose the AI that writes your meeting summaries. You can change it or add other providers later in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите ИИ, который пишет саммари встреч. Изменить или добавить других провайдеров можно позже в Настройках."
+          }
+        }
+      }
+    },
+    "Choose where Daisy saves your recordings, transcripts and summaries. Leave the default to keep everything inside Daisy's own folder." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, куда Daisy сохраняет записи, расшифровки и саммари. Оставьте по умолчанию, чтобы хранить всё в собственной папке Daisy."
+          }
+        }
+      }
+    },
+    "Connect calendar" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить календарь"
+          }
+        }
+      }
+    },
+    "Connect your calendar so Daisy can start recording automatically when a meeting begins. You can change this anytime in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите календарь, чтобы Daisy запускала запись автоматически в начале встречи. Это можно изменить в любой момент в Настройках."
+          }
+        }
+      }
+    },
+    "Dictation vocabulary" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Словарь диктовки"
+          }
+        }
+      }
+    },
+    "Heard as…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как слышится…"
+          }
+        }
+      }
+    },
+    "Optionally paste a short description of your writing style. Daisy can use it to polish dictated text in your voice." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По желанию вставьте короткое описание вашего стиля письма. Daisy сможет использовать его, чтобы полировать надиктованный текст в вашем стиле."
+          }
+        }
+      }
+    },
+    "Runs on-device — no API key needed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает на устройстве — API-ключ не нужен."
+          }
+        }
+      }
+    },
+    "Save style" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить стиль"
+          }
+        }
+      }
+    },
+    "Should be…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Как надо…"
+          }
+        }
+      }
+    },
+    "Summaries" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Саммари"
+          }
+        }
+      }
+    },
+    "Teach Daisy special terms it tends to mishear — a name, brand or bit of jargon — so dictation spells them your way." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Научите Daisy особым терминам, которые она часто распознаёт неверно — имя, бренд или жаргон — чтобы диктовка писала их по-вашему."
+          }
+        }
+      }
+    },
     "" : {
 
     },

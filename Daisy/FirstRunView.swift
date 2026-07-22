@@ -32,6 +32,8 @@ import SwiftUI
 import AVFoundation
 import CoreGraphics
 import ApplicationServices
+import EventKit
+import FoundationModels
 
 struct FirstRunView: View {
     @Environment(\.dismiss) private var dismiss
@@ -49,6 +51,13 @@ struct FirstRunView: View {
         case screenRecording
         case accessibility
         case hotkeys
+        // Soft, optional setup steps (Increment 2). Full track gets all
+        // four; dictation-only gets just `vocab`. Each is skippable via
+        // its "Continue" footer — no action is forced.
+        case folder
+        case calendar
+        case model
+        case vocab
         case done
 
         var progressIndex: Int { rawValue }
@@ -65,17 +74,20 @@ struct FirstRunView: View {
     /// Steps shown, branched by `setupPath`. Full asks the recording
     /// permission set (mic + screen + accessibility — full users dictate
     /// too) and all three hotkeys; dictation-only asks mic + accessibility
-    /// and just the dictation hotkey. (Soft steps — folder, calendar,
-    /// summary model, style/vocab import — land in a later pass.)
+    /// and just the dictation hotkey. After the permission/hotkey block
+    /// come the optional "soft" steps: full gets folder + calendar +
+    /// summary model + vocabulary; dictation-only gets just vocabulary
+    /// (folder/calendar/model are meeting-oriented and don't apply).
     private var orderedSteps: [Step] {
         switch setupPath {
         case .full:
             return [.welcome, .language, .purpose, .name,
                     .microphone, .screenRecording, .accessibility,
-                    .hotkeys, .done]
+                    .hotkeys, .folder, .calendar, .model, .vocab, .done]
         case .dictationOnly:
             return [.welcome, .language, .purpose,
-                    .microphone, .accessibility, .hotkeys, .done]
+                    .microphone, .accessibility, .hotkeys,
+                    .vocab, .done]
         }
     }
 
@@ -90,6 +102,22 @@ struct FirstRunView: View {
     @State private var micGranted: Bool = false
     @State private var screenGranted: Bool = false
     @State private var accessibilityGranted: Bool = false
+
+    // ─── Soft-step state (Increment 2) ────────────────────────────────
+    /// Summary provider is @Observable but lives outside `settings`, so
+    /// it needs its own @Bindable to drive the provider Picker.
+    @Bindable private var summarizer = Summarizer.shared
+    /// SessionsFolder reads UserDefaults directly (not @Observable), so a
+    /// manual tick forces the displayed path to refresh after a pick /
+    /// reset — mirrors SettingsView.storageRow's `storageRefreshTick`.
+    @State private var folderTick: Int = 0
+    /// New-term entry fields for the vocab step + a running count of how
+    /// many terms were added during this onboarding session.
+    @State private var vocabHeard: String = ""
+    @State private var vocabCorrect: String = ""
+    @State private var vocabAddedCount: Int = 0
+    /// Optional writing-style prompt for the voice profile.
+    @State private var styleText: String = ""
 
     /// Default UI language for the language step: Russian for Russia &
     /// Belarus (or a ru/be system language); English for Ukraine — we
@@ -176,6 +204,10 @@ struct FirstRunView: View {
             case .screenRecording: screenStep
             case .accessibility: accessibilityStep
             case .hotkeys: hotkeysStep
+            case .folder: folderStep
+            case .calendar: calendarStep
+            case .model: modelStep
+            case .vocab: vocabStep
             case .done: doneStep
             }
         }
@@ -446,6 +478,294 @@ struct FirstRunView: View {
         )
     }
 
+    // MARK: - Soft steps (Increment 2)
+
+    /// Recordings folder — inline path + Choose / Reset. Reuses
+    /// `SessionsFolder`, which persists its bookmark straight to
+    /// UserDefaults (not @Observable), so `folderTick` on the card
+    /// forces the path + the Reset button's visibility to re-read after
+    /// a pick or reset — same trick as SettingsView.storageRow.
+    private var folderStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "folder")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Recordings folder")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("Choose where Daisy saves your recordings, transcripts and summaries. Leave the default to keep everything inside Daisy's own folder.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(SessionsFolder.userFolderDisplayPath()
+                     ?? SessionsFolder.defaultContainerLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                HStack(spacing: 8) {
+                    Button("Choose folder…") {
+                        if SessionsFolder.presentPicker() != nil {
+                            folderTick &+= 1
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(Color.daisyTextPrimary)
+                    if SessionsFolder.hasUserFolder {
+                        Button("Reset to default") {
+                            SessionsFolder.clearUserFolder()
+                            folderTick &+= 1
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(Color.daisyTextPrimary)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
+            .id(folderTick)
+            Spacer()
+        }
+    }
+
+    /// Calendar — connect via EventKit, then pick an auto-record policy.
+    /// Reading `CalendarService.shared.authorizationStatus` (an
+    /// @Observable property) inside the body means the "Connected" state
+    /// flips live when the grant lands, without an extra observer here.
+    private var calendarStep: some View {
+        let connected = CalendarService.shared.authorizationStatus == .fullAccess
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "calendar")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Calendar")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                if connected {
+                    Label("Connected", systemImage: "checkmark.circle.fill")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(Color.daisySuccess)
+                }
+            }
+            Text("Connect your calendar so Daisy can start recording automatically when a meeting begins. You can change this anytime in Settings.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            if connected {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Auto-record")
+                        .font(.callout.weight(.medium))
+                    Picker("", selection: $settings.autoStartPolicy) {
+                        ForEach(AutoStartPolicy.allCases) { policy in
+                            Text(policy.displayName).tag(policy)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: 260, alignment: .leading)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+                .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                )
+            } else {
+                Button("Connect calendar") {
+                    Task { await CalendarService.shared.requestAccess() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.daisyAccent)
+                .foregroundStyle(Color.daisyTextOnAccent)
+                .controlSize(.regular)
+            }
+            Spacer()
+        }
+    }
+
+    /// Summaries — provider Picker + inline key. Offers only a small
+    /// onboarding subset (Apple Intelligence when available + the two
+    /// key-based cloud providers); local/self-hosted options are set up
+    /// later in Settings.
+    private var modelStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "wand.and.stars")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Summaries")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("Choose the AI that writes your meeting summaries. You can change it or add other providers later in Settings.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("", selection: $summarizer.providerKind) {
+                    ForEach(onboardingProviders, id: \.self) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(maxWidth: 280, alignment: .leading)
+
+                switch summarizer.providerKind {
+                case .anthropic:
+                    SecureField(String(localized: "Anthropic API key"),
+                                text: $settings.anthropicAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                case .openai:
+                    SecureField(String(localized: "OpenAI API key"),
+                                text: $settings.openaiAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                case .appleIntelligence:
+                    Text("Runs on-device — no API key needed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                default:
+                    EmptyView()
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
+            Spacer()
+        }
+    }
+
+    /// Whether Apple Intelligence's on-device model is actually usable —
+    /// the same availability gate `AppleIntelligenceSummarizer.isReady()`
+    /// applies, so onboarding never offers a provider that can't run.
+    private var appleIntelligenceAvailable: Bool {
+        if #available(macOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available: return true
+            default: return false
+            }
+        }
+        return false
+    }
+
+    /// Providers offered during onboarding — a deliberately small subset.
+    /// The current selection is always included so the menu Picker never
+    /// renders a blank tag if the persisted provider is one we don't list.
+    private var onboardingProviders: [SummaryProviderKind] {
+        var list: [SummaryProviderKind] = []
+        if appleIntelligenceAvailable { list.append(.appleIntelligence) }
+        list.append(.anthropic)
+        list.append(.openai)
+        if !list.contains(summarizer.providerKind) {
+            list.append(summarizer.providerKind)
+        }
+        return list
+    }
+
+    /// Dictation vocabulary + optional writing-style prompt. Both are
+    /// inline and optional: a term goes straight into
+    /// `DictationDictionary`, the style prompt into `VoiceProfileStore`.
+    private var vocabStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "textformat.abc")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Dictation vocabulary")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("Teach Daisy special terms it tends to mishear — a name, brand or bit of jargon — so dictation spells them your way.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField(String(localized: "Heard as…"), text: $vocabHeard)
+                        .textFieldStyle(.roundedBorder)
+                    TextField(String(localized: "Should be…"), text: $vocabCorrect)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Add") { addVocabTerm() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(Color.daisyTextPrimary)
+                        .disabled(
+                            vocabHeard.trimmingCharacters(in: .whitespaces).isEmpty
+                            || vocabCorrect.trimmingCharacters(in: .whitespaces).isEmpty
+                        )
+                }
+                if vocabAddedCount > 0 {
+                    Text("\(vocabAddedCount) term(s) added")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
+            Text("Optionally paste a short description of your writing style. Daisy can use it to polish dictated text in your voice.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                TextEditor(text: $styleText)
+                    .font(.callout)
+                    .frame(height: 58)
+                    .scrollContentBackground(.hidden)
+                    .padding(4)
+                    .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                    )
+                Button("Save style") {
+                    VoiceProfileStore.shared.setCustomInstruction(styleText)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
+                .disabled(styleText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            Spacer()
+        }
+    }
+
+    /// Append the entered term as a correction rule and reset the fields.
+    private func addVocabTerm() {
+        let heard = vocabHeard.trimmingCharacters(in: .whitespaces)
+        let correct = vocabCorrect.trimmingCharacters(in: .whitespaces)
+        guard !heard.isEmpty, !correct.isEmpty else { return }
+        DictationDictionary.shared.add(
+            DictationReplacement(kind: .correction, from: heard, to: correct)
+        )
+        vocabHeard = ""
+        vocabCorrect = ""
+        vocabAddedCount += 1
+    }
+
     /// Short human label for the current Whisper load state. Nil when
     /// the model is ready (we hide the row entirely in that case so the
     /// Done step doesn't show stale "100%" after the load completes).
@@ -580,6 +900,14 @@ struct FirstRunView: View {
                     .controlSize(.regular)
                     .tint(Color.daisyTextPrimary)
             case .hotkeys:
+                Button("Continue") { advance() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.daisyAccent)
+                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .keyboardShortcut(.defaultAction)
+            case .folder, .calendar, .model, .vocab:
+                // Soft steps: their controls act inline; the footer just
+                // advances. Nothing is forced — Continue is always valid.
                 Button("Continue") { advance() }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.daisyAccent)
