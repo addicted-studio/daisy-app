@@ -77,7 +77,7 @@ struct VoiceView: View {
                 // Serif display title, matching the Home greeting.
                 .font(.system(.largeTitle, design: .serif).weight(.medium))
                 .foregroundStyle(.primary)
-            Text("A profile of how you write, built from your dictations.")
+            Text("A profile of how you write, built from your dictations")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             // "Built from N words · date" moved up here, under the title.
@@ -207,6 +207,10 @@ struct VoiceView: View {
                     }
                 }
             }
+            // Let the user drag-select and copy the profile text (it's just
+            // Text, non-selectable by default on macOS). Applied to the
+            // whole card so it covers the summary, section titles, and bullets.
+            .textSelection(.enabled)
         }
     }
 

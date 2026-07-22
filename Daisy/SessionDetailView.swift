@@ -947,8 +947,14 @@ struct SessionDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             speakerMappingSection
 
-            if session.transcriptText.isEmpty {
-                Text("No transcript text on disk.")
+            // Gate on the DISPLAYED body, not the raw file: an empty
+            // recording still has a `# title` / `> recorded …` / `## Transcript`
+            // doc header on disk, so `session.transcriptText` is non-empty
+            // while the sliced-out transcript body is "" — which used to
+            // render a blank 600pt pane (Egor 2026-07-22). Show an explicit
+            // empty-recording note instead.
+            if mappedTranscriptText.isEmpty {
+                Text("Empty recording — nothing was transcribed.")
                     .font(.body)
                     .foregroundStyle(.tertiary)
             } else {
