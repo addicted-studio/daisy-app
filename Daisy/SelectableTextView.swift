@@ -181,6 +181,10 @@ struct SelectableTextView: NSViewRepresentable {
         tv.textContainerInset = .zero
         tv.font = font
         tv.textColor = .labelColor
+        // Explicit selection colour: the system default is nearly invisible
+        // on the cream light-theme cards (Egor 2026-07-22) — a soft amber
+        // wash reads in both themes without recolouring the glyphs.
+        tv.selectedTextAttributes = [.backgroundColor: NSColor.daisyTextSelection]
         // Strict SwiftUI-driven sizing: NSTextView never tries to
         // grow itself, the height is exactly what `sizeThatFits`
         // returns. With `isVerticallyResizable = true` AppKit
@@ -367,6 +371,8 @@ struct ScrollableTextView: NSViewRepresentable {
         tv.textColor = .labelColor
         tv.font = font
         tv.textContainerInset = .zero
+        // Same explicit selection colour as SelectableTextView above.
+        tv.selectedTextAttributes = [.backgroundColor: NSColor.daisyTextSelection]
         // Standard scrollable-NSTextView setup: the view grows vertically
         // to fit content inside the scroll view's clip view, width tracks
         // the visible content width so text wraps to the pane.
@@ -657,4 +663,27 @@ func summaryAttributedString(_ summary: MeetingSummary, compact: Bool) -> NSAttr
         appendBody(summary.clientFollowUp)
     }
     return result
+}
+
+// MARK: - Selection colour
+
+extension NSColor {
+    /// Text-selection wash for the NSTextView wrappers. The system
+    /// selection colour follows the user's Highlight setting and, on the
+    /// app's cream light-theme cards, can be nearly invisible (and drops
+    /// to a faint unemphasized grey when the view isn't focused). A soft
+    /// amber tied to the app's accent stays legible in both themes.
+    nonisolated static let daisyTextSelection = NSColor(
+        name: nil,
+        dynamicProvider: { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            // daisyAccent-family amber (0xF5A14B) at a wash alpha.
+            return NSColor(
+                calibratedRed: 0xF5 / 255.0,
+                green: 0xA1 / 255.0,
+                blue: 0x4B / 255.0,
+                alpha: isDark ? 0.45 : 0.35
+            )
+        }
+    )
 }
