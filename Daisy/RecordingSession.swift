@@ -1622,7 +1622,41 @@ final class RecordingSession {
         let summary = "mode=\(currentMode) dur=\(durSec)s sys=\(String(describing: sysStatus)) mic=\(String(describing: micStatus)) sysReceived=\(hasCapturedSystemAudio) captureSysSetting=\(settings.captureSystemAudio) boundEndDelta=\(boundEndDelta.map { "\($0)s" } ?? "none")"
         log.notice("post-stop SESSION SUMMARY — \(summary, privacy: .public)")
 
-        if case .truncated(let bytes, let framesWritten, let writeErrors) = micStatus {
+        // ── Capture-failure gate (2026-07-22, AirPods support case) ───────
+        // If NEITHER channel reached `.captured` AND the transcript is
+        // sparse for its length, the recording holds no usable audio: the
+        // live transcript is at best fragments and, on a near-silent
+        // stream, Whisper hallucinates. Real report: AirPods took the
+        // audio route, mic + system both went empty, yet a confident
+        // summary + client follow-up email were generated from garbage.
+        // Suppress the auto-summary so no authoritative-looking text comes
+        // out of a failed capture — the raw transcript is still saved, and
+        // the user can Re-summarize by hand if they disagree. Gated on
+        // sparsity too so a dead ARCHIVE with a good LIVE transcript
+        // (archive-write died but capture was fine) isn't wrongly blocked.
+        var anyChannelCaptured = false
+        if case .captured = micStatus { anyChannelCaptured = true }
+        if case .captured = sysStatus { anyChannelCaptured = true }
+        let transcriptWPM = durSec > 0
+            ? Double(UsageStats.wordCount(fullTranscriptText)) / (Double(durSec) / 60.0)
+            : 0
+        // Real meetings run ~100-150 wpm; <20 over the whole recording
+        // means almost nothing was heard.
+        let captureLikelyFailed = currentMode == .meeting
+            && !anyChannelCaptured
+            && transcriptWPM < 20
+        if captureLikelyFailed {
+            log.error("Capture likely FAILED — mic=\(String(describing: micStatus), privacy: .public) sys=\(String(describing: sysStatus), privacy: .public) wpm=\(Int(transcriptWPM), privacy: .public); suppressing auto-summary")
+            ToastCenter.shared.show(
+                String(localized: "This recording captured almost no audio — a Bluetooth headset (e.g. AirPods) likely took over the mic and system audio. The transcript is empty or unreliable, so no summary was generated. Use the built-in mic and speakers for meetings."),
+                style: .error,
+                duration: .seconds(15)
+            )
+        }
+
+        // Per-channel truncation toasts — only when we haven't already
+        // shown the unified capture-failed message above.
+        if !captureLikelyFailed, case .truncated(let bytes, let framesWritten, let writeErrors) = micStatus {
             log.error("Mic archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
             ToastCenter.shared.show(
                 String(localized: "Mic recording is incomplete — only part of your audio made it to disk. Keep this session's folder to recover what's there."),
@@ -1630,7 +1664,7 @@ final class RecordingSession {
                 duration: .seconds(12)
             )
         }
-        if case .truncated(let bytes, let framesWritten, let writeErrors) = sysStatus {
+        if !captureLikelyFailed, case .truncated(let bytes, let framesWritten, let writeErrors) = sysStatus {
             log.error("System audio archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
             ToastCenter.shared.show(
                 String(localized: "Other-side audio is incomplete — capture started but the file didn't grow. Transcript may still be usable; raw audio is partial."),
@@ -1728,6 +1762,7 @@ final class RecordingSession {
             && summarizer.availability == .available
             && !segments.isEmpty
             && currentMode == .meeting
+            && !captureLikelyFailed
 
         guard let dir = sessionDirectory else {
             // No session dir — shouldn't happen post-capture, but
