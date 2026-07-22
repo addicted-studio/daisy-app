@@ -24,7 +24,6 @@ struct HomeView: View {
     /// on the Apple-Calendar-only path and visibly hides events
     /// even though `calendar.upcomingEvents` was just populated
     /// by the Google fetch.
-    @Bindable private var google = GoogleAccountStore.shared
     @Bindable var folders = FolderStore.shared
     @Bindable var integrationStore = MCPIntegrationStore.shared
     @Bindable private var permissions = SystemPermissions.shared
@@ -289,28 +288,21 @@ struct HomeView: View {
     /// Home body layout (2026-07-21, per Egor's mock): two full-height
     /// columns. LEFT = activity heatmap, then the fixes/words number pair,
     /// then recent recordings. RIGHT = the DayCard (morning lede + agenda
-    /// + open items). Previously the stats sat in their own top band with
-    /// [numbers | heatmap] and the columns below were [dayCard | recent];
-    /// this pulls the heatmap up-left and moves the day card to the right.
-    @ViewBuilder
+    /// + open items).
+    ///
+    /// The layout is FIXED regardless of calendar state (Egor 2026-07-22):
+    /// no calendar just means the day card shows less inside it — it must
+    /// NOT restack the whole screen into one column. The old single-column
+    /// fallback made a fresh install (or a permissions-reset release build)
+    /// look like a different app.
     private var homeColumns: some View {
-        if hasAnyCalendarSource {
-            HStack(alignment: .top, spacing: Self.columnGap) {
-                leftColumn
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                dayColumn
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .padding(.horizontal, 24)
-        } else {
-            // No calendar connected: the day card still carries the lede +
-            // open items (if any), stacked above the left-column content.
-            VStack(alignment: .leading, spacing: 16) {
-                dayColumn
-                leftColumn
-            }
-            .padding(.horizontal, 24)
+        HStack(alignment: .top, spacing: Self.columnGap) {
+            leftColumn
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            dayColumn
+                .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .padding(.horizontal, 24)
     }
 
     /// Right column: the onboarding checklist (while setup is unfinished)
@@ -359,17 +351,8 @@ struct HomeView: View {
 
     // MARK: - Calendar plumbing (consumed by DayCard)
 
-    /// True when at least one calendar source can deliver events
-    /// — drives the source-agnostic gate above and the event-count
-    /// pill in the section header. Reads `SystemPermissions.calendar`
-    /// (the same observable PermissionsView and SettingsView's
-    /// Calendar section read) so all three surfaces agree on a
-    /// single live source-of-truth. Pre-1.0.4 HomeView used
-    /// `calendar.authorizationStatus`, which could drift from
-    /// SystemPermissions across the auto-refresh window.
-    private var hasAnyCalendarSource: Bool {
-        permissions.calendar == .granted || google.isConnected
-    }
+    // (`hasAnyCalendarSource` removed 2026-07-22 — the column layout no
+    // longer branches on calendar state; DayCard degrades internally.)
 
     /// All remaining events for today — calendar-day filter, not 24h
     /// rolling window. If it's 23:00 and an event is tomorrow at
