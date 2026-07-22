@@ -580,6 +580,7 @@ extension RecordingSession {
             segments: segments,
             summary: summarizer.lastSummary,
             folderSlug: sessionFolderSlug,
+            kind: sessionKind,
             tag: tag,
             systemAudioStatus: systemAudioStatusValue
         )
@@ -683,6 +684,7 @@ extension RecordingSession {
             segments: segments,
             summary: summarizer.lastSummary,
             folderSlug: folder.slug,
+            kind: sessionKind,
             tag: tag,
             systemAudioStatus: systemAudioStatusValue
         )
@@ -736,44 +738,94 @@ extension RecordingSession {
 
     // MARK: - Side notes (voice notes layered over a meeting)
 
-    /// Split each CLOSED side-note window into its own transcript-only
-    /// session in the Notes folder: gather the meeting's segments inside
-    /// the window and write them out with a back-link to the meeting.
-    /// The same segments are cut from the meeting transcript by
-    /// `MarkdownExporter` (see `isInSideNoteWindow`). Best-effort — a
-    /// failure here must NEVER affect the meeting save, so it runs after
-    /// the meeting's transcript.md is on disk and swallows its own
-    /// errors. Called while the sessions-folder ticket is still held.
-    func writeSideNotes() {
+    /// Split each CLOSED side-note window into its own session in the
+    /// Notes folder as an EXCERPT of the meeting (2026-07-21 model):
+    /// COPY the meeting segments overlapping the window (mic + system,
+    /// so the note carries the full context, not just the user's voice),
+    /// snap the window to those segments' bounds, and slice a matching
+    /// audio clip — mic + system mixed into one `microphone.caf` — out of
+    /// the meeting's own archive so the note is replayable. The meeting
+    /// itself is never cut. Best-effort — a failure here must NEVER affect
+    /// the meeting save, so it runs after the meeting's transcript.md is
+    /// on disk and swallows its own errors, while the sessions-folder
+    /// ticket is still held.
+    func writeSideNotes() async {
         let closed = sideNoteWindows.filter { $0.end != nil }
         guard !closed.isEmpty, let meetingDir = sessionDirectory else { return }
         let base = meetingDir.deletingLastPathComponent()   // …/Daisy/Sessions
         let meetingID = meetingDir.lastPathComponent
         let allSegments = segments
+        let displayName = settings.userDisplayName
         let stamp = ISO8601DateFormatter()
         stamp.formatOptions = [.withInternetDateTime]
         let fm = FileManager.default
         var created = 0
+
+        // Decode the meeting's own archives ONCE to 16 kHz mono; every
+        // note excerpt is a slice of these. Best-effort — a note still
+        // saves its text if the audio can't be decoded.
+        let micURLs = archivedAudioParts
+        let sysURL = systemArchiveURL
+        let micSamples: [Float]? = await Task.detached(priority: .utility) {
+            AudioArchiveDecoder.decodeToMono16k(urls: micURLs)
+        }.value
+        let systemSamples: [Float]? = await Task.detached(priority: .utility) {
+            guard let sysURL, FileManager.default.fileExists(atPath: sysURL.path) else { return nil }
+            return AudioArchiveDecoder.decodeToMono16k(urls: [sysURL])
+        }.value
+
         for window in closed {
             guard let end = window.end else { continue }
-            let inWindow = allSegments.filter { seg in
-                seg.startedAt >= window.start && seg.startedAt <= end
-                    && !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }
-            guard !inWindow.isEmpty else { continue }
-            let safeStamp = stamp.string(from: window.start)
+
+            // Meeting segments (mic + system) that fall inside the marked
+            // span — the note is a COPY of these, snapped to their bounds.
+            let covered = allSegments
+                .filter { $0.startedAt >= window.start && $0.startedAt <= end
+                    && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { $0.startSec < $1.startSec }
+            guard !covered.isEmpty else { continue }
+
+            let noteStart = covered.first!.startedAt
+            let noteEnd = covered.last!.startedAt
+            let safeStamp = stamp.string(from: noteStart)
                 .replacingOccurrences(of: ":", with: "-")
             let noteDir = base.appendingPathComponent(safeStamp, isDirectory: true)
-            // Never collide with the meeting's own directory or an
-            // existing one (two notes started in the same second).
             guard noteDir.lastPathComponent != meetingID,
                   !fm.fileExists(atPath: noteDir.path) else { continue }
+            do { try fm.createDirectory(at: noteDir, withIntermediateDirectories: true) }
+            catch {
+                log.error("Side note dir failed: \(error.localizedDescription, privacy: .public)")
+                continue
+            }
+
+            // Transcript body: copy each covered segment with its speaker
+            // label, so "Me" vs "Remote" survives in the excerpt.
+            let body = covered.map { seg -> String in
+                let label = seg.speakerLabel(displayName: displayName)
+                return "**[\(label)]** " + seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.joined(separator: "\n\n")
+            guard !body.isEmpty else { try? fm.removeItem(at: noteDir); continue }
+
+            // Audio excerpt: slice [startSec, endSec] (snapped to the
+            // covered segments) from mic + system and mix into one caf.
+            let startSec = max(0, covered.map(\.startSec).min() ?? 0)
+            let endSec = max(startSec, covered.map { $0.endSec > 0 ? $0.endSec : $0.startSec }.max() ?? startSec)
+            let lo = Int((startSec * 16_000).rounded())
+            let hi = Int((endSec * 16_000).rounded())
+            var hasAudio = false
+            if let excerpt = Self.mixExcerpt(mic: micSamples, system: systemSamples, from: lo, to: hi),
+               !excerpt.isEmpty {
+                let destCaf = noteDir.appendingPathComponent("microphone.caf")
+                hasAudio = await Task.detached(priority: .utility) {
+                    AudioArchiveDecoder.writeMono16kCAF(samples: excerpt, to: destCaf)
+                }.value
+            }
+
+            let md = Self.renderSideNoteMarkdown(
+                body: body, start: noteStart, end: noteEnd,
+                meetingID: meetingID, hasAudio: hasAudio
+            )
             do {
-                try fm.createDirectory(at: noteDir, withIntermediateDirectories: true)
-                let md = Self.renderSideNoteMarkdown(
-                    segments: inWindow, start: window.start, end: end,
-                    meetingID: meetingID
-                )
                 try Data(md.utf8).write(
                     to: noteDir.appendingPathComponent("transcript.md"),
                     options: .atomic
@@ -781,31 +833,62 @@ extension RecordingSession {
                 created += 1
             } catch {
                 log.error("Side note write failed: \(error.localizedDescription, privacy: .public)")
+                try? fm.removeItem(at: noteDir)
             }
         }
+
         if created > 0 {
+            await SessionStore.shared.refresh()
             let n = created
-            Task { @MainActor in
-                await SessionStore.shared.refresh()
-                ToastCenter.shared.show(
-                    n == 1
-                        ? String(localized: "Saved a side note to Notes.")
-                        : String(localized: "Saved \(n) side notes to Notes."),
-                    style: .success
-                )
-            }
+            ToastCenter.shared.show(
+                n == 1
+                    ? String(localized: "Saved a side note to Notes.")
+                    : String(localized: "Saved \(n) side notes to Notes."),
+                style: .success
+            )
         }
+    }
+
+    /// Slice `[lo, hi)` (16 kHz mono sample indices) out of the meeting's
+    /// mic and system sample arrays and MIX them into one clip, so a note
+    /// excerpt carries both the user's voice and the meeting audio in a
+    /// single replayable track. Each array is sliced from its own start
+    /// and clamped to its own length (mic/system decode lengths differ
+    /// slightly); the sum is clamped to [-1, 1] to avoid clip artefacts.
+    /// Returns nil when neither stream has audio in the window.
+    nonisolated static func mixExcerpt(
+        mic: [Float]?, system: [Float]?, from lo: Int, to hi: Int
+    ) -> [Float]? {
+        guard hi > lo else { return nil }
+        func slice(_ s: [Float]?) -> ArraySlice<Float>? {
+            guard let s else { return nil }
+            let a = max(0, min(lo, s.count))
+            let b = max(a, min(hi, s.count))
+            return a < b ? s[a..<b] : nil
+        }
+        let m = slice(mic)
+        let sy = slice(system)
+        let n = max(m?.count ?? 0, sy?.count ?? 0)
+        guard n > 0 else { return nil }
+        var out = [Float](repeating: 0, count: n)
+        if let m { for (i, v) in m.enumerated() { out[i] += v } }
+        if let sy { for (i, v) in sy.enumerated() { out[i] += v } }
+        for i in out.indices { out[i] = max(-1, min(1, out[i])) }
+        return out
     }
 
     /// Obsidian-shaped transcript.md for a split-out side note. Minimum
     /// frontmatter (title + started) so SessionStore classifies it
-    /// `.valid`, plus `daisy_folder: notes` and a `daisy_source_meeting`
-    /// back-link to the meeting it was captured during.
+    /// `.valid`, plus `daisy_kind: note` (so it surfaces in the Notes tab
+    /// by kind, not by folder), a default `daisy_folder: inbox` project
+    /// like any other note, and a `daisy_source_meeting` back-link to the
+    /// meeting it was captured during.
     nonisolated static func renderSideNoteMarkdown(
-        segments: [TranscriptSegment],
+        body: String,
         start: Date,
         end: Date,
-        meetingID: String
+        meetingID: String,
+        hasAudio: Bool
     ) -> String {
         let iso = ISO8601DateFormatter()
         let df = DateFormatter()
@@ -819,20 +902,17 @@ extension RecordingSession {
         lines.append("title: \"Side note — \(titleDate)\"")
         lines.append("started: \(iso.string(from: start))")
         lines.append("duration_sec: \(durSec)")
-        lines.append("daisy_folder: \(SessionFolder.notes.slug)")
+        lines.append("daisy_kind: \(SessionKind.note.rawValue)")
+        lines.append("daisy_folder: \(SessionFolder.inbox.slug)")
         lines.append("daisy_source_meeting: \(meetingID)")
         lines.append("---")
         lines.append("")
         lines.append("# Side note — \(titleDate)")
         lines.append("")
-        lines.append("> " + String(localized: "Captured during a meeting and split out into its own note."))
+        lines.append("> " + String(localized: "An excerpt copied from a meeting into its own note."))
         lines.append("")
-        for seg in segments {
-            let t = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !t.isEmpty else { continue }
-            lines.append(t)
-            lines.append("")
-        }
+        lines.append(body)
+        lines.append("")
         return lines.joined(separator: "\n")
     }
 
@@ -846,6 +926,7 @@ extension RecordingSession {
         segments: [TranscriptSegment],
         summary: MeetingSummary?,
         folderSlug: String,
+        kind: SessionKind = .recording,
         tag: String = "",
         systemAudioStatus: String? = nil
     ) -> StoredSession {
@@ -886,6 +967,7 @@ extension RecordingSession {
             summary: summary,
             transcriptURL: FileManager.default.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
+            kind: kind,
             tag: tag,
             meetingAttendees: [],
             // In-memory builder (post-stop MCP auto-send + manual

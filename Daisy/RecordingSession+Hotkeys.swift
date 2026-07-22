@@ -37,7 +37,7 @@ extension RecordingSession {
 
     /// Voice-notes — TOGGLE on tap. Single press starts a
     /// `.voiceNote` session (mic only, no system audio, no LLM
-    /// summary, Notes folder); next press of the same hotkey
+    /// summary, kind = note); next press of the same hotkey
     /// stops it. Different from dictation (hold-to-talk) because
     /// voice notes can be longer than the user wants to keep a
     /// finger on the key — meeting yourself, dictating ideas
@@ -46,7 +46,11 @@ extension RecordingSession {
         switch status {
         case .idle, .finished, .failed:
             pendingMode = .voiceNote
-            pendingFolderHint = .notes
+            // No folder hint: a voice note is now identified by
+            // `daisy_kind: note`, not by living in the Notes folder, so it
+            // defaults to Inbox like any capture and still lands in the
+            // Notes tab (which filters by kind). Was `pendingFolderHint =
+            // .notes`, which forced every note into the Notes folder.
             await start()
         case .recording, .paused:
             if currentMode == .voiceNote {

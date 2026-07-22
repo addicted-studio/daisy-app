@@ -13,17 +13,13 @@ struct VoiceView: View {
     @Bindable var settings: AppSettings
     @Bindable private var store = VoiceProfileStore.shared
     @State private var showingImport = false
+    @State private var showingEdit = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 stateCard
-                polishCard
-                Text("Your dictations are analyzed on your Mac. With a local summary provider the profile never leaves your Mac.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: 720, alignment: .leading)
@@ -33,15 +29,64 @@ struct VoiceView: View {
         .sheet(isPresented: $showingImport) {
             VoiceImportView()
         }
+        // Update + the polish toggle live as toolbar pills (CTA style, like
+        // the other sections) — only once a profile exists.
+        .toolbar {
+            if store.hasProfile {
+                ToolbarItem(placement: .primaryAction) {
+                    Toggle(isOn: $settings.polishDictationInMyVoice) {
+                        Text("Polish in my voice")
+                            .padding(.horizontal, 10)
+                    }
+                    .toggleStyle(.button)
+                    .help("Rewrite each dictation in your voice before it's pasted")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showingEdit = true
+                    } label: {
+                        Text("Edit")
+                            .padding(.horizontal, 10)
+                    }
+                    .help("Edit your profile text, or paste one carried over from another app (Granola, Wispr Flow…)")
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await store.generate() }
+                    } label: {
+                        Text("Update")
+                            .padding(.horizontal, 10)
+                    }
+                    .help("Rebuild your profile from your latest dictations")
+                }
+            }
+        }
+        // Edit / replace the current profile text (pre-filled with the
+        // active style instruction), in the Style-prompt editor.
+        .sheet(isPresented: $showingEdit) {
+            VoiceImportView(
+                initialText: store.profile?.styleInstruction ?? "",
+                startInStylePrompt: true
+            )
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Your Voice")
-                .font(.title2.weight(.semibold))
+                // Serif display title, matching the Home greeting.
+                .font(.system(.largeTitle, design: .serif).weight(.medium))
+                .foregroundStyle(.primary)
             Text("A profile of how you write, built from your dictations.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            // "Built from N words · date" moved up here, under the title.
+            if let profile = store.profile {
+                Text("Built from \(profile.sampleWords.formatted(.number)) words · \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
         }
     }
 
@@ -140,22 +185,14 @@ struct VoiceView: View {
     private func profileCard(_ profile: VoiceProfile) -> some View {
         card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Your voice")
-                        .font(.headline)
-                    Spacer()
-                    Button {
-                        Task { await store.generate() }
-                    } label: {
-                        Label("Update", systemImage: "arrow.trianglehead.2.clockwise")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
+                // Clean prose, like the meeting Summary block: no repeated
+                // "Your voice" header (the page title already says it), no
+                // accent-coloured section titles. Update / polish live in
+                // the toolbar; the "built from" line moved under the title.
                 if !profile.display.summary.isEmpty {
                     Text(profile.display.summary)
                         .font(.callout)
+                        .foregroundStyle(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -163,42 +200,11 @@ struct VoiceView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(section.title)
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.daisyAccent)
+                            .foregroundStyle(.primary)
                         ForEach(Array(section.bullets.enumerated()), id: \.offset) { _, bullet in
                             VoiceBulletRow(bullet: bullet, depth: 0)
                         }
                     }
-                }
-
-                Text("Built from \(profile.sampleWords.formatted(.number)) words · \(profile.generatedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 2)
-            }
-        }
-    }
-
-    // MARK: - Polish toggle
-
-    private var polishCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle(isOn: $settings.polishDictationInMyVoice) {
-                    Text("Polish dictation in my voice")
-                }
-                .disabled(!store.hasProfile)
-                Text(store.hasProfile
-                     ? "Each dictation is rewritten in your voice before it's pasted. Adds a moment of processing on release."
-                     : "Generate your profile first to enable this.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if store.hasProfile {
-                    Text("Tip: you can also rewrite selected text in any app — set a shortcut in Settings → Recording → Shortcuts (“Rewrite in my voice”).")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
                 }
             }
         }

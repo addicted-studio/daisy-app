@@ -689,27 +689,22 @@ struct ContentView: View {
         }
     }
 
-    /// Solid capsule fill. Colour signals what happens ON CLICK,
-    /// not the current state:
-    ///   • Recording → the button reads "Pause"; clicking it puts
-    /// Orange is reserved for actual live capture; paused is neutral and
-    /// the start button is charcoal at rest.
+    /// Solid capsule fill — mirrors the sidebar `RecordCapsule.fill` so the
+    /// two twin controls stay in visual lock-step. Orange is reserved for
+    /// actual live capture; paused is neutral; idle/finished is charcoal;
+    /// transitional states dim to the same grey as the capsule (0.40).
     private var primaryFill: Color {
         switch session.status {
         case .recording: return .daisyRecording
         case .paused:    return .daisyPaused
-        case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.55)
+        case .summarizing, .preparing, .stopping: return Color.gray.opacity(0.40)
         case .failed: return .daisyError
         default: return .daisyRecordIdle
         }
     }
 
     /// Every filled button state uses white ink, including charcoal idle.
-    private var primaryForeground: Color {
-        switch session.status {
-        default: return .white
-        }
-    }
+    private var primaryForeground: Color { .white }
 
     private var disablePrimary: Bool {
         switch session.status {

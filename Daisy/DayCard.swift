@@ -36,12 +36,20 @@ struct DayCard: View {
     /// Which event's Prep brief is expanded (one at a time).
     @State private var expandedPrepID: String?
 
-    private static let maxTasksPerEvent = 3
-    private static let maxStandaloneItems = 6
+    /// Open items whose source session is older than this land in the
+    /// separate "Overdue" block instead of "To close" (tunable).
+    private static let overdueAfterDays = 3
+
+    /// Width of the leading glyph column shared by the calendar dot and the
+    /// task checkbox, so the dot's centre lines up with the checkbox centre
+    /// and both titles start at the same x.
+    private static let glyphColumn: CGFloat = 20
 
     var body: some View {
         let grouping = makeGrouping()
-        let hasAnything = !events.isEmpty || !grouping.standalone.isEmpty
+        let doneToday = actionItems.doneTodayItems
+        let hasAnything = !events.isEmpty || !grouping.current.isEmpty
+            || !grouping.overdue.isEmpty || !doneToday.isEmpty
         if settings.morningBriefEnabled == false {
             // Brief disabled → plain agenda card (events only, no LLM/no tasks).
             if !events.isEmpty {
@@ -64,20 +72,31 @@ struct DayCard: View {
                         Spacer()
                     }
                 } else {
+                    // Separator between the lede paragraph and the agenda —
+                    // only when a lede is actually showing above it.
+                    if hasLede { fullBleedDivider }
                     eventRows(grouping: grouping, showTasks: true)
                 }
-                if !grouping.standalone.isEmpty {
-                    Divider().padding(.vertical, 2)
-                    Text("To close")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
-                    itemsList(Array(grouping.standalone.prefix(Self.maxStandaloneItems)))
-                    if grouping.standalone.count > Self.maxStandaloneItems {
-                        Text("+ \(grouping.standalone.count - Self.maxStandaloneItems) more in recent sessions")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                // Current open items not tied to a meeting — shown in full
+                // (the column scrolls), newest first.
+                if !grouping.current.isEmpty {
+                    fullBleedDivider
+                    sectionLabel("To close")
+                    itemsList(grouping.current)
+                }
+                // Overdue: carried over from older sessions, split below so
+                // today's pre-meeting tasks stay on top. Most-overdue first.
+                if !grouping.overdue.isEmpty {
+                    fullBleedDivider
+                    sectionLabel("Overdue")
+                    itemsList(grouping.overdue)
+                }
+                // Completed today — struck through at the very bottom;
+                // cleared automatically once the day rolls over.
+                if !doneToday.isEmpty {
+                    fullBleedDivider
+                    sectionLabel("Done")
+                    itemsList(doneToday)
                 }
             }
         }
@@ -96,6 +115,33 @@ struct DayCard: View {
         .task { await brief.prepare(settings: settings) }
     }
 
+    /// Shared uppercase section label ("To close", "Overdue") — the same
+    /// style the header greeting uses, so all card sub-headers match.
+    private func sectionLabel(_ text: LocalizedStringKey) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+    }
+
+    /// Light full-bleed 1pt rule reused between every card section (lede ↔
+    /// agenda, To close, Overdue, Done). The −16 cancels the card padding
+    /// so it runs edge to edge.
+    private var fullBleedDivider: some View {
+        Rectangle()
+            .fill(Color.daisyDivider.opacity(0.5))
+            .frame(height: 1)
+            .padding(.horizontal, -16)
+            .padding(.vertical, 2)
+    }
+
+    /// True while an LLM lede paragraph is actually on screen — gates the
+    /// lede↔agenda divider so it doesn't appear under an empty header.
+    private var hasLede: Bool {
+        if case .ready(let summary) = brief.ledeState { return !summary.summary.isEmpty }
+        return false
+    }
+
     private func header(open: Int) -> some View {
         HStack(spacing: 8) {
             Text(isTomorrow ? String(localized: "Tomorrow") : greeting)
@@ -104,8 +150,7 @@ struct DayCard: View {
                 .textCase(.uppercase)
             Spacer()
             Text(countsLabel(events: events.count, open: open))
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .daisyStatLabel()
             if case .ready = brief.ledeState {
                 Button {
                     Task { await brief.regenerate(settings: settings) }
@@ -188,8 +233,10 @@ struct DayCard: View {
                 let key = PreMeetingBriefStore.key(for: event)
                 eventRow(event, briefable: grouping.briefable.contains(key))
                 if showTasks, let tasks = grouping.byEvent[key], !tasks.isEmpty {
-                    itemsList(Array(tasks.prefix(Self.maxTasksPerEvent)))
-                        .padding(.leading, 66)
+                    // Indent nested tasks under the event title (glyph column
+                    // + the row's 8pt gap) so they read as the meeting's own.
+                    itemsList(tasks)
+                        .padding(.leading, Self.glyphColumn + 8)
                 }
                 if expandedPrepID == key {
                     PreMeetingBriefCard(meeting: event, settings: settings)
@@ -200,21 +247,20 @@ struct DayCard: View {
     }
 
     private func eventRow(_ event: DaisyMeeting, briefable: Bool) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
+            // Coloured calendar dot, centred in the shared glyph column so
+            // it lines up with the task checkboxes below.
             Circle()
                 .fill(dotColor(event))
                 .frame(width: 8, height: 8)
-            Text(event.startDate, style: .time)
-                .font(.system(.callout, design: .monospaced))
-                .frame(width: 46, alignment: .leading)
-                .foregroundStyle(.secondary)
-            // Tap the title area = start recording (same contract as the
-            // old event row).
+                .frame(width: Self.glyphColumn)
+            // Title left-aligned right after the glyph column — same start x
+            // as the task titles. Tap = start recording.
             Button {
                 onStartMeeting(event)
             } label: {
                 Text(event.title)
-                    .font(.callout)
+                    .font(.callout.weight(.medium))
                     .lineLimit(1)
                     .foregroundStyle(.primary)
             }
@@ -232,7 +278,7 @@ struct DayCard: View {
                         Text("Prep")
                         Image(systemName: expandedPrepID == PreMeetingBriefStore.key(for: event)
                               ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .semibold))
+                            .font(.caption2)
                     }
                     .font(.caption)
                 }
@@ -240,8 +286,13 @@ struct DayCard: View {
                 .controlSize(.mini)
                 .tint(Color.daisyHomeAccent)
             }
+            // Time pushed all the way to the right.
+            Text(event.startDate, style: .time)
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
         .frame(minHeight: 24)
+        .dayRowHover()
     }
 
     private func dotColor(_ event: DaisyMeeting) -> Color {
@@ -261,22 +312,24 @@ struct DayCard: View {
                         actionItems.setDone(item, done: !item.isDone)
                     } label: {
                         Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 13))
+                            .font(.title3)
                             .foregroundStyle(item.isDone ? Color.daisyHomeAccent : Color.secondary)
+                            .frame(width: Self.glyphColumn)
                     }
                     .buttonStyle(.plain)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(item.text)
-                            .font(.caption)
+                            .font(.callout.weight(.medium))
                             .strikethrough(item.isDone)
                             .foregroundStyle(item.isDone ? .secondary : .primary)
                             .fixedSize(horizontal: false, vertical: true)
                         Text("\(item.sessionTitle) · \(item.sessionDate.formatted(date: .abbreviated, time: .omitted))")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
+                .dayRowHover()
             }
         }
     }
@@ -285,7 +338,8 @@ struct DayCard: View {
 
     private struct Grouping {
         var byEvent: [String: [TrackedActionItem]] = [:]
-        var standalone: [TrackedActionItem] = []
+        var current: [TrackedActionItem] = []
+        var overdue: [TrackedActionItem] = []
         var briefable: Set<String> = []
     }
 
@@ -325,7 +379,14 @@ struct DayCard: View {
                 claimed.formUnion(tasks.map(\.id))
             }
         }
-        g.standalone = open.filter { !claimed.contains($0.id) }
+        let standalone = open.filter { !claimed.contains($0.id) }
+        let overdueCutoff = Calendar.current.date(
+            byAdding: .day, value: -Self.overdueAfterDays, to: now
+        ) ?? now
+        g.current = standalone.filter { $0.sessionDate >= overdueCutoff }
+        g.overdue = standalone
+            .filter { $0.sessionDate < overdueCutoff }
+            .sorted { $0.sessionDate < $1.sessionDate }   // most-overdue first
         return g
     }
 }
@@ -342,4 +403,29 @@ private extension Color {
         let b = Double(value & 0xFF) / 255
         self = Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
     }
+}
+
+/// Subtle hover highlight for the day-card meeting + task rows. Pads out a
+/// comfortable hit area, draws a faint rounded fill while hovered, then
+/// negates the padding so row layout doesn't shift.
+private struct DayRowHover: ViewModifier {
+    @State private var hovering = false
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(hovering ? 0.06 : 0))
+            )
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .padding(.horizontal, -8)
+            .padding(.vertical, -4)
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+}
+
+private extension View {
+    func dayRowHover() -> some View { modifier(DayRowHover()) }
 }

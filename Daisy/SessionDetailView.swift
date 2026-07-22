@@ -239,6 +239,30 @@ struct SessionDetailView: View {
         // rather than collapsing to icon-only — that collapse is why the old
         // `Label` showed only the sparkle. So: text title + default style =
         // proper text pill.
+        // Pin the three detail-section controls to the TRAILING edge of the
+        // detail column's toolbar section (window right edge), where they lived
+        // in the old 2-column layout. In the genuine 3-column
+        // NavigationSplitView each column owns its own toolbar section; inside
+        // the detail section the `.primaryAction` items resolve to the section's
+        // LEADING edge (just right of the list/detail divider, next to the Tags
+        // pill) because nothing in the detail section reserves leading space for
+        // them to push against — there's no principal/title content here, and
+        // the pre-26 implicit flexible spacer that used to trail-align
+        // primaryAction no longer spans an individual column section.
+        //
+        // macOS 26 replaces that implicit spacer with an explicit one:
+        // `ToolbarSpacer(.flexible)` is greedy space that consumes the
+        // section's free width. Declared FIRST in the primaryAction region, it
+        // pushes the whole group to the section's trailing edge. `.flexible`
+        // draws NO glass and is NOT an item, so it doesn't disturb each
+        // control's own default-style capsule (all three pills survive) and it
+        // doesn't touch the list/sidebar sections. Declaration order after the
+        // spacer is preserved, so the visual order stays tag → Summarize → ⋯.
+        // macOS 26 only — pre-26 the implicit primary-action spacer already
+        // trailing-pins these, and `ToolbarSpacer` doesn't exist there.
+        if #available(macOS 26.0, *) {
+            ToolbarSpacer(.flexible, placement: .primaryAction)
+        }
         // Tag capsule — leftmost of the primary-action cluster, so it
         // sits to the LEFT of Summarize (declaration order = left→right).
         ToolbarItem(placement: .primaryAction) {

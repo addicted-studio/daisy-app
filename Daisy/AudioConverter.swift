@@ -108,6 +108,42 @@ enum AudioArchiveDecoder {
         return anyDecoded ? samples : nil
     }
 
+    /// Write a 16 kHz mono Float32 sample array to a `.caf` at `url`,
+    /// overwriting any existing file. Used to materialise a side-note
+    /// audio excerpt sliced (and mic+system mixed) out of a meeting's own
+    /// archive. Written in 30 s blocks so we never build one giant PCM
+    /// buffer. Returns whether the write succeeded.
+    @discardableResult
+    nonisolated static func writeMono16kCAF(samples: [Float], to url: URL) -> Bool {
+        guard !samples.isEmpty,
+              let format = AVAudioFormat(
+                  commonFormat: .pcmFormatFloat32,
+                  sampleRate: 16_000,
+                  channels: 1,
+                  interleaved: false
+              ) else { return false }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: format.settings)
+            let block = 16_000 * 30
+            var offset = 0
+            while offset < samples.count {
+                let n = min(block, samples.count - offset)
+                guard let buf = AVAudioPCMBuffer(pcmFormat: format,
+                                                 frameCapacity: AVAudioFrameCount(n)),
+                      let ch = buf.floatChannelData?[0] else { return false }
+                samples.withUnsafeBufferPointer { src in
+                    ch.update(from: src.baseAddress!.advanced(by: offset), count: n)
+                }
+                buf.frameLength = AVAudioFrameCount(n)
+                try file.write(from: buf)
+                offset += n
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Stream-decode a single file in ~10 s blocks so we never hold the
     /// whole native-rate file in memory at once (only the 16 kHz result
     /// grows). Returns an empty array for a zero-frame file, `nil` on a

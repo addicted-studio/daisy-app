@@ -24,7 +24,11 @@ struct TrackedActionItem: Identifiable, Sendable, Equatable {
     let sessionID: String
     let sessionTitle: String
     let sessionDate: Date
-    var isDone: Bool
+    /// When the user checked it off, or nil if still open. Drives the
+    /// "done-today stays struck at the bottom, cleared on the next day"
+    /// behavior — a bare Bool couldn't tell today's dones from old ones.
+    var doneAt: Date?
+    var isDone: Bool { doneAt != nil }
 }
 
 @MainActor
@@ -39,22 +43,42 @@ final class ActionItemStore {
     /// How far back to harvest items. Old promises either got done or
     /// went stale — two weeks keeps the list honest.
     private static let windowDays = 14
-    private static let stateKey = "daisy.actionItemStates"
+    private static let stateKey = "daisy.actionItemStates"          // legacy [String: Bool]
+    private static let doneDatesKey = "daisy.actionItemDoneDates"   // [String: Date]
 
-    /// Persisted per-item state: true = done/dismissed.
+    /// Persisted per-item completion date; presence = done. Replaces the
+    /// old bool map so the card can distinguish "done today" (keep struck
+    /// at the bottom) from "done earlier" (gone).
     @ObservationIgnored
-    private var doneStates: [String: Bool]
+    private var doneDates: [String: Date]
 
     private init() {
-        if let dict = UserDefaults.standard.dictionary(forKey: Self.stateKey) as? [String: Bool] {
-            doneStates = dict
+        if let dates = UserDefaults.standard.dictionary(forKey: Self.doneDatesKey) as? [String: Date] {
+            doneDates = dates
+        } else if let legacy = UserDefaults.standard.dictionary(forKey: Self.stateKey) as? [String: Bool] {
+            // One-time migration: keep done-ness, but stamp distantPast —
+            // we don't know when they were done, and "before today" means
+            // they won't resurface in today's Done group.
+            doneDates = legacy.compactMapValues { $0 ? Date.distantPast : nil }
+            UserDefaults.standard.set(doneDates, forKey: Self.doneDatesKey)
+            UserDefaults.standard.removeObject(forKey: Self.stateKey)
         } else {
-            doneStates = [:]
+            doneDates = [:]
         }
     }
 
-    var openItems: [TrackedActionItem] { items.filter { !$0.isDone } }
+    var openItems: [TrackedActionItem] { items.filter { $0.doneAt == nil } }
     var openCount: Int { openItems.count }
+
+    /// Items completed TODAY — the card shows these struck-through at the
+    /// bottom until the day rolls over, then they drop out on their own
+    /// (the source item stays `done`, just no longer "done today").
+    var doneTodayItems: [TrackedActionItem] {
+        let cal = Calendar.current
+        return items
+            .filter { $0.doneAt.map { cal.isDateInToday($0) } ?? false }
+            .sorted { ($0.doneAt ?? .distantPast) < ($1.doneAt ?? .distantPast) }
+    }
 
     /// Rebuild from the session corpus (call after SessionStore.refresh).
     /// Also prunes persisted states for items that no longer exist so the
@@ -77,7 +101,7 @@ final class ActionItemStore {
                     sessionID: session.id,
                     sessionTitle: session.title,
                     sessionDate: session.startedAt,
-                    isDone: doneStates[id] ?? false
+                    doneAt: doneDates[id]
                 ))
             }
         }
@@ -86,22 +110,23 @@ final class ActionItemStore {
 
         // Prune states for vanished items (aged out / session deleted).
         let liveIDs = Set(rebuilt.map(\.id))
-        let pruned = doneStates.filter { liveIDs.contains($0.key) }
-        if pruned.count != doneStates.count {
-            doneStates = pruned
+        let pruned = doneDates.filter { liveIDs.contains($0.key) }
+        if pruned.count != doneDates.count {
+            doneDates = pruned
             persist()
         }
     }
 
     func setDone(_ item: TrackedActionItem, done: Bool) {
-        doneStates[item.id] = done
+        let stamp: Date? = done ? Date() : nil
+        if let stamp { doneDates[item.id] = stamp } else { doneDates.removeValue(forKey: item.id) }
         if let idx = items.firstIndex(where: { $0.id == item.id }) {
-            items[idx].isDone = done
+            items[idx].doneAt = stamp
         }
         persist()
     }
 
     private func persist() {
-        UserDefaults.standard.set(doneStates, forKey: Self.stateKey)
+        UserDefaults.standard.set(doneDates, forKey: Self.doneDatesKey)
     }
 }

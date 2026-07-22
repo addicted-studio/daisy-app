@@ -2,9 +2,10 @@
 //  HomeView.swift
 //  Daisy
 //
-//  Primary "landing" window that opens when the user clicks the Dock
-//  icon. Dispatcher hub: big Start/Stop button, current status, last
-//  few sessions, and shortcuts into the History + Settings windows.
+//  Primary "landing" view that opens when the user clicks the Dock
+//  icon. A calm hub: a serif greeting, today's agenda (DayCard), usage
+//  stats, and the last few recordings. Recording itself is driven by the
+//  persistent RecordCapsule / hotkey, not a button here.
 //
 
 import AppKit
@@ -33,17 +34,22 @@ struct HomeView: View {
     /// we don't accept two settings sources of truth.
     private var settings: AppSettings { session.settings }
 
+    /// Persisted "Don't show again" for the onboarding checklist — set from
+    /// the dismiss button, which only appears once the required permissions
+    /// are granted. Hides the block for good on Home.
+    @AppStorage("daisy.onboardingDismissed") private var onboardingDismissed = false
+
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                welcomeHeader
                 // Permissions moved from a full-width top banner into the
                 // onboarding checklist that sits above the day card in the
                 // right column (2026-07-21) — a calmer "finish setting up"
                 // block instead of an alarm bar.
                 homeColumns
                 if showDestinationsHint { destinationsHint }
-                Spacer(minLength: 0)
             }
             .padding(.top, 24)
             .padding(.bottom, 32)
@@ -57,6 +63,13 @@ struct HomeView: View {
         }
         .task {
             await store.refresh()
+            // Rebuild the open-items list now that the session corpus is
+            // loaded. MorningBriefStore.prepare also rebuilds, but the day
+            // card's own `.task` can fire before this refresh finishes on a
+            // cold launch — leaving the to-do list empty even though the
+            // (cached) lede already names the tasks. Redo it here so the
+            // checkable items always appear once sessions are in.
+            ActionItemStore.shared.rebuild(from: store.sessions)
             // One-time: seed the usage widgets from the existing Library
             // so long-time users don't see an empty stats block.
             usage.backfillIfNeeded(from: store.sessions)
@@ -66,12 +79,21 @@ struct HomeView: View {
         .tint(Color.daisyHomeAccent)
     }
 
-    // MARK: - Permissions banner
-    //
-    // Sticky at the top of Home if either Microphone or Accessibility
-    // is missing — those two are required, recording / dictation will
-    // fail silently without them. Calendar / Screen Recording are
-    // optional and don't trigger this banner.
+    // MARK: - Welcome header
+
+    /// Serif greeting at the very top of Home. Uses Apple's system serif
+    /// (New York) via `.serif` fontDesign. Appends the user's display
+    /// name when set ("Welcome back, Egor"); bare "Welcome back" otherwise.
+    private var welcomeHeader: some View {
+        let name = settings.userDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let greeting = name.isEmpty
+            ? String(localized: "Welcome back")
+            : String(localized: "Welcome back, \(name)")
+        return Text(greeting)
+            .font(.system(.largeTitle, design: .serif).weight(.medium))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 24)
+    }
 
     // MARK: - Onboarding checklist
     //
@@ -87,41 +109,64 @@ struct HomeView: View {
     /// optional one hasn't been decided yet. Hidden entirely when setup
     /// is complete so Home is clean for the everyday case.
     private var shouldShowOnboarding: Bool {
-        permissions.microphone != .granted
+        guard !onboardingDismissed else { return false }
+        return permissions.microphone != .granted
             || permissions.accessibility != .granted
             || permissions.screenRecording == .notDetermined
             || permissions.calendar == .notDetermined
     }
 
+    /// Both REQUIRED permissions granted — the point at which we let the
+    /// user dismiss the whole checklist (optional rows may still linger,
+    /// but nothing is broken, so "Don't show again" is safe to offer).
+    private var requiredPermissionsMet: Bool {
+        permissions.microphone == .granted && permissions.accessibility == .granted
+    }
+
     private var onboardingChecklist: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Finish setting up Daisy")
-                .font(.callout.weight(.semibold))
+            HStack(spacing: 8) {
+                Text("Finish setting up Daisy")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Spacer()
+                // Low-emphasis escape hatch — only once the essentials are
+                // in place, so the user can't skip past a broken setup.
+                if requiredPermissionsMet {
+                    Button(String(localized: "Don't show again")) {
+                        onboardingDismissed = true
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
 
             onboardingRow(
                 title: String(localized: "Microphone"),
-                caption: String(localized: "Required — captures your voice"),
+                caption: String(localized: "Captures your voice"),
                 status: permissions.microphone,
                 action: { Task { await permissions.requestMicrophone() } },
                 openSettings: permissions.openMicrophoneSettings
             )
             onboardingRow(
                 title: String(localized: "Accessibility"),
-                caption: String(localized: "Required — lets dictation paste into any app"),
+                caption: String(localized: "Lets dictation paste into any app"),
                 status: permissions.accessibility,
                 action: { permissions.requestAccessibility() },
                 openSettings: permissions.openAccessibilitySettings
             )
             onboardingRow(
                 title: String(localized: "Screen Recording"),
-                caption: String(localized: "Optional — captures the other side of meetings"),
+                caption: String(localized: "Captures the other side of meetings"),
                 status: permissions.screenRecording,
                 action: { permissions.requestScreenRecording() },
                 openSettings: permissions.openScreenRecordingSettings
             )
             onboardingRow(
                 title: String(localized: "Calendar"),
-                caption: String(localized: "Optional — auto-starts recording at meeting times"),
+                caption: String(localized: "Auto-starts recording at meeting times"),
                 status: permissions.calendar,
                 action: { Task { await permissions.requestCalendar() } },
                 openSettings: permissions.openCalendarSettings
@@ -132,9 +177,11 @@ struct HomeView: View {
         .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
     }
 
-    /// One checklist line: a status glyph (filled check when granted),
-    /// the name + one-line rationale, and a trailing action — "Allow"
-    /// when the system can still prompt, "Open Settings" once denied.
+    /// One checklist line: a status glyph (filled check when granted) plus
+    /// the name + one-line rationale. The WHOLE row is the tap target —
+    /// notDetermined requests the permission, denied/restricted opens
+    /// System Settings, granted is inert. No buttons (keeps the block
+    /// calm); a hover highlight + trailing chevron signal it's clickable.
     @ViewBuilder
     private func onboardingRow(
         title: String,
@@ -144,36 +191,34 @@ struct HomeView: View {
         openSettings: @escaping () -> Void
     ) -> some View {
         let granted = (status == .granted)
-        HStack(spacing: 10) {
-            Image(systemName: granted ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .foregroundStyle(granted ? Color.daisySuccess : Color.daisyTextTertiary)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(.callout.weight(.medium))
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        Button {
+            switch status {
+            case .granted:       break
+            case .notDetermined: action()
+            // denied / restricted / insufficient — the system won't prompt
+            // again, so send them to System Settings.
+            default:             openSettings()
             }
-            Spacer(minLength: 8)
-            if !granted {
-                switch status {
-                case .notDetermined:
-                    Button(String(localized: "Allow")) { action() }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .tint(Color.daisyBannerAction)
-                        .foregroundStyle(Color.daisyBannerActionText)
-                default:
-                    // denied / restricted / insufficient — the system
-                    // won't prompt again, so send them to Settings.
-                    Button(String(localized: "Open Settings")) { openSettings() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: granted ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(granted ? Color.daisyHomeAccent : Color.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.callout.weight(.medium))
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                Spacer(minLength: 8)
             }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .disabled(granted)
+        .modifier(OnboardingRowHover(active: !granted))
     }
 
     // MARK: - Destinations discoverability
@@ -310,7 +355,6 @@ struct HomeView: View {
                 Task { await session.startFromMeeting(event) }
             }
         )
-        .padding(.vertical, 16)
     }
 
     // MARK: - Calendar plumbing (consumed by DayCard)
@@ -363,76 +407,9 @@ struct HomeView: View {
     // (sectionHeader / eventsBody / UpcomingEventRow removed 2026-07-15 —
     // the DayCard renders the agenda now, with inline Prep + nested tasks.)
 
-    private var connectCalendarCTA: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "calendar.badge.plus")
-                .font(.title3)
-                .foregroundStyle(Color.daisyHomeAccent)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("See your meetings here")
-                    .font(.callout.weight(.medium))
-                Text("Connect Calendar to surface today's events and auto-start recordings when they begin")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 8)
-            // minWidth lives on the LABEL inside the Button (not the
-            // Button) so the bordered-prominent capsule sizes around the
-            // wider text frame rather than hugging the label.
-            Button {
-                Task { _ = await calendar.requestAccess() }
-                // MainView observes CalendarService.authorizationStatus
-                // and wires AppSettings + service start on its own.
-            } label: {
-                Text("Connect").frame(minWidth: 120)
-                    .foregroundStyle(Color.daisyBannerActionText)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .tint(Color.daisyBannerAction)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.daisyBannerBackground, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyBannerBorder, lineWidth: 1)
-        )
-    }
-
-    private var deniedCalendarCTA: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "calendar.badge.exclamationmark")
-                .font(.title3)
-                .foregroundStyle(Color.daisyHomeAccent)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Calendar access is off")
-                    .font(.callout.weight(.medium))
-                Text("Grant access in System Settings → Privacy → Calendars to see upcoming meetings")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer(minLength: 8)
-            Button {
-                calendar.openCalendarPrivacy()
-            } label: {
-                Text("Open Settings").frame(minWidth: 120)
-                    .foregroundStyle(Color.daisyBannerActionText)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
-            .tint(Color.daisyBannerAction)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color.daisyBannerBackground, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.daisyBannerBorder, lineWidth: 1)
-        )
-    }
+    // (connectCalendarCTA / deniedCalendarCTA removed 2026-07-21 — the
+    // onboarding checklist's Calendar row is the only calendar nudge on
+    // Home now; the standalone banners were dead code.)
 
     // MARK: - Usage stats (words/min · total words · activity)
 
@@ -442,28 +419,29 @@ struct HomeView: View {
     private var fixesCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(usage.totalFixes.formatted(.number))
-                .font(.system(size: 30, weight: .semibold))
-                .monospacedDigit()
+                .font(.title.weight(.semibold))
                 .foregroundStyle(.primary)
             Text("Fixes made by Daisy")
-                .font(.caption)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            Divider().padding(.vertical, 4)
-            HStack {
+            Rectangle()
+                .fill(Color.daisyDivider.opacity(0.5))
+                .frame(height: 1)
+                .padding(.horizontal, -16)
+                .padding(.vertical, 4)
+            HStack(spacing: 6) {
+                Text(usage.totalDictionaryFixes.formatted(.number))
                 Text("Dictionary")
                 Spacer()
-                Text(usage.totalDictionaryFixes.formatted(.number)).monospacedDigit()
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            HStack {
+            .daisyStatLabel()
+            HStack(spacing: 6) {
+                Text(usage.totalPolishedWords.formatted(.number))
                 Text("Voice polish")
                 Spacer()
-                Text(usage.totalPolishedWords.formatted(.number)).monospacedDigit()
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .daisyStatLabel()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
@@ -474,23 +452,25 @@ struct HomeView: View {
     private var wordsCard: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(usage.totalWords.formatted(.number))
-                .font(.system(size: 30, weight: .semibold))
-                .monospacedDigit()
+                .font(.title.weight(.semibold))
                 .foregroundStyle(.primary)
             Text("Total words")
-                .font(.caption)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
-            Divider().padding(.vertical, 4)
-            HStack {
-                Text("Words / min")
-                Spacer()
+            Rectangle()
+                .fill(Color.daisyDivider.opacity(0.5))
+                .frame(height: 1)
+                .padding(.horizontal, -16)
+                .padding(.vertical, 4)
+            HStack(spacing: 6) {
                 // "—" until the first dictation lands: WPM is dictation-
                 // only, and a literal 0 reads as broken.
-                Text(usage.averageWPM > 0 ? "\(usage.averageWPM)" : "—").monospacedDigit()
+                Text(usage.averageWPM > 0 ? "\(usage.averageWPM)" : "—")
+                Text("Words / min")
+                Spacer()
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .daisyStatLabel()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
@@ -508,8 +488,7 @@ struct HomeView: View {
                 Text(usage.currentStreak == 1
                      ? String(localized: "1 day streak")
                      : String(localized: "\(usage.currentStreak) day streak"))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .daisyStatLabel()
             }
             MeetingsHeatmap(dayCounts: usage.dayCounts())
         }
@@ -531,8 +510,9 @@ struct HomeView: View {
                 Button("Open Library") {
                     nav.section = .library
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             if store.sessions.isEmpty {
@@ -544,23 +524,24 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 160)
             } else {
-                // spacing 6 = same rhythm as the events list next door.
-                VStack(spacing: 6) {
+                // One block, no dividers — the per-row hover carries the
+                // separation now.
+                VStack(spacing: 0) {
                     ForEach(Array(store.sessions.prefix(5))) { session in
                         RecentSessionRow(session: session) {
-                            // Deep-link into the Library view with
-                            // this session pre-selected, instead of
-                            // dumping the user on the default row.
+                            // Deep-link into the Library view with this
+                            // session pre-selected, not the default row.
                             nav.openInLibrary(session.id)
                         }
                     }
                 }
             }
         }
-        // Horizontal inset comes from `homeColumns` (the left column's
-        // parent), so this section adds only vertical padding.
-        .padding(.vertical, 16)
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
     }
+
 
 }
 
@@ -570,9 +551,46 @@ struct HomeView: View {
 /// agenda rows for the calendar side).
 private let homeRowMinHeight: CGFloat = 36
 
+/// Subtle hover highlight for the onboarding checklist rows. `active` is
+/// false for a granted (inert) row, so it never lights up. Pads a comfy
+/// hit area, draws a faint fill on hover, then negates the padding so the
+/// row layout doesn't shift.
+private struct OnboardingRowHover: ViewModifier {
+    let active: Bool
+    @State private var hovering = false
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(active && hovering ? 0.06 : 0))
+            )
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .padding(.horizontal, -8)
+            .padding(.vertical, -6)
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+}
+
+extension View {
+    /// Shared secondary "stat label" style — the same aligned look as the
+    /// uppercase section headers on Home (caption · semibold · secondary ·
+    /// uppercase). Used for the number-led breakdown rows in the stat
+    /// cards, the streak, the heatmap session count, and the day-card
+    /// counts, so every small figure+label reads the same.
+    func daisyStatLabel() -> some View {
+        self.font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+    }
+}
+
 private struct RecentSessionRow: View {
     let session: StoredSession
     let onTap: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: onTap) {
@@ -597,19 +615,32 @@ private struct RecentSessionRow: View {
                 Spacer()
             }
             .frame(minHeight: homeRowMinHeight)
-            .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.primary.opacity(hovering ? 0.06 : 0))
+                    // Extend 8pt past the content on each side so the
+                    // highlight lines up with the day-card / onboarding rows.
+                    .padding(.horizontal, -8)
+            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeInOut(duration: 0.12), value: hovering)
     }
 
-    private var formattedDate: String {
+    // One shared formatter instead of allocating per row per render.
+    private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
         f.timeStyle = .short
-        return f.string(from: session.startedAt)
+        return f
+    }()
+
+    private var formattedDate: String {
+        Self.dateFormatter.string(from: session.startedAt)
     }
 
     private var formattedDuration: String {

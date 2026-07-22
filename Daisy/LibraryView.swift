@@ -2,9 +2,22 @@
 //  LibraryView.swift
 //  Daisy
 //
-//  Browser for past recording sessions. Top-level NavigationSplitView:
-//  left pane = list of sessions with search; right pane = full detail
-//  (transcript + summary + screenshots + actions).
+//  Browser for past recording sessions. As of 2026-07-21 the Library is
+//  rendered by MainView as a GENUINE three-column NavigationSplitView:
+//      [sidebar/section-nav] | [session list] | [session detail]
+//  so the window's Liquid Glass toolbar splits into column-aligned
+//  sections (Daisy pill over the sidebar, Tags pill over the list,
+//  Add-tag / Summarize / ⋯ over the detail). To make a list column and
+//  a detail column — two separate view trees — share one selection, the
+//  former per-view `@State` (selection / query / filters / pending
+//  delete) is hoisted into `LibraryModel`, an `@Observable` owned by
+//  MainView (one instance for Library `.all`, one for Notes `.notes`).
+//
+//  `LibraryListColumn` and `LibraryDetailColumn` are the two column
+//  views MainView places in `content:` and `detail:`. `LibraryView`
+//  remains as a thin composite (list | divider | detail in an HStack)
+//  for #Preview and as a non-split fallback; MainView no longer renders
+//  it for the live Library/Notes tabs.
 //
 //  Sidebar entry is called "Library" — `HistoryView` was the original
 //  name when it framed the section as a chronological log; renamed
@@ -15,158 +28,191 @@
 import SwiftUI
 import AppKit
 
-struct LibraryView: View {
-    /// Which slice of the corpus this instance shows. `.all` is the
-    /// Library proper (everything EXCEPT the Notes folder — voice notes
-    /// live in their own top-level Notes tab now). `.notes` is that tab:
-    /// only the Notes folder, folder chips hidden (the folder is fixed).
-    /// Same view, same model, same detail pane — just a scoped pool.
-    enum Scope: Equatable { case all, notes }
-    let scope: Scope
+// MARK: - Scope
 
-    init(scope: Scope = .all) { self.scope = scope }
+/// Which slice of the corpus a Library surface shows. `.all` is the
+/// Library proper (every session with `kind == .recording`); `.notes` is
+/// the top-level Notes tab (every session with `kind == .note`). Both
+/// span ALL folders/projects — notes and recordings share the same
+/// taxonomy and are told apart by kind, not by folder. Same columns,
+/// same model, same detail pane, same folder + tag chips — just a
+/// scoped pool.
+///
+/// Was a nested `LibraryView.Scope`; lifted to a top-level enum so the
+/// shared `LibraryModel` (and the two column views) can name it without
+/// depending on the composite `LibraryView`. `LibraryView.Scope` stays
+/// as a typealias for source compatibility.
+enum LibraryScope: Equatable { case all, notes }
 
-    @Bindable var store = SessionStore.shared
-    @Bindable var folders = FolderStore.shared
-    @State private var query: String = ""
+// MARK: - Shared selection model
+
+/// The Library's cross-column state. In the three-column shell the list
+/// (content column) and the detail (detail column) are separate view
+/// trees, so their shared selection can't live in either's `@State` —
+/// it's hoisted here and handed to both columns by MainView, which owns
+/// the instance (`@State`) so the state survives the split's remount
+/// when the user navigates away and back.
+///
+/// `scope` is immutable per instance (Library vs Notes get their own
+/// model), so leaving the two tabs' selections independent — matching
+/// the pre-refactor behaviour where each tab was a fresh `LibraryView`.
+@Observable
+@MainActor
+final class LibraryModel {
+    let scope: LibraryScope
+    var query: String = ""
     /// Selected session IDs. Multi-select via Shift-click (range)
     /// and Cmd-click (toggle). When exactly one is selected, the
     /// detail pane shows it. When several, the pane shows a "N
     /// selected" empty-state with a bulk-delete CTA.
-    @State private var selectedIDs: Set<StoredSession.ID> = []
+    var selectedIDs: Set<StoredSession.ID> = []
     /// Active folder filter. `nil` = show all folders.
-    @State private var folderFilter: SessionFolder? = nil
+    var folderFilter: SessionFolder? = nil
     /// Active tag filter. `nil` == "all tags" (no filter). `.some("")`
     /// == "untagged" bucket only. `.some("Mediacube")` == that exact
-    /// tag. Driven by the selector dropdown above the session list.
-    @State private var tagFilter: String? = nil
+    /// tag. Driven by the selector pill in the list column's toolbar.
+    var tagFilter: String? = nil
     /// Pending delete confirmation. Carries the sessions about to
     /// be removed (1 for context-menu, N for multi-select).
-    @State private var pendingDelete: [StoredSession] = []
-    // refreshRotation removed in 1.0.6.1 along with the dormant
-    // manual-reload button. Store auto-refreshes on .task / focus /
-    // FSEvents.
+    var pendingDelete: [StoredSession] = []
 
-    /// Single selected session, used as a derived view for the
-    /// detail pane. `nil` when 0 or >1 selected.
-    private var singleSelected: StoredSession? {
+    init(scope: LibraryScope) { self.scope = scope }
+
+    /// Single selected session, used as a derived view for the detail
+    /// pane. `nil` when 0 or >1 selected. Reads `SessionStore` so the
+    /// detail column re-renders when the store swaps the row in-place
+    /// (post-Stop summary write).
+    var singleSelected: StoredSession? {
         guard selectedIDs.count == 1,
               let id = selectedIDs.first else { return nil }
-        return store.sessions.first(where: { $0.id == id })
+        return SessionStore.shared.sessions.first(where: { $0.id == id })
     }
+}
+
+// MARK: - List column (content column of the split)
+
+/// The session list: search header, folder chips, the list itself, the
+/// Tags-filter toolbar pill, bulk-delete keyboard shortcuts + alert, and
+/// the deep-link / default-selection wiring. Lives in the split's
+/// `content:` column; its `.toolbar` items therefore land in the list
+/// region of the window toolbar (Tags pill pinned to that region's
+/// trailing edge). All selection/filter state is in the shared `model`.
+struct LibraryListColumn: View {
+    @Bindable var model: LibraryModel
+    @Bindable var store = SessionStore.shared
+    @Bindable var folders = FolderStore.shared
+
+    private var scope: LibraryScope { model.scope }
 
     var body: some View {
-        // Plain HStack instead of NavigationSplitView — we don't need
-        // SwiftUI's nested-split chrome (its sidebar style + merged
-        // toolbar were causing visual jank when nested inside MainView).
-        // A simple list + divider + detail gives full control over
-        // sizing and removes the frosted-glass list backplate.
-        HStack(spacing: 0) {
-            sessionList
-                .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
-            // Manual vertical divider drawn full-bleed so it visually
-            // extends from the window's title-bar edge to the bottom.
-            // `.ignoresSafeArea(.container, edges: .top)` on the
-            // divider alone (not the whole HStack) extends just this
-            // hairline up through the toolbar safe area, without
-            // pulling the rest of the content under the toolbar.
-            Rectangle()
-                .fill(Color.daisyDivider)
-                .frame(width: 0.5)
-                .frame(maxHeight: .infinity)
-                .ignoresSafeArea(.container, edges: .top)
-            detailPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .frame(minWidth: 760, minHeight: 480)
-        .task { await store.refresh() }
-        .onAppear {
-            consumePendingSelection()
-            if selectedIDs.isEmpty, let first = store.sessions.first?.id {
-                selectedIDs = [first]
-            }
-        }
-        // Deep-link arrival: HomeView (and similar) can request a
-        // specific session via `AppNavigation.openInLibrary(_:)`.
-        // We react to that request both on first appear (above) and
-        // any subsequent arrivals while the view is already mounted.
-        .onChange(of: AppNavigation.shared.pendingLibrarySelection) { _, _ in
-            consumePendingSelection()
-        }
-        // Backspace / forward-Delete on the History view trigger the
-        // bulk-delete confirmation. `.onDeleteCommand` only fires
-        // when the responder chain has a focused view that opted in —
-        // our rows use a manual gesture model, so the List never
-        // receives focus and `.onDeleteCommand` never fires. Hidden
-        // buttons with `.keyboardShortcut` work without focus.
-        //
-        // `.disabled(...)` guards both buttons so neither hijacks
-        // Backspace while the user is typing in the search field
-        // (TextField captures the key first anyway, but this is
-        // belt-and-braces).
-        .background {
-            Group {
-                Button("Delete selected sessions") {
-                    requestBulkDelete()
-                }
-                .keyboardShortcut(.delete, modifiers: [])
-
-                Button("Forward-delete selected sessions") {
-                    requestBulkDelete()
-                }
-                .keyboardShortcut(.deleteForward, modifiers: [])
-
-                // ⌘+Delete — macOS convention (Finder, Notes, Mail
-                // all bind "move to trash" to ⌘+⌫). Mirrors the bare
-                // Backspace path; same alert, same destruction.
-                Button("Delete selected (⌘⌫)") {
-                    requestBulkDelete()
-                }
-                .keyboardShortcut(.delete, modifiers: .command)
-            }
-            .hidden()
-            .disabled(selectedIDs.isEmpty)
-        }
-        .alert(
-            deleteAlertTitle,
-            isPresented: Binding(
-                get: { !pendingDelete.isEmpty },
-                set: { if !$0 { pendingDelete = [] } }
-            )
-        ) {
-            Button("Cancel", role: .cancel) { pendingDelete = [] }
-            Button("Delete", role: .destructive) {
-                let victims = pendingDelete
-                Task {
-                    if victims.count == 1, let only = victims.first {
-                        await store.delete(only)
-                    } else {
-                        await store.deleteMany(victims)
+        sessionList
+            // List column paper tone (Home surface), NOT the frosted
+            // content-column material a NavigationSplitView paints by
+            // default. `.scrollContentBackground(.hidden)` on the inner
+            // List (below) lets this show through.
+            .background(Color.daisyBgPrimary)
+            .toolbar {
+                // Tags pill → LIST section, pinned to its RIGHT edge.
+                // `.primaryAction` on the CONTENT column attributes the
+                // item to the list region's trailing edge (the detail
+                // column's own `.primaryAction` items sit in the detail
+                // region further right). Only shown once there's a real
+                // (non-empty) tag to filter by.
+                // Shown on BOTH tabs (Library and Notes) so tag filtering is
+                // consistent now that notes and recordings share tags.
+                if tagGroups.contains(where: { !$0.name.isEmpty }) {
+                    ToolbarItem(placement: .primaryAction) {
+                        tagSelector
                     }
-                    selectedIDs.subtract(victims.map(\.id))
-                    pendingDelete = []
                 }
             }
-            // Enter confirms — by default macOS binds Return to the
-            // .cancel role and leaves destructive buttons un-defaulted
-            // (anti-fat-finger). User explicitly asked for keyboard-
-            // first delete flow, so we promote Delete to .defaultAction.
-            // Esc still maps to Cancel via the .cancel role.
-            .keyboardShortcut(.defaultAction)
-        } message: {
-            Text(deleteAlertMessage)
-        }
+            .task { await store.refresh() }
+            .onAppear {
+                consumePendingSelection()
+                if model.selectedIDs.isEmpty, let first = store.sessions.first?.id {
+                    model.selectedIDs = [first]
+                }
+            }
+            // Deep-link arrival: HomeView (and similar) can request a
+            // specific session via `AppNavigation.openInLibrary(_:)`.
+            // We react both on first appear (above) and any subsequent
+            // arrivals while the column is already mounted.
+            .onChange(of: AppNavigation.shared.pendingLibrarySelection) { _, _ in
+                consumePendingSelection()
+            }
+            // Backspace / forward-Delete trigger the bulk-delete
+            // confirmation. `.onDeleteCommand` only fires when the
+            // responder chain has a focused view that opted in — our
+            // rows use a manual gesture model, so the List never
+            // receives focus and `.onDeleteCommand` never fires. Hidden
+            // buttons with `.keyboardShortcut` work without focus.
+            //
+            // `.disabled(...)` guards both buttons so neither hijacks
+            // Backspace while the user is typing in the search field
+            // (TextField captures the key first anyway, but this is
+            // belt-and-braces).
+            .background {
+                Group {
+                    Button("Delete selected sessions") {
+                        requestBulkDelete()
+                    }
+                    .keyboardShortcut(.delete, modifiers: [])
+
+                    Button("Forward-delete selected sessions") {
+                        requestBulkDelete()
+                    }
+                    .keyboardShortcut(.deleteForward, modifiers: [])
+
+                    // ⌘+Delete — macOS convention (Finder, Notes, Mail
+                    // all bind "move to trash" to ⌘+⌫). Mirrors the bare
+                    // Backspace path; same alert, same destruction.
+                    Button("Delete selected (⌘⌫)") {
+                        requestBulkDelete()
+                    }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                }
+                .hidden()
+                .disabled(model.selectedIDs.isEmpty)
+            }
+            .alert(
+                deleteAlertTitle,
+                isPresented: Binding(
+                    get: { !model.pendingDelete.isEmpty },
+                    set: { if !$0 { model.pendingDelete = [] } }
+                )
+            ) {
+                Button("Cancel", role: .cancel) { model.pendingDelete = [] }
+                Button("Delete", role: .destructive) {
+                    let victims = model.pendingDelete
+                    Task {
+                        if victims.count == 1, let only = victims.first {
+                            await store.delete(only)
+                        } else {
+                            await store.deleteMany(victims)
+                        }
+                        model.selectedIDs.subtract(victims.map(\.id))
+                        model.pendingDelete = []
+                    }
+                }
+                // Enter confirms — by default macOS binds Return to the
+                // .cancel role and leaves destructive buttons un-defaulted
+                // (anti-fat-finger). User explicitly asked for keyboard-
+                // first delete flow, so we promote Delete to .defaultAction.
+                // Esc still maps to Cancel via the .cancel role.
+                .keyboardShortcut(.defaultAction)
+            } message: {
+                Text(deleteAlertMessage)
+            }
     }
 
     /// Pull the pending session id from `AppNavigation`, focus the
     /// row, and clear the request so it doesn't fire again. Called
     /// on appear AND on changes — the latter handles deep-links
-    /// while the History tab is already the active one.
+    /// while the Library tab is already the active one.
     private func consumePendingSelection() {
         guard let pending = AppNavigation.shared.pendingLibrarySelection else { return }
         if store.sessions.contains(where: { $0.id == pending }) {
-            selectedIDs = [pending]
+            model.selectedIDs = [pending]
         }
         AppNavigation.shared.pendingLibrarySelection = nil
     }
@@ -175,19 +221,19 @@ struct LibraryView: View {
     /// request. No-op if nothing's selected. Shared by the Backspace
     /// shortcut and (potentially) any future bulk-delete button.
     private func requestBulkDelete() {
-        let toDelete = store.sessions.filter { selectedIDs.contains($0.id) }
+        let toDelete = store.sessions.filter { model.selectedIDs.contains($0.id) }
         guard !toDelete.isEmpty else { return }
-        pendingDelete = toDelete
+        model.pendingDelete = toDelete
     }
 
     private var deleteAlertTitle: String {
-        let n = pendingDelete.count
+        let n = model.pendingDelete.count
         if n <= 1 { return String(localized: "Delete this recording?") }
         return String(localized: "Delete \(n) recordings?")
     }
 
     private var deleteAlertMessage: String {
-        let n = pendingDelete.count
+        let n = model.pendingDelete.count
         if n <= 1 {
             return String(localized: "Audio, transcript, summary and screenshots will be removed from disk. This can't be undone.")
         }
@@ -236,15 +282,15 @@ struct LibraryView: View {
         }
         Divider()
         Button(role: .destructive) {
-            let multi = store.sessions.filter { selectedIDs.contains($0.id) }
+            let multi = store.sessions.filter { model.selectedIDs.contains($0.id) }
             if multi.count > 1, multi.contains(where: { $0.id == session.id }) {
-                pendingDelete = multi
+                model.pendingDelete = multi
             } else {
-                pendingDelete = [session]
+                model.pendingDelete = [session]
             }
         } label: {
-            let multi = selectedIDs.count
-            if multi > 1 && selectedIDs.contains(session.id) {
+            let multi = model.selectedIDs.count
+            if multi > 1 && model.selectedIDs.contains(session.id) {
                 Label(String(localized: "Delete \(multi) selected"), systemImage: "trash")
             } else {
                 Label("Delete", systemImage: "trash")
@@ -286,22 +332,13 @@ struct LibraryView: View {
 
     private var sessionList: some View {
         VStack(spacing: 0) {
-            // Search + tag-filter header
+            // Search header
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(.secondary)
-                TextField("Search transcripts…", text: $query)
+                TextField("Search transcripts…", text: $model.query)
                     .textFieldStyle(.plain)
                 Spacer(minLength: 0)
-                // Tag selector lives here in 1.0.6 — Egor moved it
-                // up from a separate row below folder chips so it
-                // shares the capsule region with search. Only
-                // renders when there's at least one real tag in
-                // use; keeps the bar uncluttered for users who
-                // haven't tagged anything yet.
-                if tagGroups.contains(where: { !$0.name.isEmpty }) {
-                    tagSelector
-                }
             }
             .padding(.horizontal, 12)
             .padding(.top, 12)
@@ -310,14 +347,14 @@ struct LibraryView: View {
             // "All" chip sat right under the text-field's baseline.
             .padding(.bottom, 14)
 
-            // Folder chips only in the full Library — the Notes tab is
-            // itself a fixed-folder view, so a folder picker there is
-            // meaningless.
-            if scope == .all {
-                folderChips
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
-            }
+            // Both tabs get the SAME folder/project chip row now that notes
+            // and recordings share folders — the Notes tab is no longer a
+            // single fixed folder. The tag filter lives in the toolbar pill
+            // (see the `.toolbar` above) on both tabs, so folder + tag
+            // filtering are consistent across Library and Notes.
+            folderChips
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
 
             // Manual selection model keeps the custom neutral highlight
             // while preserving Finder-style Shift / Cmd-click behaviour:
@@ -333,21 +370,9 @@ struct LibraryView: View {
                         .listRowBackground(Color.clear)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(selectedIDs.contains(session.id)
-                                      ? Color.daisySelectionBackground
-                                      : Color.clear)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(
-                                    selectedIDs.contains(session.id)
-                                        ? Color.daisySelectionBorder
-                                        : Color.clear,
-                                    lineWidth: 1
-                                )
-                        )
+                        // Selection = the sidebar menu's borderless fill;
+                        // hover = the subtle Home-style highlight.
+                        .modifier(LibraryRowHighlight(isSelected: model.selectedIDs.contains(session.id)))
                         .contentShape(Rectangle())
                         .gesture(rowTapGesture(for: session))
                         .contextMenu {
@@ -372,43 +397,25 @@ struct LibraryView: View {
                             description: Text("When you stop a recording, it'll appear here.")
                         )
                     }
-                } else if filteredSessions.isEmpty && !query.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                } else if filteredSessions.isEmpty, let f = folderFilter {
-                    ContentUnavailableView(
-                        "No recordings in \(f.name)",
-                        systemImage: "folder",
-                        description: Text("Move a recording into this folder from its detail view.")
-                    )
+                } else if filteredSessions.isEmpty && !model.query.isEmpty {
+                    ContentUnavailableView.search(text: model.query)
+                } else if filteredSessions.isEmpty, let f = model.folderFilter {
+                    // Kind-aware noun: the Notes tab also has folder chips now.
+                    if scope == .notes {
+                        ContentUnavailableView(
+                            "No notes in \(f.name)",
+                            systemImage: "folder",
+                            description: Text("Move a note into this folder from its detail view.")
+                        )
+                    } else {
+                        ContentUnavailableView(
+                            "No recordings in \(f.name)",
+                            systemImage: "folder",
+                            description: Text("Move a recording into this folder from its detail view.")
+                        )
+                    }
                 }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var detailPane: some View {
-        if let session = singleSelected {
-            SessionDetailView(initialSession: session)
-        } else if selectedIDs.count > 1 {
-            multiSelectDetail
-        } else {
-            emptyDetail
-        }
-    }
-
-    private var multiSelectDetail: some View {
-        ContentUnavailableView {
-            Label(String(localized: "\(selectedIDs.count) recordings selected"), systemImage: "doc.on.doc")
-        } description: {
-            Text("Press ⌫ to delete the selection, or click a single row to read its transcript.")
-        } actions: {
-            Button(role: .destructive) {
-                pendingDelete = store.sessions.filter { selectedIDs.contains($0.id) }
-            } label: {
-                Label(String(localized: "Delete \(selectedIDs.count) sessions…"), systemImage: "trash")
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Color.daisyError)
         }
     }
 
@@ -418,26 +425,26 @@ struct LibraryView: View {
     private func rowTapGesture(for session: StoredSession) -> some Gesture {
         TapGesture().onEnded {
             let mods = NSEvent.modifierFlags
-            if mods.contains(.shift), let anchor = selectedIDs.first ?? store.sessions.first?.id {
+            if mods.contains(.shift), let anchor = model.selectedIDs.first ?? store.sessions.first?.id {
                 // Range select between anchor and this row.
                 let ids = filteredSessions.map(\.id)
                 if let a = ids.firstIndex(of: anchor),
                    let b = ids.firstIndex(of: session.id) {
                     let range = a <= b ? a...b : b...a
-                    selectedIDs = Set(ids[range])
+                    model.selectedIDs = Set(ids[range])
                     return
                 }
-                selectedIDs = [session.id]
+                model.selectedIDs = [session.id]
             } else if mods.contains(.command) {
                 // Toggle this row in the selection.
-                if selectedIDs.contains(session.id) {
-                    selectedIDs.remove(session.id)
+                if model.selectedIDs.contains(session.id) {
+                    model.selectedIDs.remove(session.id)
                 } else {
-                    selectedIDs.insert(session.id)
+                    model.selectedIDs.insert(session.id)
                 }
             } else {
                 // Bare click — single select.
-                selectedIDs = [session.id]
+                model.selectedIDs = [session.id]
             }
         }
     }
@@ -447,23 +454,26 @@ struct LibraryView: View {
     /// chips, tag groups, counts) reads from this so scope stays
     /// consistent across all of them.
     private var scopedSessions: [StoredSession] {
-        let notesSlug = SessionFolder.notes.slug
+        // Split by KIND, not by folder: recordings and notes now share the
+        // same projects, so the Library shows every recording and the Notes
+        // tab every note, each across ALL folders. (Was `folderSlug` vs the
+        // Notes folder — the coupling this whole change removed.)
         switch scope {
-        case .all:   return store.sessions.filter { $0.folderSlug != notesSlug }
-        case .notes: return store.sessions.filter { $0.folderSlug == notesSlug }
+        case .all:   return store.sessions.filter { $0.kind == .recording }
+        case .notes: return store.sessions.filter { $0.kind == .note }
         }
     }
 
     private var filteredSessions: [StoredSession] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = model.query.trimmingCharacters(in: .whitespacesAndNewlines)
         var pool = scopedSessions
-        if let f = folderFilter {
+        if let f = model.folderFilter {
             // Selecting a project parent aggregates its child folders'
             // records too; a leaf folder scopes to just itself.
             let scope = folders.slugScope(for: f)
             pool = pool.filter { scope.contains($0.folderSlug) }
         }
-        if let t = tagFilter {
+        if let t = model.tagFilter {
             pool = pool.filter { $0.tag == t }
         }
         if !trimmed.isEmpty {
@@ -478,7 +488,7 @@ struct LibraryView: View {
     /// All tags present across sessions, sorted by count desc then
     /// alphabetically. "Untagged" (empty tag) is appended last so
     /// it's visually demoted but still reachable from the selector.
-    /// Powers both the sidebar selector and the autocomplete inside
+    /// Powers both the toolbar selector and the autocomplete inside
     /// SessionDetail's tag editor.
     var tagGroups: [(name: String, count: Int)] {
         var counts: [String: Int] = [:]
@@ -501,15 +511,15 @@ struct LibraryView: View {
 
     /// Single-selection dropdown listing every tag in use, with
     /// "All tags" reset at the top and "Untagged" demoted to the
-    /// bottom. Lives inside the search-row header in 1.0.6 — compact
-    /// trigger (tag icon + label + chevron). An active filter gains
-    /// primary ink without borrowing the recording/brand signal colour.
+    /// bottom. Pinned to the list column's toolbar trailing edge. An
+    /// active filter gains primary ink without borrowing the
+    /// recording/brand signal colour.
     private var tagSelector: some View {
         Menu {
             Button {
-                tagFilter = nil
+                model.tagFilter = nil
             } label: {
-                if tagFilter == nil {
+                if model.tagFilter == nil {
                     Label("All tags", systemImage: "checkmark")
                 } else {
                     Text("All tags")
@@ -519,9 +529,9 @@ struct LibraryView: View {
             ForEach(tagGroups, id: \.name) { group in
                 let displayName = group.name.isEmpty ? String(localized: "Untagged") : group.name
                 Button {
-                    tagFilter = (tagFilter == group.name) ? nil : group.name
+                    model.tagFilter = (model.tagFilter == group.name) ? nil : group.name
                 } label: {
-                    if tagFilter == group.name {
+                    if model.tagFilter == group.name {
                         Label("\(displayName) · \(group.count)", systemImage: "checkmark")
                     } else {
                         Text("\(displayName) · \(group.count)")
@@ -529,26 +539,23 @@ struct LibraryView: View {
                 }
             }
         } label: {
-            HStack(spacing: 3) {
+            // DEFAULT style + toolbar = the system Liquid Glass pill (same
+            // as Daisy / Add tag). NO capsule and NO .plain/.borderless —
+            // those suppress the pill. `.menuIndicator(.hidden)` = no chevron.
+            HStack(spacing: 4) {
                 Image(systemName: "tag")
-                    .font(.caption)
-                    .foregroundStyle(tagFilter == nil ? Color.daisyTextSecondary : Color.daisyTextPrimary)
                 Text(tagSelectorLabel)
-                    .font(.caption)
-                    .foregroundStyle(tagFilter == nil ? Color.daisyTextSecondary : Color.daisyTextPrimary)
-                Image(systemName: "chevron.down")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
+            .foregroundStyle(Color.daisyTextPrimary)
+            .padding(.horizontal, 8)
         }
-        .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .fixedSize()
+        .tint(Color.daisyTextPrimary)
         .help("Filter by tag")
     }
 
     private var tagSelectorLabel: String {
-        switch tagFilter {
+        switch model.tagFilter {
         case nil:        return String(localized: "Tags")
         case .some(""):  return String(localized: "Untagged")
         case .some(let t): return t
@@ -569,7 +576,11 @@ struct LibraryView: View {
     }
 
     /// Folders flattened for the chip row in hierarchy order: each root
-    /// followed by its children. Notes excluded (own tab).
+    /// followed by its children. Shared by both tabs. The system Notes
+    /// folder is dropped from the chip row (it's still a valid move
+    /// target): it's a legacy home for pre-split notes, redundant now
+    /// that notes are identified by kind and default to Inbox — "All"
+    /// still surfaces anything left in it.
     private var chipRows: [(folder: SessionFolder, isChild: Bool)] {
         var rows: [(folder: SessionFolder, isChild: Bool)] = []
         for root in folders.rootFolders where root.slug != SessionFolder.notes.slug {
@@ -589,9 +600,9 @@ struct LibraryView: View {
                 FolderChip(
                     label: String(localized: "All"),
                     count: scopedSessions.count,
-                    isActive: folderFilter == nil
+                    isActive: model.folderFilter == nil
                 ) {
-                    folderFilter = nil
+                    model.folderFilter = nil
                 }
                 // Project hierarchy, flattened for the horizontal chip
                 // row: each root, immediately followed by its child
@@ -606,12 +617,50 @@ struct LibraryView: View {
                     FolderChip(
                         label: row.isChild ? "↳ \(f.name)" : f.name,
                         count: count,
-                        isActive: folderFilter?.slug == f.slug
+                        isActive: model.folderFilter?.slug == f.slug
                     ) {
-                        folderFilter = (folderFilter?.slug == f.slug) ? nil : f
+                        model.folderFilter = (model.folderFilter?.slug == f.slug) ? nil : f
                     }
                 }
             }
+        }
+    }
+
+}
+
+// MARK: - Detail column (detail column of the split)
+
+/// The session detail pane: one selected session → `SessionDetailView`
+/// (whose own `.toolbar` supplies the Add-tag / Summarize / ⋯ items in
+/// the detail region), several selected → a bulk-delete empty state,
+/// none → a "pick a recording" placeholder. Reads the shared `model`.
+struct LibraryDetailColumn: View {
+    @Bindable var model: LibraryModel
+    @Bindable var store = SessionStore.shared
+
+    var body: some View {
+        if let session = model.singleSelected {
+            SessionDetailView(initialSession: session)
+        } else if model.selectedIDs.count > 1 {
+            multiSelectDetail
+        } else {
+            emptyDetail
+        }
+    }
+
+    private var multiSelectDetail: some View {
+        ContentUnavailableView {
+            Label(String(localized: "\(model.selectedIDs.count) recordings selected"), systemImage: "doc.on.doc")
+        } description: {
+            Text("Press ⌫ to delete the selection, or click a single row to read its transcript.")
+        } actions: {
+            Button(role: .destructive) {
+                model.pendingDelete = store.sessions.filter { model.selectedIDs.contains($0.id) }
+            } label: {
+                Label(String(localized: "Delete \(model.selectedIDs.count) sessions…"), systemImage: "trash")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.daisyError)
         }
     }
 
@@ -624,6 +673,39 @@ struct LibraryView: View {
     }
 }
 
+// MARK: - Composite (Preview / non-split fallback)
+
+/// Thin composite that stacks the two columns in a plain HStack. Used by
+/// #Preview and available as a non-split fallback; MainView renders the
+/// live Library/Notes tabs as a genuine three-column NavigationSplitView
+/// (see MainView.threeColumnSplit) rather than through this type.
+struct LibraryView: View {
+    /// Source-compatibility alias — callers still write `LibraryView.Scope`.
+    typealias Scope = LibraryScope
+
+    @State private var model: LibraryModel
+
+    init(scope: Scope = .all) {
+        _model = State(initialValue: LibraryModel(scope: scope))
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            LibraryListColumn(model: model)
+                .frame(minWidth: 280, idealWidth: 320, maxWidth: 360)
+            Rectangle()
+                .fill(Color.daisyDivider)
+                .frame(width: 0.5)
+                .frame(maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .top)
+            LibraryDetailColumn(model: model)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(minWidth: 760, minHeight: 480)
+    }
+}
+
 // MARK: - Sidebar row
 
 private struct SessionRow: View {
@@ -633,7 +715,7 @@ private struct SessionRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(session.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Spacer()
                 badges
@@ -647,6 +729,14 @@ private struct SessionRow: View {
                 Text(formattedDuration)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if session.hasSummary {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .help("Has AI summary")
+                }
                 if !session.tag.isEmpty {
                     Text("·")
                         .foregroundStyle(.tertiary)
@@ -662,12 +752,6 @@ private struct SessionRow: View {
                         )
                 }
                 Spacer()
-            }
-            if !session.transcriptPreview.isEmpty {
-                Text(session.transcriptPreview)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
             }
         }
         .padding(.vertical, 4)
@@ -686,12 +770,6 @@ private struct SessionRow: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .help(String(localized: "\(session.screenshotURLs.count) screenshots"))
-            }
-            if session.hasSummary {
-                Image(systemName: "sparkles")
-                    .font(.caption2)
-                    .foregroundStyle(Color.daisyAccent)
-                    .help("Has AI summary")
             }
         }
     }
@@ -748,6 +826,29 @@ private struct FolderChip: View {
             .foregroundStyle(Color.daisyTextPrimary)
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Row selection + hover highlight for the Library list. Selection reuses
+/// the sidebar menu's borderless fill (`daisySidebarSelection`); hovering an
+/// unselected row shows the same subtle grey as the Home rows. No border —
+/// that's what made the old selection read as a box rather than a menu pick.
+private struct LibraryRowHighlight: ViewModifier {
+    let isSelected: Bool
+    @State private var hovering = false
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(fill)
+            )
+            .onHover { hovering = $0 }
+            .animation(.easeInOut(duration: 0.12), value: hovering)
+    }
+    private var fill: Color {
+        if isSelected { return Color.daisySidebarSelection }
+        if hovering { return Color.primary.opacity(0.06) }
+        return .clear
     }
 }
 

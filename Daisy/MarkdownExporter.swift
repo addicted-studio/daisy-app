@@ -46,6 +46,11 @@ enum MarkdownExporter {
         }
         lines.append("duration_sec: \(Int(session.elapsed))")
         lines.append("daisy_folder: \(session.folder.slug)")
+        // Note vs recording — decoupled from the folder so both kinds can
+        // live in any project. Read back by SessionStore.parseSession to
+        // route the session into the Library (recording) or Notes (note)
+        // tab. See RecordingSession.sessionKind / SessionKind.
+        lines.append("daisy_kind: \(session.sessionKind.rawValue)")
         // Free-form tag — empty when untagged. History sidebar
         // selector groups by this value. Renamed from `daisy_client`
         // in 1.0.5.2; parser still reads the legacy key for older
@@ -252,15 +257,11 @@ enum MarkdownExporter {
         // instead of headphones; mic re-captures + Whisper re-
         // transcribes the same audio, producing duplicate lines
         // attributed to the user). See `AcousticEchoDedup.swift`.
-        let baseSegments = session.settings.suppressAcousticEcho
+        // Side notes are COPIES of a meeting excerpt (2026-07-21 "excerpt"
+        // model) — the meeting keeps every segment; nothing is cut here.
+        let segments = session.settings.suppressAcousticEcho
             ? AcousticEchoDedup.filter(session.segments)
             : session.segments
-        // Cut side-note speech OUT of the meeting transcript — those
-        // segments are written into their own Notes session by finalize,
-        // and the user asked for them to live ONLY there (2026-07-21).
-        let segments = session.sideNoteWindows.isEmpty
-            ? baseSegments
-            : baseSegments.filter { !session.isInSideNoteWindow($0.startedAt) }
         for segment in segments {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }

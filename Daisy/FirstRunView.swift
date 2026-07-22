@@ -42,6 +42,9 @@ struct FirstRunView: View {
     /// progress-dot indices.
     enum Step: Int, CaseIterable {
         case welcome
+        case language
+        case purpose
+        case name
         case microphone
         case screenRecording
         case accessibility
@@ -52,23 +55,34 @@ struct FirstRunView: View {
         static var total: Int { allCases.count }
     }
 
-    /// The steps actually shown, in order. Onboarding asks only for the
-    /// minimal dictation permission set — Microphone + Accessibility.
-    /// Screen Recording is no longer asked at onboarding; it's requested
-    /// lazily on the first meeting recording (its `.screenRecording` step
-    /// stays defined but is intentionally absent from this list).
+    /// Which setup track the user picked on the `purpose` step. Tailors
+    /// what onboarding asks — the full track sets up meetings, dictation-
+    /// only skips to the dictation essentials. NOT an app mode: the app
+    /// stays whole; the user can enable the rest later (lazily).
+    enum SetupPath { case full, dictationOnly }
+    @State private var setupPath: SetupPath = .full
+
+    /// Steps shown, branched by `setupPath`. Full asks the recording
+    /// permission set (mic + screen + accessibility — full users dictate
+    /// too) and all three hotkeys; dictation-only asks mic + accessibility
+    /// and just the dictation hotkey. (Soft steps — folder, calendar,
+    /// summary model, style/vocab import — land in a later pass.)
     private var orderedSteps: [Step] {
-        // Accessibility dropped from onboarding (2026-07-20): it's only
-        // needed for dictation auto-paste / rewrite, and DictationPaste
-        // already prompts lazily (AXIsProcessTrustedWithOptions) on
-        // first use, with a copy-only fallback. Asking here — before
-        // the user has even chosen to dictate — was the last
-        // permission requested ahead of its value. The `.accessibility`
-        // step stays defined for the settings-driven re-run path.
-        [.welcome, .microphone, .hotkeys, .done]
+        switch setupPath {
+        case .full:
+            return [.welcome, .language, .purpose, .name,
+                    .microphone, .screenRecording, .accessibility,
+                    .hotkeys, .done]
+        case .dictationOnly:
+            return [.welcome, .language, .purpose,
+                    .microphone, .accessibility, .hotkeys, .done]
+        }
     }
 
     @State private var step: Step = .welcome
+    /// Interface-language pick for the language step, seeded from the
+    /// region heuristic below.
+    @State private var uiLanguage: String = FirstRunView.recommendedLanguage()
     /// Permission states refreshed on .appear of each step + on app
     /// foreground-activation — system can flip them out-of-band (user
     /// toggles in Settings while onboarding is open), and the cached
@@ -76,6 +90,25 @@ struct FirstRunView: View {
     @State private var micGranted: Bool = false
     @State private var screenGranted: Bool = false
     @State private var accessibilityGranted: Bool = false
+
+    /// Default UI language for the language step: Russian for Russia &
+    /// Belarus (or a ru/be system language); English for Ukraine — we
+    /// never default Russian there — and for everyone else.
+    static func recommendedLanguage() -> String {
+        let region = Locale.current.region?.identifier
+        let lang = Locale.current.language.languageCode?.identifier
+        if region == "UA" || lang == "uk" { return "en" }
+        if region == "RU" || region == "BY" || lang == "ru" || lang == "be" { return "ru" }
+        return "en"
+    }
+
+    /// Persist the interface-language override — same keys as Settings →
+    /// Language. Full effect on next launch (standard AppKit behaviour).
+    private func applyLanguage(_ code: String) {
+        let d = UserDefaults.standard
+        d.set([code], forKey: "AppleLanguages")
+        d.set(true, forKey: "AppleLanguagesOverridden")
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -136,6 +169,9 @@ struct FirstRunView: View {
         Group {
             switch step {
             case .welcome: welcomeStep
+            case .language: languageStep
+            case .purpose: purposeStep
+            case .name: nameStep
             case .microphone: micStep
             case .screenRecording: screenStep
             case .accessibility: accessibilityStep
@@ -165,10 +201,119 @@ struct FirstRunView: View {
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("A couple of quick permission asks and one hotkey screen, then you're set.")
+            Text("A few quick questions and permissions, then you're set.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+    }
+
+    private var languageStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "globe")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Language")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("Choose the language for Daisy's interface. You can change it later in Settings.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Picker("", selection: $uiLanguage) {
+                Text("English").tag("en")
+                Text(verbatim: "Русский").tag("ru")
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 260, alignment: .leading)
+            .onChange(of: uiLanguage) { _, new in applyLanguage(new) }
+            Spacer()
+        }
+    }
+
+    private var purposeStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("What do you need Daisy for?")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("We'll set up only what you need — you can enable the rest anytime.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            purposeOption(
+                title: String(localized: "Meetings + dictation"),
+                detail: String(localized: "Record and transcribe meetings, and dictate into any app."),
+                path: .full
+            )
+            purposeOption(
+                title: String(localized: "Just dictation"),
+                detail: String(localized: "Talk, and Daisy types it into whatever app you're in."),
+                path: .dictationOnly
+            )
+            Spacer()
+        }
+    }
+
+    /// One selectable card on the purpose step — picking it sets the track
+    /// and advances immediately (no separate Continue).
+    private func purposeOption(title: String, detail: String, path: SetupPath) -> some View {
+        Button {
+            setupPath = path
+            advance()
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(Color.daisyTextPrimary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var nameStep: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.circle")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("What should we call you?")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+            }
+            Text("Used to greet you and to label your voice in transcripts. Optional — leave it blank to skip.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField(String(localized: "Your name"), text: $settings.userDisplayName)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 260)
             Spacer()
         }
     }
@@ -234,24 +379,28 @@ struct FirstRunView: View {
                     .font(.title2.weight(.semibold))
                 Spacer()
             }
-            Text("Pick a global shortcut for each recording mode. You can change them later in Settings → Recording → Shortcuts.")
+            Text(setupPath == .full
+                 ? String(localized: "Pick a global shortcut for each recording mode. You can change them later in Settings → Recording → Shortcuts.")
+                 : String(localized: "Pick a global shortcut for dictation. You can change it later in Settings → Recording → Shortcuts."))
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 10) {
-                hotkeyRow(
-                    title: String(localized: "Meeting"),
-                    description: String(localized: "Captures mic + system audio together."),
-                    color: .daisyRecording,
-                    binding: $settings.recordHotkey
-                )
-                hotkeyRow(
-                    title: String(localized: "Voice notes"),
-                    description: String(localized: "Quick one-off thought, mic only."),
-                    color: .daisyVoiceNote,
-                    binding: $settings.voiceNoteHotkey
-                )
+                if setupPath == .full {
+                    hotkeyRow(
+                        title: String(localized: "Meeting"),
+                        description: String(localized: "Captures mic + system audio together."),
+                        color: .daisyRecording,
+                        binding: $settings.recordHotkey
+                    )
+                    hotkeyRow(
+                        title: String(localized: "Voice notes"),
+                        description: String(localized: "Quick one-off thought, mic only."),
+                        color: .daisyVoiceNote,
+                        binding: $settings.voiceNoteHotkey
+                    )
+                }
                 hotkeyRow(
                     title: String(localized: "Dictation"),
                     description: String(localized: "Hold to talk, release to paste at cursor."),
@@ -408,6 +557,21 @@ struct FirstRunView: View {
                     .tint(Color.daisyAccent)
                     // Ink-on-accent: the system's white label fails
                     // WCAG on the amber fill (≈2:1 in dark).
+                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .keyboardShortcut(.defaultAction)
+            case .language:
+                Button("Continue") { applyLanguage(uiLanguage); advance() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.daisyAccent)
+                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .keyboardShortcut(.defaultAction)
+            case .purpose:
+                // The two option cards advance on tap — no footer action.
+                EmptyView()
+            case .name:
+                Button("Continue") { advance() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.daisyAccent)
                     .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
             case .microphone, .screenRecording, .accessibility:

@@ -90,9 +90,9 @@ struct DictationDictionaryView: View {
                 editingEntry = entry
             } label: {
                 Image(systemName: "pencil")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.daisyTextPrimary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Edit")
 
             // Per-row delete — borderless destructive glyph, distinct hit
@@ -102,9 +102,9 @@ struct DictationDictionaryView: View {
                 dictionary.remove(entry)
             } label: {
                 Image(systemName: "trash")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.daisyTextPrimary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .help("Remove")
         }
         .padding(.vertical, 2)

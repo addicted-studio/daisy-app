@@ -171,61 +171,45 @@ struct SettingsView: View {
     @Bindable private var nav = AppNavigation.shared
 
     var body: some View {
-        TabView(selection: $settingsTab) {
-            generalTab
-                .tag(SettingsTab.general)
-                // "General" — catch-all for app-level prefs (audio I/O,
-                // hotkey, calendar gating, screenshots, storage). Was
-                // "Capture" while Notion/MCP/Integrations also lived in
-                // Settings; after they moved to Connections the tab
-                // drifted into general-prefs territory and the label
-                // followed. Mic icon stays — most rows are still
-                // audio-recording-adjacent.
-                .tabItem { Label("General", systemImage: "gearshape") }
-                .scrollContentBackground(.hidden)
-
-            recordingTab
-                .tag(SettingsTab.recording)
-                .tabItem { Label("Recording", systemImage: "mic") }
-                .scrollContentBackground(.hidden)
-
-            transcriptionTab
-                .tag(SettingsTab.transcription)
-                .tabItem { Label("Transcription", systemImage: "waveform") }
-                .scrollContentBackground(.hidden)
-
-            summaryTab
-                .tag(SettingsTab.summary)
-                .tabItem { Label("Summary", systemImage: "text.bubble") }
-                .scrollContentBackground(.hidden)
-
-            PermissionsView(settings: settings)
-                .tag(SettingsTab.permissions)
-                .tabItem { Label("Permissions", systemImage: "checkmark.shield") }
-                .scrollContentBackground(.hidden)
-
-            // Integrations + MCP server promoted out of Settings into
-            // the top-level `Connections` sidebar destination — see
-            // `MainSection.connections` + `ConnectionsView`. Settings
-            // is now narrowly about "how the recorder processes a
-            // session", Connections is "where Daisy talks to other
-            // systems". About also moved to its own sidebar entry.
+        // Custom text-only Liquid-Glass tab strip in the window toolbar
+        // (ToolbarItem .principal below), replacing the native TabView.
+        // The strip lives OFF the SwiftUI `glassEffect()`/DesignLibrary
+        // path this app disabled — it uses AppKit's NSGlassEffectView
+        // (see GlassSegmentedControl.swift). Content is a plain switch so
+        // we control per-cell padding, which `.tabItem` locks.
+        //
+        // History (kept for context): 2026-05-22 / 2026-05-28 there were
+        // two aborted attempts to swap the TabView for a custom HStack of
+        // tab buttons on macOS 26, both reverted when the crash then in
+        // view turned out to correlate with low disk / a partly-downloaded
+        // model / recording start-stop cycles rather than the segmented
+        // control itself. This control is different: it carries no
+        // SwiftUI glass and no NSSegmentedControl, so it's off both of
+        // those crash pathways.
+        Group {
+            switch settingsTab {
+            case .general:       generalTab
+            case .recording:     recordingTab
+            case .transcription: transcriptionTab
+            case .summary:       summaryTab
+            case .permissions:   PermissionsView(settings: settings)
+            }
         }
-        // 2026-05-22 — there was a brief workaround that replaced
-        // this TabView with a custom HStack of tab buttons on
-        // macOS 26, after a tester crash that pointed at the
-        // `SystemSegmentedControl → DesignLibrary` path. Reverted
-        // when the crash turned out to correlate with low disk +
-        // a partly-downloaded Whisper model on the tester's
-        // machine, not the segmented control itself. 2026-05-28
-        // briefly tried the same workaround again in build 38 after
-        // a build 37 crash with NSSegmentedControl in the stack —
-        // reverted again in build 39 after observing the crash
-        // correlates with recording start/stop cycles (not tab
-        // navigation), suggesting the NSSegmentedControl is the
-        // pathway the layout pressure lands on, not the trigger.
-        // Native chrome restored; root cause being chased
-        // separately via the audio engine rebuild work.
+        .scrollContentBackground(.hidden)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                GlassSegmentedControl(
+                    selection: $settingsTab,
+                    segments: [
+                        .init(value: .general, title: String(localized: "General")),
+                        .init(value: .recording, title: String(localized: "Recording")),
+                        .init(value: .transcription, title: String(localized: "Transcription")),
+                        .init(value: .summary, title: String(localized: "Summary")),
+                        .init(value: .permissions, title: String(localized: "Permissions")),
+                    ]
+                )
+            }
+        }
         // Consume any one-shot deep-link from AppNavigation. Set on
         // appear (initial entry into Settings) AND on change (user
         // jumps from FirstRun while Settings sheet is already

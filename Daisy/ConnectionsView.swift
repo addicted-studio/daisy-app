@@ -95,20 +95,30 @@ struct ConnectionsView: View {
         // calendar data from"). Connections is now strictly outbound
         // integrations: where Daisy SENDS data, not where it reads
         // from.
-        TabView(selection: $selectedSection) {
-            autoRoutingTab
-                .tag(ConnectionSection.autoRouting)
-                .tabItem { Label("Auto-routing", systemImage: "arrow.triangle.swap") }
-                .scrollContentBackground(.hidden)
-
-            mcpServerTab
-                .tag(ConnectionSection.mcpServer)
-                .tabItem { Label("MCP server", systemImage: "antenna.radiowaves.left.and.right") }
-                .scrollContentBackground(.hidden)
+        Group {
+            switch selectedSection {
+            case .autoRouting: autoRoutingTab
+            case .mcpServer:   mcpServerTab
+            }
         }
+        .scrollContentBackground(.hidden)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
         .background(Color.daisyBgPrimary)
+        // Text-only glass tab strip at toolbar level, replacing the
+        // native TabView chrome (system-locked per-cell padding). Order
+        // matches the old tab order: Auto-routing, then MCP server.
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                GlassSegmentedControl(
+                    selection: $selectedSection,
+                    segments: [
+                        .init(value: .autoRouting, title: String(localized: "Auto-routing")),
+                        .init(value: .mcpServer, title: String(localized: "MCP server")),
+                    ]
+                )
+            }
+        }
         .onAppear {
             mcpPortText = String(settings.mcpServerPort)
             refreshClaudeEntryState()

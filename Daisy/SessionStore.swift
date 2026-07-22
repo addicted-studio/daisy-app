@@ -553,6 +553,15 @@ final class SessionStore {
         do {
             var text = try String(contentsOf: url, encoding: .utf8)
             text = Self.upsertFrontmatter(in: text, key: "daisy_folder", value: folder.slug)
+            // Pin the kind on every move. Otherwise a LEGACY note (no
+            // `daisy_kind:` on disk, currently inferred `.note` only
+            // because it sits in the Notes folder) that the user moves
+            // to another project would, on the next scan, infer as a
+            // `.recording` and vanish from the Notes tab. `session.kind`
+            // is the value we already resolved at parse time, so writing
+            // it here makes the classification permanent and folder-
+            // independent — the whole point of the note/recording split.
+            text = Self.upsertFrontmatter(in: text, key: "daisy_kind", value: session.kind.rawValue)
             try text.write(to: url, atomically: true, encoding: .utf8)
             await refresh()
         } catch {
@@ -992,6 +1001,7 @@ final class SessionStore {
         // ParsedFrontmatter struct, distinct from the outer-scope
         // `fm` (FileManager) — don't conflate the two.
         var folderSlug = "inbox"
+        var kind: SessionKind = .recording
         var tag = ""
         var attendees: [String] = []
         var attendeeEmails: [String] = []
@@ -1001,6 +1011,20 @@ final class SessionStore {
         if let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
             let parsedFm = parseFrontmatter(in: text)
             folderSlug = parsedFm.folder ?? "inbox"
+            // Explicit `daisy_kind:` wins; otherwise INFER for legacy
+            // files. Historically the ONLY way to make a note was to put
+            // it in the Notes folder (voice notes + side notes both wrote
+            // `daisy_folder: notes`), so a Notes-folder session with no
+            // `daisy_kind:` is a note and everything else is a recording.
+            // This keeps every pre-split file classified correctly with
+            // zero on-disk rewrite. Once such a note is moved to another
+            // folder, `moveSession` stamps `daisy_kind:` so the inference
+            // can't later flip it to a recording.
+            if let raw = parsedFm.kind, let explicit = SessionKind(rawValue: raw) {
+                kind = explicit
+            } else {
+                kind = (folderSlug == SessionFolder.notes.slug) ? .note : .recording
+            }
             tag = parsedFm.tag ?? ""
             attendees = parsedFm.attendees
             attendeeEmails = parsedFm.attendeeEmails
@@ -1036,6 +1060,7 @@ final class SessionStore {
             summary: summary,
             transcriptURL: fm.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
+            kind: kind,
             tag: tag,
             meetingAttendees: attendees,
             meetingAttendeeEmails: attendeeEmails,
@@ -1105,6 +1130,20 @@ final class SessionStore {
 
 // MARK: - Stored session value
 
+/// Whether a stored session is a full RECORDING (meeting / interrupted-
+/// recovery) or a NOTE (voice note / side-note excerpt). Replaces the
+/// old "a note is anything living in the Notes folder" coupling: notes
+/// and recordings now share the same projects/folders AND tags, and are
+/// told apart ONLY by this field. Persisted in transcript frontmatter as
+/// `daisy_kind: recording|note`; `rawValue` IS the on-disk token, so keep
+/// the cases stable. Sessions saved before this field existed carry no
+/// `daisy_kind:` — `parseSession` INFERS it (Notes folder ⇒ note, else
+/// recording), so every legacy file keeps working with zero rewrite.
+nonisolated enum SessionKind: String, Sendable {
+    case recording
+    case note
+}
+
 struct StoredSession: Identifiable, Sendable {
     let id: String          // = directory name
     let directoryURL: URL
@@ -1123,6 +1162,11 @@ struct StoredSession: Identifiable, Sendable {
     /// Folder slug, taken from `daisy_folder:` frontmatter. Defaults
     /// to "inbox" for transcripts that predate folder support.
     let folderSlug: String
+    /// Recording vs note — from `daisy_kind:` frontmatter, or inferred
+    /// for legacy files (see `SessionKind` / `parseSession`). Drives the
+    /// Library (`.recording`) vs Notes (`.note`) tab split; INDEPENDENT
+    /// of `folderSlug`, so a note or a recording can live in any folder.
+    let kind: SessionKind
     /// Free-form tag (`daisy_tag:` in frontmatter; legacy
     /// `daisy_client:` also accepted on read for sessions saved
     /// pre-1.0.5.2). Empty == "untagged" — sidebar selector groups
@@ -1205,6 +1249,9 @@ nonisolated private struct ParsedFrontmatter {
     var started: String?
     var durationSec: Int?
     var folder: String?
+    /// `daisy_kind:` — "recording" | "note". Nil for sessions saved
+    /// before the note/recording split; `parseSession` then infers it.
+    var kind: String?
     var tag: String?
     var attendees: [String] = []
     /// Attendee emails parsed from `daisy_event_emails`. Parallel to
@@ -1257,6 +1304,7 @@ nonisolated private func parseFrontmatter(in markdown: String) -> ParsedFrontmat
         case "started":       parsed.started = valueRaw
         case "duration_sec":  parsed.durationSec = Int(valueRaw)
         case "daisy_folder":  parsed.folder = valueRaw.lowercased()
+        case "daisy_kind":    parsed.kind = valueRaw.lowercased()
         case "daisy_tag":     parsed.tag = valueRaw
         // Legacy alias — sessions saved by 1.0.5 had `daisy_client:`
         // before we renamed the field. Read but don't write; the
