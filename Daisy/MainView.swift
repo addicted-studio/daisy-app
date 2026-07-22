@@ -185,6 +185,7 @@ struct MainView: View {
     @Bindable var session: RecordingSession
     @Bindable var settings: AppSettings
     @Bindable var nav = AppNavigation.shared
+    @Bindable private var updater = SparkleUpdater.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sidebarSelection: MainSection? = .home
     /// Mirrors `settings.hasShownFirstRun` for the sheet binding.
@@ -448,6 +449,48 @@ struct MainView: View {
         // letting the system material darken it against the window.
         .scrollContentBackground(.hidden)
         .background(Color.daisyBgSidebar)
+        // Quiet "update available" affordance pinned to the very bottom of
+        // the side menu — appears only once Sparkle has found (and the user
+        // hasn't yet installed) a newer build. Non-modal complement to
+        // Sparkle's own prompt; tapping re-opens the install flow.
+        .safeAreaInset(edge: .bottom, spacing: 0) { updateFooter }
+    }
+
+    /// Bottom-of-sidebar "Обновиться" row. Renders nothing in the steady
+    /// state (up to date) so it costs zero space until there's an update.
+    /// Orange per Egor's spec — see the `daisyUpdateAccent` note about the
+    /// clash with the recording-reserved amber.
+    @ViewBuilder
+    private var updateFooter: some View {
+        if let upd = updater.availableUpdate {
+            Button {
+                updater.checkForUpdates()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.callout)
+                    Text(String(localized: "sidebar.update", defaultValue: "Update"))
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color.daisyUpdateAccent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(Text("Update available: \(upd.shortVersion)"))
+            .padding(.horizontal, 8)
+            .padding(.bottom, 8)
+            .background(Color.daisyBgSidebar)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color.daisyDivider.opacity(0.5))
+                    .frame(height: 1)
+            }
+        }
     }
 
     // MARK: Detail

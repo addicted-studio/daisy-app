@@ -55,6 +55,20 @@ extension Color {
         dark:  Color(hex: 0xFFD3A7)
     )
 
+    // ─── Update-available affordance ──────────────────────────────────
+    //
+    // Orange for the sidebar "Обновиться" row (Egor's spec). NOTE: the amber
+    // above is documented as "the sole vivid, always-live colour, reserved
+    // for live capture" — this sits on the same warm axis and lands right
+    // under the record capsule in the sidebar, so during an active recording
+    // two orange elements coexist. Kept as its own token so the hue is a
+    // one-line change if that clash reads badly on device; nudged slightly
+    // redder than the recording amber to separate them.
+    static let daisyUpdateAccent = Color(
+        light: Color(hex: 0xE8620E),
+        dark:  Color(hex: 0xFF8A3D)
+    )
+
     // ─── Dictation mode (lilac) ───────────────────────────────────────
     //
     // Vivid lilac. Center of the petal widget when dictation is the
