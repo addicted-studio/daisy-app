@@ -5002,6 +5002,22 @@
         }
       }
     },
+    "heatmap.legend.more" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "More"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Больше"
+          }
+        }
+      }
+    },
     "Heard as…" : {
       "localizations" : {
         "ru" : {

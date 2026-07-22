@@ -66,7 +66,10 @@ struct MeetingsHeatmap: View {
                     .fill(legendColor(level))
                     .frame(width: cell, height: cell)
             }
-            Text("More")
+            // Keyed separately from the generic "More" (the ⋯ menu label,
+            // RU «Ещё») — as a heatmap-legend pair with "Less" it must
+            // read «Меньше/Больше», not «Меньше/Ещё».
+            Text(String(localized: "heatmap.legend.more", defaultValue: "More"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
