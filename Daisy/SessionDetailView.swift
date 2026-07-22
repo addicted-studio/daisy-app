@@ -954,7 +954,7 @@ struct SessionDetailView: View {
             // render a blank 600pt pane (Egor 2026-07-22). Show an explicit
             // empty-recording note instead.
             if mappedTranscriptText.isEmpty {
-                Text("Empty recording — nothing was transcribed.")
+                Text("Empty recording — nothing was transcribed")
                     .font(.body)
                     .foregroundStyle(.tertiary)
             } else {
