@@ -1484,4 +1484,17 @@ enum SummaryLanguage: String, CaseIterable, Identifiable, Sendable {
         case .zh:   return "中文"
         }
     }
+
+    /// Whether Apple's on-device model can WRITE in this language.
+    /// Apple Intelligence supports a fixed set (en/es/fr/de/it/pt/ja/ko/zh
+    /// as of macOS 26); asking for e.g. Russian silently yields English.
+    /// The Settings picker filters on this when the provider is
+    /// `.appleIntelligence`, and warns if the stored choice is unsupported.
+    /// `.auto` stays offered — the transcript's language may be supported.
+    nonisolated var supportedByAppleIntelligence: Bool {
+        switch self {
+        case .auto, .en, .es, .fr, .de, .it, .pt, .ja, .ko, .zh: return true
+        case .ru, .uk, .pl: return false
+        }
+    }
 }

@@ -5002,6 +5002,16 @@
         }
       }
     },
+    "Apple Intelligence can't write summaries in %@ — they'll come out in English. Pick a supported language or switch to a cloud provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple Intelligence не пишет саммари на языке «%@» — они будут на английском. Выберите поддерживаемый язык или облачного провайдера."
+          }
+        }
+      }
+    },
     "heatmap.legend.more" : {
       "localizations" : {
         "en" : {
