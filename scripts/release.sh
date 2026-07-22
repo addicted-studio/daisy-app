@@ -241,10 +241,15 @@ if [[ "${DAISY_SKIP_TESTS:-0}" == "1" ]]; then
     echo "  ⚠ DAISY_SKIP_TESTS=1 — skipping unit tests (hotfix mode)."
 else
     echo "  • running unit tests…"
+    # Tests run under Debug, NOT ${CONFIGURATION}: the DaisyTests target
+    # does `@testable import Daisy`, which requires ENABLE_TESTABILITY=YES.
+    # That's on for Debug but off for Release (we don't want to weaken the
+    # shipped/optimised build), so `-configuration Release test` fails to
+    # resolve the module. The archive below still builds Release.
     if ! xcodebuild \
         -project "${DAISY_REPO}/Daisy.xcodeproj" \
         -scheme "${SCHEME}" \
-        -configuration "${CONFIGURATION}" \
+        -configuration Debug \
         -destination 'platform=macOS' \
         test; then
         echo "  ✗ Tests failed — aborting before archive." >&2
