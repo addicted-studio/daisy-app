@@ -733,13 +733,14 @@ enum ModelLoadActivity: Equatable {
     /// downloads anything); surfaces render this as "Checking
     /// models…" with an indeterminate bar.
     case checking
-    case downloading(progress: Double)
+    case downloading(progress: Double, totalMB: Int?)
     case loading
 
     /// True while real bytes are moving — the only phase with a
-    /// meaningful fraction.
-    private static func classify(_ progress: Double) -> ModelLoadActivity {
-        progress > 0.001 ? .downloading(progress: progress) : .checking
+    /// meaningful fraction. `totalMB` (when known) lets the label show
+    /// "X / Y MB" instead of a bare percentage.
+    private static func classify(_ progress: Double, totalMB: Int?) -> ModelLoadActivity {
+        progress > 0.001 ? .downloading(progress: progress, totalMB: totalMB) : .checking
     }
 
     /// Highest-priority in-flight load, or `nil` when every relevant
@@ -753,20 +754,20 @@ enum ModelLoadActivity: Equatable {
     /// timers, no polling.
     static func current(settings: AppSettings) -> ModelLoadActivity? {
         switch WhisperEngine.shared.state {
-        case .downloading(let progress): return classify(progress)
+        case .downloading(let progress): return classify(progress, totalMB: WhisperEngine.shared.activeModelSizeMB)
         case .loading: return .loading
         case .notLoaded, .ready, .failed: break
         }
         if settings.dictationUseParakeet {
             switch ParakeetEngine.shared.state {
-            case .downloading(let progress): return classify(progress)
+            case .downloading(let progress): return classify(progress, totalMB: nil)
             case .loading: return .loading
             case .notLoaded, .ready, .failed: break
             }
         }
         if settings.dictationUseNemotronLive {
             switch NemotronLiveEngine.shared.state {
-            case .downloading(let progress): return classify(progress)
+            case .downloading(let progress): return classify(progress, totalMB: nil)
             case .loading: return .loading
             case .notLoaded, .ready, .failed: break
             }
@@ -801,17 +802,47 @@ struct ModelDownloadPill: View {
             // Eyes, not a download arrow — nothing is downloading yet,
             // Daisy is just looking around (cache check / repo resolve).
             pill(label: String(localized: "Checking models…"), icon: "eyes", progress: nil)
-        case .downloading(let progress)?:
+        case .downloading(let progress, let totalMB)?:
             pill(
-                label: String(localized: "Downloading model… \(Int(progress * 100))%"),
+                label: downloadLabel(progress: progress, totalMB: totalMB),
                 icon: "arrow.down.circle",
                 progress: min(max(progress, 0), 1)
             )
         case .loading?:
-            pill(label: String(localized: "Loading model…"), icon: "arrow.down.circle", progress: nil)
+            // Live "…Ns" counter (re-rendered each second by TimelineView)
+            // so a long cold CoreML/ANE compile visibly progresses instead
+            // of sitting behind a bar that looks frozen.
+            TimelineView(.periodic(from: WhisperEngine.shared.loadStartedAt ?? Date(), by: 1)) { _ in
+                pill(label: loadingLabel(), icon: "arrow.down.circle", progress: nil)
+            }
         case nil:
             EmptyView()
         }
+    }
+
+    /// "Downloading model… 412 / 626 MB" when the model size is known,
+    /// else a bare percentage. Bytes give the "it's actually moving"
+    /// signal a lone percentage can't.
+    private func downloadLabel(progress: Double, totalMB: Int?) -> String {
+        if let totalMB {
+            let done = Int((Double(totalMB) * min(max(progress, 0), 1)).rounded())
+            let mb = "\(done) / \(totalMB) MB"
+            return String(localized: "modelload.downloading.mb",
+                          defaultValue: "Downloading model… \(mb)")
+        }
+        return String(localized: "Downloading model… \(Int(progress * 100))%")
+    }
+
+    /// "Loading model… 32s" once the load clock is running; plain
+    /// "Loading model…" for the brief window before it starts.
+    private func loadingLabel() -> String {
+        if let started = WhisperEngine.shared.loadStartedAt {
+            let secs = max(0, Int(Date().timeIntervalSince(started)))
+            let e = "\(secs)s"
+            return String(localized: "modelload.loading.elapsed",
+                          defaultValue: "Loading model… \(e)")
+        }
+        return String(localized: "Loading model…")
     }
 
     /// Banner-family chip — cinnamon accent (informational, not a
@@ -832,10 +863,20 @@ struct ModelDownloadPill: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
-            ProgressView(value: progress, total: 1.0)
-                .progressViewStyle(.linear)
-                .controlSize(.small)
-                .tint(Color.daisyAccent)
+            // `progress == nil` MUST use ProgressView() (no value) for the
+            // ANIMATED indeterminate bar. `ProgressView(value: nil, total:)`
+            // renders a STATIC empty track on macOS — the reason the load
+            // phase read as frozen/stuck (Egor 2026-07-23).
+            Group {
+                if let progress {
+                    ProgressView(value: progress, total: 1.0)
+                } else {
+                    ProgressView()
+                }
+            }
+            .progressViewStyle(.linear)
+            .controlSize(.small)
+            .tint(Color.daisyAccent)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)

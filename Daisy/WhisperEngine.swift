@@ -67,6 +67,17 @@ final class WhisperEngine {
     /// Progress 0.0–1.0 during the .downloading phase. Mirrors the value
     /// from .downloading associated value for binding-friendly UI.
     private(set) var downloadProgress: Double = 0
+    /// Wall-clock start of the CoreML load phase, or nil when not loading.
+    /// The sidebar model pill reads this to show a live "…Ns" counter so a
+    /// long cold ANE compile visibly progresses instead of looking frozen.
+    private(set) var loadStartedAt: Date?
+
+    /// Disk/download size (MB) of the currently selected model — powers the
+    /// "X / Y MB" download label. Falls back to the recommended default's
+    /// size if the id isn't in the catalog.
+    var activeModelSizeMB: Int {
+        Self.availableModels.first { $0.id == modelID }?.sizeMB ?? 626
+    }
 
     @ObservationIgnored
     private var kitBox: WhisperKitBox?
@@ -280,13 +291,16 @@ final class WhisperEngine {
         // the OS aned cache is being evicted between runs — a different
         // problem than this prewarm-doubling fix.
         let loadStart = Date()
+        loadStartedAt = loadStart
         do {
             let kit = try await Self.loadKit(folder: folder)
             self.kitBox = WhisperKitBox(kit)
             self.state = .ready
+            loadStartedAt = nil
             let loadSec = Date().timeIntervalSince(loadStart)
             log.info("WhisperKit ready — model \(variant, privacy: .public) — CoreML load \(String(format: "%.1f", loadSec), privacy: .public)s")
         } catch {
+            loadStartedAt = nil
             log.error("Whisper load failed: \(error.localizedDescription, privacy: .public)")
             state = .failed("Init failed: \(error.localizedDescription)")
         }

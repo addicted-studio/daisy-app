@@ -147,6 +147,22 @@ final class PreMeetingBriefStore {
             return
         }
 
+        // Provider must be ready before we commit to a spinner. Without
+        // this, runProbe below can block indefinitely — a local summary
+        // model still initializing, or an MCP/Ollama endpoint pointed at a
+        // host that never answers — leaving the card stuck forever on
+        // "Assembling from your past meetings…" (Egor 2026-07-23). Mirror
+        // MorningBrief: resolve availability first and bail to
+        // `.unavailable` rather than hang. `.unknown` (not yet probed)
+        // proceeds optimistically — the timeout below is the backstop.
+        if Summarizer.shared.availability == .unknown {
+            await Summarizer.shared.refreshAvailability()
+        }
+        if case .unavailable(let why) = Summarizer.shared.availability {
+            states[key] = .unavailable(why)
+            return
+        }
+
         states[key] = .generating
         builtSignatures[key] = signature
 
@@ -171,12 +187,17 @@ final class PreMeetingBriefStore {
         )
 
         do {
-            let summary = try await Summarizer.shared.runProbe(
-                transcript: dossier,
-                title: meeting.title,
-                localeHint: localeHint,
-                task: .preMeetingBrief(info)
-            )
+            // Hard wall-clock ceiling so a reachable-but-wedged provider
+            // can't leave the card spinning forever (the backstop the
+            // availability check above can't cover).
+            let summary = try await Self.withTimeout(seconds: 60) {
+                try await Summarizer.shared.runProbe(
+                    transcript: dossier,
+                    title: meeting.title,
+                    localeHint: localeHint,
+                    task: .preMeetingBrief(info)
+                )
+            }
             // Guard against a stale write: if the user's history changed
             // while we were generating, drop this result.
             guard builtSignatures[key] == signature else { return }
@@ -190,6 +211,14 @@ final class PreMeetingBriefStore {
             states[key] = .ready(brief)
             log.info("Brief ready for \(meeting.title, privacy: .public) from \(matches.count) past session(s)")
         } catch {
+            // Timed out — provider never answered. Surface a clear,
+            // retryable failure instead of an endless spinner.
+            if error is BriefTimeoutError {
+                states[key] = .failed(String(localized: "The brief took too long and was stopped — tap retry."))
+                builtSignatures[key] = nil
+                log.error("Brief timed out for \(meeting.title, privacy: .public)")
+                return
+            }
             // Provider-unready errors get the softer "unavailable" state
             // (nothing the user did wrong); everything else is "failed".
             let msg = error.localizedDescription
@@ -215,6 +244,29 @@ final class PreMeetingBriefStore {
         builtSignatures[key] = nil
         states[key] = .idle
         await generate(for: meeting, settings: settings, force: true)
+    }
+
+    // MARK: - Timeout
+
+    struct BriefTimeoutError: Error {}
+
+    /// Race an async operation against a wall-clock deadline: returns the
+    /// operation's result if it wins, throws `BriefTimeoutError` if the
+    /// deadline does (and cancels the still-running operation). Backstops
+    /// brief generation so a wedged provider can't spin the card forever.
+    nonisolated static func withTimeout<T: Sendable>(
+        seconds: Double,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw BriefTimeoutError()
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
+        }
     }
 
     // MARK: - Matching (pure, nonisolated)
