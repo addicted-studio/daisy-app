@@ -814,21 +814,21 @@ final class WhisperEngine {
                 // (1) Known YouTube-training artefacts (full phrases).
                 if Self.isKnownHallucination(text) { dHalluc += 1; continue }
 
-                worstLogprob = min(worstLogprob, seg.avgLogprob)
+                worstLogprob = min(worstLogprob, Double(seg.avgLogprob))
 
                 // (2) Confidence filter. Threshold is profile-driven:
                 // meetings/live keep the strict −0.8 that kills ambient
                 // "so"/"はい"/"you" leaks; dictation relaxes it (see
                 // `DecodeProfile.logProbFloor`) so a real-but-quiet
                 // utterance is never silently dropped to an empty paste.
-                if seg.avgLogprob < profile.logProbFloor { dLogprob += 1; continue }
+                if Double(seg.avgLogprob) < profile.logProbFloor { dLogprob += 1; continue }
 
                 // (3) Short-utterance + middling-confidence cut, also
                 // profile-driven (off for dictation).
                 let wordCount = text
                     .split(whereSeparator: { $0.isWhitespace })
                     .count
-                if wordCount <= 2 && seg.avgLogprob < profile.shortUtteranceLogProbFloor { dShort += 1; continue }
+                if wordCount <= 2 && Double(seg.avgLogprob) < profile.shortUtteranceLogProbFloor { dShort += 1; continue }
 
                 // (4) Adjacent-duplicate collapse. Only fires when
                 // the text is long enough that a real repeat is
