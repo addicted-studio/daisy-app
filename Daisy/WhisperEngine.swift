@@ -615,6 +615,21 @@ final class WhisperEngine {
         /// ANE worker count — 16 only for the full-quality pass; 16 on
         /// a short span just burst-overheats the ANE (see `.lite` note).
         var concurrentWorkerCount: Int { self == .full ? 16 : 4 }
+
+        /// avgLogprob floor for the blanket confidence cut (post-filter
+        /// rule 2). Dictation is deliberate push-to-talk speech pasted
+        /// VERBATIM: dropping a real-but-low-confidence segment yields an
+        /// EMPTY paste (total failure), far worse than a meeting shedding
+        /// one noisy line. So `.dictationFinal` relaxes the floor and leans
+        /// on the Silero VAD pre-pass as the noise gate; meeting/live keep
+        /// the strict −0.8. (Root cause of the 1.0.7.35 "Standard dictation
+        /// pastes nothing" report: the strict cut silently dropped the
+        /// user's only segment.)
+        var logProbFloor: Double { self == .dictationFinal ? -2.2 : -0.8 }
+        /// avgLogprob floor for the short (≤2-word) utterance cut
+        /// (post-filter rule 3). Effectively off for dictation — same
+        /// reasoning as `logProbFloor`.
+        var shortUtteranceLogProbFloor: Double { self == .dictationFinal ? -2.2 : -0.6 }
     }
 
     /// Run a transcription pass against 16 kHz mono Float samples.
@@ -783,49 +798,58 @@ final class WhisperEngine {
 
         // Post-filter pipeline. Each rule kills a distinct class of
         // hallucination observed in QA; the comments name the class.
+        // Post-filter pipeline (explicit loop so we can report WHY
+        // segments were dropped — a silent 0-segment dictation was
+        // impossible to diagnose from the pass log alone). Privacy-safe:
+        // counts + one logprob number, never transcript text.
         var previousText: String?
-        return allRaw.flatMap { (offsetSec, segs) in
-            segs.compactMap { seg -> WhisperSegment? in
+        var kept: [WhisperSegment] = []
+        var dEmpty = 0, dHalluc = 0, dLogprob = 0, dShort = 0, dDup = 0
+        var worstLogprob = 0.0
+        for (offsetSec, segs) in allRaw {
+            for seg in segs {
                 let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return nil }
+                guard !text.isEmpty else { dEmpty += 1; continue }
 
                 // (1) Known YouTube-training artefacts (full phrases).
-                if Self.isKnownHallucination(text) { return nil }
+                if Self.isKnownHallucination(text) { dHalluc += 1; continue }
 
-                // (2) Confidence filter. Hallucinated short tokens
-                // ("so", "はい", "you") almost always score below
-                // -0.7 avg log-prob. A blanket -0.8 cut kills the
-                // worst offenders without removing real-but-noisy
-                // speech (which typically scores -0.4 to -0.7).
-                if seg.avgLogprob < -0.8 { return nil }
+                worstLogprob = min(worstLogprob, seg.avgLogprob)
 
-                // (3) Short-utterance + middling-confidence cut.
-                // 1–2 word segments with avgLogprob below -0.6 are
-                // suspect — real short answers ("yes", "ok", "да")
-                // score higher because Whisper's prior is strong on
-                // them. This catches the residual single-token leaks
-                // (2)'s harder threshold lets through.
+                // (2) Confidence filter. Threshold is profile-driven:
+                // meetings/live keep the strict −0.8 that kills ambient
+                // "so"/"はい"/"you" leaks; dictation relaxes it (see
+                // `DecodeProfile.logProbFloor`) so a real-but-quiet
+                // utterance is never silently dropped to an empty paste.
+                if seg.avgLogprob < profile.logProbFloor { dLogprob += 1; continue }
+
+                // (3) Short-utterance + middling-confidence cut, also
+                // profile-driven (off for dictation).
                 let wordCount = text
                     .split(whereSeparator: { $0.isWhitespace })
                     .count
-                if wordCount <= 2 && seg.avgLogprob < -0.6 { return nil }
+                if wordCount <= 2 && seg.avgLogprob < profile.shortUtteranceLogProbFloor { dShort += 1; continue }
 
                 // (4) Adjacent-duplicate collapse. Only fires when
                 // the text is long enough that a real repeat is
                 // implausible (avoids killing "yes, yes" / "ok ok").
-                if text.count >= 6, text == previousText { return nil }
+                if text.count >= 6, text == previousText { dDup += 1; continue }
                 previousText = text
 
                 // Translate per-span timings back into the original
                 // buffer's coordinate space (`offsetSec` is 0 when
                 // VAD wasn't used or returned a full-buffer span).
-                return WhisperSegment(
+                kept.append(WhisperSegment(
                     start: offsetSec + Double(seg.start),
                     end: offsetSec + Double(seg.end),
                     text: text
-                )
+                ))
             }
         }
+        if (dEmpty + dHalluc + dLogprob + dShort + dDup) > 0 {
+            log.info("Whisper post-filter [\(String(describing: profile), privacy: .public)]: kept \(kept.count, privacy: .public)/\(rawSegmentCount, privacy: .public) — dropped empty=\(dEmpty, privacy: .public) halluc=\(dHalluc, privacy: .public) logprob=\(dLogprob, privacy: .public) short=\(dShort, privacy: .public) dup=\(dDup, privacy: .public), worstLogprob=\(String(format: "%.2f", worstLogprob), privacy: .public)")
+        }
+        return kept
     }
 
     // MARK: - VAD pre-pass
