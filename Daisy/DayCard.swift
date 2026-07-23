@@ -360,35 +360,28 @@ struct DayCard: View {
     private func makeGrouping() -> Grouping {
         var g = Grouping()
         let now = Date()
-        var claimed = Set<String>()
         let open = actionItems.openItems
         // Effective-local: checks the CONFIGURED endpoint, not just the
         // provider kind — an MCP/Ollama URL pointed at a remote host
         // must NOT auto-run without the consent tap.
         let providerLocal = Summarizer.shared.providerIsEffectivelyLocal
 
+        // Prep-chip eligibility ONLY. Task nesting under meetings was
+        // removed (Egor 2026-07-23): a shared attendee email across
+        // DIFFERENT meeting series mis-filed one meeting's tasks under an
+        // unrelated meeting with the same person. Open items now always
+        // live in their own "To close" / "Overdue" block — never nested
+        // under an event. `g.byEvent` stays empty by design.
         for event in events {
             let key = PreMeetingBriefStore.key(for: event)
-            // Prep chip: any usable history under the provider's rules.
             let briefMatches = PreMeetingBriefStore.matchingSessions(
                 for: event, in: store.sessions, now: now,
                 limit: 1, requireStrong: !providerLocal
             )
             if !briefMatches.isEmpty { g.briefable.insert(key) }
-
-            // Task nesting: STRONG matches only, regardless of provider.
-            let strongIDs = Set(PreMeetingBriefStore.matchingSessions(
-                for: event, in: store.sessions, now: now,
-                limit: 5, requireStrong: true
-            ).map(\.id))
-            guard !strongIDs.isEmpty else { continue }
-            let tasks = open.filter { !claimed.contains($0.id) && strongIDs.contains($0.sessionID) }
-            if !tasks.isEmpty {
-                g.byEvent[key] = tasks
-                claimed.formUnion(tasks.map(\.id))
-            }
         }
-        let standalone = open.filter { !claimed.contains($0.id) }
+        // Every open item is standalone now (no per-event claiming).
+        let standalone = open
         let overdueCutoff = Calendar.current.date(
             byAdding: .day, value: -Self.overdueAfterDays, to: now
         ) ?? now

@@ -594,7 +594,7 @@ struct ContentView: View {
                 .controlSize(.small)
                 .tint(Color.daisyAccent)
                 .help("Checking speech models…")
-        case .downloading(let progress)?:
+        case .downloading(let progress, _)?:
             ProgressView(value: min(max(progress, 0), 1), total: 1.0)
                 .progressViewStyle(.linear)
                 .controlSize(.small)
