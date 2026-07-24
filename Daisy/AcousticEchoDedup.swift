@@ -26,10 +26,19 @@
 //           alone rejected those, so echoes leaked through — observed on
 //           the 2026-05-31 Billions-through-speakers test).
 //    3. Mark the mic segment as an echo candidate.
-//    4. After the full pass: drop runs of ≥3 consecutive echo
-//       candidates outright (confirmed echo — extremely unlikely
-//       to be the user repeating multiple lines verbatim by
-//       coincidence). Isolated single matches are KEPT on the
+//    4. After the full pass, decide at SESSION level first: if the
+//       recording shows a systemic echo pattern (≥5 substantial
+//       verbatim matches making up ≥10% of mic segments, or ≥20
+//       absolute), the mic channel is clearly re-capturing speaker
+//       output — drop EVERY candidate, including isolated ones.
+//       Real conversations produce echo "пунктиром": one duplicate
+//       per remote utterance with the user's own interjections in
+//       between, so consecutive-run heuristics never fire (field
+//       report: Ken Yesh 2026-07-24 — every Remote line doubled as
+//       a mic line 1-2s later, zero runs of ≥3).
+//    5. Otherwise (healthy session, a few coincidental matches):
+//       fall back to the conservative rule — drop only runs of ≥3
+//       consecutive echo candidates, keep isolated matches on the
 //       assumption they're legitimate quoting ("ты сказал X").
 //
 //  Why not Apple-AEC at the audio-graph level: would require
@@ -41,8 +50,11 @@
 //
 
 import Foundation
+import os
 
 enum AcousticEchoDedup {
+
+    private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "EchoDedup")
 
     /// Window around a mic segment's start time within which a
     /// system-audio segment can match as an echo source. Wide enough
@@ -54,8 +66,11 @@ enum AcousticEchoDedup {
     /// Length-ratio bound: |mic_len - sys_len| / max(...) must be
     /// ≤ this fraction for a candidate match. Catches cases where
     /// Whisper segmented the same audio into slightly different
-    /// chunks on each stream.
-    private static let lengthRatioTolerance: Double = 0.20
+    /// chunks on each stream. 0.20 → 0.30 (2026-07-25): the Ken Yesh
+    /// echo pair "Oh, there we go." vs "There we go." sat at 0.21 and
+    /// leaked; the Levenshtein 0.8 gate behind it still rejects
+    /// genuinely different text.
+    private static let lengthRatioTolerance: Double = 0.30
 
     /// Normalized similarity threshold (0..1, where 1 = identical).
     /// 0.8 was chosen on the 2026-05-25 Billions test: SRT lines vs
@@ -67,9 +82,29 @@ enum AcousticEchoDedup {
     /// Minimum length (normalized chars) of the shorter segment for the
     /// containment path to fire. Below this, short fillers ("да", "нет",
     /// "хорошо") would be a substring of almost any longer line. ~12
-    /// chars ≈ 2-3 Russian words. The ≥3-consecutive run rule still
-    /// backstops a false single match.
-    private static let minContainmentLen: Int = 12
+    /// chars ≈ 2-3 Russian words. The run/systemic rules still
+    /// backstop a false single match. 12 → 10 (2026-07-25): "there we
+    /// go" normalizes to 11 chars and leaked at 12.
+    private static let minContainmentLen: Int = 10
+
+    /// A match only counts toward the SYSTEMIC-echo session gate when
+    /// the normalized mic text is at least this long. Short fillers
+    /// ("yeah", "да", "okay") match nearby system lines by coincidence
+    /// all the time (simultaneous back-channel agreement) and must not
+    /// be able to trip the session-level gate on their own.
+    private static let minStrongLen: Int = 8
+
+    /// Systemic-echo gate: at least this many strong matches AND at
+    /// least `systemicMinStrongFraction` of non-empty mic segments…
+    private static let systemicMinStrongCount: Int = 4
+
+    /// …must be strong matches (guards long healthy meetings where a
+    /// handful of coincidences accumulate)…
+    private static let systemicMinStrongFraction: Double = 0.15
+
+    /// …OR this many strong matches outright — 20 verbatim repeats
+    /// within ±2s each cannot be coincidence at any session length.
+    private static let systemicAbsoluteStrongCount: Int = 20
 
     /// Minimum length of a "confirmed echo" run. Runs of N or more
     /// consecutive mic segments matching nearby system segments are
@@ -106,25 +141,52 @@ enum AcousticEchoDedup {
         // walking them once + storing the verdict lets pass 2 see
         // the sequential pattern without re-scanning.
         var verdict: [Bool] = Array(repeating: false, count: segments.count)
+        var micNormLen: [Int] = Array(repeating: 0, count: segments.count)
+        var strongCount = 0
+        var micWithText = 0
         for (idx, seg) in segments.enumerated() {
             guard seg.source == .microphone else { continue }
             let micText = normalize(seg.text)
             guard !micText.isEmpty else { continue }
+            micWithText += 1
+            micNormLen[idx] = micText.count
             verdict[idx] = matchesAnyNearby(
                 micText: micText,
                 micStart: seg.startSec,
                 systemSegments: systemSegments,
                 systemNorm: systemNorm
             )
+            if verdict[idx], micText.count >= minStrongLen {
+                strongCount += 1
+            }
         }
 
-        // Pass 2: collapse the verdict array into kept / dropped
-        // decisions. Echo runs of length ≥ `confirmedEchoRunLength`
-        // are dropped wholesale (high confidence). Shorter runs are
-        // kept (ambiguous — could be the user quoting the other
-        // side once, which is a legitimate transcript artifact).
-        // System segments and non-echo mic segments are always
-        // kept.
+        // Session-level decision: does this recording show SYSTEMIC
+        // echo (speakers instead of headphones — the mic re-captures
+        // essentially every remote line)? If yes, every candidate is
+        // an echo; the conservative run rule below would keep most of
+        // them because real interjections break the runs.
+        let strongFraction = micWithText > 0
+            ? Double(strongCount) / Double(micWithText)
+            : 0
+        let systemicEcho =
+            (strongCount >= systemicMinStrongCount && strongFraction >= systemicMinStrongFraction)
+            || strongCount >= systemicAbsoluteStrongCount
+
+        if systemicEcho {
+            let kept = zip(segments, verdict)
+                .compactMap { $1 && $0.source == .microphone ? nil : $0 }
+            log.info("Acoustic echo dedup: SYSTEMIC mode — dropped \(segments.count - kept.count) of \(micWithText) mic segments (strong matches: \(strongCount), fraction \(String(format: "%.2f", strongFraction)))")
+            return kept
+        }
+
+        // Pass 2 (healthy session): collapse the verdict array into
+        // kept / dropped decisions. Echo runs of length ≥
+        // `confirmedEchoRunLength` are dropped wholesale (high
+        // confidence). Shorter runs are kept (ambiguous — could be
+        // the user quoting the other side once, which is a
+        // legitimate transcript artifact). System segments and
+        // non-echo mic segments are always kept.
         var keep: [Bool] = Array(repeating: true, count: segments.count)
         var i = 0
         while i < segments.count {
@@ -149,8 +211,17 @@ enum AcousticEchoDedup {
                         runEnd = j
                         micRunLen += 1
                         j += 1
+                    } else if micNormLen[j] < minStrongLen {
+                        // Short mic interjection ("yeah", "ага") between
+                        // echoes — the user back-channeling over the
+                        // speaker output. Doesn't count toward the run
+                        // but doesn't break it either; requiring echoes
+                        // to be strictly consecutive made the run rule
+                        // blind to real conversational echo (Ken Yesh
+                        // report, 2026-07-24).
+                        j += 1
                     } else {
-                        break  // mic-side non-echo breaks the run
+                        break  // substantial mic-side non-echo breaks the run
                     }
                 } else {
                     // System-audio interleaved — skip past, doesn't
@@ -169,8 +240,12 @@ enum AcousticEchoDedup {
             i = j
         }
 
-        return zip(segments, keep)
+        let kept = zip(segments, keep)
             .compactMap { $1 ? $0 : nil }
+        if kept.count != segments.count {
+            log.info("Acoustic echo dedup: run mode — dropped \(segments.count - kept.count) mic segments (strong matches: \(strongCount), fraction \(String(format: "%.2f", strongFraction)))")
+        }
+        return kept
     }
 
     // MARK: - Internals
