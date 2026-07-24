@@ -62,6 +62,7 @@
       }
     },
     "NSScreenCaptureUsageDescription" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

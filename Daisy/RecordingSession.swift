@@ -1716,6 +1716,18 @@ final class RecordingSession {
             stopSignposter.endInterval("render_markdown", renderState)
             log.info("post-stop render_markdown: \(ms(t_render), privacy: .public)ms, \(md.count, privacy: .public) bytes")
 
+            // Product call 2026-07-25: when the dedup pass concluded the
+            // whole meeting echoed through the speakers (systemic mode),
+            // say so once — the durable fix is a headset, not smarter
+            // attribution. Complements the at-start internal-speakers
+            // nudge in SystemAudioCapture.start().
+            if settings.suppressAcousticEcho, AcousticEchoDedup.lastFilterWasSystemic {
+                ToastCenter.shared.show(
+                    String(localized: "Echo removed — this meeting seems to have played through the speakers. Use headphones for clean speaker separation."),
+                    style: .info
+                )
+            }
+
             let writeState = stopSignposter.beginInterval("write_transcript_md", id: stopSignposter.makeSignpostID())
             let t_write = Date()
             do {
