@@ -24,6 +24,10 @@ final class ScreenshotCapture {
     private var index = 0
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Screenshots")
 
+    /// Display captured on the previous tick — only used to log
+    /// display switches once instead of every 60 s.
+    private var lastPickedDisplayID: CGDirectDisplayID?
+
     /// Begin periodic capture every `intervalSec` seconds. Writes files
     /// numbered `001.png`, `002.png`, … into the given directory.
     func start(intervalSec: Int, into directory: URL) async {
@@ -72,13 +76,62 @@ final class ScreenshotCapture {
         isRunning = false
     }
 
+    /// Display to capture this tick. Prefers the display hosting the
+    /// meeting app's window (issue #6 — the call is often on a
+    /// secondary monitor, and `displays.first` isn't even guaranteed
+    /// to be the main display); falls back to the main display, then
+    /// to the first. Because `captureOne` re-enumerates
+    /// `SCShareableContent` on every tick, dragging the meeting window
+    /// to another monitor is picked up automatically on the next shot
+    /// — no move-observer needed.
+    ///
+    /// Browser-tab meetings (Meet in Chrome/Safari) can't be matched —
+    /// the owning app is just the browser — so they use the fallback,
+    /// same as today's behaviour.
+    private func pickDisplay(from content: SCShareableContent) -> SCDisplay? {
+        // 1. Biggest on-screen window owned by a known meeting app.
+        //    Size gate skips join-panels, HUDs and toolbars; the main
+        //    call window (the one rendering shared content) is large.
+        let meetingWindows = content.windows.filter { w in
+            guard let bid = w.owningApplication?.bundleIdentifier else { return false }
+            return MeetingDetector.knownMeetingBundleIDs.contains(bid)
+                && w.isOnScreen
+                && w.frame.width >= 300 && w.frame.height >= 200
+        }
+        if let win = meetingWindows.max(by: {
+            $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
+        }) {
+            // SCWindow.frame and SCDisplay.frame share the same global
+            // display-space coordinates — a plain contains() works.
+            let center = CGPoint(x: win.frame.midX, y: win.frame.midY)
+            if let hit = content.displays.first(where: { $0.frame.contains(center) }) {
+                if hit.displayID != lastPickedDisplayID {
+                    lastPickedDisplayID = hit.displayID
+                    let owner = win.owningApplication?.bundleIdentifier ?? "?"
+                    log.info("Screenshot display → \(hit.displayID, privacy: .public) (meeting window: \(owner, privacy: .public))")
+                }
+                return hit
+            }
+        }
+
+        // 2. No meeting window found — main display, then first.
+        let mainDisplay = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+        let fallback = mainDisplay ?? content.displays.first
+        if let picked = fallback, picked.displayID != lastPickedDisplayID {
+            lastPickedDisplayID = picked.displayID
+            let label = mainDisplay != nil ? "main display" : "first display"
+            log.info("Screenshot display → \(picked.displayID, privacy: .public) (fallback: \(label, privacy: .public))")
+        }
+        return fallback
+    }
+
     private func captureOne() async {
         guard let dir = outputDir else { return }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false, onScreenWindowsOnly: false
             )
-            guard let display = content.displays.first else { return }
+            guard let display = pickDisplay(from: content) else { return }
 
             // Exclude our own popover from the shot.
             let ourApps = content.applications.filter {
