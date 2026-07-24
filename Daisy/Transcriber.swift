@@ -160,6 +160,14 @@ final class Transcriber {
         segmentsVersion &+= 1
     }
     private(set) var isRunning = false
+
+    /// Bumped by every `start()`. `runFinalPass` snapshots it and only
+    /// clears `isRunning` at the end when the value is unchanged —
+    /// i.e. when no newer session has re-started this shared
+    /// transcriber while the (minutes-long) final pass ran. Wrapping
+    /// add; overflow is irrelevant at one bump per session.
+    private var runGeneration: UInt = 0
+
     private(set) var lastError: String?
     var localeIdentifier: String
 
@@ -351,6 +359,13 @@ final class Transcriber {
     /// transcription is more cost than value.
     func start(consuming audio: AsyncStream<AudioChunk>, startedAt: Date, tier: LiveTranscriptionTier = .full) {
         guard !isRunning else { return }
+        // Generation stamp — lets a stale `runFinalPass` from the
+        // PREVIOUS session detect that this shared transcriber has
+        // been re-started for a new one and leave `isRunning` alone
+        // (issue #7: the old pass finishing minutes into the next
+        // meeting used to flip isRunning off and kill its live
+        // transcription).
+        runGeneration &+= 1
         sessionStartedAt = startedAt
         isRunning = true
         lastError = nil
@@ -715,8 +730,19 @@ final class Transcriber {
     /// Default `[]` (meeting/voice-note final passes don't bias); the
     /// dictation stop passes `DictationDictionary.shared.biasTerms()`.
     func runFinalPass(archiveURLs: [URL] = [], profile: WhisperEngine.DecodeProfile = .full, biasTerms: [String] = []) async {
+        let myGeneration = runGeneration
         await runFinalTranscribe(archiveURLs: archiveURLs, profile: profile, biasTerms: biasTerms)
-        isRunning = false
+        // Only clear `isRunning` when no NEW session has re-started
+        // this shared transcriber while the pass was running. A stale
+        // pass (session rotated / user quick-restarted) writing
+        // `isRunning = false` here used to kill the new session's live
+        // transcription — `kickLiveTranscribe` and `stopCapture` both
+        // guard on `isRunning` (issue #7).
+        if runGeneration == myGeneration {
+            isRunning = false
+        } else {
+            log.info("Final pass: transcriber was re-started for a newer session — leaving isRunning untouched")
+        }
     }
 
     func reset() {
@@ -1069,6 +1095,18 @@ final class Transcriber {
             }
         }
         let lang = languageHint
+
+        // Third cancellation check — right before committing to the
+        // non-cancellable Whisper inference. On session rotation or a
+        // quick manual stop→start the cancel typically lands while the
+        // archive decode above is in flight; bailing here keeps the
+        // shared engine slot free for the NEW session's live windows
+        // instead of burning minutes of Neural Engine time on a doomed
+        // pass (issue #7).
+        if Task.isCancelled {
+            log.info("Final pass: cancelled before inference — bailing")
+            return
+        }
 
         // Run Whisper + diarization in parallel — both are CoreML on
         // the Neural Engine, but Whisper hogs the encoder and the

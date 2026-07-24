@@ -185,6 +185,16 @@ final class RecordingSession {
     // internal for RecordingSession+Finalize.swift
     var summaryTaskGeneration: UInt = 0
 
+    /// One-shot flag set by `performStartFromMeeting` right before its
+    /// rotation `stop()`: tells stop() NOT to spawn the finalize task
+    /// for the outgoing meeting (it would be cancelled immediately
+    /// anyway, but used to win the MainActor FIFO race against that
+    /// cancel and hog the Whisper slot / clobber shared transcriber
+    /// state — issue #7, back-to-back meetings). Consumed (reset to
+    /// false) by the next stop().
+    @ObservationIgnored
+    private var skipFinalPassOnNextStop = false
+
     /// True when the most recent `start()` skipped system audio
     /// because `CGPreflightScreenCaptureAccess()` returned false.
     /// Cleared on the next start() that successfully bootstraps the
@@ -821,6 +831,18 @@ final class RecordingSession {
                 String(localized: "Previous meeting saved — starting new session for \(meeting.title)."),
                 style: .info
             )
+            // Issue #7 (back-to-back meetings): the final pass spawned
+            // by stop() is doomed on rotation — summaryTask?.cancel()
+            // below always cancels it. But on the FIFO MainActor the
+            // spawned task used to RUN FIRST (before the cancel), start
+            // the non-cancellable Whisper inference on the shared
+            // engine slot for minutes, and on return flip the shared
+            // transcribers' isRunning off — killing the NEW session's
+            // transcription while screenshots kept going ("second
+            // meeting only captures the screen"). Tell stop() to skip
+            // spawning it: deterministic, and M1 keeps exactly what it
+            // kept before (the live transcript already on disk).
+            skipFinalPassOnNextStop = true
             await stop()
         }
 
@@ -1378,6 +1400,13 @@ final class RecordingSession {
         // first, change their mind, then commit). Anything else is a
         // no-op so transient states aren't interrupted.
         guard status == .recording || status == .paused else { return }
+        // Consume the rotation flag IMMEDIATELY — stop() has several
+        // early returns below (husk cleanup, dictation branch, missing
+        // session dir), and a stale `true` surviving one of them would
+        // make a LATER legitimate stop silently skip its finalize
+        // (no summary, no auto-send — hours later, undiagnosable).
+        let isRotationStop = skipFinalPassOnNextStop
+        skipFinalPassOnNextStop = false
         removeThermalDowngrade()
         // No stop-click cue — it fired before capture stopped (tailing the
         // recording) and before any work finished. The "done" cue now plays
@@ -1847,6 +1876,26 @@ final class RecordingSession {
         // per second forever this overflows in ~136 years.
         summaryTaskGeneration &+= 1
         let myGeneration = summaryTaskGeneration
+        // Session-rotation fast-path (issue #7): when this stop() runs
+        // because a back-to-back calendar meeting is about to take
+        // over, don't spawn the finalize task at all — see
+        // `performStartFromMeeting` for the full story. The sandbox
+        // ticket still has to be released (normally the spawned task's
+        // defer does it).
+        if isRotationStop {
+            ticketSnapshot?.release()
+            // Mirror finalizePostStop's `bailRotated` cleanup: stop()
+            // already ran beginGenerating + set .generating above, and
+            // with no finalize task spawned nobody else would ever
+            // clear them — the rotated-away meeting would show the
+            // summary skeleton until relaunch.
+            if willSummarize {
+                summaryGenerationState = .failed("cancelled")
+                await SessionStore.shared.finishGenerating(sessionID)
+            }
+            log.warning("Final pass skipped — session rotation (back-to-back meeting) is taking over")
+            return
+        }
         summaryTask = Task { [weak self] in
             defer { ticketSnapshot?.release() }
             await self?.finalizePostStop(
@@ -1970,6 +2019,10 @@ final class RecordingSession {
         summaryTask?.cancel()
         summaryTask = nil
         summaryGenerationState = .idle
+        // Defensive: the rotation flag is normally consumed at the top
+        // of stop(), but a reset() between set and consume (husk
+        // cleanup path) must not leave it armed for a later stop.
+        skipFinalPassOnNextStop = false
         recorder.reset()
         micTranscriber.reset()
         systemTranscriber.reset()
