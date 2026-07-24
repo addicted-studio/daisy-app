@@ -316,9 +316,26 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         if Self.currentOutputDeviceIsBluetooth() {
             log.warning("Default output is Bluetooth — SCStream loopback may not deliver frames")
             ToastCenter.shared.show(
-                "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture.",
+                String(localized: "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture."),
                 style: .warning
             )
+        } else if Self.currentOutputDeviceIsInternalSpeakers() {
+            // Internal speakers → the mic acoustically re-captures the
+            // remote side. Echo dedup scrubs the duplicate lines, but
+            // speaker attribution is fundamentally unreliable in this
+            // setup (product call 2026-07-25: don't out-smart physics —
+            // recommend a headset instead). Nudge at most once per day
+            // so a deliberate speakers user isn't nagged every meeting.
+            let nudgeKey = "daisy.speakersNudgeLastShown"
+            let lastShown = UserDefaults.standard.object(forKey: nudgeKey) as? Date
+            if lastShown == nil || !Calendar.current.isDateInToday(lastShown!) {
+                UserDefaults.standard.set(Date(), forKey: nudgeKey)
+                log.info("Default output is internal speakers — showing headphones nudge")
+                ToastCenter.shared.show(
+                    String(localized: "Playing through the Mac's speakers — your mic will also hear the other side. Headphones keep the two sides cleanly separated."),
+                    style: .info
+                )
+            }
         }
 
         log.info("SystemAudio capturing")
@@ -352,6 +369,58 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         //    BT — that's the "BlackHole + AirPods" multi-output
         //    configuration which still hits the BT loopback bug.
         return isBluetoothTransport(deviceID: deviceID)
+    }
+
+    /// True when the default output device is the Mac's INTERNAL
+    /// speakers: transport is built-in AND the data source reports
+    /// the internal speaker ('ispk'), not the headphone jack
+    /// ('hdpn'). Drives the once-a-day headphones recommendation at
+    /// meeting start — with speakers the mic re-captures the remote
+    /// side and speaker attribution can't be trusted. Conservative:
+    /// any property-query failure returns false; a missed nudge is
+    /// cheaper than a false one.
+    nonisolated private static func currentOutputDeviceIsInternalSpeakers() -> Bool {
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var defaultOutAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let idStatus = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &defaultOutAddress,
+            0, nil,
+            &size, &deviceID
+        )
+        guard idStatus == noErr, deviceID != kAudioObjectUnknown else { return false }
+
+        // Transport must be built-in. (External interfaces — USB
+        // DACs, displays — can't be told speaker-vs-headphone apart,
+        // so they never nudge.)
+        var transportType: UInt32 = 0
+        var tSize = UInt32(MemoryLayout<UInt32>.size)
+        var transportAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(deviceID, &transportAddress, 0, nil, &tSize, &transportType) == noErr,
+              transportType == kAudioDeviceTransportTypeBuiltIn else { return false }
+
+        // Data source on the OUTPUT scope: 'ispk' = internal
+        // speaker, 'hdpn' = headphone jack.
+        var dataSource: UInt32 = 0
+        var dsSize = UInt32(MemoryLayout<UInt32>.size)
+        var dsAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDataSource,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(deviceID, &dsAddress, 0, nil, &dsSize, &dataSource) == noErr else {
+            return false
+        }
+        return dataSource == 0x6973_706B  // FourCC 'ispk'
     }
 
     /// Recursively check whether `deviceID` (or any of its active
@@ -642,7 +711,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             lastAudibleSampleAt = nil
             receivedAudibleAudio = false
             ToastCenter.shared.show(
-                "Output device changed — system audio capture continues.",
+                String(localized: "Output device changed — system audio capture continues."),
                 style: .info
             )
         } catch {
@@ -654,7 +723,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             // remote side captured.
             state = .stopped
             ToastCenter.shared.show(
-                "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it.",
+                String(localized: "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it."),
                 style: .warning
             )
         }
@@ -714,8 +783,8 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
                 silenceWarningFired = true
                 let neverGotAudio = !hasReceivedAudio
                 let msg = neverGotAudio
-                    ? "Daisy isn't hearing the other side — they won't be recorded. Check your output device (Bluetooth headphones can't be captured on macOS)."
-                    : "The other side went silent and may not be recording anymore. Check your output device."
+                    ? String(localized: "Daisy isn't hearing the other side — they won't be recorded. Check your output device (Bluetooth headphones can't be captured on macOS).")
+                    : String(localized: "The other side went silent and may not be recording anymore. Check your output device.")
                 log.warning("Silent SCStream detected after \(Int(silentDuration), privacy: .public)s (hasReceivedAudio=\(self.hasReceivedAudio, privacy: .public))")
                 ToastCenter.shared.show(msg, style: .warning)
                 return
@@ -737,7 +806,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             silentContentWarningFired = true
             log.warning("Silent-content system capture: buffers arriving but nothing audible after \(Int(now.timeIntervalSince(captureStartedAt)), privacy: .public)s")
             ToastCenter.shared.show(
-                "Daisy is capturing the other side but there's no sound in it — they won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording.",
+                String(localized: "Daisy is capturing the other side but there's no sound in it — they won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording."),
                 style: .warning
             )
         }

@@ -120,7 +120,15 @@ enum AcousticEchoDedup {
     ///
     /// Returned list preserves order and identity for kept segments;
     /// dropped echoes are simply absent from the output.
+    /// True when the most recent `filter` run tripped SYSTEMIC mode —
+    /// the whole meeting echoed through speakers. Read by
+    /// `RecordingSession` right after the finalize render to surface
+    /// the headphones recommendation once. Same implicit isolation as
+    /// the rest of this enum (project compiles main-actor-by-default).
+    private(set) static var lastFilterWasSystemic = false
+
     static func filter(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        lastFilterWasSystemic = false
         guard !segments.isEmpty else { return segments }
 
         // Index system segments by start time for O(log n) window
@@ -174,6 +182,7 @@ enum AcousticEchoDedup {
             || strongCount >= systemicAbsoluteStrongCount
 
         if systemicEcho {
+            lastFilterWasSystemic = true
             let kept = zip(segments, verdict)
                 .compactMap { $1 && $0.source == .microphone ? nil : $0 }
             log.info("Acoustic echo dedup: SYSTEMIC mode — dropped \(segments.count - kept.count) of \(micWithText) mic segments (strong matches: \(strongCount), fraction \(String(format: "%.2f", strongFraction)))")

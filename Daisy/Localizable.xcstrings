@@ -1,6 +1,86 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обнаружены Bluetooth-наушники — Daisy может не записать собеседника. Используйте встроенные динамики, проводные наушники или установите BlackHole для надёжного захвата системного звука."
+          }
+        }
+      }
+    },
+    "Playing through the Mac's speakers — your mic will also hear the other side. Headphones keep the two sides cleanly separated." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук идёт через динамики Mac — микрофон услышит и собеседника. С наушниками стороны записи не смешиваются."
+          }
+        }
+      }
+    },
+    "Output device changed — system audio capture continues." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устройство вывода изменилось — захват системного звука продолжается."
+          }
+        }
+      }
+    },
+    "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вывод звука изменился, и Daisy не смогла продолжить запись собеседника. Остановите и перезапустите запись, если она вам нужна."
+          }
+        }
+      }
+    },
+    "Daisy isn't hearing the other side — they won't be recorded. Check your output device (Bluetooth headphones can't be captured on macOS)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не слышит собеседника — он не будет записан. Проверьте устройство вывода (Bluetooth-наушники не захватываются в macOS)."
+          }
+        }
+      }
+    },
+    "The other side went silent and may not be recording anymore. Check your output device." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник замолчал и, возможно, больше не записывается. Проверьте устройство вывода."
+          }
+        }
+      }
+    },
+    "Daisy is capturing the other side but there's no sound in it — they won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy захватывает звук собеседника, но в нём тишина — записи не будет. Обычно это DRM-защищённое воспроизведение или сбой захвата macOS. Попробуйте другой источник или перезапустите запись."
+          }
+        }
+      }
+    },
+    "Echo removed — this meeting seems to have played through the speakers. Use headphones for clean speaker separation." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эхо удалено — похоже, звук встречи шёл через динамики. Для чистого разделения сторон используйте наушники."
+          }
+        }
+      }
+    },
     "" : {
       "localizations" : {
         "ru" : {
