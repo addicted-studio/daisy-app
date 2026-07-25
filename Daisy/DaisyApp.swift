@@ -47,11 +47,11 @@ struct DaisyApp: App {
         // `ServiceWiring` so both call sites can't drift apart.
         ServiceWiring.applyAll(settings: s, session: sess)
 
-        // Light the sidebar "update available" badge shortly after launch
-        // instead of waiting for Sparkle's next scheduled automatic check.
-        // Silent (no UI); self-guards on the auto-check preference + a 1h
-        // throttle so rapid relaunches don't re-poll the appcast.
-        SparkleUpdater.shared.refreshAvailableUpdateSilently()
+        // Start Sparkle's normal background cycle immediately after launch.
+        // This honours the Automatic update setting, does not interrupt the
+        // user with a manual-check sheet, and ensures a newly published
+        // release is discovered without waiting for the next hourly cadence.
+        SparkleUpdater.shared.checkForUpdatesAfterLaunch()
     }
 
     var body: some Scene {
