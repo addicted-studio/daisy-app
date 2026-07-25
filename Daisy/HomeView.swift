@@ -285,10 +285,11 @@ struct HomeView: View {
     /// calendar/recordings band) so vertical boundaries align.
     static let columnGap: CGFloat = 16
 
-    /// Home body layout (2026-07-21, per Egor's mock): two full-height
-    /// columns. LEFT = activity heatmap, then the fixes/words number pair,
-    /// then recent recordings. RIGHT = the DayCard (morning lede + agenda
-    /// + open items).
+    /// Home body layout (columns swapped 2026-07-25, per Egor): two
+    /// full-height columns. LEFT = the DayCard (morning lede + agenda +
+    /// open items). RIGHT = activity heatmap, then the fixes/words
+    /// number pair, then recent recordings. (`leftColumn` kept its
+    /// historical name to avoid churn — it now renders on the right.)
     ///
     /// The layout is FIXED regardless of calendar state (Egor 2026-07-22):
     /// no calendar just means the day card shows less inside it — it must
@@ -297,16 +298,16 @@ struct HomeView: View {
     /// look like a different app.
     private var homeColumns: some View {
         HStack(alignment: .top, spacing: Self.columnGap) {
-            leftColumn
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             dayColumn
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            leftColumn
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .padding(.horizontal, 24)
     }
 
-    /// Right column: the onboarding checklist (while setup is unfinished)
-    /// stacked above the day card.
+    /// Day column (now LEFT): the onboarding checklist (while setup is
+    /// unfinished) stacked above the day card.
     @ViewBuilder
     private var dayColumn: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -317,9 +318,10 @@ struct HomeView: View {
         }
     }
 
-    /// Left column stack: heatmap on top, the fixes/words number pair
-    /// beneath it, then recent recordings. Stats hide until there's at
-    /// least one session so a fresh install isn't greeted by zeros.
+    /// Stats column (now RIGHT; name is historical): heatmap on top, the
+    /// fixes/words number pair beneath it, then recent recordings. Stats
+    /// hide until there's at least one session so a fresh install isn't
+    /// greeted by zeros.
     @ViewBuilder
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: 16) {
