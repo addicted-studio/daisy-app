@@ -758,7 +758,6 @@ final class WhisperEngine {
         // if VAD wasn't available). Per-span timings are translated
         // back into the original-buffer coordinate space so the
         // Transcriber doesn't notice the VAD slicing.
-        var allRaw: [(spanOffsetSec: Double, segs: [TranscriptionSegment])] = []
         if speechSpans.isEmpty {
             // VAD says "no speech" — skip Whisper entirely. This is
             // the desired behaviour for ambient-noise-only buffers:
@@ -766,6 +765,11 @@ final class WhisperEngine {
             log.info("Whisper pass: vad=\(vadMs, privacy: .public)ms decode=0ms (no speech) audio=\(samples.count, privacy: .public) samples")
             return []
         }
+
+        // Decode + post-filter as ONE reusable pass so the dictation
+        // rescue below can re-run it with adjusted options.
+        func runDecodePass(_ options: DecodingOptions) async throws -> (kept: [WhisperSegment], rawCount: Int) {
+        var allRaw: [(spanOffsetSec: Double, segs: [TranscriptionSegment])] = []
         let decodeStart = Date()
         for span in speechSpans {
             // Cooperative cancellation point between spans — a
@@ -849,7 +853,45 @@ final class WhisperEngine {
         if (dEmpty + dHalluc + dLogprob + dShort + dDup) > 0 {
             log.info("Whisper post-filter [\(String(describing: profile), privacy: .public)]: kept \(kept.count, privacy: .public)/\(rawSegmentCount, privacy: .public) — dropped empty=\(dEmpty, privacy: .public) halluc=\(dHalluc, privacy: .public) logprob=\(dLogprob, privacy: .public) short=\(dShort, privacy: .public) dup=\(dDup, privacy: .public), worstLogprob=\(String(format: "%.2f", worstLogprob), privacy: .public)")
         }
-        return kept
+        return (kept, rawSegmentCount)
+        }  // runDecodePass
+
+        let first = try await runDecodePass(options)
+
+        // Dictation rescue pass (field bug 2026-07-25, Egor's log
+        // report): with vocabulary-bias promptTokens active, WhisperKit
+        // can return a single segment with EMPTY text on short clips —
+        // the decode "succeeds" ("rawSegments=1"), the post-filter
+        // drops it ("kept 0/1 — dropped empty=1"), and dictation
+        // pastes nothing. Parakeet has no prompt support, which is why
+        // only the Fast engine appeared to work; the Apple engine's
+        // silent Whisper fallback funnelled into this same path. When
+        // the paste-verbatim dictation pass ends up empty despite VAD
+        // hearing real speech, retry ONCE without the bias prompt and
+        // with the upstream-default no-speech threshold. Meetings and
+        // voice notes (.full/.lite) keep single-pass behaviour.
+        if profile == .dictationFinal, first.kept.isEmpty {
+            log.warning("Dictation pass empty (raw=\(first.rawCount, privacy: .public), bias=\(biasPromptTokens != nil, privacy: .public)) — rescue pass without bias prompt")
+            let rescueOptions = DecodingOptions(
+                task: .transcribe,
+                language: language,
+                temperatureFallbackCount: profile.temperatureFallbackCount,
+                topK: profile.topK,
+                detectLanguage: language == nil,
+                skipSpecialTokens: true,
+                withoutTimestamps: false,
+                wordTimestamps: false,
+                promptTokens: nil,
+                compressionRatioThreshold: 2.4,
+                logProbThreshold: -1.0,
+                noSpeechThreshold: 0.6,
+                concurrentWorkerCount: profile.concurrentWorkerCount,
+                chunkingStrategy: .vad
+            )
+            let rescue = try await runDecodePass(rescueOptions)
+            return rescue.kept
+        }
+        return first.kept
     }
 
     // MARK: - VAD pre-pass
