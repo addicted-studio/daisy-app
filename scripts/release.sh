@@ -37,7 +37,9 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 
 DAISY_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DAISY_WEB_REPO="${DAISY_REPO}/../Daisy-web"
+# The conventional sibling checkout is the default, but allow an explicit
+# override when the active website working copy lives elsewhere.
+DAISY_WEB_REPO="${DAISY_WEB_REPO:-${DAISY_REPO}/../Daisy-web}"
 SCHEME="Daisy"
 CONFIGURATION="Release"
 TEAM_ID="${DAISY_TEAM_ID:-LW64FQXZCU}"  # Apple Developer team ID; override via DAISY_TEAM_ID env var

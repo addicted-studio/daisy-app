@@ -128,23 +128,21 @@ final class SparkleUpdater {
         controller.checkForUpdates(nil)
     }
 
-    /// SILENT background update check — NO UI, even when an update is found.
-    /// Unlike `checkForUpdates()` (which drives Sparkle's visible progress +
-    /// prompt), `checkForUpdateInformation()` just fetches the appcast and
-    /// fires the delegate's `didFindValidUpdate` / `updaterDidNotFindUpdate`
-    /// callbacks — which is exactly what populates `availableUpdate`. Called
-    /// once at launch so the sidebar badge lights up shortly after start
-    /// instead of waiting for Sparkle's next SCHEDULED automatic check.
+    /// Starts Sparkle's normal background update cycle immediately after
+    /// launch. Sparkle itself continues to schedule later checks according to
+    /// `SUScheduledCheckInterval`; this launch check means a user who opens
+    /// Daisy after a new release doesn't have to wait for that cadence or
+    /// press “Check for Updates”.
     ///
-    /// Guards: honours the user's automatic-check preference (if they turned
-    /// auto-updates off, we don't silently phone home), and self-throttles on
-    /// `lastUpdateCheckDate` so rapid relaunches don't re-poll the appcast
-    /// every single time.
-    func refreshAvailableUpdateSilently() {
+    /// `checkForUpdatesInBackground()` is Sparkle's recommended API for this
+    /// exact case. Unlike an information-only probe, it can progress through
+    /// Sparkle's regular download/install flow while remaining non-modal.
+    /// It must be invoked immediately after the updater is started, which is
+    /// satisfied by the singleton's construction just before this method is
+    /// called from `DaisyApp.init`.
+    func checkForUpdatesAfterLaunch() {
         guard automaticallyChecksForUpdates else { return }
-        if let last = lastUpdateCheckDate,
-           Date().timeIntervalSince(last) < 3600 { return }
-        controller.updater.checkForUpdateInformation()
+        controller.updater.checkForUpdatesInBackground()
     }
 }
 
@@ -207,7 +205,7 @@ final class SparkleUpdater {
     }
 
     /// No-op until Sparkle is linked (see the real implementation).
-    func refreshAvailableUpdateSilently() {}
+    func checkForUpdatesAfterLaunch() {}
 }
 
 #endif
