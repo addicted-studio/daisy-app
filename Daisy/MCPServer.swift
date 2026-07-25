@@ -14,18 +14,20 @@
 //
 //  Scope intentionally narrow:
 //    • Loopback only — never bound to anything but 127.0.0.1
-//    • Single client at a time — if a second SSE client connects,
-//      we drop the previous stream (matches Claude Desktop's
-//      restart-on-config-change behaviour)
+//    • A few concurrent clients (Claude Desktop + Cowork + friends),
+//      each on its own SSE stream with its own ?sessionId endpoint;
+//      capped at `maxSSEClients` with oldest-stream eviction.
+//      (Single-client-with-rollover until 2026-07-25 — two legit
+//      clients ping-ponged each other's streams every 15 s.)
 //    • Tools (see MCPTools.swift) are READ tools plus a small,
 //      deliberately SAFE set of ACTION (write) tools — regenerate a
 //      summary, rename a session/speaker, route a session to a
 //      configured destination. No DESTRUCTIVE surface: nothing here
 //      can delete a session/audio/transcript, change settings or
 //      credentials, or alter this server's own transport / network
-//      binding. The security posture below (loopback + single-client
-//      + Host/Origin guards) is unchanged by the addition of write
-//      tools — only the tool surface in MCPTools grew.
+//      binding. The security posture below (loopback + bounded client
+//      table + Host/Origin guards) is unchanged by the addition of
+//      write tools — only the tool surface in MCPTools grew.
 //
 //  We hand-roll the HTTP/1.1 parser and SSE framing on top of
 //  Network.framework's NWListener so the build stays free of
@@ -57,9 +59,32 @@ final class MCPServer {
     @ObservationIgnored private let log = Logger(subsystem: "app.essazanov.Daisy", category: "MCPServer")
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private let queue = DispatchQueue(label: "app.essazanov.Daisy.mcp", qos: .utility)
-    /// Currently active SSE client connection, if any. The server is
-    /// single-client by design — see header comment.
-    @ObservationIgnored private var sseConnection: NWConnection?
+    /// Live SSE clients keyed by session id. MULTI-CLIENT since
+    /// 2026-07-25: the old single-slot design made two legitimate
+    /// clients (Claude Desktop's mcp-remote + Cowork's Daisy
+    /// connector) ping-pong forever — every GET /sse tore down the
+    /// other's stream, the loser reconnected after the 15 s retry
+    /// floor and tore down the winner, producing one "SSE stream
+    /// opened" every 15 s for hours in field logs (2026-07-25).
+    /// Each client gets its own keepalive timer and its own endpoint
+    /// URL carrying ?sessionId=… so POSTs route to the right stream.
+    private struct SSEClient {
+        let sessionID: String
+        let connection: NWConnection
+        let keepalive: DispatchSourceTimer
+        let openedAt: Date
+    }
+    @ObservationIgnored private var sseClients: [String: SSEClient] = [:]
+
+    /// Hard cap on concurrent SSE clients — past it the OLDEST stream
+    /// is evicted. Normal setups run 1-2 (Claude Desktop + Cowork);
+    /// the cap only bounds a leaky client that opens without closing.
+    private static let maxSSEClients = 4
+
+    /// Consecutive bind-retry attempts after EADDRINUSE (a previous
+    /// Daisy instance still holding the port during an update
+    /// relaunch). Reset when the listener reaches .ready.
+    @ObservationIgnored private var bindRetryCount = 0
 
     /// Periodic SSE comment-frame timer. Without it the loopback
     /// socket goes half-open after macOS power-naps or after long
@@ -67,20 +92,11 @@ final class MCPServer {
     /// because the response writes into a TCP send buffer that will
     /// never drain. 15s cadence is well under the 30-45s standard
     /// EventSource staleness window mcp-remote uses internally.
-    /// Bound to the current sseConnection — re-created when a new
-    /// SSE stream replaces an old one, torn down on stop().
-    ///
-    /// As of the connection-storm root-cause fix the keepalive does
-    /// MORE than emit a heartbeat: its send-completion now inspects the
-    /// error. A half-open loopback socket accepts the first write into
-    /// the kernel send buffer, but the next write after the peer's RST
-    /// surfaces ECONNRESET/EPIPE in `contentProcessed`. We previously
-    /// discarded that error (`{ _ in }`), so a dead peer left a zombie
-    /// `sseConnection` wired up forever and the next POST's response
-    /// was written into a corpse. Now a failed keepalive write tears
-    /// the connection down, which lets the client reconnect ONCE
-    /// cleanly instead of the server silently wedging.
-    @ObservationIgnored private var sseKeepaliveTimer: DispatchSourceTimer?
+    /// (Keepalive timers now live PER-CLIENT inside `SSEClient` — see
+    /// the multi-client note above. The half-open-detection behaviour
+    /// is unchanged: a failed keepalive write tears that one client
+    /// down so it can reconnect cleanly, instead of the server nursing
+    /// a zombie stream.)
 
     /// SSE `retry:` directive (milliseconds) emitted on every stream
     /// open. The `eventsource` package mcp-remote rides on hardcodes a
@@ -96,13 +112,7 @@ final class MCPServer {
     /// either proven the socket alive (heartbeat) or torn it down.
     private static let sseReconnectFloorMillis = 15_000
 
-    /// Per-session UUID issued at `initialize` time. Used to detect
-    /// stale reconnects from mcp-remote after a Claude restart — if
-    /// the bridge somehow attached to a previous Daisy session
-    /// (cached state file under ~/.mcp-auth) but Daisy has rolled
-    /// to a new id, we log loudly so support knows what happened
-    /// rather than the request just dying mid-flight.
-    @ObservationIgnored private var currentSessionID: String?
+    // (per-session UUIDs live as `SSEClient.sessionID` keys now)
 
     /// Sliding window of recent SSE-open timestamps for the
     /// connection-storm circuit breaker. Pruned to the last
@@ -146,6 +156,10 @@ final class MCPServer {
     /// current listener and restarts on the new one.
     func start(port: Int) {
         if case .running(let p) = state, p == port { return }
+        // Fresh explicit start = fresh retry budget (the counter
+        // otherwise only resets on .ready, so an exhausted
+        // EADDRINUSE cycle would leave later starts retry-less).
+        bindRetryCount = 0
         stop()
 
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
@@ -182,38 +196,63 @@ final class MCPServer {
         }
     }
 
-    /// Stop the listener and close any in-flight SSE stream.
+    /// Stop the listener and close all in-flight SSE streams.
     func stop() {
         listener?.cancel()
         listener = nil
-        tearDownSSE()
+        tearDownAllSSE()
         state = .stopped
     }
 
-    /// Cancel the active SSE connection + its keepalive timer + drop
-    /// the session id. Single chokepoint so we can't leak a timer
-    /// firing into a dead connection (the closure would log, but
-    /// it's still wasted work and a small heap-retain leak).
-    private func tearDownSSE() {
-        sseKeepaliveTimer?.cancel()
-        sseKeepaliveTimer = nil
-        sseConnection?.cancel()
-        sseConnection = nil
-        currentSessionID = nil
+    /// Cancel ONE client's SSE connection + keepalive timer and drop
+    /// it from the table. Single chokepoint so we can't leak a timer
+    /// firing into a dead connection.
+    private func tearDown(clientID: String) {
+        guard let client = sseClients.removeValue(forKey: clientID) else { return }
+        client.keepalive.cancel()
+        client.connection.cancel()
+    }
+
+    private func tearDownAllSSE() {
+        for id in Array(sseClients.keys) { tearDown(clientID: id) }
     }
 
     private func handleListenerState(_ s: NWListener.State, port: Int) {
         switch s {
         case .ready:
             state = .running(port: port)
+            bindRetryCount = 0
             log.info("MCP server listening on 127.0.0.1:\(port, privacy: .public)")
         case .failed(let err):
             state = .failed(err.localizedDescription)
             log.error("MCP listener failed: \(err.localizedDescription, privacy: .public)")
+            // "Address already in use" = a previous Daisy instance
+            // still holds the port (relaunch during a Sparkle update,
+            // or a duplicate launch). It exits within seconds — retry
+            // instead of staying dead until the user relaunches (field
+            // log 2026-07-25: two EADDRINUSE entries, no MCP server
+            // for hours).
+            if case .posix(let code) = err, code == .EADDRINUSE {
+                scheduleBindRetry(port: port)
+            }
         case .cancelled:
             state = .stopped
         default:
             break
+        }
+    }
+
+    /// Re-attempt the bind every 10 s, up to 6 tries, while the state
+    /// is still `.failed`. A successful `.ready` resets the counter.
+    private func scheduleBindRetry(port: Int) {
+        guard bindRetryCount < 6 else { return }
+        bindRetryCount += 1
+        let attempt = bindRetryCount
+        log.info("MCP port \(port, privacy: .public) busy — bind retry \(attempt, privacy: .public)/6 in 10s")
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self, case .failed = self.state else { return }
+            self.start(port: port)
         }
     }
 
@@ -250,9 +289,9 @@ final class MCPServer {
     /// stale reference) and the keepalive timer can't fire into a dead
     /// socket.
     private func handleConnectionTerminated(_ connection: NWConnection) {
-        guard sseConnection === connection else { return }
-        log.info("SSE connection terminated (\(self.currentSessionID ?? "nil", privacy: .public)) — clearing stream state; client may reconnect")
-        tearDownSSE()
+        guard let client = sseClients.values.first(where: { $0.connection === connection }) else { return }
+        log.info("SSE connection terminated (\(client.sessionID, privacy: .public)) — removing stream (remaining: \(self.sseClients.count - 1, privacy: .public)); client may reconnect")
+        tearDown(clientID: client.sessionID)
     }
 
     /// Pull bytes off `connection` until we have a complete HTTP/1.1
@@ -361,7 +400,13 @@ final class MCPServer {
         // browser vector, but any LOCAL process could otherwise read
         // every transcript. The friendly GET / probe stays open so
         // pasting the URL into a browser still explains the server.
-        let isProbe = request.method.uppercased() == "GET" && request.path == "/"
+        // Split the query string off — the endpoint URL handed to SSE
+        // clients carries ?sessionId=… for multi-client POST routing.
+        let pathParts = request.path.split(separator: "?", maxSplits: 1)
+        let path = pathParts.first.map(String.init) ?? request.path
+        let query = pathParts.count > 1 ? String(pathParts[1]) : nil
+
+        let isProbe = request.method.uppercased() == "GET" && path == "/"
         if !isProbe, !MCPAccessToken.authorize(header: request.headers["authorization"]) {
             Self.write(
                 status: 401,
@@ -372,11 +417,15 @@ final class MCPServer {
             return
         }
 
-        switch (request.method.uppercased(), request.path) {
+        switch (request.method.uppercased(), path) {
         case ("GET", "/sse"):
             await openSSEStream(on: connection)
         case ("POST", "/messages"):
-            await handlePostedMessage(body: body, replyOn: connection)
+            await handlePostedMessage(
+                body: body,
+                replyOn: connection,
+                sessionID: Self.queryValue(query, key: "sessionId")
+            )
         case ("GET", "/"):
             // Friendly probe — useful when the user pastes the URL
             // into a browser to check the server's up.
@@ -411,6 +460,21 @@ final class MCPServer {
             return false
         }
         return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    /// Value of `key` in a raw query string ("a=1&b=2"). Minimal on
+    /// purpose — the only producer of these URLs is our own endpoint
+    /// event, so no exotic encodings to handle beyond percent-escapes.
+    private static func queryValue(_ query: String?, key: String) -> String? {
+        guard let query else { return nil }
+        for pair in query.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1)
+            if kv.count == 2, kv[0] == Substring(key) {
+                let raw = String(kv[1])
+                return raw.removingPercentEncoding ?? raw
+            }
+        }
+        return nil
     }
 
     // MARK: - SSE stream (server → client)
@@ -461,9 +525,9 @@ final class MCPServer {
             recentSSEOpenings.removeAll()
             let retryAfter = Int(Self.stormCooldown)
             log.error("MCP connection storm: \(Self.stormThreshold, privacy: .public)+ opens in \(Int(Self.stormWindow), privacy: .public)s — replying 503 + Retry-After \(retryAfter, privacy: .public)s for \(Int(Self.stormCooldown), privacy: .public)s. Likely cause: a misbehaving MCP client (e.g. mcp-remote with a broken reconnect). Daisy stays usable and the listener stays up; the client should stop its EventSource on the non-200 and reconnect cleanly later.")
-            // Tear down any live stream this storm rolled over so we
-            // don't leak it, then 503 the offending open.
-            tearDownSSE()
+            // Tear down every live stream this storm rolled over so we
+            // don't leak them, then 503 the offending open.
+            tearDownAllSSE()
             Self.write(
                 status: 503,
                 contentType: "text/plain; charset=utf-8",
@@ -475,13 +539,16 @@ final class MCPServer {
             return
         }
 
-        // Drop any previous stream — single-client transport.
-        // Cancel the OLD timer first so it can't race onto the new
-        // connection. tearDownSSE handles both.
-        tearDownSSE()
-        sseConnection = connection
+        // Multi-client: register ALONGSIDE any existing streams —
+        // never tear a peer down for a new arrival (that was the
+        // 15-second ping-pong storm; see `sseClients` doc). Bounded by
+        // evicting the OLDEST stream past the cap.
+        if sseClients.count >= Self.maxSSEClients,
+           let oldest = sseClients.values.min(by: { $0.openedAt < $1.openedAt }) {
+            log.warning("SSE client cap (\(Self.maxSSEClients, privacy: .public)) reached — evicting oldest session \(oldest.sessionID, privacy: .public)")
+            tearDown(clientID: oldest.sessionID)
+        }
         let sessionID = UUID().uuidString
-        currentSessionID = sessionID
 
         // No `Access-Control-Allow-Origin: *` — see the long note in
         // `route(...)`. Native MCP clients (Claude Desktop, Cursor)
@@ -522,7 +589,11 @@ final class MCPServer {
         // gets the endpoint event, so a reconnect never lands without
         // knowing where to POST (which would itself make the client
         // give up and retry).
-        sendSSEEvent(name: "endpoint", data: "/messages", on: connection)
+        // The endpoint carries this stream's sessionId so the client's
+        // POSTs route back to ITS stream (multi-client). Legacy clients
+        // that cached a plain "/messages" still work — see the
+        // most-recent-stream fallback in handlePostedMessage.
+        sendSSEEvent(name: "endpoint", data: "/messages?sessionId=\(sessionID)", on: connection)
 
         // Start a receive pump on the SSE socket. We don't expect the
         // client to send anything on this connection (it POSTs on a
@@ -538,9 +609,9 @@ final class MCPServer {
         // Arm the keepalive — comment-frame heartbeat every 15s for the
         // lifetime of THIS connection. The closure captures the
         // connection weakly so a dropped client can't keep the server
-        // alive; we also re-verify it's still the current sseConnection
-        // on each fire (race against a fresh openSSEStream replacing
-        // us). Crucially the send-completion now INSPECTS the error: a
+        // alive; we also re-verify it's still THIS session's live
+        // connection on each fire (race against eviction/teardown).
+        // Crucially the send-completion INSPECTS the error: a
         // half-open loopback socket swallows the first write into the
         // kernel buffer but fails the next one with ECONNRESET/EPIPE.
         // On any such failure we tear the connection down so the client
@@ -557,7 +628,7 @@ final class MCPServer {
             // cancelled.
             if connection.state == .cancelled { return }
             Task { @MainActor in
-                guard strongSelf.sseConnection === connection else { return }
+                guard strongSelf.sseClients[sessionID]?.connection === connection else { return }
                 connection.send(content: keepaliveBytes, completion: .contentProcessed { error in
                     // `strongSelf`/`connection` are immutable strong
                     // `let`s from the timer-handler guard, captured
@@ -573,16 +644,21 @@ final class MCPServer {
                     // drives the stateUpdateHandler → tearDownSSE on the
                     // MainActor; we don't touch isolated state here.
                     Task { @MainActor in
-                        guard strongSelf.sseConnection === connection else { return }
-                        strongSelf.log.info("SSE keepalive write failed — peer gone; tearing down so client can reconnect cleanly")
+                        guard strongSelf.sseClients[sessionID]?.connection === connection else { return }
+                        strongSelf.log.info("SSE keepalive write failed — peer gone; tearing down session \(sessionID, privacy: .public) so client can reconnect cleanly")
                         connection.cancel()
                     }
                 })
             }
         }
         timer.resume()
-        sseKeepaliveTimer = timer
-        log.info("SSE stream opened, session=\(sessionID, privacy: .public)")
+        sseClients[sessionID] = SSEClient(
+            sessionID: sessionID,
+            connection: connection,
+            keepalive: timer,
+            openedAt: Date()
+        )
+        log.info("SSE stream opened, session=\(sessionID, privacy: .public) (live streams: \(self.sseClients.count, privacy: .public))")
     }
 
     /// Drain (and discard) anything the client sends on the SSE
@@ -620,21 +696,46 @@ final class MCPServer {
 
     // MARK: - POST /messages (client → server → SSE)
 
-    private func handlePostedMessage(body: Data, replyOn postConnection: NWConnection) async {
+    private func handlePostedMessage(body: Data, replyOn postConnection: NWConnection, sessionID: String?) async {
         // Acknowledge the POST with 202 Accepted immediately — the
         // actual JSON-RPC response goes out on the SSE stream.
         Self.write(status: 202, body: "", on: postConnection, closeAfter: true)
 
-        // Snapshot the SSE reference BEFORE any await — if a fresh
-        // openSSEStream lands during handler work it'll cancel this
-        // one, and we'd otherwise write the response into a dead
-        // connection. The final `sseConnection === sseAtEntry` check
-        // (below) confirms our snapshot is still the current stream.
-        guard let sseAtEntry = sseConnection else {
+        // Route to the POSTing client's own stream. The sessionId comes
+        // from the endpoint URL this client received on connect; a
+        // legacy client that cached a plain "/messages" (pre-multi-
+        // client state file under ~/.mcp-auth) falls back to the most
+        // recently opened stream, loudly.
+        let targetID: String
+        if let sessionID {
+            // A PRESENT sessionId must match a live stream. Routing an
+            // unknown id to some other client's stream would inject an
+            // unmatched response into the wrong client (review finding
+            // 2026-07-25); the poster's own EventSource reconnects and
+            // gets a fresh endpoint anyway.
+            guard sseClients[sessionID] != nil else {
+                log.warning("POST /messages for unknown session \(sessionID, privacy: .public) — dropping (client should reconnect)")
+                return
+            }
+            targetID = sessionID
+        } else if let newest = sseClients.values.max(by: { $0.openedAt < $1.openedAt }) {
+            // Legacy client with a cached plain "/messages" endpoint.
+            log.info("POST /messages without sessionId (legacy client) — routing to most recent stream")
+            targetID = newest.sessionID
+        } else {
             log.warning("POST /messages with no live SSE stream — dropping")
             return
         }
-        let sessionAtEntry = currentSessionID
+
+        // Snapshot the SSE reference BEFORE any await — if the client
+        // reconnects during handler work its old connection dies, and
+        // we'd otherwise write the response into a corpse. The final
+        // identity check (below) confirms the snapshot is still this
+        // session's live stream.
+        guard let sseAtEntry = sseClients[targetID]?.connection else {
+            log.warning("POST /messages with no live SSE stream — dropping")
+            return
+        }
 
         let response: JSONRPCResponse
         do {
@@ -648,15 +749,14 @@ final class MCPServer {
             )
         }
 
-        // Verify the SSE stream we snapshotted is still the live one.
-        // If a fresh client reconnect rolled us over (new
-        // openSSEStream → tearDownSSE → fresh sseConnection +
-        // sessionID), writing to the old reference is a no-op at
-        // best and a crash-on-cancelled-connection at worst. Log
-        // loudly so a regression in lifecycle handling is obvious.
-        guard sseConnection === sseAtEntry,
-              currentSessionID == sessionAtEntry else {
-            log.warning("SSE stream rolled over mid-request — dropping stale response for session \(sessionAtEntry ?? "nil", privacy: .public)")
+        // Verify the stream we snapshotted is still this session's
+        // live one. If the client reconnected mid-request (fresh
+        // session id, old connection cancelled), writing to the old
+        // reference is a no-op at best and a crash-on-cancelled-
+        // connection at worst. Log loudly so a lifecycle regression
+        // is obvious.
+        guard sseClients[targetID]?.connection === sseAtEntry else {
+            log.warning("SSE stream rolled over mid-request — dropping stale response for session \(targetID, privacy: .public)")
             return
         }
         let sse = sseAtEntry

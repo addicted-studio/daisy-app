@@ -29,12 +29,26 @@ extension RecordingSession {
         // transcribe the captured mic buffer directly, skipping the Whisper
         // final pass. Any miss (off, error, empty, or — for Apple — pre-26 /
         // "auto" locale / model not yet installed) drops through to Whisper.
+        // Every fast-engine miss is LOGGED with its reason (2026-07-25):
+        // the silent `try?`-and-fall-through made field logs useless —
+        // an "Apple" dictation that quietly took the Whisper path left
+        // no trace of why, so engine bugs looked identical to user
+        // error. The fallback policy itself is unchanged and uniform:
+        // fast engine produces text, or logs why not and Whisper takes
+        // over.
         var fastText: String? = nil
         switch settings.dictationEngine {
         case .whisper:
             break
         case .parakeet:
-            fastText = try? await ParakeetEngine.shared.transcribe(samples: samples)
+            do {
+                fastText = try await ParakeetEngine.shared.transcribe(samples: samples)
+                if fastText?.isEmpty != false {
+                    log.info("Dictation fast-engine miss: Parakeet returned empty — Whisper fallback")
+                }
+            } catch {
+                log.warning("Dictation fast-engine miss: Parakeet error \(error.localizedDescription, privacy: .public) — Whisper fallback")
+            }
         case .appleSpeech:
             // SpeechTranscriber needs a concrete language and macOS 26.
             let localeID = settings.dictationLocale.isEmpty
@@ -44,8 +58,19 @@ extension RecordingSession {
                 let locale = Locale(identifier: localeID)
                 if await AppleSpeechEngine.isUsable(locale: locale),
                    await AppleSpeechEngine.ensureModelReady(locale: locale) {
-                    fastText = try? await AppleSpeechEngine.shared.transcribe(samples: samples, locale: locale)
+                    do {
+                        fastText = try await AppleSpeechEngine.shared.transcribe(samples: samples, locale: locale)
+                        if fastText?.isEmpty != false {
+                            log.info("Dictation fast-engine miss: Apple SpeechAnalyzer returned empty — Whisper fallback")
+                        }
+                    } catch {
+                        log.warning("Dictation fast-engine miss: Apple SpeechAnalyzer error \(error.localizedDescription, privacy: .public) — Whisper fallback")
+                    }
+                } else {
+                    log.info("Dictation fast-engine miss: Apple SpeechAnalyzer unusable for locale \(localeID, privacy: .public) (unsupported or model not installed) — Whisper fallback")
                 }
+            } else {
+                log.info("Dictation fast-engine miss: Apple SpeechAnalyzer needs macOS 26+ and a concrete language (got \(localeID, privacy: .public)) — Whisper fallback")
             }
         }
 
