@@ -125,10 +125,19 @@ struct DaisyApp: App {
             CommandGroup(after: .sidebar) {
                 Divider()
                 Button("Refresh Your Day") {
+                    // Home-only by product decision (Egor 2026-07-25) —
+                    // the guard doubles the .disabled below in case the
+                    // menu's enable-state ever lags an @Observable nav
+                    // change.
+                    guard AppNavigation.shared.section == .home else { return }
                     CalendarService.shared.refresh()
                     Task { await MorningBriefStore.shared.regenerate(settings: settings) }
                 }
                 .keyboardShortcut("r", modifiers: [.command])
+                // Reading the @Observable nav section here makes the
+                // menu item re-evaluate on section changes: ⌘R is
+                // greyed out everywhere except Home.
+                .disabled(AppNavigation.shared.section != .home)
             }
         }
 
