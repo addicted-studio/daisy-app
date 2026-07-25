@@ -263,42 +263,47 @@ struct DayCard: View {
                 .fill(dotColor(event))
                 .frame(width: 8, height: 8)
                 .frame(width: Self.glyphColumn)
-            // Title left-aligned right after the glyph column — same start x
-            // as the task titles. Tap = start recording.
-            Button {
-                onStartMeeting(event)
-            } label: {
-                Text(event.title)
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-            }
-            .buttonStyle(.plain)
-            .help(String(localized: "Start recording for “\(event.title)”"))
+            // Time FIRST (Egor 2026-07-25), monospaced digits so the
+            // titles after it start at the same x across rows.
+            Text(event.startDate, style: .time)
+                .font(.callout)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Text(event.title)
+                .font(.callout.weight(.medium))
+                .lineLimit(1)
+                .foregroundStyle(.primary)
             Spacer()
             if briefable {
+                // Prep brief toggle — icon-only (questionmark.message),
+                // Egor 2026-07-25; the expanded card below the row is
+                // the open/closed indicator now.
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         let key = PreMeetingBriefStore.key(for: event)
                         expandedPrepID = (expandedPrepID == key) ? nil : key
                     }
                 } label: {
-                    HStack(spacing: 3) {
-                        Text("Prep")
-                        Image(systemName: expandedPrepID == PreMeetingBriefStore.key(for: event)
-                              ? "chevron.up" : "chevron.down")
-                            .font(.caption2)
-                    }
-                    .font(.caption)
+                    Image(systemName: "questionmark.message")
+                        .font(.caption)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.mini)
                 .tint(Color.daisyHomeAccent)
+                .help(String(localized: "Prep brief"))
             }
-            // Time pushed all the way to the right.
-            Text(event.startDate, style: .time)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            // Record icon back on the far right (Egor 2026-07-25) —
+            // the explicit start-recording affordance the old
+            // Today/Tomorrow column had; title is plain text again.
+            Button {
+                onStartMeeting(event)
+            } label: {
+                Image(systemName: "record.circle")
+                    .font(.body)
+                    .foregroundStyle(Color.daisyRecording)
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Start recording for “\(event.title)”"))
         }
         .frame(minHeight: 24)
         .dayRowHover()

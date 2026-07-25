@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Prep brief" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бриф к встрече"
+          }
+        }
+      }
+    },
     "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture." : {
       "localizations" : {
         "ru" : {

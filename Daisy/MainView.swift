@@ -467,7 +467,7 @@ struct MainView: View {
                 updater.checkForUpdates()
             } label: {
                 HStack(spacing: 8) {
-                    Image(systemName: "arrow.down.circle.fill")
+                    Image(systemName: "arrowshape.down.circle.fill")
                         .font(.callout)
                     Text(String(localized: "sidebar.update", defaultValue: "Update"))
                         .font(.callout.weight(.medium))
