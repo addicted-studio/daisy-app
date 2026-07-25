@@ -1,96 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Prep brief" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Бриф к встрече"
-          }
-        }
-      }
-    },
-    "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Обнаружены Bluetooth-наушники — Daisy может не записать собеседника. Используйте встроенные динамики, проводные наушники или установите BlackHole для надёжного захвата системного звука."
-          }
-        }
-      }
-    },
-    "Playing through the Mac's speakers — your mic will also hear the other side. Headphones keep the two sides cleanly separated." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Звук идёт через динамики Mac — микрофон услышит и собеседника. С наушниками стороны записи не смешиваются."
-          }
-        }
-      }
-    },
-    "Output device changed — system audio capture continues." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Устройство вывода изменилось — захват системного звука продолжается."
-          }
-        }
-      }
-    },
-    "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вывод звука изменился, и Daisy не смогла продолжить запись собеседника. Остановите и перезапустите запись, если она вам нужна."
-          }
-        }
-      }
-    },
-    "Daisy isn't hearing the other side — they won't be recorded. Check your output device (Bluetooth headphones can't be captured on macOS)." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy не слышит собеседника — он не будет записан. Проверьте устройство вывода (Bluetooth-наушники не захватываются в macOS)."
-          }
-        }
-      }
-    },
-    "The other side went silent and may not be recording anymore. Check your output device." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Собеседник замолчал и, возможно, больше не записывается. Проверьте устройство вывода."
-          }
-        }
-      }
-    },
-    "Daisy is capturing the other side but there's no sound in it — they won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy захватывает звук собеседника, но в нём тишина — записи не будет. Обычно это DRM-защищённое воспроизведение или сбой захвата macOS. Попробуйте другой источник или перезапустите запись."
-          }
-        }
-      }
-    },
-    "Echo removed — this meeting seems to have played through the speakers. Use headphones for clean speaker separation." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Эхо удалено — похоже, звук встречи шёл через динамики. Для чистого разделения сторон используйте наушники."
-          }
-        }
-      }
-    },
     "" : {
       "localizations" : {
         "ru" : {
@@ -2411,6 +2321,16 @@
         }
       }
     },
+    "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обнаружены Bluetooth-наушники — Daisy может не записать собеседника. Используйте встроенные динамики, проводные наушники или установите BlackHole для надёжного захвата системного звука."
+          }
+        }
+      }
+    },
     "Body template" : {
       "localizations" : {
         "ru" : {
@@ -3621,6 +3541,16 @@
         }
       }
     },
+    "Daisy is capturing the other side but there's no sound in it — they won't be recorded. This usually means DRM-protected playback or a macOS capture glitch. Try a different source or restart the recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy захватывает звук собеседника, но в нём тишина — записи не будет. Обычно это DRM-защищённое воспроизведение или сбой захвата macOS. Попробуйте другой источник или перезапустите запись."
+          }
+        }
+      }
+    },
     "Daisy is learning your voice" : {
       "localizations" : {
         "ru" : {
@@ -3657,6 +3587,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy всё ещё записывает"
+          }
+        }
+      }
+    },
+    "Daisy isn't hearing the other side — they won't be recorded. Check your output device (Bluetooth headphones can't be captured on macOS)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не слышит собеседника — он не будет записан. Проверьте устройство вывода (Bluetooth-наушники не захватываются в macOS)."
           }
         }
       }
@@ -4569,6 +4509,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Каждая интеграция — это назначение, на которое Daisy может отправить завершённую запись по MCP: тикет Linear, собственная база данных Notion, вебхук — что угодно, поддерживающее протокол. Нажатие «Отправить» на панели инструментов записи сразу запускает назначение по умолчанию; шеврон рядом по-прежнему открывает полный список."
+          }
+        }
+      }
+    },
+    "Echo removed — this meeting seems to have played through the speakers. Use headphones for clean speaker separation." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эхо удалено — похоже, звук встречи шёл через динамики. Для чистого разделения сторон используйте наушники."
           }
         }
       }
@@ -7391,6 +7341,26 @@
         }
       }
     },
+    "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вывод звука изменился, и Daisy не смогла продолжить запись собеседника. Остановите и перезапустите запись, если она вам нужна."
+          }
+        }
+      }
+    },
+    "Output device changed — system audio capture continues." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Устройство вывода изменилось — захват системного звука продолжается."
+          }
+        }
+      }
+    },
     "Overdue" : {
       "comment" : "A section header for overdue tasks.",
       "isCommentAutoGenerated" : true,
@@ -7637,6 +7607,16 @@
         }
       }
     },
+    "Playing through the Mac's speakers — your mic will also hear the other side. Headphones keep the two sides cleanly separated." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звук идёт через динамики Mac — микрофон услышит и собеседника. С наушниками стороны записи не смешиваются."
+          }
+        }
+      }
+    },
     "Polish in my voice" : {
       "comment" : "A button that lets the user rewrite their dictations in their voice.",
       "isCommentAutoGenerated" : true,
@@ -7690,11 +7670,22 @@
       }
     },
     "Prep" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Бриф"
+          }
+        }
+      }
+    },
+    "Prep brief" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Бриф к встрече"
           }
         }
       }
@@ -9734,6 +9725,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Язык интерфейса изменится после перезапуска Daisy."
+          }
+        }
+      }
+    },
+    "The other side went silent and may not be recording anymore. Check your output device." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собеседник замолчал и, возможно, больше не записывается. Проверьте устройство вывода."
           }
         }
       }

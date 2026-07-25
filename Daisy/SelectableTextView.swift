@@ -494,7 +494,13 @@ struct ScrollableTextView: NSViewRepresentable {
 /// (label / secondaryLabel / tertiaryLabel) so the forced-darkAqua
 /// appearance renders them correctly.
 @MainActor
-func summaryAttributedString(_ summary: MeetingSummary, compact: Bool) -> NSAttributedString {
+/// `includeStructural: false` (Voice Profile card, 2026-07-25) renders
+/// ONLY the lede + sections/bullets: no "Meeting" header, no "Next
+/// actions", no follow-up block. The profile reuses `MeetingSummary` as
+/// its display shape, but those meeting-specific frames read wrong on a
+/// profile — and a manually imported profile stores the same text in
+/// BOTH `summary` and `clientFollowUp`, which would render twice.
+func summaryAttributedString(_ summary: MeetingSummary, compact: Bool, includeStructural: Bool = true) -> NSAttributedString {
     // Typography — NSFont equivalents of the SwiftUI styles the card used.
     let bodyFont = NSFont.preferredFont(forTextStyle: compact ? .callout : .body)
     let headerBase = NSFont.preferredFont(forTextStyle: compact ? .subheadline : .title3)
@@ -632,11 +638,11 @@ func summaryAttributedString(_ summary: MeetingSummary, compact: Bool) -> NSAttr
     if summary.sections.isEmpty {
         // Legacy pre-1.0.2 summary: full paragraph under "Meeting",
         // shown even when other blocks are empty (old behaviour).
-        appendHeader(labels.meeting)
+        if includeStructural { appendHeader(labels.meeting) }
         appendBody(summary.summary)
     } else {
         if !summary.summary.isEmpty {
-            appendHeader(labels.meeting)
+            if includeStructural { appendHeader(labels.meeting) }
             appendBody(summary.summary)
         }
         for section in summary.sections {
@@ -644,7 +650,7 @@ func summaryAttributedString(_ summary: MeetingSummary, compact: Bool) -> NSAttr
             appendBullets(section.bullets, level: 0)
         }
     }
-    if !summary.actionItems.isEmpty {
+    if includeStructural, !summary.actionItems.isEmpty {
         appendHeader(labels.nextActions)
         for item in summary.actionItems {
             // ☐ mirrors the old `square` SF-symbol checkbox rows; owner
@@ -658,7 +664,7 @@ func summaryAttributedString(_ summary: MeetingSummary, compact: Bool) -> NSAttr
             )
         }
     }
-    if !summary.clientFollowUp.isEmpty {
+    if includeStructural, !summary.clientFollowUp.isEmpty {
         appendHeader(labels.followUp)
         appendBody(summary.clientFollowUp)
     }

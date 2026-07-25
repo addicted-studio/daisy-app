@@ -184,33 +184,26 @@ struct VoiceView: View {
     @ViewBuilder
     private func profileCard(_ profile: VoiceProfile) -> some View {
         card {
-            VStack(alignment: .leading, spacing: 12) {
-                // Clean prose, like the meeting Summary block: no repeated
-                // "Your voice" header (the page title already says it), no
-                // accent-coloured section titles. Update / polish live in
-                // the toolbar; the "built from" line moved under the title.
-                if !profile.display.summary.isEmpty {
-                    Text(profile.display.summary)
-                        .font(.callout)
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                ForEach(Array(profile.display.sections.enumerated()), id: \.offset) { _, section in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(section.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        ForEach(Array(section.bullets.enumerated()), id: \.offset) { _, bullet in
-                            VoiceBulletRow(bullet: bullet, depth: 0)
-                        }
-                    }
-                }
-            }
-            // Let the user drag-select and copy the profile text (it's just
-            // Text, non-selectable by default on macOS). Applied to the
-            // whole card so it covers the summary, section titles, and bullets.
-            .textSelection(.enabled)
+            // One continuous NSTextView-backed text body — same fix the
+            // transcript and summary cards got (2026-07-25, Egor's
+            // report): a stack of SwiftUI `Text`s with
+            // .textSelection(.enabled) can't drag-select across view
+            // boundaries, so selection stopped at every paragraph/bullet.
+            // `includeStructural: false` = lede + sections/bullets only
+            // (no "Meeting"/"Next actions"/follow-up frames — and an
+            // imported profile duplicates its text into clientFollowUp,
+            // which would render twice).
+            SelectableTextView(
+                attributed: summaryAttributedString(
+                    profile.display,
+                    compact: true,
+                    includeStructural: false
+                )
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Same defense-in-depth as the summary cards: never paint
+            // outside the card on a mis-measured line.
+            .clipped()
         }
     }
 
@@ -237,26 +230,6 @@ struct VoiceView: View {
     }
 }
 
-private struct VoiceBulletRow: View {
-    let bullet: SummaryBullet
-    let depth: Int
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "circle.fill")
-                    .font(.system(size: 4))
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 6)
-                Text(bullet.text)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.leading, CGFloat(depth) * 12)
-            ForEach(Array(bullet.children.enumerated()), id: \.offset) { _, child in
-                VoiceBulletRow(bullet: child, depth: depth + 1)
-            }
-        }
-    }
-}
+// VoiceBulletRow removed 2026-07-25 — the profile card now renders
+// through summaryAttributedString + SelectableTextView (one continuous
+// selectable text body), same as the meeting summary cards.
