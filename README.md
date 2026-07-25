@@ -2,6 +2,8 @@
 
 A local-first meeting recorder, push-to-talk dictation tool, and AI-notes app for macOS — with a local MCP server so Claude Desktop and Cursor can query your transcripts without anything leaving the Mac.
 
+[![Support Daisy on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G3W723TUZD)
+
 Daisy captures meeting audio (microphone + system-audio loopback via ScreenCaptureKit), transcribes it on-device with Whisper on the Neural Engine, and produces a Granola-style outline with action items and a draft follow-up. Audio and transcripts never leave the Mac unless you explicitly enable a cloud LLM provider for the summary step — and even then you supply your own API key.
 
 End-user installation, FAQ, and the privacy story live at **<https://mydaisy.io>**. This README is for people building Daisy from source.
