@@ -18,8 +18,17 @@ struct MeetingsHeatmap: View {
     /// content column comfortably.
     var weeks: Int = 26
 
-    private let cell: CGFloat = 11
-    private let gap: CGFloat = 3
+    private static let cellSize: CGFloat = 11
+    private static let gapSize: CGFloat = 3
+    private var cell: CGFloat { Self.cellSize }
+    private var gap: CGFloat { Self.gapSize }
+
+    /// Natural width of the default 26-week grid: 26 cells + 25 gaps.
+    /// HomeView pins its stats column to this (+ card padding) so the
+    /// heatmap card hugs its content instead of leaving dead space
+    /// (Egor, 2026-07-25).
+    nonisolated static let defaultGridWidth: CGFloat =
+        26 * cellSize + 25 * gapSize
 
     var body: some View {
         let model = Self.build(dayCounts: dayCounts, weeks: weeks, now: Date())

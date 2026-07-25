@@ -296,12 +296,21 @@ struct HomeView: View {
     /// NOT restack the whole screen into one column. The old single-column
     /// fallback made a fresh install (or a permissions-reset release build)
     /// look like a different app.
+    /// Fixed width for the stats column (right): the 26-week heatmap
+    /// grid's natural width + the card's 16pt padding on both sides.
+    /// A 50/50 split left ~100pt of dead space inside the activity
+    /// card on wide windows (Egor, 2026-07-25) — the heatmap grid has
+    /// intrinsic width, so its column should hug it; the day card
+    /// takes everything else.
+    private static let statsColumnWidth: CGFloat =
+        MeetingsHeatmap.defaultGridWidth + 32
+
     private var homeColumns: some View {
         HStack(alignment: .top, spacing: Self.columnGap) {
             dayColumn
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             leftColumn
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(width: Self.statsColumnWidth, alignment: .topLeading)
         }
         .padding(.horizontal, 24)
     }
