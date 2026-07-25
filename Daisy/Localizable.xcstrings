@@ -1,6 +1,26 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Refresh Your Day" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить «Ваш день»"
+          }
+        }
+      }
+    },
+    "Refresh the brief (⌘R)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить бриф (⌘R)"
+          }
+        }
+      }
+    },
     "" : {
       "localizations" : {
         "ru" : {

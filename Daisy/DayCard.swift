@@ -169,7 +169,12 @@ struct DayCard: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Refresh the brief")
+                // ⌘R lives on the app-level "Refresh Your Day" command
+                // (View menu, DaisyApp) — it triggers this same
+                // regenerate PLUS a calendar refresh. A view-local
+                // .keyboardShortcut here would be shadowed by the menu
+                // key equivalent anyway; the help just advertises it.
+                .help("Refresh the brief (⌘R)")
             }
         }
     }

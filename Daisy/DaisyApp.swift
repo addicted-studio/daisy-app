@@ -114,18 +114,19 @@ struct DaisyApp: App {
                 }
                 .disabled(!SparkleUpdater.shared.canCheckForUpdates)
             }
-            // ⌘R — refresh the home meeting list on demand (user
-            // feedback: a meeting added in Calendar right before
-            // hitting Record shouldn't have to wait for the next
-            // EventKit change notification / periodic tick). Sits in
+            // ⌘R — refresh "Your Day" on demand: calendar meetings AND
+            // the day-card brief (Egor 2026-07-25; was calendar-only).
+            // A meeting added in Calendar right before hitting Record
+            // shouldn't wait for the next EventKit tick, and the lede/
+            // agenda/tasks should follow in the same gesture. Sits in
             // the View menu per macOS convention (Mail/Finder ⌘R-ish
-            // refresh affordances). Safe while recording — refresh()
-            // only rebuilds `upcomingMeetings`, it never touches the
-            // live session.
+            // refresh affordances). Safe while recording — neither
+            // refresh touches the live session.
             CommandGroup(after: .sidebar) {
                 Divider()
-                Button("Refresh Meetings") {
+                Button("Refresh Your Day") {
                     CalendarService.shared.refresh()
+                    Task { await MorningBriefStore.shared.regenerate(settings: settings) }
                 }
                 .keyboardShortcut("r", modifiers: [.command])
             }
