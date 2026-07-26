@@ -30,6 +30,7 @@
 
 import CoreAudio
 import Foundation
+import IOKit
 import os
 
 /// One input-capable audio device visible to the system.
@@ -337,6 +338,102 @@ enum AudioInputDevices {
         return "device \(id) '\(name)': inputStream=\(streamRate(kAudioDevicePropertyScopeInput))Hz, outputStream=\(streamRate(kAudioDevicePropertyScopeOutput))Hz, nominal=\(nominalStr)Hz"
     }
 
+    /// True when the Mac's lid is CLOSED (clamshell / desk-dock mode:
+    /// external display + keyboard, laptop shut). Egor's field report
+    /// 2026-07-26: in clamshell macOS keeps the built-in microphone in
+    /// the device list, lets us open it, and then feeds bit-exact zeros
+    /// forever — the hardware is physically muted with the lid. So this
+    /// is a first-class capture precondition, not a curiosity.
+    ///
+    /// `AppleClamshellState` on IOPMrootDomain is the standard read and
+    /// needs no entitlement. Any failure returns false — we never block
+    /// recording on a diagnostic we couldn't take.
+    static func isLidClosed() -> Bool {
+        let service = IOServiceGetMatchingService(
+            kIOMainPortDefault, IOServiceMatching("IOPMrootDomain")
+        )
+        guard service != 0 else { return false }
+        defer { IOObjectRelease(service) }
+        guard let property = IORegistryEntryCreateCFProperty(
+            service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0
+        ) else { return false }
+        return (property.takeRetainedValue() as? Bool) ?? false
+    }
+
+    /// True when `id` is the Mac's own built-in microphone — the device
+    /// that goes silent in clamshell mode. Matches on transport first
+    /// (authoritative) and falls back to the UID convention.
+    static func isBuiltIn(_ id: AudioDeviceID) -> Bool {
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &transportType) == noErr {
+            return transportType == kAudioDeviceTransportTypeBuiltIn
+        }
+        return (deviceUID(id) ?? "").contains("BuiltInMicrophone")
+    }
+
+    /// First PHYSICAL external input — something that genuinely records
+    /// with the lid shut (USB interface, webcam mic, Thunderbolt dock).
+    ///
+    /// Transport is a WHITELIST, not a blacklist: virtual drivers
+    /// (BlackHole, Loopback, Krisp, ZoomAudioDevice), aggregates and an
+    /// asleep Continuity mic all report real input streams and would
+    /// otherwise qualify — and silently switching a user onto one of
+    /// those is the exact digital-silence failure this whole layer
+    /// exists to prevent. Also requires ≥1 real input channel.
+    static func firstExternalWiredInputID() -> AudioDeviceID? {
+        let physical: Set<UInt32> = [
+            kAudioDeviceTransportTypeUSB,
+            kAudioDeviceTransportTypeThunderbolt,
+            kAudioDeviceTransportTypePCI,
+            kAudioDeviceTransportTypeFireWire,
+            kAudioDeviceTransportTypeDisplayPort,
+            kAudioDeviceTransportTypeHDMI,
+        ]
+        return allDeviceIDs().first { id in
+            guard hasInputStreams(id), !isBuiltIn(id), inputChannelCount(id) > 0 else { return false }
+            var transport: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            var addr = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &transport) == noErr else {
+                return false
+            }
+            return physical.contains(transport)
+        }
+    }
+
+    /// Live input channel count on the input scope (0 for output-only,
+    /// misconfigured or virtual devices that expose no real channels).
+    static func inputChannelCount(_ id: AudioDeviceID) -> UInt32 {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else {
+            return 0
+        }
+        let raw = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { raw.deallocate() }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, raw) == noErr else { return 0 }
+        let list = UnsafeMutableAudioBufferListPointer(
+            raw.bindMemory(to: AudioBufferList.self, capacity: 1)
+        )
+        return list.reduce(0) { $0 + $1.mNumberChannels }
+    }
+
     /// Everything we know about a device, in one log line. Emitted at
     /// every capture start (2026-07-26): a field report where the mic
     /// delivered bit-exact digital silence could not be diagnosed
@@ -348,26 +445,7 @@ enum AudioInputDevices {
         let name = deviceName(id) ?? "?"
         let uidStr = deviceUID(id) ?? "?"
         let isDefault = systemDefaultInputID() == id ? "yes" : "no"
-        var channels: UInt32 = 0
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeInput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        if AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 {
-            let bufferList = UnsafeMutableRawPointer.allocate(
-                byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment
-            )
-            defer { bufferList.deallocate() }
-            if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, bufferList) == noErr {
-                let list = UnsafeMutableAudioBufferListPointer(
-                    bufferList.bindMemory(to: AudioBufferList.self, capacity: 1)
-                )
-                for buffer in list { channels += buffer.mNumberChannels }
-            }
-        }
-        return "device \(id) '\(name)' uid=\(uidStr) inputStreams=\(hasInputStreams(id)) inputChannels=\(channels) bluetooth=\(isBluetooth(id)) isSystemDefault=\(isDefault)"
+        return "device \(id) '\(name)' uid=\(uidStr) inputStreams=\(hasInputStreams(id)) inputChannels=\(inputChannelCount(id)) bluetooth=\(isBluetooth(id)) builtIn=\(isBuiltIn(id)) lidClosed=\(isLidClosed()) isSystemDefault=\(isDefault)"
     }
 
     /// A device qualifies as an "input" if it has at least one

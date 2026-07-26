@@ -418,3 +418,72 @@ enum AutoStopPromptNotification {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
+
+// MARK: - Capture problems (mic can't hear anything)
+
+/// System notification for "we are recording, but no audio is reaching
+/// us" — clamshell lid closed, macOS handing us digital silence, mic
+/// permission off (Egor, 2026-07-26). These conditions used to surface
+/// only as an in-app toast, and `ToastOverlay` is mounted in exactly one
+/// place (the main window): a dictation triggered by hotkey from another
+/// app, or an auto-started meeting with Daisy in the background, showed
+/// the user nothing at all while recording silence for an hour.
+///
+/// No actions on the banner — the fix always lives in System Settings or
+/// in the physical world (open the lid, plug a mic in), and the app-side
+/// toast already carries the deep link when the window is visible.
+@MainActor
+enum CaptureProblemNotification {
+
+    static let requestID = "app.essazanov.Daisy.captureProblem"
+
+    /// Fire-and-forget. Deliberately NOT gated on the auto-start
+    /// notification toggle in Settings: that switch is about routine
+    /// lifecycle chatter, this is a failure the user must know about.
+    /// Requests authorization when we've never asked — otherwise this
+    /// banner would silently never appear for the users who need it
+    /// most (Daisy doesn't request notification access at launch).
+    static func post(title: String, body: String) {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .notDetermined:
+                UNUserNotificationCenter.current().requestAuthorization(
+                    options: [.alert, .sound]
+                ) { granted, _ in
+                    guard granted else { return }
+                    Task { @MainActor in addRequest(title: title, body: body) }
+                }
+            case .authorized, .provisional:
+                Task { @MainActor in addRequest(title: title, body: body) }
+            default:
+                break
+            }
+        }
+    }
+
+    /// Clear the banner once capture is healthy again (lid opened, mic
+    /// reconnected) — otherwise "Daisy can't hear you" lingers in
+    /// Notification Center long after it stopped being true.
+    static func cancel() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [requestID])
+        center.removeDeliveredNotifications(withIdentifiers: [requestID])
+    }
+
+    /// Build + submit on the MainActor — same pattern as every other
+    /// notification enum in this file (UNMutableNotificationContent is
+    /// not Sendable; building it inside the settings callback is what
+    /// Swift 6 strict concurrency rejects).
+    private static func addRequest(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        // Same identifier every time: a repeat replaces the old banner
+        // instead of stacking a wall of them.
+        let request = UNNotificationRequest(
+            identifier: requestID, content: content, trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+}

@@ -1,6 +1,46 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Daisy can’t hear you" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy вас не слышит"
+          }
+        }
+      }
+    },
+    "The lid is closed, so the Mac’s built-in microphone is off. Open the lid or connect an external mic." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Крышка закрыта, поэтому встроенный микрофон Mac отключён. Откройте крышку или подключите внешний микрофон."
+          }
+        }
+      }
+    },
+    "The lid is closed — the built-in microphone is off in clamshell mode. Open the lid or connect an external mic." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Крышка закрыта — в режиме clamshell встроенный микрофон отключён. Откройте крышку или подключите внешний микрофон."
+          }
+        }
+      }
+    },
+    "No sound is reaching Daisy from the microphone. Nothing is being recorded." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С микрофона в Daisy не поступает звук. Запись не идёт."
+          }
+        }
+      }
+    },
     "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume." : {
       "localizations" : {
         "ru" : {

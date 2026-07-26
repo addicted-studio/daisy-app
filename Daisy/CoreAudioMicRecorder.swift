@@ -483,6 +483,10 @@ final class CoreAudioMicRecorder {
     /// render context, and restarts the unit.
     func resume() throws {
         guard state == .paused else { return }
+        // Whatever we warned about is being retried — clear the banner
+        // so "Daisy can't hear you" doesn't outlive the problem.
+        CaptureProblemNotification.cancel()
+        micLiveness.reset(to: Date())
 
         // Re-resolve the device — the user may have switched mics in
         // Settings, or unplugged a headset, while paused.
@@ -894,12 +898,43 @@ final class CoreAudioMicRecorder {
         // the route-change guard avoids mid-session, now avoided at START
         // too. A pinned BT device is still honoured above (explicit choice).
         let defaultID = AudioInputDevices.systemDefaultInputID()
-        if defaultID != 0,
-           AudioInputDevices.isBluetooth(defaultID),
-           let nonBT = AudioInputDevices.firstNonBluetoothInputID() {
-            log.info("Default input is Bluetooth — capturing from non-BT input \(AudioInputDevices.describe(nonBT), privacy: .public) to avoid SCO-mic silence")
-            return nonBT
+        // Clamshell (lid closed, external display + keyboard): the Mac's
+        // built-in mic is HARDWARE-disconnected with the lid, yet stays
+        // in the device list and streams bit-exact zeros forever
+        // (2026-07-26 field bug). It must therefore never win ANY
+        // fallback below — including the Bluetooth one, whose
+        // `firstNonBluetoothInputID` deliberately PREFERS the built-in.
+        let lidClosed = AudioInputDevices.isLidClosed()
+        if lidClosed, defaultID != 0, AudioInputDevices.isBuiltIn(defaultID),
+           let external = AudioInputDevices.firstExternalWiredInputID() {
+            log.warning("Lid is closed — the built-in mic records silence in clamshell. Switching to \(AudioInputDevices.describe(external), privacy: .public)")
+            return external
         }
+
+        // Unpinned: take the system default — UNLESS it's a Bluetooth mic,
+        // in which case prefer a non-BT input. A BT headset used for OUTPUT
+        // (the call / a video) drags the default INPUT onto its SCO mic,
+        // which delivers pure silence while the headset is playing audio
+        // (A2DP↔SCO conflict) → the mic silence watchdog then pauses the
+        // recording and the user's speech is lost. This is the same trap
+        // the route-change guard avoids mid-session, now avoided at START
+        // too. A pinned BT device is still honoured above (explicit choice).
+        if defaultID != 0, AudioInputDevices.isBluetooth(defaultID) {
+            // With the lid shut the non-BT preference would land on the
+            // silent built-in mic — a real external input beats both.
+            if lidClosed, let external = AudioInputDevices.firstExternalWiredInputID() {
+                log.warning("Default input is Bluetooth and the lid is closed — capturing from \(AudioInputDevices.describe(external), privacy: .public)")
+                return external
+            }
+            // Lid open: the built-in mic is the better SCO-avoiding
+            // choice. Lid closed with no external input: keep the BT mic
+            // (it actually records) rather than the muted built-in.
+            if !lidClosed, let nonBT = AudioInputDevices.firstNonBluetoothInputID() {
+                log.info("Default input is Bluetooth — capturing from non-BT input \(AudioInputDevices.describe(nonBT), privacy: .public) to avoid SCO-mic silence")
+                return nonBT
+            }
+        }
+
         // The system default is not guaranteed to be able to record:
         // a virtual driver, an aggregate with no live input, or an
         // asleep Continuity mic can hold the default slot and deliver
@@ -907,7 +942,10 @@ final class CoreAudioMicRecorder {
         // streams (deviceID(forUID:)); the default path never did
         // (2026-07-26).
         if defaultID != 0, !AudioInputDevices.hasInputStreams(defaultID) {
-            if let fallback = AudioInputDevices.firstNonBluetoothInputID() {
+            let fallback = lidClosed
+                ? AudioInputDevices.firstExternalWiredInputID()
+                : AudioInputDevices.firstNonBluetoothInputID()
+            if let fallback {
                 log.warning("System default input has NO input streams — falling back. Default: \(AudioInputDevices.describe(defaultID), privacy: .public). Using: \(AudioInputDevices.describe(fallback), privacy: .public)")
                 return fallback
             }
@@ -1270,13 +1308,38 @@ final class CoreAudioMicRecorder {
         log.error("Mic silence watchdog fired — RMS below \(Self.micLivenessFloorDB, privacy: .public) dBFS for \(Int(silentFor), privacy: .public)s (last RMS \(snap.lastRMS, privacy: .public) dBFS, all-zero samples \(snap.allZero, privacy: .public)/\(snap.total, privacy: .public) ticks, digitalSilence=\(digitalSilence, privacy: .public), micPermission=\(SystemPermissions.micAuthorizationDescription(), privacy: .public)). Device: \(AudioInputDevices.describe(self.boundDeviceID ?? 0), privacy: .public). Falling to paused.")
         fallToPaused()
         if digitalSilence {
-            ToastCenter.shared.showAction(
-                String(localized: "macOS is sending Daisy an empty microphone signal — nothing is being recorded. Check Privacy & Security → Microphone, and that the input isn’t muted in Sound settings."),
-                actionLabel: String(localized: "Open Microphone settings"),
-                style: .warning,
-                duration: .seconds(30)
-            ) {
-                SystemPermissions.shared.openMicrophoneSettings()
+            // Name the specific cause when we can prove it. Lid closed
+            // + built-in mic is THE common one on a desk-docked laptop
+            // (Egor, 2026-07-26) and has nothing to do with permissions.
+            let lidClosed = AudioInputDevices.isLidClosed()
+                && AudioInputDevices.isBuiltIn(boundDeviceID ?? 0)
+            if lidClosed {
+                // start() may have already said this — don't stack a
+                // second identical toast (the banner de-dupes itself
+                // via its shared request id).
+                if RecordingSession.current?.clamshellWarned != true {
+                    CaptureProblemNotification.post(
+                        title: String(localized: "Daisy can’t hear you"),
+                        body: String(localized: "The lid is closed, so the Mac’s built-in microphone is off. Open the lid or connect an external mic.")
+                    )
+                    ToastCenter.shared.show(
+                        String(localized: "The lid is closed — the built-in microphone is off in clamshell mode. Open the lid or connect an external mic."),
+                        style: .warning
+                    )
+                }
+            } else {
+                CaptureProblemNotification.post(
+                    title: String(localized: "Daisy can’t hear you"),
+                    body: String(localized: "No sound is reaching Daisy from the microphone. Nothing is being recorded.")
+                )
+                ToastCenter.shared.showAction(
+                    String(localized: "macOS is sending Daisy an empty microphone signal — nothing is being recorded. Check Privacy & Security → Microphone, and that the input isn’t muted in Sound settings."),
+                    actionLabel: String(localized: "Open Microphone settings"),
+                    style: .warning,
+                    duration: .seconds(30)
+                ) {
+                    SystemPermissions.shared.openMicrophoneSettings()
+                }
             }
         } else {
             ToastCenter.shared.show(
