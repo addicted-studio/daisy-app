@@ -201,6 +201,18 @@ final class AppSettings {
         didSet { defaults.set(polishDictationInMyVoice, forKey: Self.k_polishDictationInMyVoice) }
     }
 
+    /// Built-in dictation layer restoring transliterated product names
+    /// to their Latin spelling («фигма» → "Figma") on every engine —
+    /// Parakeet can't be vocabulary-biased, so this is the only way it
+    /// gets brand names right in non-Latin speech. Curated table in
+    /// BrandTransliterations.swift; the user's own Vocabulary rules
+    /// always take precedence. Default ON. Key lives on
+    /// `BrandCorrections.defaultsKey` because DictationPaste (no
+    /// AppSettings reference) reads it straight from UserDefaults.
+    var fixBrandNamesInDictation: Bool {
+        didSet { defaults.set(fixBrandNamesInDictation, forKey: BrandCorrections.defaultsKey) }
+    }
+
     /// EXPERIMENTAL: stream the DICTATION live preview through FluidAudio's
     /// Nemotron 3.5 multilingual streaming ASR (560 ms chunks, Neural
     /// Engine) instead of the Whisper rolling-window pass. Preview-only —
@@ -968,6 +980,7 @@ final class AppSettings {
         self.dictationUseNemotronLive = defaults.bool(forKey: Self.k_dictationUseNemotronLive)
         // Opt-in voice-polish of dictation. Default OFF.
         self.polishDictationInMyVoice = defaults.bool(forKey: Self.k_polishDictationInMyVoice)
+        self.fixBrandNamesInDictation = defaults.object(forKey: BrandCorrections.defaultsKey) as? Bool ?? true
         // Decode HotkeyChoice from UserDefaults JSON. Fall back to
         // ⌃⌥⌘R default if missing/corrupt. (Old enum-based string
         // values from pre-v1.1 installs are now invalid and will

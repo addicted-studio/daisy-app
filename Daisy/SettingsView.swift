@@ -1114,6 +1114,14 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
+                // Built-in brand layer (Egor 2026-07-25) — the only way
+                // the Faster engine (no vocabulary biasing) gets product
+                // names in Latin when you dictate in Russian & co.
+                Toggle(isOn: $settings.fixBrandNamesInDictation) {
+                    Text("Fix product names")
+                }
+                .help("Restores product names dictated in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Works on every engine; your own Vocabulary rules always win.")
+
                 // Streaming live preview for dictation (Nemotron 3.5,
                 // on-device). The badge doubles as the model-download
                 // indicator — same pattern as the Faster engine in

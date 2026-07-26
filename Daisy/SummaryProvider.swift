@@ -684,6 +684,11 @@ extension SummaryPrompt {
             speech-to-text errors. Keep the length in the same ballpark —
             this is polish, NOT summarization or expansion.
           - Keep the user's language.
+          - Product, company, and technology names that were dictated as
+            transliterations must be restored to their canonical Latin
+            spelling (фигма → Figma, гитхаб → GitHub, зум → Zoom). Only
+            proper names of products/companies/technologies — never
+            transliterate ordinary words.
 
         Respond ONLY with valid JSON, no Markdown fences:
         { "summary": "", "sections": [], "actionItems": [], "clientFollowUp": "<the rewritten text, verbatim, and nothing else>" }
