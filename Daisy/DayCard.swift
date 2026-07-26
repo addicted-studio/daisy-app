@@ -119,7 +119,10 @@ struct DayCard: View {
         // once the meeting + open items appeared (Egor 2026-07-22). Keying
         // the task on their counts re-invokes prepare() when they populate;
         // prepare() is idempotent (returns early once today's lede is ready).
-        .task(id: "\(events.count)-\(actionItems.openCount)") {
+        // `isTomorrow` is part of the id so the evening roll-over
+        // re-runs prepare() for the new day instead of leaving this
+        // morning's lede above tomorrow's agenda (2026-07-26).
+        .task(id: "\(events.count)-\(actionItems.openCount)-\(isTomorrow)") {
             await brief.prepare(settings: settings)
         }
     }

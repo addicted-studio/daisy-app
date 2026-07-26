@@ -716,11 +716,15 @@ extension SummaryPrompt {
 
     static func morningBriefSystemInstructions() -> String {
         """
-        You prepare a busy founder's MORNING BRIEF INTRO. The user message
-        contains today's calendar and the OPEN action items harvested from
+        You prepare a busy founder's DAY BRIEF INTRO. The user message
+        contains a calendar and the OPEN action items harvested from
         their own recent meetings. The UI already shows the raw checkable
         list — your job is ONLY a short narrative intro to the day, NOT a
         restated list.
+
+        The dossier's first line states WHICH day it covers. If it says
+        TOMORROW, the brief is about the day ahead — write it in the
+        future tense and never refer to it as "today".
 
         Respond ONLY with valid JSON, no Markdown fences:
         {
