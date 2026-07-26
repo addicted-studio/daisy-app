@@ -942,6 +942,27 @@ final class RecordingSession {
         }
     }
 
+    /// True when the microphone this session would actually bind to is
+    /// the Mac's built-in one — the device that goes hardware-silent
+    /// with the lid closed. Mirrors `CoreAudioMicRecorder`'s pinned-vs-
+    /// default resolution.
+    private func plannedInputIsBuiltIn() -> Bool {
+        if !settings.selectedMicDeviceUID.isEmpty {
+            guard let pinned = AudioInputDevices.deviceID(forUID: settings.selectedMicDeviceUID) else {
+                // Pinned device is gone → we'll fall back to the system
+                // default, so judge that instead.
+                return AudioInputDevices.isBuiltIn(AudioInputDevices.systemDefaultInputID())
+            }
+            return AudioInputDevices.isBuiltIn(pinned)
+        }
+        return AudioInputDevices.isBuiltIn(AudioInputDevices.systemDefaultInputID())
+    }
+
+    /// Set when `start()` already warned about a closed lid, so the
+    /// silence watchdog 10 s later doesn't repeat the same toast.
+    @ObservationIgnored
+    var clamshellWarned = false
+
     /// Toast for "we can't record because macOS won't give us the mic".
     /// Actionable — the deep link lands the user exactly where the
     /// switch is, instead of leaving them to hunt through Settings.
@@ -994,6 +1015,34 @@ final class RecordingSession {
             break
         @unknown default:
             break
+        }
+
+        // Clamshell preflight (Egor, 2026-07-26). Lid closed + the
+        // device we'd actually bind to is the built-in mic + nothing
+        // external to switch to = a guaranteed silent session. Say so
+        // BEFORE recording rather than after the 10-second watchdog,
+        // and say it as a system notification too: a dictation
+        // triggered by hotkey from another app never sees an in-app
+        // toast (ToastOverlay lives in the main window).
+        //
+        // Gate on the PLANNED device, not just "unpinned": a user on
+        // AirPods records fine with the lid shut (their mic isn't the
+        // built-in one), while a user who explicitly pinned the
+        // built-in mic is silent and deserves the same warning.
+        clamshellWarned = false
+        if AudioInputDevices.isLidClosed(),
+           plannedInputIsBuiltIn(),
+           AudioInputDevices.firstExternalWiredInputID() == nil {
+            log.warning("Lid closed and the planned input is the built-in mic with no external alternative — capture will be silent")
+            clamshellWarned = true
+            CaptureProblemNotification.post(
+                title: String(localized: "Daisy can’t hear you"),
+                body: String(localized: "The lid is closed, so the Mac’s built-in microphone is off. Open the lid or connect an external mic.")
+            )
+            ToastCenter.shared.show(
+                String(localized: "The lid is closed — the built-in microphone is off in clamshell mode. Open the lid or connect an external mic."),
+                style: .warning
+            )
         }
 
         reset()
