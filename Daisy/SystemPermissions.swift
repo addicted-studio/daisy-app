@@ -277,6 +277,29 @@ final class SystemPermissions {
 
     // MARK: - Helpers
 
+    /// LIVE microphone authorization as a log-safe word. `nonisolated`
+    /// so the audio path can log it at capture start without an actor
+    /// hop — `AVCaptureDevice.authorizationStatus` is thread-safe and
+    /// reads TCC directly, never a cache (2026-07-26 field bug: the
+    /// report header proved the permission at REPORT time, not at
+    /// capture time, which is a different moment entirely).
+    /// LIVE microphone authorization, typed. Callers that GATE on the
+    /// value must use this, not the string formatter below — a wording
+    /// change must never be able to silently disable a permission gate.
+    nonisolated static func micAuthorization() -> AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
+    nonisolated static func micAuthorizationDescription() -> String {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .notDetermined: return "notDetermined"
+        case .authorized:    return "authorized"
+        case .denied:        return "denied"
+        case .restricted:    return "restricted"
+        @unknown default:    return "unknown"
+        }
+    }
+
     private static func normalise(_ s: AVAuthorizationStatus) -> Status {
         switch s {
         case .notDetermined: return .notDetermined

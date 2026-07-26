@@ -942,6 +942,20 @@ final class RecordingSession {
         }
     }
 
+    /// Toast for "we can't record because macOS won't give us the mic".
+    /// Actionable — the deep link lands the user exactly where the
+    /// switch is, instead of leaving them to hunt through Settings.
+    private func showMicBlockedToast() {
+        ToastCenter.shared.showAction(
+            String(localized: "Daisy can’t hear your microphone — access is turned off in System Settings."),
+            actionLabel: String(localized: "Open Microphone settings"),
+            style: .warning,
+            duration: .seconds(30)
+        ) {
+            SystemPermissions.shared.openMicrophoneSettings()
+        }
+    }
+
     func start() async {
         // If a previous Stop's summary task is still in flight, the
         // user has explicitly asked for a NEW recording — drop the
@@ -955,6 +969,33 @@ final class RecordingSession {
         summaryTask = nil
 
         guard status == .idle || status == .finished || isFailed else { return }
+
+        // Microphone preflight — FIRST, before any state is allocated
+        // (2026-07-26). The Screen Recording path further down has
+        // always gated on TCC; the mic path never did, so a denied or
+        // never-asked mic produced a "successful" capture full of
+        // digital silence with no user-visible clue. Deliberately
+        // placed above `reset()`/`makeSessionDirectory()` so bailing
+        // out here leaves no half-built session folder or `.recording`
+        // marker behind.
+        switch SystemPermissions.micAuthorization() {
+        case .notDetermined:
+            log.warning("Mic permission notDetermined at capture start — prompting")
+            await SystemPermissions.shared.requestMicrophone()
+            if SystemPermissions.micAuthorization() != .authorized {
+                showMicBlockedToast()
+                return
+            }
+        case .denied, .restricted:
+            log.error("Mic permission is \(SystemPermissions.micAuthorizationDescription(), privacy: .public) — refusing to start a silent recording")
+            showMicBlockedToast()
+            return
+        case .authorized:
+            break
+        @unknown default:
+            break
+        }
+
         reset()
 
         // Apply meeting/folder/mode bindings stashed by entry-point

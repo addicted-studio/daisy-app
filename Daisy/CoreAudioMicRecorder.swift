@@ -215,6 +215,15 @@ final class CoreAudioMicRecorder {
     /// internal for RecordingSession+AutoStop.swift
     var lastMicRMSDB: Float { micLiveness.snapshot().lastRMS }
 
+    /// True when this capture consisted (almost) entirely of bit-exact
+    /// zero samples — macOS handed us an empty signal rather than a
+    /// quiet room (see `LivenessBox`). Read by the dictation paste path
+    /// so an empty result can name its real cause (2026-07-26).
+    var sawDigitalSilence: Bool {
+        let snap = micLiveness.snapshot()
+        return snap.total > 0 && snap.allZero * 10 >= snap.total * 9
+    }
+
     /// Level helpers, re-exported from the render-thread context below.
     /// The implementations live on `RenderContext` (a PRIVATE class —
     /// invisible outside this file), so these internal forwarders are
@@ -320,6 +329,12 @@ final class CoreAudioMicRecorder {
     func start(archiveURL: URL? = nil, preferredDeviceUID: String? = nil) throws {
         guard state != .recording else { return }
         lastError = nil
+        // Clear signal accounting up front, not after the unit is
+        // built: a throw from makeAndConfigureUnit used to leave the
+        // PREVIOUS session's counters in the box, so a later
+        // `sawDigitalSilence` read could report stale state
+        // (2026-07-26).
+        micLiveness.reset(to: Date())
 
         activePreferredDeviceUID = preferredDeviceUID ?? ""
 
@@ -420,7 +435,12 @@ final class CoreAudioMicRecorder {
         // dead callback.
         armRecoveryWatchdog(escalateToReconfigure: true)
 
-        log.info("CoreAudioMicRecorder started on device \(deviceID, privacy: .public) at \(format.sampleRate, privacy: .public) Hz / \(format.channelCount, privacy: .public) ch")
+        // Full device identity, not just the numeric ID — see
+        // AudioInputDevices.describe. Plus the LIVE mic permission at
+        // the moment of capture: the log report's Permissions line is
+        // read when the user sends the report, which can be hours and
+        // several restarts after the failing session (2026-07-26).
+        log.info("CoreAudioMicRecorder started on \(AudioInputDevices.describe(deviceID), privacy: .public) at client \(format.sampleRate, privacy: .public) Hz / \(format.channelCount, privacy: .public) ch, micPermission=\(SystemPermissions.micAuthorizationDescription(), privacy: .public)")
     }
 
     // MARK: - API: pause / resume
@@ -677,8 +697,18 @@ final class CoreAudioMicRecorder {
         }
 
         // Preserve the device's channel count (built-in mic is mono;
-        // some interfaces are stereo). Clamp to at least 1.
-        let channels = max(1, hwFormat.mChannelsPerFrame)
+        // some interfaces are stereo). ZERO input channels is NOT a
+        // clamp case — it means we bound something that can't record
+        // (output-only device, virtual driver, an asleep Continuity
+        // mic). The old `max(1, …)` invented a mono format, initialized
+        // happily and then delivered digital silence forever, and the
+        // start log printed the INVENTED format so the report looked
+        // like a healthy mono mic (2026-07-26 field bug).
+        guard hwFormat.mChannelsPerFrame > 0 else {
+            log.error("Input device reports ZERO input channels — refusing to capture silence. \(AudioInputDevices.describe(deviceID), privacy: .public)")
+            throw fail("Input device has no input channels")
+        }
+        let channels = hwFormat.mChannelsPerFrame
 
         // 5. Build our CLIENT format: float32, non-interleaved (planar),
         //    at the real rate, matching channel count. Non-interleaved
@@ -867,8 +897,21 @@ final class CoreAudioMicRecorder {
         if defaultID != 0,
            AudioInputDevices.isBluetooth(defaultID),
            let nonBT = AudioInputDevices.firstNonBluetoothInputID() {
-            log.info("Default input is Bluetooth — capturing from non-BT input \(nonBT, privacy: .public) to avoid SCO-mic silence")
+            log.info("Default input is Bluetooth — capturing from non-BT input \(AudioInputDevices.describe(nonBT), privacy: .public) to avoid SCO-mic silence")
             return nonBT
+        }
+        // The system default is not guaranteed to be able to record:
+        // a virtual driver, an aggregate with no live input, or an
+        // asleep Continuity mic can hold the default slot and deliver
+        // digital silence. The pinned path already requires real input
+        // streams (deviceID(forUID:)); the default path never did
+        // (2026-07-26).
+        if defaultID != 0, !AudioInputDevices.hasInputStreams(defaultID) {
+            if let fallback = AudioInputDevices.firstNonBluetoothInputID() {
+                log.warning("System default input has NO input streams — falling back. Default: \(AudioInputDevices.describe(defaultID), privacy: .public). Using: \(AudioInputDevices.describe(fallback), privacy: .public)")
+                return fallback
+            }
+            log.error("System default input has NO input streams and no alternative exists: \(AudioInputDevices.describe(defaultID), privacy: .public)")
         }
         return defaultID
     }
@@ -1219,12 +1262,28 @@ final class CoreAudioMicRecorder {
         guard let reference = snap.aboveFloorAt else { return }
         let silentFor = Date().timeIntervalSince(reference)
         guard silentFor >= Self.micSilenceWindowSec else { return }
-        log.error("Mic silence watchdog fired — RMS below \(Self.micLivenessFloorDB, privacy: .public) dBFS for \(Int(silentFor), privacy: .public)s (last RMS \(snap.lastRMS, privacy: .public) dBFS). Falling to paused.")
+        // Bit-exact digital silence vs a genuinely quiet input: if
+        // (almost) every buffer was all zeros, no microphone on earth
+        // produced this — macOS is handing us silence (2026-07-26).
+        // Different cause ⇒ different message ⇒ different fix.
+        let digitalSilence = snap.total > 0 && snap.allZero * 10 >= snap.total * 9
+        log.error("Mic silence watchdog fired — RMS below \(Self.micLivenessFloorDB, privacy: .public) dBFS for \(Int(silentFor), privacy: .public)s (last RMS \(snap.lastRMS, privacy: .public) dBFS, all-zero samples \(snap.allZero, privacy: .public)/\(snap.total, privacy: .public) ticks, digitalSilence=\(digitalSilence, privacy: .public), micPermission=\(SystemPermissions.micAuthorizationDescription(), privacy: .public)). Device: \(AudioInputDevices.describe(self.boundDeviceID ?? 0), privacy: .public). Falling to paused.")
         fallToPaused()
-        ToastCenter.shared.show(
-            "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume.",
-            style: .warning
-        )
+        if digitalSilence {
+            ToastCenter.shared.showAction(
+                String(localized: "macOS is sending Daisy an empty microphone signal — nothing is being recorded. Check Privacy & Security → Microphone, and that the input isn’t muted in Sound settings."),
+                actionLabel: String(localized: "Open Microphone settings"),
+                style: .warning,
+                duration: .seconds(30)
+            ) {
+                SystemPermissions.shared.openMicrophoneSettings()
+            }
+        } else {
+            ToastCenter.shared.show(
+                String(localized: "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume."),
+                style: .warning
+            )
+        }
     }
 
     // MARK: - Helpers
@@ -1639,16 +1698,32 @@ private final class TimestampBox: @unchecked Sendable {
 }
 
 /// Mic signal liveness bridge (render → MainActor silence monitor).
+///
+/// `allZero` counts buffers whose samples are BIT-EXACT zero, tracked
+/// separately from the RMS floor (2026-07-26). The distinction is the
+/// whole diagnosis: a live microphone in a silent room still produces a
+/// noise floor around −70…−90 dBFS, so bit-exact zeros are physically
+/// impossible from working hardware. They mean exactly one of: macOS is
+/// withholding the mic (TCC / a stale coreaudiod decision), the input is
+/// muted at the system level, or we're bound to a device that isn't
+/// really recording. Telling the user "check your Bluetooth mic" in that
+/// state — as this code used to — sends them down the wrong path.
 private final class LivenessBox: @unchecked Sendable {
-    private let lock = OSAllocatedUnfairLock<(aboveFloorAt: Date?, lastRMS: Float)>(initialState: (nil, -160))
+    private let lock = OSAllocatedUnfairLock<(aboveFloorAt: Date?, lastRMS: Float, allZero: Int, total: Int)>(
+        initialState: (nil, -160, 0, 0)
+    )
     func record(rms: Float, at: Date, floor: Float) {
         lock.withLock { state in
             state.lastRMS = rms
+            state.total += 1
+            // rmsLevelDB returns exactly -160 only when meanSquare == 0,
+            // i.e. every sample in the buffer was 0.0.
+            if rms <= -160 { state.allZero += 1 }
             if rms > floor { state.aboveFloorAt = at }
         }
     }
-    func snapshot() -> (aboveFloorAt: Date?, lastRMS: Float) { lock.withLock { $0 } }
-    func reset(to date: Date?) { lock.withLock { $0 = (date, -160) } }
+    func snapshot() -> (aboveFloorAt: Date?, lastRMS: Float, allZero: Int, total: Int) { lock.withLock { $0 } }
+    func reset(to date: Date?) { lock.withLock { $0 = (date, -160, 0, 0) } }
 }
 
 /// Render-thread write gate (transcript-only mode without teardown).

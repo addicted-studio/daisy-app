@@ -337,10 +337,43 @@ enum AudioInputDevices {
         return "device \(id) '\(name)': inputStream=\(streamRate(kAudioDevicePropertyScopeInput))Hz, outputStream=\(streamRate(kAudioDevicePropertyScopeOutput))Hz, nominal=\(nominalStr)Hz"
     }
 
+    /// Everything we know about a device, in one log line. Emitted at
+    /// every capture start (2026-07-26): a field report where the mic
+    /// delivered bit-exact digital silence could not be diagnosed
+    /// because the log recorded only the numeric AudioDeviceID — an
+    /// aggregate, a virtual driver, an asleep Continuity mic and the
+    /// built-in mic all looked identical.
+    static func describe(_ id: AudioDeviceID) -> String {
+        guard id != 0 else { return "device 0 (none)" }
+        let name = deviceName(id) ?? "?"
+        let uidStr = deviceUID(id) ?? "?"
+        let isDefault = systemDefaultInputID() == id ? "yes" : "no"
+        var channels: UInt32 = 0
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        if AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 {
+            let bufferList = UnsafeMutableRawPointer.allocate(
+                byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment
+            )
+            defer { bufferList.deallocate() }
+            if AudioObjectGetPropertyData(id, &addr, 0, nil, &size, bufferList) == noErr {
+                let list = UnsafeMutableAudioBufferListPointer(
+                    bufferList.bindMemory(to: AudioBufferList.self, capacity: 1)
+                )
+                for buffer in list { channels += buffer.mNumberChannels }
+            }
+        }
+        return "device \(id) '\(name)' uid=\(uidStr) inputStreams=\(hasInputStreams(id)) inputChannels=\(channels) bluetooth=\(isBluetooth(id)) isSystemDefault=\(isDefault)"
+    }
+
     /// A device qualifies as an "input" if it has at least one
     /// stream on the input scope. Most output-only devices (HDMI
     /// displays, headphones) report zero here.
-    private static func hasInputStreams(_ id: AudioDeviceID) -> Bool {
+    static func hasInputStreams(_ id: AudioDeviceID) -> Bool {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreams,
             mScope: kAudioDevicePropertyScopeInput,
