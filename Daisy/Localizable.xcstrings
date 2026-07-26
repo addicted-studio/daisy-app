@@ -1,52 +1,62 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Fix product names" : {
+    "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Исправлять названия продуктов"
+            "value" : "Микрофон замолчал — запись на паузе. Проверьте микрофон (Bluetooth-микрофоны часто пишут тишину) и нажмите «Продолжить»."
           }
         }
       }
     },
-    "Restores product names dictated in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Works on every engine; your own Vocabulary rules always win." : {
+    "macOS is sending Daisy an empty microphone signal — nothing is being recorded. Check Privacy & Security → Microphone, and that the input isn’t muted in Sound settings." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Восстанавливает латинское написание продуктов, надиктованных другим алфавитом: «фигма» → Figma, «гитхаб» → GitHub. Работает на всех движках; ваши правила словаря всегда в приоритете."
+            "value" : "macOS передаёт Daisy пустой сигнал микрофона — запись не идёт. Проверьте «Конфиденциальность и безопасность» → «Микрофон» и что вход не выключен в настройках звука."
           }
         }
       }
     },
-    "Noticed “%@” → “%@”. Save as a dictation correction?" : {
+    "Open Microphone settings" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Замечено «%@» → «%@». Сохранить как поправку для диктовки?"
+            "value" : "Открыть настройки микрофона"
           }
         }
       }
     },
-    "Refresh Your Day" : {
+    "Daisy can’t hear your microphone — access is turned off in System Settings." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обновить «Ваш день»"
+            "value" : "Daisy не слышит микрофон — доступ выключен в системных настройках."
           }
         }
       }
     },
-    "Refresh the brief (⌘R)" : {
+    "Microphone access is off" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Обновить бриф (⌘R)"
+            "value" : "Доступ к микрофону выключен"
+          }
+        }
+      }
+    },
+    "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ничего не записано — macOS передал Daisy пустой сигнал микрофона. Проверьте «Конфиденциальность и безопасность» → «Микрофон»."
           }
         }
       }
@@ -4811,6 +4821,16 @@
         }
       }
     },
+    "Fix product names" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправлять названия продуктов"
+          }
+        }
+      }
+    },
     "Fixes made by Daisy" : {
       "localizations" : {
         "ru" : {
@@ -6943,6 +6963,16 @@
         }
       }
     },
+    "Noticed “%@” → “%@”. Save as a dictation correction?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Замечено «%@» → «%@». Сохранить как поправку для диктовки?"
+          }
+        }
+      }
+    },
     "Notification with Stop & save / snooze options instead of stopping on its own." : {
       "localizations" : {
         "ru" : {
@@ -8253,6 +8283,7 @@
       }
     },
     "Refresh Meetings" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8263,11 +8294,32 @@
       }
     },
     "Refresh the brief" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Обновить бриф"
+          }
+        }
+      }
+    },
+    "Refresh the brief (⌘R)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить бриф (⌘R)"
+          }
+        }
+      }
+    },
+    "Refresh Your Day" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Обновить «Ваш день»"
           }
         }
       }
@@ -8492,6 +8544,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Перезапустить сейчас"
+          }
+        }
+      }
+    },
+    "Restores product names dictated in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Works on every engine; your own Vocabulary rules always win." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстанавливает латинское написание продуктов, надиктованных другим алфавитом: «фигма» → Figma, «гитхаб» → GitHub. Работает на всех движках; ваши правила словаря всегда в приоритете."
           }
         }
       }

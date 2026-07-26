@@ -79,10 +79,25 @@ final class DictationPaste {
     /// transcribed" toast).
     func handle(transcript: String) {
         guard !transcript.isEmpty else {
-            ToastCenter.shared.show(
-                String(localized: "Dictation stopped — nothing was transcribed."),
-                style: .warning
-            )
+            // Say WHY when we know why (2026-07-26). "Nothing was
+            // transcribed" after a full-volume dictation reads like the
+            // app is broken; if the mic delivered digital silence the
+            // user needs to go to System Settings, not retry.
+            if RecordingSession.current?.recorder.sawDigitalSilence == true {
+                ToastCenter.shared.showAction(
+                    String(localized: "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone."),
+                    actionLabel: String(localized: "Open Microphone settings"),
+                    style: .warning,
+                    duration: .seconds(30)
+                ) {
+                    SystemPermissions.shared.openMicrophoneSettings()
+                }
+            } else {
+                ToastCenter.shared.show(
+                    String(localized: "Dictation stopped — nothing was transcribed."),
+                    style: .warning
+                )
+            }
             return
         }
 
