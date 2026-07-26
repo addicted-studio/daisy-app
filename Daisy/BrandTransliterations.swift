@@ -1,0 +1,211 @@
+//
+//  BrandTransliterations.swift
+//  Daisy
+//
+//  Built-in "product names in Latin" layer for dictation (Egor,
+//  2026-07-25). Parakeet (and to a lesser degree Whisper/Apple) writes
+//  English brand names in the script of the dominant speech language —
+//  Russian dictation yields «фигма», «гитхаб», «зум». This table maps
+//  curated Cyrillic transliteration STEMS back to the canonical Latin
+//  name, inflected forms included («в фигме» → «в Figma»).
+//
+//  Design constraints:
+//    • CURATED list only — generic transliteration is wrong more often
+//      than right («джира» → "dzhira"). Every stem here was checked
+//      against real Russian words; ambiguous ones are deliberately
+//      absent (мир/Miro, канва/Canva, асана/Asana, редис/Redis,
+//      питон/Python, курсор/Cursor, хром/Chrome…).
+//    • Matching is stem + a whitelist of Russian CASE ENDINGS, bounded
+//      by non-Cyrillic on both sides. The ending whitelist (not a
+//      greedy [а-яё]{0,3}) is what keeps «зуммер» from becoming
+//      "Zoomмер" and «телеграмма» from becoming "Telegramма".
+//    • The user's own Vocabulary rules always win: any built-in whose
+//      stem collides with a user trigger is skipped for that run.
+//    • Applied only in the dictation paste path, gated by
+//      Settings → Transcription → "Fix product names" (default ON).
+//
+
+import Foundation
+
+nonisolated enum BrandCorrections {
+
+    /// UserDefaults key for the Settings toggle. Read directly (with a
+    /// `true` default) by DictationPaste — mirrors the
+    /// `AppSettings.fixBrandNamesInDictation` property.
+    static let defaultsKey = "daisy.fixBrandNamesInDictation"
+
+    /// One brand: canonical Latin spelling + the Cyrillic stems that
+    /// dictation engines produce for it.
+    struct Entry {
+        let latin: String
+        let stems: [String]
+    }
+
+    /// Curated table. Stems are lowercase, WITHOUT case endings.
+    static let entries: [Entry] = [
+        Entry(latin: "Figma",      stems: ["фигм"]),
+        Entry(latin: "FigJam",     stems: ["фигджем", "фигджам"]),
+        Entry(latin: "Zoom",       stems: ["зум"]),
+        Entry(latin: "Slack",      stems: ["слак", "слэк"]),
+        Entry(latin: "Notion",     stems: ["ноушн", "ноушен"]),
+        Entry(latin: "GitHub",     stems: ["гитхаб", "гитхап"]),
+        Entry(latin: "GitLab",     stems: ["гитлаб"]),
+        Entry(latin: "Jira",       stems: ["джир"]),
+        Entry(latin: "Trello",     stems: ["трелл"]),
+        Entry(latin: "Linear",     stems: ["линеар", "линиар"]),
+        Entry(latin: "Obsidian",   stems: ["обсидиан"]),
+        Entry(latin: "Telegram",   stems: ["телеграм"]),
+        Entry(latin: "Discord",    stems: ["дискорд"]),
+        Entry(latin: "WhatsApp",   stems: ["ватсап", "вотсап", "уотсап"]),
+        Entry(latin: "YouTube",    stems: ["ютуб", "ютьюб"]),
+        Entry(latin: "Google",     stems: ["гугл"]),
+        Entry(latin: "Gmail",      stems: ["джимейл", "гмейл", "джимэйл"]),
+        Entry(latin: "Excel",      stems: ["эксель", "иксель"]),
+        Entry(latin: "Word",       stems: ["ворд"]),
+        Entry(latin: "PowerPoint", stems: ["поверпоинт", "паверпоинт"]),
+        Entry(latin: "Outlook",    stems: ["аутлук"]),
+        Entry(latin: "Keynote",    stems: ["кейнот"]),
+        Entry(latin: "Docker",     stems: ["докер"]),
+        Entry(latin: "Kubernetes", stems: ["кубернетес", "кубернетис"]),
+        Entry(latin: "React",      stems: ["реакт"]),
+        Entry(latin: "Angular",    stems: ["ангуляр"]),
+        Entry(latin: "Postgres",   stems: ["постгрес"]),
+        Entry(latin: "MongoDB",    stems: ["монгодб", "монгодиби"]),
+        Entry(latin: "Anthropic",  stems: ["антропик", "энтропик"]),
+        Entry(latin: "Claude",     stems: ["клод"]),
+        Entry(latin: "OpenAI",     stems: ["опенай", "опенэйай", "оупенай"]),
+        Entry(latin: "ChatGPT",    stems: ["чатгпт", "чатжпт", "чатджипити"]),
+        Entry(latin: "Gemini",     stems: ["джемини", "гемини"]),
+        Entry(latin: "Copilot",    stems: ["копайлот", "копилот"]),
+        Entry(latin: "Xcode",      stems: ["икскод", "экскод"]),
+        Entry(latin: "TestFlight", stems: ["тестфлайт"]),
+        Entry(latin: "Whisper",    stems: ["виспер", "уиспер"]),
+        Entry(latin: "Zapier",     stems: ["запиер", "зейпиер"]),
+        Entry(latin: "Airtable",   stems: ["эйртейбл", "эртейбл"]),
+        Entry(latin: "Dropbox",    stems: ["дропбокс"]),
+        Entry(latin: "iCloud",     stems: ["айклауд"]),
+        Entry(latin: "iPhone",     stems: ["айфон"]),
+        Entry(latin: "iPad",       stems: ["айпад", "айпэд"]),
+        Entry(latin: "MacBook",    stems: ["макбук"]),
+        Entry(latin: "Instagram",  stems: ["инстаграм"]),
+        Entry(latin: "TikTok",     stems: ["тикток"]),
+        Entry(latin: "LinkedIn",   stems: ["линкедин", "линкдин"]),
+        Entry(latin: "Facebook",   stems: ["фейсбук", "фэйсбук"]),
+        Entry(latin: "Twitter",    stems: ["твиттер", "твитер"]),
+        Entry(latin: "Reddit",     stems: ["реддит", "редит"]),
+        Entry(latin: "Spotify",    stems: ["спотифай"]),
+        Entry(latin: "Netflix",    stems: ["нетфликс"]),
+        Entry(latin: "Stripe",     stems: ["страйп"]),
+        Entry(latin: "PayPal",     stems: ["пейпал", "пэйпал", "пейпэл"]),
+        Entry(latin: "Shopify",    stems: ["шопифай"]),
+        Entry(latin: "Webflow",    stems: ["вебфлоу", "вэбфлоу"]),
+        Entry(latin: "WordPress",  stems: ["вордпресс", "вордпрес"]),
+        Entry(latin: "Vercel",     stems: ["версел", "верцел"]),
+        Entry(latin: "Supabase",   stems: ["супабейс", "супабейз"]),
+        Entry(latin: "Firebase",   stems: ["файербейс", "фаербейс", "файрбейс"]),
+        Entry(latin: "HubSpot",    stems: ["хабспот"]),
+        Entry(latin: "JavaScript", stems: ["джаваскрипт"]),
+        Entry(latin: "TypeScript", stems: ["тайпскрипт"]),
+        Entry(latin: "Kotlin",     stems: ["котлин"]),
+        Entry(latin: "Linux",      stems: ["линукс"]),
+        Entry(latin: "Windows",    stems: ["виндоус", "виндовс"]),
+        Entry(latin: "Android",    stems: ["андроид"]),
+        Entry(latin: "macOS",      stems: ["макос"]),
+    ]
+
+    /// Russian case endings we accept after a stem. A WHITELIST, not a
+    /// greedy wildcard — «зуммер» (зум + мер) and «телеграмма»
+    /// (телеграм + ма) must NOT match.
+    private static let endings =
+        "(?:а|е|у|ы|и|я|ю|ой|ом|ем|ов|ам|ами|ах|ях)?"
+
+    /// One compiled regex per entry (all stems alternated), built once.
+    /// Bounded by "no Cyrillic letter" on both sides so stems can't
+    /// match inside longer Russian words.
+    private static let compiled: [(latin: String, regex: NSRegularExpression)] = {
+        entries.compactMap { entry in
+            let alternation = entry.stems
+                .map { NSRegularExpression.escapedPattern(for: $0) }
+                .joined(separator: "|")
+            let pattern = "(?<![а-яё])(?:\(alternation))\(endings)(?![а-яё])"
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern, options: [.caseInsensitive]
+            ) else { return nil }
+            return (entry.latin, regex)
+        }
+    }()
+
+    /// Replace transliterated brand mentions with their Latin names.
+    /// `userTriggers` — lowercased `from`-strings of the user's own
+    /// Vocabulary rules; any built-in stem that appears among them is
+    /// skipped so the user's rule (already applied upstream) stays
+    /// authoritative even when it maps to a different target.
+    static func apply(to text: String, userTriggers: Set<String>) -> (text: String, fixes: Int) {
+        guard !text.isEmpty else { return (text, 0) }
+        var result = text
+        var fixes = 0
+        for (latin, regex) in compiled {
+            // Respect user rules: if any stem of this entry is a prefix
+            // of a user trigger (or equal), the user owns this brand.
+            let stems = entries.first(where: { $0.latin == latin })?.stems ?? []
+            if stems.contains(where: { stem in
+                userTriggers.contains(where: { $0.hasPrefix(stem) })
+            }) { continue }
+            let range = NSRange(result.startIndex..., in: result)
+            let matches = regex.numberOfMatches(in: result, options: [], range: range)
+            guard matches > 0 else { continue }
+            result = regex.stringByReplacingMatches(
+                in: result, options: [], range: range, withTemplate: latin
+            )
+            fixes += matches
+        }
+        return (result, fixes)
+    }
+
+    /// Post-polish brand-restoration detector (auto-suggest layer).
+    /// When the voice-polish LLM restored a Latin name we DON'T cover
+    /// (not in this table, not in the user's rules), surface it so one
+    /// tap turns it into a permanent Vocabulary correction — after
+    /// which it works on every engine, polish enabled or not.
+    ///
+    /// Heuristic on purpose: exactly one new Latin token in the
+    /// polished text + exactly one dropped Cyrillic token of plausible
+    /// length → treat as a restoration pair. Anything murkier returns
+    /// nil; a missed suggestion costs nothing.
+    static func suggestRestoredBrand(
+        original: String,
+        polished: String,
+        userTriggers: Set<String>
+    ) -> (from: String, to: String)? {
+        func tokens(_ s: String) -> [String] {
+            s.lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+        }
+        let origTokens = Set(tokens(original))
+        let polishedTokens = Set(tokens(polished))
+
+        let newLatin = polishedTokens.subtracting(origTokens).filter { tok in
+            tok.count >= 4 && tok.allSatisfy { $0.isASCII && $0.isLetter }
+        }
+        let lostCyrillic = origTokens.subtracting(polishedTokens).filter { tok in
+            tok.count >= 4 && tok.unicodeScalars.allSatisfy { ("а"..."я").contains(Character($0)) || $0 == "ё" }
+        }
+        guard newLatin.count == 1, lostCyrillic.count == 1,
+              let to = newLatin.first, let from = lostCyrillic.first else { return nil }
+
+        // Length sanity — a transliteration is in the same ballpark.
+        guard to.count * 2 >= from.count, from.count * 2 >= to.count else { return nil }
+
+        // Already covered? Then the suggestion is noise.
+        if userTriggers.contains(where: { from.hasPrefix($0) || $0.hasPrefix(from) }) { return nil }
+        if entries.contains(where: { $0.stems.contains(where: { from.hasPrefix($0) }) }) { return nil }
+
+        // Restore the canonical casing the model produced (the token set
+        // was lowercased) by finding the original-cased token.
+        let cased = polished
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .first(where: { $0.lowercased() == to }) ?? to
+        return (from: from, to: cased)
+    }
+}

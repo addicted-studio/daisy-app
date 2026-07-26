@@ -111,6 +111,29 @@ extension RecordingSession {
                 let after = polished.split(whereSeparator: { $0.isWhitespace })
                 let changed = after.difference(from: before).insertions.count
                 UsageStats.shared.recordFixes(polished: changed)
+
+                // Auto-suggest (Egor 2026-07-25): the polish LLM just
+                // restored a Latin brand name we don't cover (not in
+                // the built-in table, not in the user's rules) — offer
+                // to save it as a permanent Vocabulary correction. Once
+                // saved it works on EVERY engine, polish on or off.
+                let triggers = Set(
+                    DictationDictionary.shared.replacements.map { $0.from.lowercased() }
+                )
+                if let pair = BrandCorrections.suggestRestoredBrand(
+                    original: transcriptText, polished: polished, userTriggers: triggers
+                ) {
+                    ToastCenter.shared.showAction(
+                        String(localized: "Noticed “\(pair.from)” → “\(pair.to)”. Save as a dictation correction?"),
+                        actionLabel: String(localized: "Save"),
+                        style: .info
+                    ) {
+                        DictationDictionary.shared.add(
+                            DictationReplacement(kind: .correction, from: pair.from, to: pair.to)
+                        )
+                    }
+                }
+
                 transcriptText = polished
             }
             signposter.endInterval("dictation_polish", polishState)

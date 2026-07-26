@@ -96,7 +96,23 @@ final class DictationPaste {
         // no await, no snapshot, no actor hop needed. `apply` returns the
         // input unchanged when the table is empty, so this is a no-op for
         // users who never set up a dictionary.
-        let (transcript, dictionaryFixes) = DictationDictionary.shared.applyCounting(to: transcript)
+        var (transcript, dictionaryFixes) = DictationDictionary.shared.applyCounting(to: transcript)
+        // Built-in brand layer AFTER the user's rules (Egor 2026-07-25):
+        // restore transliterated product names to Latin («фигма» →
+        // Figma) on every engine — Parakeet can't be biased, so this is
+        // its only route to correct brand spelling. User rules stay
+        // authoritative: applied first above, and BrandCorrections
+        // additionally skips any entry whose stem collides with a user
+        // trigger. Gated by Settings → Transcription → Fix product
+        // names (default ON).
+        if UserDefaults.standard.object(forKey: BrandCorrections.defaultsKey) as? Bool ?? true {
+            let triggers = Set(
+                DictationDictionary.shared.replacements.map { $0.from.lowercased() }
+            )
+            let brand = BrandCorrections.apply(to: transcript, userTriggers: triggers)
+            transcript = brand.text
+            dictionaryFixes += brand.fixes
+        }
         // Feed the Home "fixes made by Daisy" widget.
         UsageStats.shared.recordFixes(dictionary: dictionaryFixes)
 
