@@ -365,38 +365,15 @@ struct HomeView: View {
     // (`hasAnyCalendarSource` removed 2026-07-22 — the column layout no
     // longer branches on calendar state; DayCard degrades internally.)
 
-    /// All remaining events for today — calendar-day filter, not 24h
-    /// rolling window. If it's 23:00 and an event is tomorrow at
-    /// 01:00, we don't want to show it under "today".
-    private var todaysEvents: [DaisyMeeting] {
-        let cal = Calendar.current
-        let now = Date()
-        return calendar.upcomingEvents.filter { event in
-            // Still relevant — either upcoming today, or currently in
-            // progress (started already but not ended yet).
-            cal.isDate(event.startDate, inSameDayAs: now) && event.endDate > now
-        }
-    }
-
-    /// Tomorrow's events (whole calendar day). Needs the 48h calendar
-    /// lookahead (see ServiceWiring) so the full day is loaded.
-    private var tomorrowsEvents: [DaisyMeeting] {
-        let cal = Calendar.current
-        guard let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) else { return [] }
-        return calendar.upcomingEvents.filter { cal.isDate($0.startDate, inSameDayAs: tomorrow) }
-    }
-
-    /// Once today's meetings are all done, roll the section over to show
-    /// tomorrow instead of an empty "today".
-    private var showingTomorrow: Bool {
-        todaysEvents.isEmpty && !tomorrowsEvents.isEmpty
-    }
+    /// Which day the card shows — delegated to `MorningBriefStore` so
+    /// the agenda and the LLM lede above it can never disagree about
+    /// what day it is (Egor, 2026-07-26: in the evening the card said
+    /// TOMORROW, listed tomorrow's meetings, and narrated this morning).
+    private var showingTomorrow: Bool { MorningBriefStore.briefScope().isTomorrow }
 
     /// The events actually rendered — today's if any remain, else
     /// tomorrow's. Empty only when there's nothing in either day.
-    private var displayedEvents: [DaisyMeeting] {
-        showingTomorrow ? tomorrowsEvents : todaysEvents
-    }
+    private var displayedEvents: [DaisyMeeting] { MorningBriefStore.briefScope().events }
 
     // (sectionHeader / eventsBody / UpcomingEventRow removed 2026-07-15 —
     // the DayCard renders the agenda now, with inline Prep + nested tasks.)

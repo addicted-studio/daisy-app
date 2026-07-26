@@ -94,8 +94,12 @@ final class MorningBriefStore {
 
         ActionItemStore.shared.rebuild(from: SessionStore.shared.sessions)
 
-        let today = UsageStats.dayKey(for: Date())
-        // Already have today's lede in memory — nothing to do.
+        let scope = Self.briefScope()
+        // Cache key carries WHICH day the lede is about, not just the
+        // date: when the agenda rolls over to tomorrow in the evening,
+        // the morning's lede must not be reused for it.
+        let today = UsageStats.dayKey(for: Date()) + (scope.isTomorrow ? "-tomorrow" : "-today")
+        // Already have this day's lede in memory — nothing to do.
         if !force, generatedDayKey == today, case .ready = ledeState { return }
         // Relaunched the same day: restore the persisted lede instead of
         // re-running the LLM (local) or re-prompting for consent (cloud).
@@ -105,7 +109,7 @@ final class MorningBriefStore {
         }
         if case .generating = ledeState { return }
 
-        let events = Self.todaysEvents()
+        let events = scope.events
         let openItems = ActionItemStore.shared.openItems
         // Nothing to brief about — the card renders its own empty state;
         // don't spend an LLM call narrating an empty day.
@@ -127,7 +131,9 @@ final class MorningBriefStore {
         }
 
         ledeState = .generating
-        let dossier = Self.buildDossier(events: events, openItems: openItems)
+        let dossier = Self.buildDossier(
+            events: events, openItems: openItems, isTomorrow: scope.isTomorrow
+        )
         do {
             let summary = try await Summarizer.shared.runProbe(
                 transcript: dossier,
@@ -166,8 +172,41 @@ final class MorningBriefStore {
         }
     }
 
-    nonisolated static func buildDossier(events: [DaisyMeeting], openItems: [TrackedActionItem]) -> String {
-        var out = "TODAY'S CALENDAR:\n"
+    /// Tomorrow's whole calendar day (needs the 48 h lookahead in
+    /// ServiceWiring to be populated).
+    static func tomorrowsEvents() -> [DaisyMeeting] {
+        let cal = Calendar.current
+        guard let tomorrow = cal.date(byAdding: .day, value: 1, to: Date()) else { return [] }
+        return CalendarService.shared.upcomingEvents.filter {
+            cal.isDate($0.startDate, inSameDayAs: tomorrow)
+        }
+    }
+
+    /// THE day the card is about — single source of truth shared by the
+    /// lede and the agenda below it (Egor, 2026-07-26).
+    ///
+    /// The bug this fixes: the agenda rolled over to tomorrow once
+    /// today's meetings were done, but the lede was generated from
+    /// `todaysEvents()` and cached under a plain day key — so in the
+    /// evening the card read "TOMORROW", listed tomorrow's meetings,
+    /// and narrated this morning. Two different days in one card.
+    static func briefScope() -> (events: [DaisyMeeting], isTomorrow: Bool) {
+        let today = todaysEvents()
+        if !today.isEmpty { return (today, false) }
+        let tomorrow = tomorrowsEvents()
+        return tomorrow.isEmpty ? (today, false) : (tomorrow, true)
+    }
+
+    nonisolated static func buildDossier(
+        events: [DaisyMeeting],
+        openItems: [TrackedActionItem],
+        isTomorrow: Bool = false
+    ) -> String {
+        // Which day the dossier describes — the model must not narrate
+        // "today" over tomorrow's agenda (2026-07-26).
+        var out = isTomorrow
+            ? "TOMORROW'S CALENDAR (today is over — brief the user on the DAY AHEAD, in the future tense):\n"
+            : "TODAY'S CALENDAR:\n"
         if events.isEmpty {
             out += "(no meetings scheduled)\n"
         } else {
