@@ -34,8 +34,11 @@ nonisolated enum BrandCorrections {
     /// `AppSettings.fixBrandNamesInDictation` property.
     static let defaultsKey = "daisy.fixBrandNamesInDictation"
 
-    /// One brand: canonical Latin spelling + the Cyrillic stems that
-    /// dictation engines produce for it.
+    /// One brand: canonical spelling + the Cyrillic stems that
+    /// dictation engines produce for it. `latin` is historical naming —
+    /// it holds the CANONICAL form, which for Russian brands is their
+    /// proper Cyrillic casing («сбербанк» → «Сбербанк», «т банк» →
+    /// «Т-Банк») and for everything else the Latin name.
     struct Entry {
         let latin: String
         let stems: [String]
@@ -170,6 +173,41 @@ nonisolated enum BrandCorrections {
         Entry(latin: "Threads",    stems: ["тредс"]),
         Entry(latin: "Oracle",     stems: ["оракл"]),
         Entry(latin: "Salesforce", stems: ["сейлсфорс", "сэйлсфорс"]),
+        // ── 2026-07-25, Russian brands (Egor): here the fix is
+        // NORMALIZATION — proper casing/hyphenation of the canonical
+        // Cyrillic name («т банк» → «Т-Банк»), or the Latin name where
+        // that's the brand's canonical form (Wildberries, Rutube,
+        // HeadHunter). Deliberately absent after the usual collision
+        // pass: Ozon («озон» = gas), Мир (карта), Точка («точка»!),
+        // Контур, Магнит, Самокат, Дзен, Мегафон («в мегафон»),
+        // Пятёрочка («на пятёрочку»), Kaspi («Каспия» = каспи+я!),
+        // «в контакте» раздельно (легитимная фраза — only the joined
+        // «вконтакте» maps), «тиньков» (фамилия).
+        Entry(latin: "Т-Банк",     stems: ["т банк", "тбанк", "тэ банк"]),
+        Entry(latin: "Тинькофф",   stems: ["тинькофф", "тинькоф"]),
+        Entry(latin: "Сбербанк",   stems: ["сбербанк"]),
+        Entry(latin: "Сбер",       stems: ["сбер"]),
+        Entry(latin: "Альфа-Банк", stems: ["альфа банк", "альфабанк"]),
+        Entry(latin: "ВТБ",        stems: ["втб"]),
+        Entry(latin: "Райффайзен", stems: ["райффайзен", "райфайзен"]),
+        Entry(latin: "Модульбанк", stems: ["модульбанк"]),
+        Entry(latin: "ЮMoney",     stems: ["юмани"]),
+        Entry(latin: "МТС",        stems: ["мтс"]),
+        Entry(latin: "Билайн",     stems: ["билайн"]),
+        Entry(latin: "Ростелеком", stems: ["ростелеком"]),
+        Entry(latin: "Госуслуги",  stems: ["госуслуг"]),
+        Entry(latin: "Авито",      stems: ["авито"]),
+        Entry(latin: "Яндекс",     stems: ["яндекс"]),
+        Entry(latin: "Wildberries", stems: ["вайлдберриз", "вайлдберис", "вайлдбериз"]),
+        Entry(latin: "Rutube",     stems: ["рутуб"]),
+        Entry(latin: "Хабр",       stems: ["хабр"]),
+        Entry(latin: "Кинопоиск",  stems: ["кинопоиск"]),
+        Entry(latin: "ВКонтакте",  stems: ["вконтакте"]),
+        Entry(latin: "СДЭК",       stems: ["сдэк", "сдек"]),
+        Entry(latin: "Циан",       stems: ["циан"]),
+        Entry(latin: "HeadHunter", stems: ["хедхантер", "хэдхантер"]),
+        Entry(latin: "2ГИС",       stems: ["двагис", "два гис"]),
+        Entry(latin: "1С",         stems: ["один эс", "одинэс"]),
     ]
 
     /// Russian case endings we accept after a stem. A WHITELIST, not a
