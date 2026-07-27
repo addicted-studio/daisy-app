@@ -168,21 +168,22 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
         }
 
         // Response shape: { "message": { "role": "assistant", "content": "<JSON>" }, ... }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let message = json["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw SummaryProviderError.invalidResponse(provider: "Ollama")
         }
 
-        // Local and free, so this is informational only — but recorded
-        // for the same reason WPM is: the user gets to see the volume
-        // they're pushing through. `prompt_eval_count` undercounts on
-        // cache hits upstream (see TokenLedger).
+        // Local and free, but the usage is still useful volume data. Keep
+        // it even if a server returned an unusable content shape.
         TokenLedgerSink.record(
             provider: .ollama,
             model: model,
             spend: .ollama(from: json)
         )
+
+        guard let message = json["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw SummaryProviderError.invalidResponse(provider: "Ollama")
+        }
 
         do {
             let dto = try CloudSummaryDTO.decode(from: content)

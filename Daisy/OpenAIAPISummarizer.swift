@@ -96,20 +96,23 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
 
         // Response shape (chat completions):
         // { "choices": [{ "message": { "content": "<JSON>" }, ... }], ... }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw SummaryProviderError.invalidResponse(provider: "OpenAI")
         }
 
-        // Token cost from the response's own `usage` block — see
-        // TokenLedger. Fire-and-forget; never affects the summary.
+        // Usage is billable even if a successful response later proves
+        // unusable as a Daisy summary, so record it before shape checks.
         TokenLedgerSink.record(
             provider: .openai,
             model: model,
             spend: .openAICompatible(from: json)
         )
+
+        guard let choices = json["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw SummaryProviderError.invalidResponse(provider: "OpenAI")
+        }
 
         do {
             let dto = try CloudSummaryDTO.decode(from: content)

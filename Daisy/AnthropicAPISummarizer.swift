@@ -104,18 +104,19 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
         // { "id": "...", "type": "message",
         //   "content": [{ "type": "text", "text": "<JSON we want>" }],
         //   ... }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]],
-              let firstText = content.first?["text"] as? String else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw SummaryProviderError.invalidResponse(provider: "Anthropic")
         }
 
-        // Book the tokens this call actually cost, straight from the
-        // provider's own `usage` block. Fire-and-forget — a ledger write
-        // must never affect the summary. Recorded here (after the shape
-        // check) rather than earlier so a malformed response doesn't
-        // book a call that produced nothing.
+        // A 2xx response can still contain malformed content. Usage was
+        // nevertheless reported by Anthropic, so account for that charge
+        // before validating the content Daisy needs to parse.
         TokenLedgerSink.recordAnthropic(model: model, json: json)
+
+        guard let content = json["content"] as? [[String: Any]],
+              let firstText = content.first?["text"] as? String else {
+            throw SummaryProviderError.invalidResponse(provider: "Anthropic")
+        }
 
         do {
             let dto = try CloudSummaryDTO.decode(from: firstText)

@@ -16,9 +16,10 @@
 //  those want an org-level admin key that individual accounts don't have
 //  — see Projects/Daisy/2026-07-27-token-spend-widget-research.md.
 //
-//  Deliberately token-only: no prices, no dollars. A hardcoded price
-//  table goes stale between releases and then Daisy confidently lies
-//  about money. Cost is a separate decision (same research note).
+//  Costs are estimates, never a provider invoice. Daisy keeps a small
+//  list of the models it offers in Settings, checked on 2026-07-27.
+//  Unknown cloud models remain explicitly unpriced rather than being
+//  silently shown as $0. Prices can change between Daisy releases.
 //
 //  100% local (UserDefaults JSON). Never leaves the Mac. Bucketed per
 //  local day × provider × model, pruned to `retentionDays`.
@@ -52,6 +53,8 @@ nonisolated struct TokenSpend: Sendable {
         inputTokens == 0 && outputTokens == 0 && cachedInputTokens == 0
             && cacheWriteTokens == 0 && webSearches == 0
     }
+
+    var hasActivity: Bool { !isEmpty }
 
     // MARK: Response parsers
     //
@@ -190,6 +193,92 @@ nonisolated struct ProviderSpend: Identifiable, Sendable {
     var totalTokens: Int {
         inputTokens + outputTokens + cachedInputTokens + cacheWriteTokens
     }
+
+    /// A Claude web search can be billed even though it uses no model
+    /// tokens, so token count alone is not enough to decide whether this
+    /// provider had activity in the selected period.
+    var hasActivity: Bool { totalTokens > 0 || webSearches > 0 }
+}
+
+// MARK: - Approximate API cost
+
+/// Price estimate for Daisy's own calls during a period. It deliberately
+/// excludes local providers and marks an unknown *cloud* model as unpriced
+/// instead of pretending its cost is zero.
+nonisolated struct TokenCostEstimate: Sendable, Equatable {
+    var usd: Double = 0
+    var hasPricedUsage = false
+    var hasUnpricedBilledUsage = false
+}
+
+/// Public list prices for the small, curated model lists Daisy exposes in
+/// Settings, in USD per million tokens. Kept here (rather than fetched at
+/// runtime) so calculating a local estimate never sends usage anywhere.
+///
+/// Checked 2026-07-27:
+/// - OpenAI GPT-4o / GPT-4o mini / GPT-4 Turbo API pricing
+/// - Anthropic Claude Sonnet 4.6 / Opus 4.6 / Haiku 4.5 API pricing
+nonisolated enum TokenCostEstimator {
+    private struct Price: Sendable {
+        var input: Double
+        var output: Double
+        var cachedInput: Double
+        var cacheWrite: Double
+        var webSearch: Double
+    }
+
+    static func estimate(
+        provider: SummaryProviderKind,
+        model: String,
+        spend: TokenSpend
+    ) -> TokenCostEstimate {
+        guard spend.hasActivity else { return TokenCostEstimate() }
+        guard TokenLedger.isBilled(provider) else { return TokenCostEstimate() }
+        guard let price = price(for: provider, model: model) else {
+            return TokenCostEstimate(hasUnpricedBilledUsage: true)
+        }
+
+        let million = 1_000_000.0
+        let usd = Double(spend.inputTokens) / million * price.input
+            + Double(spend.outputTokens) / million * price.output
+            + Double(spend.cachedInputTokens) / million * price.cachedInput
+            + Double(spend.cacheWriteTokens) / million * price.cacheWrite
+            + Double(spend.webSearches) * price.webSearch
+        return TokenCostEstimate(usd: usd, hasPricedUsage: true)
+    }
+
+    private static func price(for provider: SummaryProviderKind, model: String) -> Price? {
+        let id = model.lowercased()
+        switch provider {
+        case .anthropic:
+            if id.hasPrefix("claude-sonnet-4-6") {
+                // $3 / $15, cache write $3.75, cache read $0.30, web $10 / 1K.
+                return Price(input: 3, output: 15, cachedInput: 0.30, cacheWrite: 3.75, webSearch: 0.01)
+            }
+            if id.hasPrefix("claude-opus-4-6") {
+                return Price(input: 5, output: 25, cachedInput: 0.50, cacheWrite: 6.25, webSearch: 0.01)
+            }
+            if id.hasPrefix("claude-haiku-4-5") {
+                return Price(input: 1, output: 5, cachedInput: 0.10, cacheWrite: 1.25, webSearch: 0.01)
+            }
+        case .openai:
+            if id.hasPrefix("gpt-4o-mini") {
+                return Price(input: 0.15, output: 0.60, cachedInput: 0.075, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("gpt-4o") {
+                return Price(input: 2.50, output: 10, cachedInput: 1.25, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("gpt-4-turbo") {
+                // Chat Completions does not report cached tokens for this
+                // legacy model in Daisy today; count any future value at
+                // the normal input rate rather than inventing a discount.
+                return Price(input: 10, output: 30, cachedInput: 10, cacheWrite: 0, webSearch: 0)
+            }
+        case .appleIntelligence, .ollama, .lmStudio, .mcp:
+            return nil
+        }
+        return nil
+    }
 }
 
 // MARK: - Ledger
@@ -279,14 +368,14 @@ final class TokenLedger {
     /// is more useful than hiding the card from the majority of users
     /// who never point Daisy at a paid API.
     var hasSpendThisMonth: Bool {
-        currentMonthSpend().contains { $0.totalTokens > 0 }
+        currentMonthSpend().contains(where: \.hasActivity)
     }
 
     /// The provider whose number the card leads with: the one currently
     /// selected if it spent anything this month, otherwise the biggest
     /// spender. Never a cross-provider sum.
     func heroSpend(active: SummaryProviderKind) -> ProviderSpend? {
-        let all = currentMonthSpend().filter { $0.totalTokens > 0 }
+        let all = currentMonthSpend().filter(\.hasActivity)
         return all.first { $0.provider == active } ?? all.first
     }
 
@@ -296,7 +385,15 @@ final class TokenLedger {
     /// pre-meeting brief alongside a local summarizer).
     func secondarySpend(active: SummaryProviderKind) -> [ProviderSpend] {
         guard let hero = heroSpend(active: active) else { return [] }
-        return currentMonthSpend().filter { $0.totalTokens > 0 && $0.id != hero.id }
+        return currentMonthSpend().filter { $0.hasActivity && $0.id != hero.id }
+    }
+
+    /// Approximate USD cost of all paid Daisy calls in the current month.
+    /// Local providers are excluded. If the user entered a custom cloud
+    /// model whose tariff Daisy does not know, `hasUnpricedBilledUsage` is
+    /// set so the UI can avoid presenting a misleading total.
+    func currentMonthCostEstimate() -> TokenCostEstimate {
+        costEstimate(matchingDayPrefix: Self.monthKey(for: Date()))
     }
 
     private func spend(matchingDayPrefix prefix: String) -> [ProviderSpend] {
@@ -338,6 +435,30 @@ final class TokenLedger {
                 return out
             }
             .sorted { $0.totalTokens > $1.totalTokens }
+    }
+
+    private func costEstimate(matchingDayPrefix prefix: String) -> TokenCostEstimate {
+        var total = TokenCostEstimate()
+        for (dayKey, buckets) in days where dayKey.hasPrefix(prefix) {
+            for bucket in buckets {
+                guard let provider = SummaryProviderKind(rawValue: bucket.provider) else { continue }
+                let one = TokenCostEstimator.estimate(
+                    provider: provider,
+                    model: bucket.model,
+                    spend: TokenSpend(
+                        inputTokens: bucket.inputTokens,
+                        outputTokens: bucket.outputTokens,
+                        cachedInputTokens: bucket.cachedInputTokens,
+                        cacheWriteTokens: bucket.cacheWriteTokens,
+                        webSearches: bucket.webSearches
+                    )
+                )
+                total.usd += one.usd
+                total.hasPricedUsage = total.hasPricedUsage || one.hasPricedUsage
+                total.hasUnpricedBilledUsage = total.hasUnpricedBilledUsage || one.hasUnpricedBilledUsage
+            }
+        }
+        return total
     }
 
     // MARK: Helpers

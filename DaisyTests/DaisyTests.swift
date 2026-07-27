@@ -15,6 +15,42 @@ import AVFoundation
 @Suite("Smoke suite (pure-function regression locks)")
 struct DaisyTests {
 
+    // MARK: - Token cost estimate
+
+    @Test("Claude estimate includes cache and web-search pricing")
+    func tokenCostEstimate_anthropicIncludesAllBillableUnits() {
+        let estimate = TokenCostEstimator.estimate(
+            provider: .anthropic,
+            model: "claude-sonnet-4-6",
+            spend: TokenSpend(
+                inputTokens: 1_000_000,
+                outputTokens: 1_000_000,
+                cachedInputTokens: 1_000_000,
+                cacheWriteTokens: 1_000_000,
+                webSearches: 2
+            )
+        )
+        #expect(estimate.hasPricedUsage)
+        #expect(!estimate.hasUnpricedBilledUsage)
+        #expect(abs(estimate.usd - 22.07) < 0.000_001)
+    }
+
+    @Test("Unknown cloud model is never shown as free")
+    func tokenCostEstimate_unknownCloudModelIsUnpriced() {
+        let estimate = TokenCostEstimator.estimate(
+            provider: .openai,
+            model: "future-gpt",
+            spend: TokenSpend(inputTokens: 100, outputTokens: 50)
+        )
+        #expect(!estimate.hasPricedUsage)
+        #expect(estimate.hasUnpricedBilledUsage)
+    }
+
+    @Test("A web search alone counts as token-ledger activity")
+    func tokenSpend_webSearchIsActivity() {
+        #expect(TokenSpend(webSearches: 1).hasActivity)
+    }
+
     // MARK: - resolveSummaryLocaleHint precedence
     //
     // 1.0.3 flipped precedence: explicit picker wins over content
