@@ -199,20 +199,17 @@ enum LogReporter {
     /// exactly like a dead microphone. 2026-07-27: cost a full
     /// investigation on a report where the real cause was 0.4 GB free —
     /// the only hint in the whole log was a Whisper download refusing to
-    /// start. Same volume WhisperEngine measures (`~`), so both agree.
+    /// start. Measures the volume recordings actually land on, so a
+    /// sessions folder on an external disk reports that disk, not the
+    /// boot drive.
     private static func diskLine() -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        guard let free = (try? home.resourceValues(
-            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
-        ))?.volumeAvailableCapacityForImportantUsage else {
-            return "unknown"
-        }
+        guard let free = DiskSpace.recordingsVolumeFreeBytes() else { return "unknown" }
         let gb = 1_073_741_824.0
         let line = String(format: "%.1f GB free", Double(free) / gb)
-        guard free < RecordingSession.lowDiskStartThresholdBytes else { return line }
+        guard free < DiskSpace.recordingFloorBytes else { return line }
         return line + String(
             format: " — BELOW the %.1f GB floor: meetings record TRANSCRIPT-ONLY, no audio archive",
-            Double(RecordingSession.lowDiskStartThresholdBytes) / gb
+            Double(DiskSpace.recordingFloorBytes) / gb
         )
     }
 
