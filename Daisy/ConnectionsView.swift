@@ -64,6 +64,10 @@ struct ConnectionsView: View {
     /// malformed hints. Recomputed on appear, after every write, and
     /// whenever the live server port changes.
     @State private var claudeEntryState: ClaudeDesktopConfig.EntryState = .notInstalled
+    @State private var codexInstallInProgress: Bool = false
+    @State private var codexEntryState: CodexMCPConfig.EntryState = .notInstalled
+    @State private var cursorInstallInProgress: Bool = false
+    @State private var cursorEntryState: CursorMCPConfig.EntryState = .notInstalled
     /// MCP access-control toggles — mirrors of `MCPAccessToken`'s
     /// UserDefaults-backed flags (kept as @State because they live
     /// outside AppSettings; onChange writes them through).
@@ -121,7 +125,7 @@ struct ConnectionsView: View {
         }
         .onAppear {
             mcpPortText = String(settings.mcpServerPort)
-            refreshClaudeEntryState()
+            refreshMCPClientEntryStates()
             consumePendingSection()
         }
         .onChange(of: nav.pendingConnectionsSection) { _, _ in
@@ -135,13 +139,15 @@ struct ConnectionsView: View {
             // so changing the port never creates a config the user
             // didn't ask for.
             ClaudeDesktopConfig.refreshIfInstalled(port: liveServerPort)
-            refreshClaudeEntryState()
+            CodexMCPConfig.refreshIfInstalled(port: liveServerPort)
+            CursorMCPConfig.refreshIfInstalled(port: liveServerPort)
+            refreshMCPClientEntryStates()
         }
         // The button copy + status hints key off whether the server is
         // running and on what port; recompute when the listener state
         // flips (start / stop / restart on a new port).
         .onChange(of: mcpServer.state) { _, _ in
-            refreshClaudeEntryState()
+            refreshMCPClientEntryStates()
         }
         .sheet(item: $editingIntegration) { integration in
             IntegrationEditor(
@@ -529,197 +535,196 @@ struct ConnectionsView: View {
     @ViewBuilder
     private var mcpServerSection: some View {
         Section {
-            Toggle(isOn: $settings.mcpServerEnabled) {
-                Text("Let AI clients read your sessions")
-                Text("So Claude Desktop, Cursor and other MCP-compatible tools on this Mac can read your transcripts and summaries. Bound to 127.0.0.1 only — nothing leaves this Mac.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            mcpStatusRow
-            HStack {
-                Text("Port")
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MCP server")
+                        .font(.callout.weight(.semibold))
+                    Text(mcpServerSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(mcpServerSubtitleColor)
+                        .lineLimit(1)
+                }
                 Spacer()
-                TextField("", text: $mcpPortText, prompt: Text("54321"))
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 90)
-                    .onSubmit { commitMCPPort() }
+                Toggle("MCP server", isOn: $settings.mcpServerEnabled)
+                    .labelsHidden()
+            }
+            claudeDesktopRow
+            codexRow
+            cursorRow
+
+            DisclosureGroup("Claude Code") {
+                claudeCodeRow
+                    .padding(.top, 6)
             }
 
-            // ── Access control ────────────────────────────────────
+            rawSnippetDisclosure
+
+            DisclosureGroup("Privacy") {
+                mcpPrivacySettings
+                    .padding(.top, 6)
+            }
+
+            DisclosureGroup("Advanced") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Change the port only if it is occupied.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("Port")
+                        Spacer()
+                        TextField("", text: $mcpPortText, prompt: Text("54321"))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 90)
+                            .onSubmit { commitMCPPort() }
+                    }
+                }
+                .padding(.top, 6)
+            }
+        } header: {
+            Text("MCP server")
+        } footer: {
+            Text("Only apps on this Mac can connect.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    // MARK: - Privacy & permissions
+
+    @ViewBuilder
+    private var mcpPrivacySettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: $mcpRequireToken) {
                 Text("Require access token")
-                Text("Clients must send this token with every request — without it, any app on this Mac could read your transcripts. Daisy adds the token to the Claude Desktop config automatically; copy it for other clients.")
+                Text("A code for other apps on this Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .onChange(of: mcpRequireToken) { _, new in
                 MCPAccessToken.isRequired = new
-                // Rewrite the Claude Desktop entry so it keeps working
-                // (adds or drops the Authorization header).
                 ClaudeDesktopConfig.refreshIfInstalled(port: liveServerPort)
+                CodexMCPConfig.refreshIfInstalled(port: liveServerPort)
+                CursorMCPConfig.refreshIfInstalled(port: liveServerPort)
+                refreshMCPClientEntryStates()
             }
+
             if mcpRequireToken {
                 HStack {
                     Text("Access token")
                     Spacer()
                     Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(MCPAccessToken.ensure(), forType: .string)
-                        ToastCenter.shared.show(String(localized: "Access token copied."), style: .success)
+                        copyToPasteboard(MCPAccessToken.ensure(), toast: "Access token copied.")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
+            } else {
+                Label("Any app on this Mac can read your recordings while this is on.", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(Color.daisyWarning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+
             Toggle(isOn: $mcpAllowActions) {
                 Text("Allow actions from MCP clients")
-                Text("Lets clients re-summarize a session (may use your cloud API key) and send sessions to your destinations. Off = clients can read and rename, nothing more.")
+                Text("Lets apps re-summarize and send recordings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .onChange(of: mcpAllowActions) { _, new in
                 MCPAccessToken.allowExternalActions = new
             }
-
-            // ── Connect to Claude ─────────────────────────────────
-            // One-click for Claude Desktop + a copy-able command for
-            // Claude Code, both pointed at the LIVE server port. Lives
-            // in the same Section so the Form draws no inner divider
-            // between the local-server config and the client wiring.
-            connectToClaudeBlock
-        } header: {
-            HStack(spacing: 6) {
-                Text("MCP server")
-                Spacer()
-                switch mcpServer.state {
-                case .running:
-                    Text("Running")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.daisySuccess)
-                case .starting:
-                    Text("Starting…")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(.secondary)
-                case .failed:
-                    Text("Error")
-                        .font(.caption2.weight(.medium))
-                        .foregroundStyle(Color.daisyWarning)
-                case .stopped:
-                    EmptyView()
-                }
-            }
-        } footer: {
-            Text("Loopback-only (127.0.0.1) — the server is reachable only from this Mac. Connected clients can read your sessions and rename a session or speaker. Re-summarizing and sending sessions to destinations stay off unless you enable “Allow actions from MCP clients” above. They can't delete anything or change Daisy's settings. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
         }
-    }
-
-    // MARK: - Connect to Claude (Desktop one-click + Code command)
-
-    /// The whole "Connect to Claude" affordance: Claude Desktop
-    /// one-click row, the Claude Code copy-command, and the raw
-    /// snippet for everything else. Disabled / re-worded based on
-    /// whether the server is running and what's already in the config.
-    @ViewBuilder
-    private var connectToClaudeBlock: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Server must be listening for either client to connect.
-            // When it's not, we say so plainly and offer to flip the
-            // toggle rather than letting the user press buttons that
-            // write a config pointing at a dead port.
-            if !isServerRunning {
-                serverOfflineNotice
-            }
-
-            claudeDesktopRow
-            claudeCodeRow
-            rawSnippetDisclosure
-        }
-    }
-
-    @ViewBuilder
-    private var serverOfflineNotice: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color.daisyWarning)
-                .font(.caption)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Server isn't running")
-                    .font(.callout.weight(.medium))
-                Text("Claude can only connect while Daisy's MCP server is listening. Turn it on, then connect.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if !settings.mcpServerEnabled {
-                    Button("Turn on MCP server") { settings.mcpServerEnabled = true }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(Color.daisyAccent)
-                        .padding(.top, 2)
-                }
-            }
-            Spacer()
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-        )
     }
 
     // MARK: Claude Desktop one-click
 
     @ViewBuilder
     private var claudeDesktopRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Claude Desktop")
-                        .font(.callout.weight(.medium))
-                    Text(claudeDesktopHint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        HStack(spacing: 10) {
+            mcpClientTitle("Claude Desktop", status: claudeDesktopHint)
+            Spacer(minLength: 8)
+            if claudeEntryIsPresent {
+                Button(role: .destructive) { removeFromClaudeDesktop() } label: {
+                    Label("Disconnect", systemImage: "trash")
                 }
-                Spacer()
-
-                // Remove only shows once an entry exists — keeps the
-                // common (first-run) layout to a single button.
-                if claudeEntryIsPresent {
-                    Button(role: .destructive) {
-                        removeFromClaudeDesktop()
-                    } label: {
-                        Label("Remove", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(claudeInstallInProgress)
-                }
-
-                Button {
-                    Task { await installToClaudeDesktop() }
-                } label: {
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(claudeInstallInProgress)
+            }
+            if !claudeEntryIsPresent || claudeConnectionNeedsRepair {
+                Button { Task { await installToClaudeDesktop() } } label: {
                     Label(claudeDesktopButtonTitle, systemImage: "sparkles")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .tint(Color.daisyAccent)
-                // Block the write when the server's down (config would
-                // point nowhere) or the file is malformed (we won't
-                // touch it — the user has to fix it by hand first).
                 .disabled(claudeInstallInProgress || !isServerRunning || claudeEntryState == .malformed)
             }
+        }
+    }
 
-            if claudeEntryState == .malformed {
-                Text("Your claude_desktop_config.json has invalid JSON, so Daisy won't touch it. Open it, fix the syntax, and try again — or use the snippet below.")
-                    .font(.caption2)
-                    .foregroundStyle(Color.daisyWarning)
-                    .fixedSize(horizontal: false, vertical: true)
+    // MARK: Codex and Cursor one-click setup
+
+    @ViewBuilder
+    private var codexRow: some View {
+        HStack(spacing: 10) {
+            mcpClientTitle("Codex", status: codexHint)
+            Spacer(minLength: 8)
+            if codexEntryIsPresent {
+                Button(role: .destructive) { removeFromCodex() } label: {
+                    Label("Disconnect", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(codexInstallInProgress)
+            }
+            if !codexEntryIsPresent || codexEntryState == .installedDifferentPort {
+                Button { Task { await installToCodex() } } label: {
+                    Label(codexButtonTitle, systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+                .disabled(codexInstallInProgress || !isServerRunning || codexEntryState == .codexNotInstalled)
             }
         }
+    }
+
+    @ViewBuilder
+    private var cursorRow: some View {
+        HStack(spacing: 10) {
+            mcpClientTitle("Cursor", status: cursorHint)
+            Spacer(minLength: 8)
+            if cursorEntryIsPresent {
+                Button(role: .destructive) { removeFromCursor() } label: {
+                    Label("Disconnect", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(cursorInstallInProgress)
+            }
+            if !cursorEntryIsPresent || cursorEntryState == .installedDifferentPort {
+                Button { Task { await installToCursor() } } label: {
+                    Label(cursorButtonTitle, systemImage: "sparkles")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+                .disabled(cursorInstallInProgress || !isServerRunning || cursorEntryState == .malformed)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mcpClientTitle(_ name: String, status: String) -> some View {
+        Text(name)
+            .font(.callout.weight(.semibold))
+        Text(status)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     // MARK: Claude Code command
@@ -727,9 +732,7 @@ struct ConnectionsView: View {
     @ViewBuilder
     private var claudeCodeRow: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Claude Code")
-                .font(.callout.weight(.medium))
-            Text("Run this once in your terminal. Claude Code has native SSE transport, so no `mcp-remote` bridge needed.")
+            Text("Open Terminal, paste this command once, then restart Claude Code.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -768,8 +771,11 @@ struct ConnectionsView: View {
 
     @ViewBuilder
     private var rawSnippetDisclosure: some View {
-        DisclosureGroup("Other clients (Cursor, Cline, Continue) — raw config") {
+        DisclosureGroup("Other compatible apps") {
             VStack(alignment: .leading, spacing: 10) {
+                Text("For Cursor, Cline, Continue, or another app that asks for an MCP configuration. Copy and paste this whole block.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text(mcpConfigSnippet)
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
@@ -797,24 +803,6 @@ struct ConnectionsView: View {
         .font(.callout)
     }
 
-    @ViewBuilder
-    private var mcpStatusRow: some View {
-        HStack(spacing: 8) {
-            switch mcpServer.state {
-            case .stopped:
-                StatusBadge(state: .idle, message: nil)
-                Text("Not running").font(.caption).foregroundStyle(.secondary)
-            case .starting(let port):
-                StatusBadge(state: .busy, message: String(localized: "Starting on port \(port)…"))
-            case .running(let port):
-                StatusBadge(state: .ok, message: String(localized: "Listening on 127.0.0.1:\(port)"))
-            case .failed(let msg):
-                StatusBadge(state: .err, message: msg)
-            }
-            Spacer()
-        }
-    }
-
     // MARK: - Live port + derived UI state
 
     /// The port the config / command should point at. Prefer the port
@@ -839,6 +827,27 @@ struct ConnectionsView: View {
         return false
     }
 
+    private var mcpServerSubtitle: String {
+        switch mcpServer.state {
+        case .running:
+            return String(localized: "Running locally")
+        case .starting:
+            return String(localized: "Starting…")
+        case .stopped:
+            return String(localized: "Off")
+        case .failed(let error):
+            if error.localizedCaseInsensitiveContains("address already in use") {
+                return String(localized: "Port is already in use. Close the other copy of Daisy or change the port.")
+            }
+            return String(localized: "Couldn't start")
+        }
+    }
+
+    private var mcpServerSubtitleColor: Color {
+        if case .failed = mcpServer.state { return Color.daisyWarning }
+        return .secondary
+    }
+
     /// True when a `daisy` entry exists in the config at all (any
     /// port). Gates the Remove button.
     private var claudeEntryIsPresent: Bool {
@@ -850,29 +859,102 @@ struct ConnectionsView: View {
         }
     }
 
+    private var claudeConnectionNeedsRepair: Bool {
+        if case .installedDifferentPort = claudeEntryState { return true }
+        return false
+    }
+
     private var claudeDesktopButtonTitle: String {
         switch claudeEntryState {
         case .installed:
-            return String(localized: "Reinstall")          // already correct — let them re-write anyway
+            return String(localized: "Set up again")
         case .installedDifferentPort:
-            return String(localized: "Update port")        // entry exists but on the wrong port
+            return String(localized: "Repair connection")
         case .notInstalled, .claudeNotInstalled, .malformed:
-            return String(localized: "Add to Claude Desktop")
+            return String(localized: "Connect")
         }
     }
 
     private var claudeDesktopHint: String {
         switch claudeEntryState {
         case .claudeNotInstalled:
-            return String(localized: "Claude Desktop doesn't look installed. Daisy can still write the config — it'll be picked up next time Claude launches.")
+            return String(localized: "Claude Desktop not found")
         case .notInstalled:
-            return String(localized: "Writes the entry into Claude's config. Restart Claude Desktop afterwards to load Daisy's tools.")
+            return String(localized: "Not connected")
         case .installed:
-            return String(localized: "Installed and pointing at port \(liveServerPort). Restart Claude Desktop if you haven't since adding it.")
-        case .installedDifferentPort(let existing):
-            return String(localized: "Installed, but pointing at \(existing) instead of port \(liveServerPort). Update it, then restart Claude Desktop.")
+            return String(localized: "Connected — restart Claude Desktop.")
+        case .installedDifferentPort:
+            return String(localized: "Connection needs an update.")
         case .malformed:
-            return String(localized: "Can't read Claude's config — see below.")
+            return String(localized: "Configuration needs fixing.")
+        }
+    }
+
+    private var codexEntryIsPresent: Bool {
+        switch codexEntryState {
+        case .installed, .installedDifferentPort:
+            return true
+        case .notInstalled, .codexNotInstalled:
+            return false
+        }
+    }
+
+    private var codexButtonTitle: String {
+        switch codexEntryState {
+        case .installed:
+            return String(localized: "Set up again")
+        case .installedDifferentPort:
+            return String(localized: "Repair connection")
+        case .notInstalled:
+            return String(localized: "Connect")
+        case .codexNotInstalled:
+            return String(localized: "Codex not installed")
+        }
+    }
+
+    private var codexHint: String {
+        switch codexEntryState {
+        case .installed:
+            return String(localized: "Connected — start a new Codex task.")
+        case .installedDifferentPort:
+            return String(localized: "Connection needs an update.")
+        case .notInstalled:
+            return String(localized: "Not connected")
+        case .codexNotInstalled:
+            return String(localized: "Codex not found")
+        }
+    }
+
+    private var cursorEntryIsPresent: Bool {
+        switch cursorEntryState {
+        case .installed, .installedDifferentPort:
+            return true
+        case .notInstalled, .malformed:
+            return false
+        }
+    }
+
+    private var cursorButtonTitle: String {
+        switch cursorEntryState {
+        case .installed:
+            return String(localized: "Set up again")
+        case .installedDifferentPort:
+            return String(localized: "Repair connection")
+        case .notInstalled, .malformed:
+            return String(localized: "Connect")
+        }
+    }
+
+    private var cursorHint: String {
+        switch cursorEntryState {
+        case .installed:
+            return String(localized: "Connected — restart Cursor.")
+        case .installedDifferentPort:
+            return String(localized: "Connection needs an update.")
+        case .notInstalled:
+            return String(localized: "Not connected")
+        case .malformed:
+            return String(localized: "Configuration needs fixing.")
         }
     }
 
@@ -933,8 +1015,10 @@ struct ConnectionsView: View {
         ToastCenter.shared.show(toast, style: .success)
     }
 
-    private func refreshClaudeEntryState() {
+    private func refreshMCPClientEntryStates() {
         claudeEntryState = ClaudeDesktopConfig.entryState(port: liveServerPort)
+        codexEntryState = CodexMCPConfig.entryState(port: liveServerPort)
+        cursorEntryState = CursorMCPConfig.entryState(port: liveServerPort)
     }
 
     private func commitMCPPort() {
@@ -953,7 +1037,7 @@ struct ConnectionsView: View {
         // sees right above the button.
         let result = ClaudeDesktopConfig.install(port: liveServerPort)
         claudeInstallInProgress = false
-        refreshClaudeEntryState()
+        refreshMCPClientEntryStates()
         switch result {
         case .installed:
             ToastCenter.shared.show(
@@ -972,7 +1056,7 @@ struct ConnectionsView: View {
         claudeInstallInProgress = true
         let result = ClaudeDesktopConfig.remove()
         claudeInstallInProgress = false
-        refreshClaudeEntryState()
+        refreshMCPClientEntryStates()
         switch result {
         case .removed:
             ToastCenter.shared.show(
@@ -986,6 +1070,74 @@ struct ConnectionsView: View {
                 String(localized: "Couldn't update Claude config: \(message)"),
                 style: .warning
             )
+        }
+    }
+
+    private func installToCodex() async {
+        codexInstallInProgress = true
+        let result = CodexMCPConfig.install(port: liveServerPort)
+        codexInstallInProgress = false
+        refreshMCPClientEntryStates()
+        switch result {
+        case .installed:
+            ToastCenter.shared.show(
+                String(localized: "Connected to Codex — start a new task to use Daisy."),
+                style: .success
+            )
+        case .failed(let message):
+            ToastCenter.shared.show(
+                String(localized: "Couldn't update Codex: \(message)"),
+                style: .warning
+            )
+        }
+    }
+
+    private func removeFromCodex() {
+        codexInstallInProgress = true
+        let result = CodexMCPConfig.remove()
+        codexInstallInProgress = false
+        refreshMCPClientEntryStates()
+        switch result {
+        case .removed:
+            ToastCenter.shared.show(String(localized: "Disconnected from Codex."), style: .success)
+        case .notPresent:
+            ToastCenter.shared.show(String(localized: "No Daisy connection to remove."), style: .info)
+        case .failed(let message):
+            ToastCenter.shared.show(String(localized: "Couldn't update Codex: \(message)"), style: .warning)
+        }
+    }
+
+    private func installToCursor() async {
+        cursorInstallInProgress = true
+        let result = CursorMCPConfig.install(port: liveServerPort)
+        cursorInstallInProgress = false
+        refreshMCPClientEntryStates()
+        switch result {
+        case .installed:
+            ToastCenter.shared.show(
+                String(localized: "Connected to Cursor — restart it to use Daisy."),
+                style: .success
+            )
+        case .failed(let message):
+            ToastCenter.shared.show(
+                String(localized: "Couldn't update Cursor: \(message)"),
+                style: .warning
+            )
+        }
+    }
+
+    private func removeFromCursor() {
+        cursorInstallInProgress = true
+        let result = CursorMCPConfig.remove()
+        cursorInstallInProgress = false
+        refreshMCPClientEntryStates()
+        switch result {
+        case .removed:
+            ToastCenter.shared.show(String(localized: "Disconnected from Cursor."), style: .success)
+        case .notPresent:
+            ToastCenter.shared.show(String(localized: "No Daisy connection to remove."), style: .info)
+        case .failed(let message):
+            ToastCenter.shared.show(String(localized: "Couldn't update Cursor: \(message)"), style: .warning)
         }
     }
 

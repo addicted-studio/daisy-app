@@ -1,106 +1,6 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Daisy can’t hear you" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy вас не слышит"
-          }
-        }
-      }
-    },
-    "The lid is closed, so the Mac’s built-in microphone is off. Open the lid or connect an external mic." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Крышка закрыта, поэтому встроенный микрофон Mac отключён. Откройте крышку или подключите внешний микрофон."
-          }
-        }
-      }
-    },
-    "The lid is closed — the built-in microphone is off in clamshell mode. Open the lid or connect an external mic." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Крышка закрыта — в режиме clamshell встроенный микрофон отключён. Откройте крышку или подключите внешний микрофон."
-          }
-        }
-      }
-    },
-    "No sound is reaching Daisy from the microphone. Nothing is being recorded." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "С микрофона в Daisy не поступает звук. Запись не идёт."
-          }
-        }
-      }
-    },
-    "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Микрофон замолчал — запись на паузе. Проверьте микрофон (Bluetooth-микрофоны часто пишут тишину) и нажмите «Продолжить»."
-          }
-        }
-      }
-    },
-    "macOS is sending Daisy an empty microphone signal — nothing is being recorded. Check Privacy & Security → Microphone, and that the input isn’t muted in Sound settings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "macOS передаёт Daisy пустой сигнал микрофона — запись не идёт. Проверьте «Конфиденциальность и безопасность» → «Микрофон» и что вход не выключен в настройках звука."
-          }
-        }
-      }
-    },
-    "Open Microphone settings" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть настройки микрофона"
-          }
-        }
-      }
-    },
-    "Daisy can’t hear your microphone — access is turned off in System Settings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy не слышит микрофон — доступ выключен в системных настройках."
-          }
-        }
-      }
-    },
-    "Microphone access is off" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доступ к микрофону выключен"
-          }
-        }
-      }
-    },
-    "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ничего не записано — macOS передал Daisy пустой сигнал микрофона. Проверьте «Конфиденциальность и безопасность» → «Микрофон»."
-          }
-        }
-      }
-    },
     "" : {
       "localizations" : {
         "ru" : {
@@ -1514,6 +1414,7 @@
       }
     },
     "Access token copied." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -1583,6 +1484,16 @@
         }
       }
     },
+    "Add Daisy to Cursor’s shared MCP settings. Restart Cursor after connecting." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавьте Daisy в общие настройки MCP Cursor. После подключения перезапустите Cursor."
+          }
+        }
+      }
+    },
     "Add email" : {
       "localizations" : {
         "ru" : {
@@ -1614,6 +1525,7 @@
       }
     },
     "Add to Claude Desktop" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -1713,6 +1625,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавляет краткий поиск в интернете об участниках и их компании. Данные покидают ваш Mac только при включении этой функции."
+          }
+        }
+      }
+    },
+    "Advanced" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Дополнительно"
           }
         }
       }
@@ -1957,6 +1879,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "API Anthropic Claude"
+          }
+        }
+      }
+    },
+    "Any app on this Mac can read your recordings while this is on." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока сервер включён, любое приложение на этом Mac может читать ваши записи."
           }
         }
       }
@@ -2566,6 +2498,7 @@
       }
     },
     "Can't read Claude's config — see below." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2790,11 +2723,22 @@
       }
     },
     "Claude Desktop doesn't look installed. Daisy can still write the config — it'll be picked up next time Claude launches." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Похоже, Claude Desktop не установлен. Daisy всё равно может записать конфигурацию — она подхватится при следующем запуске Claude."
+          }
+        }
+      }
+    },
+    "Claude Desktop doesn't look installed. You can set it up now; it will connect the next time Claude opens." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Похоже, Claude Desktop не установлен. Его можно настроить сейчас — подключение заработает при следующем запуске Claude."
           }
         }
       }
@@ -2920,6 +2864,7 @@
       }
     },
     "Clients must send this token with every request — without it, any app on this Mac could read your transcripts. Daisy adds the token to the Claude Desktop config automatically; copy it for other clients." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2935,6 +2880,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Закрыть это окно — запись продолжится; снова откройте из строки меню"
+          }
+        }
+      }
+    },
+    "Codex" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex"
+          }
+        }
+      }
+    },
+    "Codex not installed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не установлен"
           }
         }
       }
@@ -3031,6 +2996,16 @@
         }
       }
     },
+    "Connect Claude and other compatible apps on this Mac to your transcripts and summaries. Your recordings stay on this Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите Claude и другие совместимые приложения на этом Mac к расшифровкам и саммари. Ваши записи остаются на этом Mac."
+          }
+        }
+      }
+    },
     "Connect Notion in Settings…" : {
       "localizations" : {
         "ru" : {
@@ -3067,6 +3042,56 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Подключено как %@"
+          }
+        }
+      }
+    },
+    "Connected to Codex — start a new task to use Daisy." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex подключён — создайте новую задачу, чтобы использовать Daisy."
+          }
+        }
+      }
+    },
+    "Connected to Cursor — restart it to use Daisy." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor подключён — перезапустите его, чтобы использовать Daisy."
+          }
+        }
+      }
+    },
+    "Connected. Restart Claude Desktop if you haven’t since setting it up." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено. Перезапустите Claude Desktop, если ещё не делали этого после настройки."
+          }
+        }
+      }
+    },
+    "Connected. Restart Cursor if you haven’t since setting it up." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено. Перезапустите Cursor, если ещё не делали этого после настройки."
+          }
+        }
+      }
+    },
+    "Connected. Start a new Codex task to use Daisy’s tools." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено. Создайте новую задачу Codex, чтобы использовать инструменты Daisy."
           }
         }
       }
@@ -3447,6 +3472,26 @@
         }
       }
     },
+    "Couldn't update Codex: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить Codex: %@"
+          }
+        }
+      }
+    },
+    "Couldn't update Cursor: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить Cursor: %@"
+          }
+        }
+      }
+    },
     "create_page" : {
       "comment" : "The name of a tool to call.",
       "isCommentAutoGenerated" : true,
@@ -3465,6 +3510,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Текущая версия"
+          }
+        }
+      }
+    },
+    "Cursor" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor"
+          }
+        }
+      }
+    },
+    "Cursor's MCP config has invalid JSON, so Daisy won't touch it. Fix the file, then try again — or use the manual configuration below." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В конфигурации MCP Cursor некорректный JSON, поэтому Daisy не будет её менять. Исправьте файл и попробуйте снова — или используйте ручную настройку ниже."
           }
         }
       }
@@ -3557,6 +3622,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy может отправлять готовые записи в Notion, Linear, Slack или на любой MCP-сервер — автоматически или через меню ⋯ в Библиотеке."
+          }
+        }
+      }
+    },
+    "Daisy can’t hear you" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy вас не слышит"
+          }
+        }
+      }
+    },
+    "Daisy can’t hear your microphone — access is turned off in System Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не слышит микрофон — доступ выключен в системных настройках."
+          }
+        }
+      }
+    },
+    "Daisy can’t read Claude Desktop’s configuration. Use the manual setup below instead." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не может прочитать конфигурацию Claude Desktop. Воспользуйтесь ручной настройкой ниже."
+          }
+        }
+      }
+    },
+    "Daisy can’t read Cursor’s MCP configuration — see below." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не может прочитать конфигурацию MCP Cursor — смотрите ниже."
           }
         }
       }
@@ -3919,6 +4024,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy. Создаём саммари транскрипта."
+          }
+        }
+      }
+    },
+    "Daisy’s connection needs an update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение Daisy нужно обновить."
           }
         }
       }
@@ -4385,6 +4500,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отключить"
+          }
+        }
+      }
+    },
+    "Disconnected from Codex." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex отключён."
+          }
+        }
+      }
+    },
+    "Disconnected from Cursor." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor отключён."
           }
         }
       }
@@ -4917,6 +5052,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Фоллоу-ап составлен"
+          }
+        }
+      }
+    },
+    "For Cursor, Cline, Continue, or another app that asks for an MCP configuration. Copy and paste this whole block." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для Cursor, Cline, Continue или другого приложения, которое просит конфигурацию MCP. Скопируйте и вставьте весь блок."
           }
         }
       }
@@ -5609,7 +5754,18 @@
         }
       }
     },
+    "Install the ChatGPT app with Codex first, then return here." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сначала установите приложение ChatGPT с Codex, затем вернитесь сюда."
+          }
+        }
+      }
+    },
     "Installed and pointing at port %lld. Restart Claude Desktop if you haven't since adding it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5620,6 +5776,7 @@
       }
     },
     "Installed, but pointing at %@ instead of port %lld. Update it, then restart Claude Desktop." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5812,6 +5969,7 @@
       }
     },
     "Lets clients re-summarize a session (may use your cloud API key) and send sessions to your destinations. Off = clients can read and rename, nothing more." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5872,6 +6030,7 @@
       }
     },
     "Listening on 127.0.0.1:%lld" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -6014,6 +6173,7 @@
       }
     },
     "Loopback-only (127.0.0.1) — the server is reachable only from this Mac. Connected clients can read your sessions and rename a session or speaker. Re-summarizing and sending sessions to destinations stay off unless you enable “Allow actions from MCP clients” above. They can't delete anything or change Daisy's settings. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -6029,6 +6189,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Мало места на диске (свободно %.1f ГБ) — в этой записи записывается только транскрипт, без аудио. Освободите место, чтобы снова записывать аудио."
+          }
+        }
+      }
+    },
+    "macOS is sending Daisy an empty microphone signal — nothing is being recorded. Check Privacy & Security → Microphone, and that the input isn’t muted in Sound settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "macOS передаёт Daisy пустой сигнал микрофона — запись не идёт. Проверьте «Конфиденциальность и безопасность» → «Микрофон» и что вход не выключен в настройках звука."
           }
         }
       }
@@ -6275,12 +6445,33 @@
         }
       }
     },
+    "Mic went silent — recording paused. Check your mic (Bluetooth mics often record silence) and hit Resume." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Микрофон замолчал — запись на паузе. Проверьте микрофон (Bluetooth-микрофоны часто пишут тишину) и нажмите «Продолжить»."
+          }
+        }
+      }
+    },
     "Microphone" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Микрофон"
+          }
+        }
+      }
+    },
+    "Microphone access is off" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ к микрофону выключен"
           }
         }
       }
@@ -6513,6 +6704,16 @@
         }
       }
     },
+    "Needs a quick repair before Claude Desktop can connect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужно быстро исправить подключение, прежде чем Claude Desktop сможет работать с Daisy."
+          }
+        }
+      }
+    },
     "Needs an Anthropic API key — the brief uses Claude’s web search. Without a key the brief stays fully local." : {
       "comment" : "A description of the web search feature that adds a short web-search pass about the attendees and their company.",
       "isCommentAutoGenerated" : true,
@@ -6606,6 +6807,10 @@
           }
         }
       }
+    },
+    "No Daisy connection to remove." : {
+      "comment" : "Text displayed in a Toast when a user tries to remove a connection that's not present.",
+      "isCommentAutoGenerated" : true
     },
     "No Daisy entry to remove." : {
       "localizations" : {
@@ -6739,6 +6944,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нет ответа от модели"
+          }
+        }
+      }
+    },
+    "No sound is reaching Daisy from the microphone. Nothing is being recorded." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С микрофона в Daisy не поступает звук. Запись не идёт."
           }
         }
       }
@@ -6944,6 +7159,7 @@
       }
     },
     "Not running" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -6989,6 +7205,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пока нечего копировать"
+          }
+        }
+      }
+    },
+    "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ничего не записано — macOS передал Daisy пустой сигнал микрофона. Проверьте «Конфиденциальность и безопасность» → «Микрофон»."
           }
         }
       }
@@ -7115,6 +7341,16 @@
         }
       }
     },
+    "Off by default: connected apps can only view and rename recordings. Turn this on to let them re-summarize or send recordings to your destinations." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По умолчанию выключено: подключённые приложения могут только просматривать и переименовывать записи. Включите, чтобы разрешить им повторно создавать саммари или отправлять записи в ваши назначения."
+          }
+        }
+      }
+    },
     "Ollama" : {
       "localizations" : {
         "ru" : {
@@ -7165,6 +7401,36 @@
         }
       }
     },
+    "One click adds Daisy to Codex. Start a new task afterwards to use it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одно нажатие добавит Daisy в Codex. Затем создайте новую задачу, чтобы использовать её."
+          }
+        }
+      }
+    },
+    "One click adds Daisy to Cursor’s global MCP settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одно нажатие добавит Daisy в глобальные настройки MCP Cursor."
+          }
+        }
+      }
+    },
+    "One click connects it. Restart Claude Desktop afterwards to see Daisy’s tools." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одно нажатие подключит Claude Desktop. Затем перезапустите его, чтобы увидеть инструменты Daisy."
+          }
+        }
+      }
+    },
     "One per line. Add a separator for a correction; a bare word is a term." : {
       "localizations" : {
         "ru" : {
@@ -7191,6 +7457,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Разовая настройка: Daisy распознаёт речь прямо на устройстве, поэтому модель нужно сначала скачать. Запись начнётся, как только она будет готова."
+          }
+        }
+      }
+    },
+    "Only apps running on this Mac can connect. They can read and rename recordings, but can’t delete anything or change Daisy’s settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключаться могут только приложения на этом Mac. Они могут читать и переименовывать записи, но не удалять их и не менять настройки Daisy."
           }
         }
       }
@@ -7297,6 +7573,16 @@
         }
       }
     },
+    "Open Microphone settings" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть настройки микрофона"
+          }
+        }
+      }
+    },
     "Open Notion settings in the gear first." : {
       "localizations" : {
         "ru" : {
@@ -7333,6 +7619,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Открыть настройки…"
+          }
+        }
+      }
+    },
+    "Open Terminal, paste this command once, then restart Claude Code." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Откройте Терминал, один раз вставьте эту команду, затем перезапустите Claude Code."
           }
         }
       }
@@ -7412,11 +7708,22 @@
       }
     },
     "Other clients (Cursor, Cline, Continue) — raw config" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Другие клиенты (Cursor, Cline, Continue) — необработанная конфигурация"
+          }
+        }
+      }
+    },
+    "Other compatible apps" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другие совместимые приложения"
           }
         }
       }
@@ -8108,6 +8415,16 @@
         }
       }
     },
+    "Ready — only this Mac can connect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готово — подключаться можно только с этого Mac."
+          }
+        }
+      }
+    },
     "Rebuild your profile from your latest dictations" : {
       "comment" : "A button that rebuilds the user's voice profile from their dictations.",
       "isCommentAutoGenerated" : true,
@@ -8136,6 +8453,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Недавние записи"
+          }
+        }
+      }
+    },
+    "Recommended if you use other apps on this Mac. Daisy adds it to Claude Desktop automatically." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рекомендуется, если на этом Mac есть другие приложения. Daisy автоматически добавит токен в Claude Desktop."
           }
         }
       }
@@ -8377,6 +8704,7 @@
       }
     },
     "Reinstall" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8474,6 +8802,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Переименовать проект"
+          }
+        }
+      }
+    },
+    "Repair connection" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправить подключение"
           }
         }
       }
@@ -8737,6 +9075,7 @@
       }
     },
     "Run this once in your terminal. Claude Code has native SSE transport, so no `mcp-remote` bridge needed." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8747,6 +9086,7 @@
       }
     },
     "Running" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9142,6 +9482,16 @@
         }
       }
     },
+    "Set up again" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настроить заново"
+          }
+        }
+      }
+    },
     "Set up your Voice Profile" : {
       "localizations" : {
         "ru" : {
@@ -9312,6 +9662,7 @@
       }
     },
     "So Claude Desktop, Cursor and other MCP-compatible tools on this Mac can read your transcripts and summaries. Bound to 127.0.0.1 only — nothing leaves this Mac." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9422,6 +9773,7 @@
       }
     },
     "Starting on port %lld…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9871,12 +10223,42 @@
       "comment" : "Error message displayed when a brief request times out.",
       "isCommentAutoGenerated" : true
     },
+    "The easiest way to start. Daisy sets this up for you." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Самый простой вариант: Daisy всё настроит сама."
+          }
+        }
+      }
+    },
     "The interface language changes after Daisy restarts." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Язык интерфейса изменится после перезапуска Daisy."
+          }
+        }
+      }
+    },
+    "The lid is closed — the built-in microphone is off in clamshell mode. Open the lid or connect an external mic." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Крышка закрыта — в режиме clamshell встроенный микрофон отключён. Откройте крышку или подключите внешний микрофон."
+          }
+        }
+      }
+    },
+    "The lid is closed, so the Mac’s built-in microphone is off. Open the lid or connect an external mic." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Крышка закрыта, поэтому встроенный микрофон Mac отключён. Откройте крышку или подключите внешний микрофон."
           }
         }
       }
@@ -10081,6 +10463,16 @@
         }
       }
     },
+    "Turn this on to connect an app." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включите сервер, чтобы подключить приложение."
+          }
+        }
+      }
+    },
     "Unavailable" : {
       "localizations" : {
         "ru" : {
@@ -10159,6 +10551,7 @@
       }
     },
     "Update port" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10184,6 +10577,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Использовать как профиль"
+          }
+        }
+      }
+    },
+    "Use Daisy with OpenAI’s coding assistant. Daisy adds a local connection without exposing your recordings online." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Используйте Daisy с помощником для программирования от OpenAI. Daisy добавит локальное подключение, не открывая ваши записи в интернете."
           }
         }
       }
@@ -10453,6 +10856,7 @@
       }
     },
     "Writes the entry into Claude's config. Restart Claude Desktop afterwards to load Daisy's tools." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10568,6 +10972,166 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ваш голосовой профиль готов!"
+          }
+        }
+      }
+    },
+    "A code for other apps on this Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код для других приложений на этом Mac."
+          }
+        }
+      }
+    },
+    "Change the port only if it is occupied." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Меняйте порт только если он занят."
+          }
+        }
+      }
+    },
+    "Claude Desktop not found" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Desktop не найден"
+          }
+        }
+      }
+    },
+    "Codex not found" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не найден"
+          }
+        }
+      }
+    },
+    "Configuration needs fixing." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужно исправить конфигурацию."
+          }
+        }
+      }
+    },
+    "Connected — restart Claude Desktop." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено — перезапустите Claude Desktop."
+          }
+        }
+      }
+    },
+    "Connected — restart Cursor." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено — перезапустите Cursor."
+          }
+        }
+      }
+    },
+    "Connected — start a new Codex task." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено — создайте новую задачу Codex."
+          }
+        }
+      }
+    },
+    "Connection needs an update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение нужно обновить."
+          }
+        }
+      }
+    },
+    "Couldn't start" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось запустить"
+          }
+        }
+      }
+    },
+    "Lets apps re-summarize and send recordings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешает приложениям повторно делать саммари и отправлять записи."
+          }
+        }
+      }
+    },
+    "Not connected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не подключено"
+          }
+        }
+      }
+    },
+    "Off" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключен"
+          }
+        }
+      }
+    },
+    "Only apps on this Mac can connect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключаться могут только приложения на этом Mac."
+          }
+        }
+      }
+    },
+    "Port is already in use. Close the other copy of Daisy or change the port." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт уже занят. Закройте другую копию Daisy или смените порт."
+          }
+        }
+      }
+    },
+    "Running locally" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает локально"
           }
         }
       }
