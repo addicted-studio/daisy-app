@@ -200,6 +200,30 @@ nonisolated struct ProviderSpend: Identifiable, Sendable {
     var hasActivity: Bool { totalTokens > 0 || webSearches > 0 }
 }
 
+/// One concrete model's roll-up. Home renders the token card from this
+/// rather than from a provider total: a person can immediately see which
+/// model the count and price belong to.
+nonisolated struct ModelSpend: Identifiable, Sendable {
+    var provider: SummaryProviderKind
+    var model: String
+    var inputTokens: Int
+    var outputTokens: Int
+    var cachedInputTokens: Int
+    var cacheWriteTokens: Int
+    var webSearches: Int
+    var calls: Int
+
+    var id: String { "\(provider.rawValue)|\(model)" }
+    var totalTokens: Int {
+        inputTokens + outputTokens + cachedInputTokens + cacheWriteTokens
+    }
+    var hasActivity: Bool { totalTokens > 0 || webSearches > 0 }
+    // A model identifier should normally always be present. Keep the
+    // provider raw value as a safe fallback for legacy rows that predate
+    // model tracking, without depending on actor-isolated UI labels.
+    var displayName: String { model.isEmpty ? provider.rawValue : model }
+}
+
 // MARK: - Approximate API cost
 
 /// Price estimate for Daisy's own calls during a period. It deliberately
@@ -388,12 +412,55 @@ final class TokenLedger {
         return currentMonthSpend().filter { $0.hasActivity && $0.id != hero.id }
     }
 
+    /// Model-level roll-up for the Home card. A model is never mixed with
+    /// another model just because both happen to use the same provider.
+    func currentMonthModelSpend() -> [ModelSpend] {
+        modelSpend(matchingDayPrefix: Self.monthKey(for: Date()))
+    }
+
+    func heroModelSpend(active: SummaryProviderKind) -> ModelSpend? {
+        let all = currentMonthModelSpend().filter(\.hasActivity)
+        return all.first { $0.provider == active } ?? all.first
+    }
+
+    func secondaryModelSpend(active: SummaryProviderKind) -> [ModelSpend] {
+        guard let hero = heroModelSpend(active: active) else { return [] }
+        return currentMonthModelSpend().filter { $0.hasActivity && $0.id != hero.id }
+    }
+
+    /// Daily values for the small chart in the model card, oldest first.
+    /// Empty days intentionally stay as zero-height bars: the quiet gaps
+    /// are useful context, not missing data.
+    func dailyTokenSeries(for modelSpend: ModelSpend, days count: Int = 14) -> [Int] {
+        guard count > 0 else { return [] }
+        let calendar = Calendar.current
+        return (0..<count).map { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset - count + 1, to: Date()) else {
+                return 0
+            }
+            let key = UsageStats.dayKey(for: date)
+            return (days[key] ?? [])
+                .filter { $0.provider == modelSpend.provider.rawValue && $0.model == modelSpend.model }
+                .reduce(0) { $0 + $1.totalTokens }
+        }
+    }
+
     /// Approximate USD cost of all paid Daisy calls in the current month.
     /// Local providers are excluded. If the user entered a custom cloud
     /// model whose tariff Daisy does not know, `hasUnpricedBilledUsage` is
     /// set so the UI can avoid presenting a misleading total.
     func currentMonthCostEstimate() -> TokenCostEstimate {
         costEstimate(matchingDayPrefix: Self.monthKey(for: Date()))
+    }
+
+    /// The price estimate next to a model's own token count. Keeping the
+    /// same scope prevents a Claude card from displaying OpenAI spend.
+    func currentMonthCostEstimate(for modelSpend: ModelSpend) -> TokenCostEstimate {
+        costEstimate(
+            matchingDayPrefix: Self.monthKey(for: Date()),
+            provider: modelSpend.provider,
+            model: modelSpend.model
+        )
     }
 
     private func spend(matchingDayPrefix prefix: String) -> [ProviderSpend] {
@@ -437,11 +504,45 @@ final class TokenLedger {
             .sorted { $0.totalTokens > $1.totalTokens }
     }
 
-    private func costEstimate(matchingDayPrefix prefix: String) -> TokenCostEstimate {
+    private func modelSpend(matchingDayPrefix prefix: String) -> [ModelSpend] {
+        var totals: [String: ModelSpend] = [:]
+
+        for (dayKey, buckets) in days where dayKey.hasPrefix(prefix) {
+            for bucket in buckets {
+                guard let provider = SummaryProviderKind(rawValue: bucket.provider) else { continue }
+                let key = "\(bucket.provider)|\(bucket.model)"
+                var running = totals[key] ?? ModelSpend(
+                    provider: provider, model: bucket.model,
+                    inputTokens: 0, outputTokens: 0, cachedInputTokens: 0,
+                    cacheWriteTokens: 0, webSearches: 0, calls: 0
+                )
+                running.inputTokens += bucket.inputTokens
+                running.outputTokens += bucket.outputTokens
+                running.cachedInputTokens += bucket.cachedInputTokens
+                running.cacheWriteTokens += bucket.cacheWriteTokens
+                running.webSearches += bucket.webSearches
+                running.calls += bucket.calls
+                totals[key] = running
+            }
+        }
+
+        return totals.values.sorted {
+            if $0.totalTokens != $1.totalTokens { return $0.totalTokens > $1.totalTokens }
+            return $0.calls > $1.calls
+        }
+    }
+
+    private func costEstimate(
+        matchingDayPrefix prefix: String,
+        provider targetProvider: SummaryProviderKind? = nil,
+        model targetModel: String? = nil
+    ) -> TokenCostEstimate {
         var total = TokenCostEstimate()
         for (dayKey, buckets) in days where dayKey.hasPrefix(prefix) {
             for bucket in buckets {
                 guard let provider = SummaryProviderKind(rawValue: bucket.provider) else { continue }
+                guard targetProvider == nil || provider == targetProvider,
+                      targetModel == nil || bucket.model == targetModel else { continue }
                 let one = TokenCostEstimator.estimate(
                     provider: provider,
                     model: bucket.model,

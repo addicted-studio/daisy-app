@@ -492,47 +492,44 @@ struct HomeView: View {
             .currency(code: "USD").precision(.fractionLength(digits))
         )
         return estimate.hasUnpricedBilledUsage
-            ? String(localized: "Paid APIs: at least \(amount)")
-            : String(localized: "Paid APIs: ≈ \(amount)")
+            ? String(localized: "At least \(amount)")
+            : String(localized: "≈ \(amount)")
     }
 
     @ViewBuilder
     private var tokensCard: some View {
-        if let hero = tokens.heroSpend(active: summarizer.providerKind) {
-            let others = tokens.secondarySpend(active: summarizer.providerKind)
-            let isBilled = TokenLedger.isBilled(hero.provider)
-            let periodCost = tokens.currentMonthCostEstimate()
+        if let hero = tokens.heroModelSpend(active: summarizer.providerKind) {
+            let others = tokens.secondaryModelSpend(active: summarizer.providerKind)
+            let periodCost = tokens.currentMonthCostEstimate(for: hero)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
+                    Text(hero.displayName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
                     Text("Tokens")
+                        .daisyStatLabel()
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(compactTokens(hero.totalTokens))
+                        .font(.title.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text("tokens")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
-                    Spacer()
-                    // Month name only — the year would be noise on a
-                    // card that always shows the current month.
-                    Text(Date.now.formatted(.dateTime.month(.wide)))
-                        .daisyStatLabel()
                 }
-                Text(compactTokens(hero.totalTokens))
-                    .font(.title.weight(.semibold))
-                    .foregroundStyle(.primary)
                 if let costLabel = estimatedCostLabel(periodCost) {
                     Text(costLabel)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
-                // "spent by Daisy", never "spent": we only see our own
-                // calls, so this will always read lower than the
-                // provider's console (other apps, the Workbench, and
-                // charged-but-retried attempts are invisible here).
-                Text(isBilled
-                     ? String(localized: "Spent by Daisy · \(hero.provider.shortName)")
-                     : String(localized: "\(hero.provider.shortName) · local, free"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+
+                TokenUsageSparkline(values: tokens.dailyTokenSeries(for: hero))
+                    .frame(height: 30)
+                    .padding(.top, 4)
 
                 Rectangle()
                     .fill(Color.daisyDivider.opacity(0.5))
@@ -581,7 +578,7 @@ struct HomeView: View {
                     ForEach(others) { other in
                         HStack(spacing: 6) {
                             Text(compactTokens(other.totalTokens))
-                            Text(other.provider.shortName)
+                            Text(other.displayName)
                                 .lineLimit(1)
                             Spacer()
                         }
@@ -668,6 +665,38 @@ struct HomeView: View {
 /// Shared minimum content height for the Home list rows (see DayCard's
 /// agenda rows for the calendar side).
 private let homeRowMinHeight: CGFloat = 36
+
+/// A quiet 14-day usage graph for one model. It deliberately has no axes:
+/// the card already gives the exact total, while the bars answer the more
+/// useful question of whether usage was steady or happened in one burst.
+private struct TokenUsageSparkline: View {
+    let values: [Int]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let highest = max(values.max() ?? 0, 1)
+            let gap: CGFloat = 3
+            let width = max(2, (proxy.size.width - gap * CGFloat(max(values.count - 1, 0))) / CGFloat(max(values.count, 1)))
+
+            HStack(alignment: .bottom, spacing: gap) {
+                ForEach(values.indices, id: \.self) { index in
+                    let value = values[index]
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(value == 0 ? Color.daisyDivider.opacity(0.45) : Color.daisyAccent)
+                        .frame(
+                            width: width,
+                            height: value == 0
+                                ? 3
+                                : max(4, proxy.size.height * CGFloat(value) / CGFloat(highest))
+                        )
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Token usage over the last 14 days"))
+    }
+}
 
 /// Subtle hover highlight for the onboarding checklist rows. `active` is
 /// false for a granted (inert) row, so it never lights up. Pads a comfy
