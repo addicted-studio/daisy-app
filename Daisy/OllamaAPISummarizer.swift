@@ -174,6 +174,16 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
             throw SummaryProviderError.invalidResponse(provider: "Ollama")
         }
 
+        // Local and free, so this is informational only — but recorded
+        // for the same reason WPM is: the user gets to see the volume
+        // they're pushing through. `prompt_eval_count` undercounts on
+        // cache hits upstream (see TokenLedger).
+        TokenLedgerSink.record(
+            provider: .ollama,
+            model: model,
+            spend: .ollama(from: json)
+        )
+
         do {
             let dto = try CloudSummaryDTO.decode(from: content)
             return dto.toMeetingSummary()

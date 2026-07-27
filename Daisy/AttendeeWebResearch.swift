@@ -103,8 +103,20 @@ nonisolated enum AttendeeWebResearch {
     /// Anthropic response content blocks. Defensive — unknown shapes are
     /// simply skipped.
     private static func parse(data: Data) -> Result? {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = json["content"] as? [[String: Any]] else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        // Book the spend BEFORE the content check: this call bypasses
+        // SummaryProvider entirely, and its `web_search` server tool is
+        // billed PER SEARCH — the most expensive thing Daisy can trigger
+        // per unit. It was charged whether or not we can parse the
+        // bullets out, so an unusable response still gets recorded.
+        // Note this always bills the ANTHROPIC key regardless of which
+        // provider is selected for summaries.
+        TokenLedgerSink.recordAnthropic(model: model, json: json)
+
+        guard let content = json["content"] as? [[String: Any]] else {
             return nil
         }
 

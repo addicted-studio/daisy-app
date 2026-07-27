@@ -16,6 +16,12 @@ struct HomeView: View {
     @Bindable var session: RecordingSession
     @Bindable var store = SessionStore.shared
     @Bindable var usage = UsageStats.shared
+    /// Token spend per connected API — see TokenLedger. Observable so the
+    /// card updates the moment a summary comes back.
+    @Bindable var tokens = TokenLedger.shared
+    /// Which provider is selected right now; the tokens card leads with
+    /// its number when it has spend this month.
+    @Bindable var summarizer = Summarizer.shared
     @Bindable var nav = AppNavigation.shared
     @Bindable var calendar = CalendarService.shared
     /// Observe Google OAuth state so the upcoming-events section
@@ -342,6 +348,10 @@ struct HomeView: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             }
+            // Full-width under the number pair rather than squeezed in
+            // beside them: the provider name + per-model line needs the
+            // horizontal room, and a third ⅓ card would crush all three.
+            if tokens.hasSpendThisMonth { tokensCard }
             recentSessionsSection
         }
     }
@@ -446,6 +456,122 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
         .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - Tokens spent per connected API
+    //
+    // Window is the current CALENDAR MONTH, not all-time: providers bill
+    // monthly, so that's the only number comparable to their console, and
+    // a forever-growing cumulative total stops being actionable after the
+    // first week. The ledger keeps 90 days (TokenLedger.retentionDays) so
+    // a previous-month comparison can be added without re-collecting.
+    //
+    // MULTI-PROVIDER: the hero number is ONE provider — the selected one
+    // if it spent anything this month, else the biggest spender. Other
+    // providers with spend get a small row each. Tokens are deliberately
+    // never summed across providers: a Claude token and a GPT token cost
+    // different money, so a combined figure would be adding two
+    // currencies. The rows exist because two providers in one month is a
+    // real case — switching mid-month, and the pre-meeting brief's web
+    // research, which always bills the Anthropic key no matter which
+    // provider is selected for summaries.
+
+    /// Compact token count — "1.2M", "840K", localized.
+    private func compactTokens(_ n: Int) -> String {
+        n.formatted(.number.notation(.compactName))
+    }
+
+    @ViewBuilder
+    private var tokensCard: some View {
+        if let hero = tokens.heroSpend(active: summarizer.providerKind) {
+            let others = tokens.secondarySpend(active: summarizer.providerKind)
+            let isBilled = TokenLedger.isBilled(hero.provider)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Tokens")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                    Spacer()
+                    // Month name only — the year would be noise on a
+                    // card that always shows the current month.
+                    Text(Date.now.formatted(.dateTime.month(.wide)))
+                        .daisyStatLabel()
+                }
+                Text(compactTokens(hero.totalTokens))
+                    .font(.title.weight(.semibold))
+                    .foregroundStyle(.primary)
+                // "spent by Daisy", never "spent": we only see our own
+                // calls, so this will always read lower than the
+                // provider's console (other apps, the Workbench, and
+                // charged-but-retried attempts are invisible here).
+                Text(isBilled
+                     ? String(localized: "Spent by Daisy · \(hero.provider.shortName)")
+                     : String(localized: "\(hero.provider.shortName) · local, free"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Rectangle()
+                    .fill(Color.daisyDivider.opacity(0.5))
+                    .frame(height: 1)
+                    .padding(.horizontal, -16)
+                    .padding(.vertical, 4)
+
+                HStack(spacing: 6) {
+                    Text(compactTokens(hero.inputTokens))
+                    Text("Input")
+                    Spacer()
+                }
+                .daisyStatLabel()
+                HStack(spacing: 6) {
+                    Text(compactTokens(hero.outputTokens))
+                    Text("Output")
+                    Spacer()
+                }
+                .daisyStatLabel()
+                if hero.cachedInputTokens > 0 {
+                    HStack(spacing: 6) {
+                        Text(compactTokens(hero.cachedInputTokens))
+                        Text("From cache")
+                        Spacer()
+                    }
+                    .daisyStatLabel()
+                }
+                // Billed per search rather than per token, so it never
+                // shows up in the totals above — surfaced separately or
+                // it stays invisible.
+                if hero.webSearches > 0 {
+                    HStack(spacing: 6) {
+                        Text(hero.webSearches.formatted(.number))
+                        Text("Web searches")
+                        Spacer()
+                    }
+                    .daisyStatLabel()
+                }
+
+                if !others.isEmpty {
+                    Rectangle()
+                        .fill(Color.daisyDivider.opacity(0.5))
+                        .frame(height: 1)
+                        .padding(.horizontal, -16)
+                        .padding(.vertical, 4)
+                    ForEach(others) { other in
+                        HStack(spacing: 6) {
+                            Text(compactTokens(other.totalTokens))
+                            Text(other.provider.shortName)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .daisyStatLabel()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+        }
     }
 
     private var heatmapCard: some View {

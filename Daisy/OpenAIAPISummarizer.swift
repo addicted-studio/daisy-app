@@ -103,6 +103,14 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
             throw SummaryProviderError.invalidResponse(provider: "OpenAI")
         }
 
+        // Token cost from the response's own `usage` block — see
+        // TokenLedger. Fire-and-forget; never affects the summary.
+        TokenLedgerSink.record(
+            provider: .openai,
+            model: model,
+            spend: .openAICompatible(from: json)
+        )
+
         do {
             let dto = try CloudSummaryDTO.decode(from: content)
             return dto.toMeetingSummary()
