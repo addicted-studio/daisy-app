@@ -62,6 +62,14 @@ extension RecordingSession {
         guard settings.captureSystemAudio, currentMode == .meeting else {
             return .off
         }
+        // No archive was OPENED for this session — low disk, or the
+        // "Don't record audio" retention mode. Zero frames and zero write
+        // errors is then the expected outcome, not a failure, and the
+        // checks below would read it as `.truncated` (buffers arrived,
+        // nothing on disk) and fire a "your audio is incomplete" toast at
+        // someone who never asked for audio. `.off` is the honest answer:
+        // no file was expected.
+        guard !audioArchivingDisabled else { return .off }
         let bytes = Self.archiveBytesOnDisk(systemArchiveURL)
         let receivedAnything = systemAudio.hasReceivedAudio
         let receivedAudible = systemAudio.receivedAudibleAudio
@@ -116,6 +124,12 @@ extension RecordingSession {
         // for the no-permission early-return path; we surface it as
         // "empty" instead here, since "no permission to record mic"
         // is a real failure the user should know about.
+        // Same deliberate-no-archive case as the system stream above.
+        // Without this the mic reads `.empty`, which combined with the
+        // system stream's verdict makes `anyChannelCaptured` false and
+        // hands the capture-failure gate a false positive on every quiet
+        // meeting — including for everyone using the privacy mode.
+        guard !audioArchivingDisabled else { return .off }
         let bytes = Self.archiveBytesOnDisk(micArchiveURL)
         let framesWritten = recorder.archivedFrameCount
         let (errCount, _) = recorder.archiveWriteErrorsSummary

@@ -11306,6 +11306,46 @@
         }
       }
     },
+    "Not enough disk space, so this meeting was recorded without audio — and the live transcript came out empty, so no summary was made. Free up space and the audio comes back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не хватило места на диске, поэтому встреча записалась без аудио — а живой транскрипт вышел пустым, так что саммари не сделано. Освободите место, и аудио вернётся."
+          }
+        }
+      }
+    },
+    "Audio recording is off in Settings → Storage, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись аудио выключена в Настройках → Хранилище, а живой транскрипт вышел пустым, так что саммари не сделано. В этом режиме нет аудиофайла, к которому можно вернуться."
+          }
+        }
+      }
+    },
+    "This recording captured almost no audio, so the transcript is unreliable and no summary was made. Check that the right microphone is selected and that other-side audio is being captured." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта запись почти не поймала звук, поэтому транскрипт ненадёжен и саммари не сделано. Проверьте, выбран ли нужный микрофон и захватывается ли звук собеседника."
+          }
+        }
+      }
+    },
+    "Only dictation counts here — meeting recordings don't, because a meeting carries several voices and this profile is about how you write." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Считаются только диктовки — записи встреч нет: во встрече несколько голосов, а профиль про то, как пишете вы."
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {
