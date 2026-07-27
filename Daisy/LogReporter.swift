@@ -55,14 +55,11 @@ enum LogReporter {
                 return
             }
 
+            // Subject stays English on purpose: it's the triage line in
+            // the maintainer's inbox, and version + date must be
+            // greppable regardless of the reporter's language.
             let subject = "Daisy log report — \(appVersionString) — \(dateStamp)"
-            let body = """
-            Daisy log report (last 24 h) attached.
-
-            What happened / what I expected:
-            \u{2014}
-
-            """
+            let body = reportBody()
             let service = NSSharingService(named: .composeEmail)
             service?.recipients = [recipient]
             service?.subject = subject
@@ -77,6 +74,54 @@ enum LogReporter {
                 ToastCenter.shared.show("Mail isn't set up — report saved; send the file to \(recipient).", style: .warning, duration: .seconds(8))
             }
         }
+    }
+
+    // MARK: - The questions
+
+    /// Pre-filled body of the report mail. Localized, so a reporter on a
+    /// Russian interface gets Russian questions — a form in a language
+    /// you don't read gets answered with one vague line, which is how we
+    /// ended up guessing at "звонок не записывался" with four sessions in
+    /// the log and no way to tell which one.
+    ///
+    /// Five questions, and the reason each one earns its line:
+    ///  1. what/expected — the report itself.
+    ///  2. WHEN + which app — the log holds a whole day; without a time
+    ///     we can't tell which SESSION SUMMARY is the failing one, and
+    ///     system-audio capture behaves differently per meeting app.
+    ///  3. headphones — the top confounder by far. Bluetooth output
+    ///     alone kills system audio and drags the mic to silence; the
+    ///     header's route line is captured when the mail is composed,
+    ///     which can be hours after the call with other gear plugged in.
+    ///  4. what was MISSING — audio, transcript and summary fail through
+    ///     different code paths, and "didn't record" reads the same for
+    ///     all three.
+    ///  5. speaking or listening — decides whether to suspect the mic
+    ///     path or the system-audio path.
+    ///
+    /// The questions come FIRST and the attachment note last: reporters
+    /// type at the very top of the mail, so the top of the body has to be
+    /// question 1 rather than a preamble (the previous template put
+    /// boilerplate there and got answered above it).
+    private static func reportBody() -> String {
+        let questions = [
+            String(localized: "1. What happened, and what you expected instead:"),
+            String(localized: "2. When was the call, and in which app (Zoom, Meet, Teams…):"),
+            String(localized: "3. Headphones / mic / speakers at the time — model, and wired or Bluetooth:"),
+            String(localized: "4. What was missing: the audio recording, the transcript, the summary, or all of it:"),
+            String(localized: "5. Were you speaking, or mostly listening:"),
+        ]
+        // Two blank lines under each question so there's visible room to
+        // type below it rather than beside it.
+        let form = questions.joined(separator: "\n\n\n")
+        let footer = [
+            // Explicitly optional: Daisy's promise is that nothing leaves
+            // the Mac unless the user sends it, so the transcript is an
+            // offer, never an expectation.
+            String(localized: "If you can share it, attach the session folder or just the transcript — that's the fastest way to see what Daisy actually heard."),
+            String(localized: "The attached log covers the last 24 hours. It holds diagnostics only — no transcript text."),
+        ].joined(separator: "\n")
+        return "\(form)\n\n\u{2014}\n\(footer)\n"
     }
 
     // MARK: - Pieces
@@ -133,6 +178,8 @@ enum LogReporter {
         macOS:      \(ProcessInfo.processInfo.operatingSystemVersionString)
         Permissions: mic=\(label(permissions.microphone)) screenRec=\(label(permissions.screenRecording)) accessibility=\(label(permissions.accessibility)) calendar=\(label(permissions.calendar)) notifications=\(label(permissions.notifications))
         Audio:      captureSystemAudio=\(settings.captureSystemAudio) liveTier=\(settings.liveTranscriptionTier) dictationEngine=\(settings.dictationEngine.rawValue) nemotronLivePreview=\(settings.dictationUseNemotronLive)
+        Disk:       \(diskLine())
+        Locale:     ui=\(Bundle.main.preferredLocalizations.first ?? "?") summaryLanguage=\(settings.summaryLanguage.isEmpty ? "auto" : settings.summaryLanguage)
         Route:      \(AudioInputDevices.routeDiagnostics(selectedMicUID: settings.selectedMicDeviceUID))
         Mic device: \(AudioInputDevices.describe(AudioInputDevices.systemDefaultInputID()))
         Bundle:     \(Bundle.main.bundleURL.path)
@@ -140,6 +187,33 @@ enum LogReporter {
         Updates:    \(updaterLine())
         ─────────────────────────────────────────────────
         """
+    }
+
+    /// Free space, plus an explicit verdict when it's under the floor
+    /// that silently turns meetings transcript-only.
+    ///
+    /// Worth its own line because a full disk doesn't look like a disk
+    /// problem in the log: archiving is skipped by design, so BOTH
+    /// archives report zero frames and zero write errors, the post-stop
+    /// audit calls that `.empty` / `.truncated`, and the report reads
+    /// exactly like a dead microphone. 2026-07-27: cost a full
+    /// investigation on a report where the real cause was 0.4 GB free —
+    /// the only hint in the whole log was a Whisper download refusing to
+    /// start. Same volume WhisperEngine measures (`~`), so both agree.
+    private static func diskLine() -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let free = (try? home.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        ))?.volumeAvailableCapacityForImportantUsage else {
+            return "unknown"
+        }
+        let gb = 1_073_741_824.0
+        let line = String(format: "%.1f GB free", Double(free) / gb)
+        guard free < RecordingSession.lowDiskStartThresholdBytes else { return line }
+        return line + String(
+            format: " — BELOW the %.1f GB floor: meetings record TRANSCRIPT-ONLY, no audio archive",
+            Double(RecordingSession.lowDiskStartThresholdBytes) / gb
+        )
     }
 
     /// Sparkle updater state — the single most-asked "why didn't it

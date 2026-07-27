@@ -511,7 +511,11 @@ final class RecordingSession {
     @ObservationIgnored
     private var diskMonitorTimer: Timer?
     /// Below this much free space at start → record transcript-only.
-    private static let lowDiskStartThresholdBytes: Int64 = 3 * 1_073_741_824      // 3 GB
+    /// Not private: LogReporter prints it next to the measured free space
+    /// so a support report says "0.4 GB free, BELOW the 3 GB floor"
+    /// instead of leaving a reader to infer a full disk from two archives
+    /// that look dead.
+    static let lowDiskStartThresholdBytes: Int64 = 3 * 1_073_741_824              // 3 GB
     /// Below this much free space mid-recording → auto-switch to transcript-only.
     private static let lowDiskCriticalThresholdBytes: Int64 = 1_536 * 1_048_576   // 1.5 GB
     /// Disk-space poll cadence while recording.

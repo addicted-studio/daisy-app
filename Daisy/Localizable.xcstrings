@@ -11206,6 +11206,76 @@
         }
       }
     },
+    "1. What happened, and what you expected instead:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1. Что произошло и что вы ожидали:"
+          }
+        }
+      }
+    },
+    "2. When was the call, and in which app (Zoom, Meet, Teams…):" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2. Когда был звонок и в каком приложении (Zoom, Meet, Teams…):"
+          }
+        }
+      }
+    },
+    "3. Headphones / mic / speakers at the time — model, and wired or Bluetooth:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3. Наушники / микрофон / колонки в тот момент — модель, проводные или Bluetooth:"
+          }
+        }
+      }
+    },
+    "4. What was missing: the audio recording, the transcript, the summary, or all of it:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "4. Чего не хватило: аудиозаписи, транскрипта, саммари или всего сразу:"
+          }
+        }
+      }
+    },
+    "5. Were you speaking, or mostly listening:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5. Вы говорили сами или в основном слушали:"
+          }
+        }
+      }
+    },
+    "If you can share it, attach the session folder or just the transcript — that's the fastest way to see what Daisy actually heard." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если можете — приложите папку сессии или просто транскрипт: так быстрее всего видно, что Daisy реально услышала."
+          }
+        }
+      }
+    },
+    "The attached log covers the last 24 hours. It holds diagnostics only — no transcript text." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложенный лог — за последние 24 часа. В нём только диагностика, без текста транскриптов."
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {
