@@ -61,9 +61,12 @@ enum DiskSpace {
             defer { ticket.release() }
             if let free = freeBytes(at: ticket.url) { return free }
         }
-        // Scope acquisition failed (bookmark stale, volume unmounted) —
-        // the recorder falls back to the container in that case too, so
-        // measure what it would actually use.
+        // Reached when the user folder RESOLVED but its volume wouldn't
+        // answer — an unmounted or misbehaving external disk. Measuring
+        // the container is the useful answer there, since that's where a
+        // recording would land. (`acquireBase()` handles the other
+        // failure, a scope it can't acquire, by returning the container
+        // itself.)
         return freeBytes(at: SessionsFolder.defaultBase())
     }
 }
