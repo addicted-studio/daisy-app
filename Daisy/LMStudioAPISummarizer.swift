@@ -139,20 +139,23 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
 
         // Response shape (OpenAI-compatible):
         // { "choices": [{ "message": { "content": "<JSON>" }, ... }], ... }
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let choices = json["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw SummaryProviderError.invalidResponse(provider: "LM Studio")
         }
 
-        // Local and free — informational, same as Ollama. LM Studio
-        // mirrors OpenAI's `usage` block.
+        // Keep the volume counter honest even when the local server's
+        // content shape is malformed.
         TokenLedgerSink.record(
             provider: .lmStudio,
             model: model,
             spend: .openAICompatible(from: json)
         )
+
+        guard let choices = json["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw SummaryProviderError.invalidResponse(provider: "LM Studio")
+        }
 
         do {
             let dto = try CloudSummaryDTO.decode(from: content)

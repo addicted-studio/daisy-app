@@ -481,11 +481,27 @@ struct HomeView: View {
         n.formatted(.number.notation(.compactName))
     }
 
+    /// API pricing changes and Daisy only sees calls it made itself, so
+    /// this is consciously an estimate — never an invoice.
+    private func estimatedCostLabel(_ estimate: TokenCostEstimate) -> String? {
+        guard estimate.hasPricedUsage else {
+            return estimate.hasUnpricedBilledUsage ? String(localized: "Cost unavailable") : nil
+        }
+        let digits = estimate.usd > 0 && estimate.usd < 0.01 ? 4 : 2
+        let amount = estimate.usd.formatted(
+            .currency(code: "USD").precision(.fractionLength(digits))
+        )
+        return estimate.hasUnpricedBilledUsage
+            ? String(localized: "Paid APIs: at least \(amount)")
+            : String(localized: "Paid APIs: ≈ \(amount)")
+    }
+
     @ViewBuilder
     private var tokensCard: some View {
         if let hero = tokens.heroSpend(active: summarizer.providerKind) {
             let others = tokens.secondarySpend(active: summarizer.providerKind)
             let isBilled = TokenLedger.isBilled(hero.provider)
+            let periodCost = tokens.currentMonthCostEstimate()
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Tokens")
@@ -501,6 +517,11 @@ struct HomeView: View {
                 Text(compactTokens(hero.totalTokens))
                     .font(.title.weight(.semibold))
                     .foregroundStyle(.primary)
+                if let costLabel = estimatedCostLabel(periodCost) {
+                    Text(costLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
                 // "spent by Daisy", never "spent": we only see our own
                 // calls, so this will always read lower than the
                 // provider's console (other apps, the Workbench, and
