@@ -510,14 +510,9 @@ final class RecordingSession {
     private var diskTranscriptOnly = false
     @ObservationIgnored
     private var diskMonitorTimer: Timer?
-    /// Below this much free space at start → record transcript-only.
-    /// Not private: LogReporter prints it next to the measured free space
-    /// so a support report says "0.4 GB free, BELOW the 3 GB floor"
-    /// instead of leaving a reader to infer a full disk from two archives
-    /// that look dead.
-    static let lowDiskStartThresholdBytes: Int64 = 3 * 1_073_741_824              // 3 GB
-    /// Below this much free space mid-recording → auto-switch to transcript-only.
-    private static let lowDiskCriticalThresholdBytes: Int64 = 1_536 * 1_048_576   // 1.5 GB
+    // Both thresholds live in `DiskSpace` — HomeView's low-disk row and
+    // LogReporter's `Disk:` line have to quote the SAME floor this
+    // recorder acts on, or the warning and the behaviour disagree.
     /// Disk-space poll cadence while recording.
     private static let diskMonitorIntervalSec: TimeInterval = 45
 
@@ -1233,7 +1228,7 @@ final class RecordingSession {
         // the same skip-archive path as the "Don't record audio" retention
         // mode (Whisper still gets full audio via the live stream).
         let freeAtStart = Self.freeDiskBytes(at: dir)
-        let lowDiskAtStart = !skipForRetention && (freeAtStart ?? .max) < Self.lowDiskStartThresholdBytes
+        let lowDiskAtStart = !skipForRetention && (freeAtStart ?? .max) < DiskSpace.recordingFloorBytes
         diskTranscriptOnly = lowDiskAtStart
         let skipAudioArchive = skipForRetention || lowDiskAtStart
         let micArchive = skipAudioArchive ? nil : dir?.appendingPathComponent("microphone.caf")
@@ -1398,7 +1393,7 @@ final class RecordingSession {
         guard !diskTranscriptOnly,
               settings.audioRetentionDays != AppSettings.audioRetentionDoNotRecord,
               let free = Self.freeDiskBytes(at: sessionDirectory),
-              free < Self.lowDiskCriticalThresholdBytes
+              free < DiskSpace.criticalFloorBytes
         else { return }
         diskTranscriptOnly = true
         recorder.stopArchivingKeepTranscribing()
@@ -2214,9 +2209,7 @@ final class RecordingSession {
     /// disk macOS could free on demand. nil if unqueryable; callers treat nil
     /// as "plenty".
     private static func freeDiskBytes(at url: URL?) -> Int64? {
-        guard let url else { return nil }
-        return (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
-            .volumeAvailableCapacityForImportantUsage
+        DiskSpace.freeBytes(at: url)
     }
 
     private var isFailed: Bool {

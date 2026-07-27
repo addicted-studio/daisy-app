@@ -11276,6 +11276,36 @@
         }
       }
     },
+    "Needs your attention" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требует внимания"
+          }
+        }
+      }
+    },
+    "Low disk space" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мало места на диске"
+          }
+        }
+      }
+    },
+    "Only %@ left — meetings are recording without audio, transcript only. Free up space to get audio back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Осталось всего %@ — встречи записываются без аудио, только транскрипт. Освободите место, чтобы аудио вернулось."
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {

@@ -44,6 +44,11 @@ struct HomeView: View {
     /// are granted. Hides the block for good on Home.
     @AppStorage("daisy.onboardingDismissed") private var onboardingDismissed = false
 
+    /// Free space on the volume recordings land on, re-read on appear and
+    /// on every foreground activation. nil until the first read — treated
+    /// as "plenty", so a failed stat never invents a warning.
+    @State private var freeDiskBytes: Int64?
+
 
     var body: some View {
         ScrollView {
@@ -80,6 +85,17 @@ struct HomeView: View {
             usage.backfillIfNeeded(from: store.sessions)
             // Keep the daily morning-brief notification armed (idempotent).
             MorningBriefStore.rescheduleNotification(settings: settings)
+            freeDiskBytes = DiskSpace.recordingsVolumeFreeBytes()
+        }
+        // Re-read on activation: the user very likely left Daisy to go
+        // empty the Trash, and a warning that survives the cleanup reads
+        // as broken. Cheap — one volume stat, no I/O.
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.didBecomeActiveNotification
+            )
+        ) { _ in
+            freeDiskBytes = DiskSpace.recordingsVolumeFreeBytes()
         }
         .tint(Color.daisyHomeAccent)
     }
@@ -110,15 +126,42 @@ struct HomeView: View {
     // only while still undecided (notDetermined) — once the user has
     // acted on them, we stop nudging.
 
-    /// Show the checklist while any required permission is missing OR an
-    /// optional one hasn't been decided yet. Hidden entirely when setup
-    /// is complete so Home is clean for the everyday case.
-    private var shouldShowOnboarding: Bool {
+    /// Setup rows: any required permission missing, or an optional one
+    /// still undecided. Hidden once setup is complete (or dismissed) so
+    /// Home is clean for the everyday case.
+    private var showsSetupRows: Bool {
         guard !onboardingDismissed else { return false }
         return permissions.microphone != .granted
             || permissions.accessibility != .granted
             || permissions.screenRecording == .notDetermined
             || permissions.calendar == .notDetermined
+    }
+
+    /// Free bytes when they're under the floor where Daisy stops
+    /// archiving audio — nil means nothing to warn about.
+    ///
+    /// Deliberately NOT gated on `onboardingDismissed`: this is a live
+    /// condition, not a setup step, and it can appear months after the
+    /// checklist was dismissed. The 2026-07-27 field report was exactly
+    /// that user — every permission granted, checklist long gone, four
+    /// meetings recorded with no audio at 0.4 GB free and nothing on
+    /// Home saying so.
+    ///
+    /// Also skipped when the user chose "Don't record audio": there's no
+    /// audio to lose, so warning about losing it is noise. Mirrors
+    /// `RecordingSession.start()`, which likewise doesn't apply the
+    /// low-disk branch in that mode.
+    private var lowDiskBytes: Int64? {
+        guard settings.audioRetentionDays != AppSettings.audioRetentionDoNotRecord,
+              let freeDiskBytes,
+              freeDiskBytes < DiskSpace.recordingFloorBytes
+        else { return nil }
+        return freeDiskBytes
+    }
+
+    /// The card shows for either reason.
+    private var shouldShowOnboarding: Bool {
+        lowDiskBytes != nil || showsSetupRows
     }
 
     /// Both REQUIRED permissions granted — the point at which we let the
@@ -131,14 +174,21 @@ struct HomeView: View {
     private var onboardingChecklist: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Text("Finish setting up Daisy")
+                // "Finish setting up" would be a lie on a card that's
+                // showing only a disk warning to a fully-configured user.
+                Text(showsSetupRows
+                     ? String(localized: "Finish setting up Daisy")
+                     : String(localized: "Needs your attention"))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                 Spacer()
                 // Low-emphasis escape hatch — only once the essentials are
                 // in place, so the user can't skip past a broken setup.
-                if requiredPermissionsMet {
+                // Never offered for the disk row: it clears itself the
+                // moment space is freed, and hiding it would hide the
+                // reason meetings are recording without audio.
+                if showsSetupRows, requiredPermissionsMet {
                     Button(String(localized: "Don't show again")) {
                         onboardingDismissed = true
                     }
@@ -148,38 +198,79 @@ struct HomeView: View {
                 }
             }
 
-            onboardingRow(
-                title: String(localized: "Microphone"),
-                caption: String(localized: "Captures your voice"),
-                status: permissions.microphone,
-                action: { Task { await permissions.requestMicrophone() } },
-                openSettings: permissions.openMicrophoneSettings
-            )
-            onboardingRow(
-                title: String(localized: "Accessibility"),
-                caption: String(localized: "Lets dictation paste into any app"),
-                status: permissions.accessibility,
-                action: { permissions.requestAccessibility() },
-                openSettings: permissions.openAccessibilitySettings
-            )
-            onboardingRow(
-                title: String(localized: "Screen Recording"),
-                caption: String(localized: "Captures the other side of meetings"),
-                status: permissions.screenRecording,
-                action: { permissions.requestScreenRecording() },
-                openSettings: permissions.openScreenRecordingSettings
-            )
-            onboardingRow(
-                title: String(localized: "Calendar"),
-                caption: String(localized: "Auto-starts recording at meeting times"),
-                status: permissions.calendar,
-                action: { Task { await permissions.requestCalendar() } },
-                openSettings: permissions.openCalendarSettings
-            )
+            // First in the card: it's the only row here describing
+            // something being lost right now.
+            if let lowDiskBytes { lowDiskRow(freeBytes: lowDiskBytes) }
+
+            if showsSetupRows {
+                onboardingRow(
+                    title: String(localized: "Microphone"),
+                    caption: String(localized: "Captures your voice"),
+                    status: permissions.microphone,
+                    action: { Task { await permissions.requestMicrophone() } },
+                    openSettings: permissions.openMicrophoneSettings
+                )
+                onboardingRow(
+                    title: String(localized: "Accessibility"),
+                    caption: String(localized: "Lets dictation paste into any app"),
+                    status: permissions.accessibility,
+                    action: { permissions.requestAccessibility() },
+                    openSettings: permissions.openAccessibilitySettings
+                )
+                onboardingRow(
+                    title: String(localized: "Screen Recording"),
+                    caption: String(localized: "Captures the other side of meetings"),
+                    status: permissions.screenRecording,
+                    action: { permissions.requestScreenRecording() },
+                    openSettings: permissions.openScreenRecordingSettings
+                )
+                onboardingRow(
+                    title: String(localized: "Calendar"),
+                    caption: String(localized: "Auto-starts recording at meeting times"),
+                    status: permissions.calendar,
+                    action: { Task { await permissions.requestCalendar() } },
+                    openSettings: permissions.openCalendarSettings
+                )
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    /// Low-disk line. Same visual language as the permission rows, but a
+    /// warning glyph instead of a checkbox — nothing here gets ticked
+    /// off, it clears when the disk does.
+    ///
+    /// Names the consequence, not just the number: "1.9 GB free" reads as
+    /// fine to anyone who doesn't know Daisy needs 3 GB to keep audio.
+    /// Tapping lands on Settings → General, where the storage location,
+    /// the audio-cache purge and bulk delete of old recordings all live —
+    /// Daisy's own recordings are usually the biggest thing it can free
+    /// (~0.7 GB per recorded hour).
+    @ViewBuilder
+    private func lowDiskRow(freeBytes: Int64) -> some View {
+        Button {
+            AppNavigation.shared.openInSettings(.general)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color.daisyWarning)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Low disk space")
+                        .font(.callout.weight(.medium))
+                    Text(String(localized: "Only \(freeBytes.formatted(.byteCount(style: .file))) left — meetings are recording without audio, transcript only. Free up space to get audio back."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .modifier(OnboardingRowHover(active: true))
     }
 
     /// One checklist line: a status glyph (filled check when granted) plus
