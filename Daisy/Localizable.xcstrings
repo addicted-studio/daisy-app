@@ -11136,6 +11136,76 @@
         }
       }
     },
+    "%@ · local, free" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · локально, бесплатно"
+          }
+        }
+      }
+    },
+    "From cache" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Из кэша"
+          }
+        }
+      }
+    },
+    "Input" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ввод"
+          }
+        }
+      }
+    },
+    "Output" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вывод"
+          }
+        }
+      }
+    },
+    "Spent by Daisy · %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Потрачено Daisy · %@"
+          }
+        }
+      }
+    },
+    "Tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены"
+          }
+        }
+      }
+    },
+    "Web searches" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Веб-поисков"
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {

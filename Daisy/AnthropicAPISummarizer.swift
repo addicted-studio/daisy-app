@@ -110,6 +110,13 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
             throw SummaryProviderError.invalidResponse(provider: "Anthropic")
         }
 
+        // Book the tokens this call actually cost, straight from the
+        // provider's own `usage` block. Fire-and-forget — a ledger write
+        // must never affect the summary. Recorded here (after the shape
+        // check) rather than earlier so a malformed response doesn't
+        // book a call that produced nothing.
+        TokenLedgerSink.recordAnthropic(model: model, json: json)
+
         do {
             let dto = try CloudSummaryDTO.decode(from: firstText)
             return dto.toMeetingSummary()

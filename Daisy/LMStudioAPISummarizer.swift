@@ -146,6 +146,14 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
             throw SummaryProviderError.invalidResponse(provider: "LM Studio")
         }
 
+        // Local and free — informational, same as Ollama. LM Studio
+        // mirrors OpenAI's `usage` block.
+        TokenLedgerSink.record(
+            provider: .lmStudio,
+            model: model,
+            spend: .openAICompatible(from: json)
+        )
+
         do {
             let dto = try CloudSummaryDTO.decode(from: content)
             return dto.toMeetingSummary()
