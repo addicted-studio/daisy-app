@@ -114,16 +114,13 @@ extension RecordingSession {
     }
 
     /// Post-stop audit of the microphone archive. Symmetric to
-    /// `systemAudioArchiveStatus` — mic almost always exists in
-    /// meeting/voiceNote/dictation modes; `.off` is mostly a future
-    /// hook for hypothetical mic-disabled modes.
+    /// `systemAudioArchiveStatus`.
+    ///
+    /// `.off` means one thing here: no archive was opened on purpose. The
+    /// mic itself is never switchable off — recording it is the entire
+    /// point — so a missing-permission capture still reports `.empty`,
+    /// which is a real failure the user should hear about.
     var micAudioArchiveStatus: ArchiveStatus {
-        // Mic is always recorded in all three modes (meeting, voice
-        // note, dictation). There's no setting to disable it — the
-        // recorder is the entire point. So the .off case is reserved
-        // for the no-permission early-return path; we surface it as
-        // "empty" instead here, since "no permission to record mic"
-        // is a real failure the user should know about.
         // Same deliberate-no-archive case as the system stream above.
         // Without this the mic reads `.empty`, which combined with the
         // system stream's verdict makes `anyChannelCaptured` false and
