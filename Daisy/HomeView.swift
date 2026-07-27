@@ -260,7 +260,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Low disk space")
                         .font(.callout.weight(.medium))
-                    Text(String(localized: "Only \(freeBytes.formatted(.byteCount(style: .file))) left — meetings are recording without audio, transcript only. Free up space to get audio back."))
+                    Text(String(localized: "Only \(freeBytes.formatted(.byteCount(style: .file))) left — recordings are being saved without audio, transcript only. Free up space to get audio back."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

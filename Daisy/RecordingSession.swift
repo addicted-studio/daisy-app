@@ -1421,7 +1421,7 @@ final class RecordingSession {
             return String(localized: "Not enough disk space, so this meeting was recorded without audio — and the live transcript came out empty, so no summary was made. Free up space and the audio comes back.")
         }
         if settings.audioRetentionDays == AppSettings.audioRetentionDoNotRecord {
-            return String(localized: "Audio recording is off in Settings → Storage, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode.")
+            return String(localized: "Audio recording is off in Settings → Privacy, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode.")
         }
         if AudioInputDevices.isBluetooth(AudioInputDevices.systemDefaultOutputID())
             || AudioInputDevices.isBluetooth(AudioInputDevices.systemDefaultInputID()) {

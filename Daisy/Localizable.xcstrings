@@ -11296,32 +11296,12 @@
         }
       }
     },
-    "Only %@ left — meetings are recording without audio, transcript only. Free up space to get audio back." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Осталось всего %@ — встречи записываются без аудио, только транскрипт. Освободите место, чтобы аудио вернулось."
-          }
-        }
-      }
-    },
     "Not enough disk space, so this meeting was recorded without audio — and the live transcript came out empty, so no summary was made. Free up space and the audio comes back." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не хватило места на диске, поэтому встреча записалась без аудио — а живой транскрипт вышел пустым, так что саммари не сделано. Освободите место, и аудио вернётся."
-          }
-        }
-      }
-    },
-    "Audio recording is off in Settings → Storage, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запись аудио выключена в Настройках → Хранилище, а живой транскрипт вышел пустым, так что саммари не сделано. В этом режиме нет аудиофайла, к которому можно вернуться."
           }
         }
       }
@@ -11342,6 +11322,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Считаются только диктовки — записи встреч нет: во встрече несколько голосов, а профиль про то, как пишете вы."
+          }
+        }
+      }
+    },
+    "Audio recording is off in Settings → Privacy, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись аудио выключена в Настройках → Приватность, а живой транскрипт вышел пустым, так что саммари не сделано. В этом режиме нет аудиофайла, к которому можно вернуться."
+          }
+        }
+      }
+    },
+    "Only %@ left — recordings are being saved without audio, transcript only. Free up space to get audio back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Осталось всего %@ — записи сохраняются без аудио, только транскрипт. Освободите место, чтобы аудио вернулось."
           }
         }
       }

@@ -121,11 +121,14 @@ extension RecordingSession {
     /// point — so a missing-permission capture still reports `.empty`,
     /// which is a real failure the user should hear about.
     var micAudioArchiveStatus: ArchiveStatus {
-        // Same deliberate-no-archive case as the system stream above.
-        // Without this the mic reads `.empty`, which combined with the
-        // system stream's verdict makes `anyChannelCaptured` false and
-        // hands the capture-failure gate a false positive on every quiet
-        // meeting — including for everyone using the privacy mode.
+        // Same deliberate-no-archive case as the system stream above:
+        // without it the mic reads `.empty` and the frontmatter records a
+        // failure nobody had. Note this does NOT change the
+        // capture-failure gate — `anyChannelCaptured` only counts
+        // `.captured`, so a quiet no-archive meeting still trips it. That
+        // suppression is correct (an empty transcript has nothing to
+        // summarise); what it needed was an honest reason, which is why
+        // `captureFailureMessage()` branches on disk vs retention.
         guard !audioArchivingDisabled else { return .off }
         let bytes = Self.archiveBytesOnDisk(micArchiveURL)
         let framesWritten = recorder.archivedFrameCount
