@@ -508,6 +508,24 @@ final class RecordingSession {
     /// from firing twice.
     @ObservationIgnored
     private var diskTranscriptOnly = false
+
+    /// True when this session writes NO audio archive on purpose — either
+    /// the disk was too full at start (or ran critically low mid-way), or
+    /// the user picked "Don't record audio" in Storage.
+    ///
+    /// Internal rather than private because `RecordingSession+ArchiveAudit`
+    /// lives in another file and MUST consult it: with no archive open,
+    /// both streams report zero frames written and zero write errors —
+    /// byte-for-byte the signature of a dead recorder. Without this flag
+    /// the audit calls a deliberate choice `.empty` / `.truncated`, the
+    /// frontmatter records a failure that never happened, and the
+    /// post-stop toast blames the user's headphones (2026-07-27 field
+    /// report: four meetings, 0.4 GB free, "Bluetooth took over the mic"
+    /// on wired headphones).
+    var audioArchivingDisabled: Bool {
+        diskTranscriptOnly
+            || settings.audioRetentionDays == AppSettings.audioRetentionDoNotRecord
+    }
     @ObservationIgnored
     private var diskMonitorTimer: Timer?
     // Both thresholds live in `DiskSpace` — HomeView's low-disk row and
@@ -1384,6 +1402,34 @@ final class RecordingSession {
         diskMonitorTimer = nil
     }
 
+    /// Why this recording came out with nothing usable, in the user's
+    /// terms. Ordered by what the user can act on FIRST, and each branch
+    /// only claims what we actually measured:
+    ///
+    ///  1. Disk ran out → Daisy chose transcript-only, so there is no
+    ///     audio to fall back on and the empty live transcript is the
+    ///     whole story. Nothing to do with hardware.
+    ///  2. User turned audio recording off in Storage → same shape, but
+    ///     it's their setting, not a problem to fix.
+    ///  3. A Bluetooth device is actually on the route → the original
+    ///     AirPods failure mode, and now only stated when a BT device is
+    ///     really there.
+    ///  4. Otherwise → say what we know and point at the input device
+    ///     rather than inventing a cause.
+    private func captureFailureMessage() -> String {
+        if diskTranscriptOnly {
+            return String(localized: "Not enough disk space, so this meeting was recorded without audio — and the live transcript came out empty, so no summary was made. Free up space and the audio comes back.")
+        }
+        if settings.audioRetentionDays == AppSettings.audioRetentionDoNotRecord {
+            return String(localized: "Audio recording is off in Settings → Storage, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode.")
+        }
+        if AudioInputDevices.isBluetooth(AudioInputDevices.systemDefaultOutputID())
+            || AudioInputDevices.isBluetooth(AudioInputDevices.systemDefaultInputID()) {
+            return String(localized: "This recording captured almost no audio — a Bluetooth headset (e.g. AirPods) likely took over the mic and system audio. The transcript is empty or unreliable, so no summary was generated. Use the built-in mic and speakers for meetings.")
+        }
+        return String(localized: "This recording captured almost no audio, so the transcript is unreliable and no summary was made. Check that the right microphone is selected and that other-side audio is being captured.")
+    }
+
     /// Mid-recording low-disk guard. If free space drops below the critical
     /// floor while we're still archiving audio, auto-switch to transcript-only
     /// (stop both archives, keep transcribing) + notify — Egor's 2026-06-01
@@ -1737,7 +1783,11 @@ final class RecordingSession {
         // it short?". No title/transcript content — privacy-safe.
         let durSec = startedAt.map { Int(Date().timeIntervalSince($0)) } ?? -1
         let boundEndDelta = boundMeeting.map { Int(Date().timeIntervalSince($0.endDate)) }
-        let summary = "mode=\(currentMode) dur=\(durSec)s sys=\(String(describing: sysStatus)) mic=\(String(describing: micStatus)) sysReceived=\(hasCapturedSystemAudio) captureSysSetting=\(settings.captureSystemAudio) boundEndDelta=\(boundEndDelta.map { "\($0)s" } ?? "none")"
+        // `archivingDisabled` earns its place here: without it, `sys=off
+        // mic=off` in a report is ambiguous between "user turned system
+        // audio off" and "no archive was written at all", and the reader
+        // has to go hunting for a low-disk warning elsewhere in the log.
+        let summary = "mode=\(currentMode) dur=\(durSec)s sys=\(String(describing: sysStatus)) mic=\(String(describing: micStatus)) sysReceived=\(hasCapturedSystemAudio) captureSysSetting=\(settings.captureSystemAudio) archivingDisabled=\(audioArchivingDisabled) boundEndDelta=\(boundEndDelta.map { "\($0)s" } ?? "none")"
         log.notice("post-stop SESSION SUMMARY — \(summary, privacy: .public)")
 
         // ── Capture-failure gate (2026-07-22, AirPods support case) ───────
@@ -1764,16 +1814,23 @@ final class RecordingSession {
             && !anyChannelCaptured
             && transcriptWPM < 20
         if captureLikelyFailed {
-            log.error("Capture likely FAILED — mic=\(String(describing: micStatus), privacy: .public) sys=\(String(describing: sysStatus), privacy: .public) wpm=\(Int(transcriptWPM), privacy: .public); suppressing auto-summary")
+            log.error("Capture likely FAILED — mic=\(String(describing: micStatus), privacy: .public) sys=\(String(describing: sysStatus), privacy: .public) wpm=\(Int(transcriptWPM), privacy: .public) archivingDisabled=\(self.audioArchivingDisabled, privacy: .public); suppressing auto-summary")
+            // SUPPRESSION is right in every branch below — an empty
+            // transcript has nothing to summarise. What differs is the
+            // reason, and the old single string asserted Bluetooth
+            // unconditionally. It sent a user on wired headphones with a
+            // full disk off to unpair AirPods she wasn't wearing.
             ToastCenter.shared.show(
-                String(localized: "This recording captured almost no audio — a Bluetooth headset (e.g. AirPods) likely took over the mic and system audio. The transcript is empty or unreliable, so no summary was generated. Use the built-in mic and speakers for meetings."),
+                captureFailureMessage(),
                 style: .error,
                 duration: .seconds(15)
             )
         }
 
         // Per-channel truncation toasts — only when we haven't already
-        // shown the unified capture-failed message above.
+        // shown the unified capture-failed message above. Both are
+        // unreachable when archiving is off by design: the audit reports
+        // `.off`, not `.truncated`.
         if !captureLikelyFailed, case .truncated(let bytes, let framesWritten, let writeErrors) = micStatus {
             log.error("Mic archive TRUNCATED: \(bytes, privacy: .public) bytes on disk, \(framesWritten, privacy: .public) frames written, \(writeErrors, privacy: .public) write errors")
             ToastCenter.shared.show(

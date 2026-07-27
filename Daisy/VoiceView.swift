@@ -149,6 +149,17 @@ struct VoiceView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
+                // Says out loud what the counter does NOT count. A user
+                // with 76 recorded meetings reads "0 of 300 words" as
+                // broken, not as "you haven't dictated yet" — reported
+                // 2026-07-27. The corpus is fed only from DictationPaste,
+                // and that's on purpose: a meeting carries several voices
+                // and conversational speech, neither of which describes
+                // how this user WRITES.
+                Text("Only dictation counts here — meeting recordings don't, because a meeting carries several voices and this profile is about how you write.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                 // Cold-start shortcut: seed from existing writing or a
                 // ready-made style prompt instead of waiting.
                 Button("Already have your style? Import it…") {
