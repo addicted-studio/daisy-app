@@ -567,6 +567,17 @@ struct HomeView: View {
     // research, which always bills the Anthropic key no matter which
     // provider is selected for summaries.
 
+    /// Current month in its standalone (nominative) form.
+    private static func standaloneMonthName() -> String {
+        let calendar = Calendar.current
+        let index = calendar.component(.month, from: Date()) - 1
+        let symbols = calendar.standaloneMonthSymbols
+        guard symbols.indices.contains(index) else {
+            return Date.now.formatted(.dateTime.month(.wide))
+        }
+        return symbols[index]
+    }
+
     /// Compact token count — "1.2M", "840K", localized.
     private func compactTokens(_ n: Int) -> String {
         n.formatted(.number.notation(.compactName))
@@ -593,6 +604,10 @@ struct HomeView: View {
             let others = tokens.secondaryModelSpend(active: summarizer.providerKind)
             let periodCost = tokens.currentMonthCostEstimate(for: hero)
             VStack(alignment: .leading, spacing: 4) {
+                // The word "tokens" used to appear twice — as a chip up
+                // here and again beside the number. The period is the
+                // thing that was actually missing: it scopes the total,
+                // the cost AND the chart, so it takes the corner slot.
                 HStack(alignment: .firstTextBaseline) {
                     Text(hero.displayName)
                         .font(.caption.weight(.semibold))
@@ -600,25 +615,23 @@ struct HomeView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer()
-                    Text("Tokens")
+                    // Standalone symbol, not `.dateTime.month(.wide)`:
+                    // that one is the FORMAT context, which in Russian
+                    // gives the genitive "июля" ("of July") — correct
+                    // inside a date, a fragment as a bare label.
+                    Text(Self.standaloneMonthName())
                         .daisyStatLabel()
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(compactTokens(hero.totalTokens))
-                        .font(.title.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Text("tokens")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .textCase(.uppercase)
-                }
+                Text(compactTokens(hero.totalTokens))
+                    .font(.title.weight(.semibold))
+                    .foregroundStyle(.primary)
                 if let costLabel = estimatedCostLabel(periodCost) {
                     Text(costLabel)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
 
-                TokenUsageSparkline(values: tokens.dailyTokenSeries(for: hero))
+                TokenUsageSparkline(values: tokens.currentMonthTokenSeries(for: hero))
                     .frame(height: 30)
                     .padding(.top, 4)
 
@@ -628,34 +641,32 @@ struct HomeView: View {
                     .padding(.horizontal, -16)
                     .padding(.vertical, 4)
 
+                // In and out are one pair of numbers, so they read as a
+                // pair: left and right ends of the same line rather than
+                // a stack the eye has to add up vertically.
                 HStack(spacing: 6) {
                     Text(compactTokens(hero.inputTokens))
                     Text("Input")
                     Spacer()
-                }
-                .daisyStatLabel()
-                HStack(spacing: 6) {
                     Text(compactTokens(hero.outputTokens))
                     Text("Output")
-                    Spacer()
                 }
                 .daisyStatLabel()
-                if hero.cachedInputTokens > 0 {
+                // The two extras follow the same left/right shape. Cache
+                // reads are billed cheaper and web searches are billed per
+                // search rather than per token — neither is inside the
+                // totals above, so they'd be invisible if not named.
+                if hero.cachedInputTokens > 0 || hero.webSearches > 0 {
                     HStack(spacing: 6) {
-                        Text(compactTokens(hero.cachedInputTokens))
-                        Text("From cache")
+                        if hero.cachedInputTokens > 0 {
+                            Text(compactTokens(hero.cachedInputTokens))
+                            Text("From cache")
+                        }
                         Spacer()
-                    }
-                    .daisyStatLabel()
-                }
-                // Billed per search rather than per token, so it never
-                // shows up in the totals above — surfaced separately or
-                // it stays invisible.
-                if hero.webSearches > 0 {
-                    HStack(spacing: 6) {
-                        Text(hero.webSearches.formatted(.number))
-                        Text("Web searches")
-                        Spacer()
+                        if hero.webSearches > 0 {
+                            Text(hero.webSearches.formatted(.number))
+                            Text("Web searches")
+                        }
                     }
                     .daisyStatLabel()
                 }
@@ -757,7 +768,7 @@ struct HomeView: View {
 /// agenda rows for the calendar side).
 private let homeRowMinHeight: CGFloat = 36
 
-/// A quiet 14-day usage graph for one model. It deliberately has no axes:
+/// A quiet month-to-date usage graph for one model. It deliberately has no axes:
 /// the card already gives the exact total, while the bars answer the more
 /// useful question of whether usage was steady or happened in one burst.
 private struct TokenUsageSparkline: View {
@@ -785,7 +796,7 @@ private struct TokenUsageSparkline: View {
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Token usage over the last 14 days"))
+        .accessibilityLabel(String(localized: "Token usage day by day this month"))
     }
 }
 

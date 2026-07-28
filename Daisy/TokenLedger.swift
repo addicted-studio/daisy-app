@@ -431,11 +431,23 @@ final class TokenLedger {
     /// Daily values for the small chart in the model card, oldest first.
     /// Empty days intentionally stay as zero-height bars: the quiet gaps
     /// are useful context, not missing data.
-    func dailyTokenSeries(for modelSpend: ModelSpend, days count: Int = 14) -> [Int] {
-        guard count > 0 else { return [] }
-        let calendar = Calendar.current
-        return (0..<count).map { offset in
-            guard let date = calendar.date(byAdding: .day, value: offset - count + 1, to: Date()) else {
+    func currentMonthTokenSeries(for modelSpend: ModelSpend) -> [Int] {
+        // Gregorian explicitly, matching `UsageStats.dayKey` and
+        // `monthKey`. `Calendar.current` follows the user's locale
+        // calendar, so on a Hebrew or Islamic calendar the day-of-month
+        // it reports belongs to a different month than the total and the
+        // cost printed above the chart — the series would silently cover
+        // the wrong window.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let today = Date()
+        let day = calendar.component(.day, from: today)
+        // One bar per elapsed day of THIS month — the same window the
+        // numbers above the chart use. A rolling 14-day series (what this
+        // was) quietly described a different period than the total right
+        // next to it, so labelling the card would have made the card lie.
+        return (0..<day).map { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset - day + 1, to: today) else {
                 return 0
             }
             let key = UsageStats.dayKey(for: date)
