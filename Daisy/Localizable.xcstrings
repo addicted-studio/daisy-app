@@ -10732,42 +10732,12 @@
         }
       }
     },
-    "Token usage over the last 14 days" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Расход токенов за последние 14 дней"
-          }
-        }
-      }
-    },
     "token…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "токен…"
-          }
-        }
-      }
-    },
-    "tokens" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "токенов"
-          }
-        }
-      }
-    },
-    "Tokens" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Токены"
           }
         }
       }
@@ -11545,6 +11515,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выберите, куда положить отчёт, — потом приложите его к письму."
+          }
+        }
+      }
+    },
+    "Token usage day by day this month" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расход токенов по дням в этом месяце"
           }
         }
       }
