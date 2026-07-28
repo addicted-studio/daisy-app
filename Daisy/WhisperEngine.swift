@@ -229,57 +229,69 @@ final class WhisperEngine {
             return
         }
 
-        // Phase 1 — download (only if the variant isn't already on disk).
-        // A cached model must NOT flash the `.downloading` state on every
-        // launch prewarm — that's what made the app look like it was
-        // "checking / downloading models" at startup even though nothing
-        // was fetched. When cached, go straight to `.loading`; the
-        // `Self.download` call below just resolves the cached folder.
-        let alreadyCached = Self.cachedModels().contains { $0.variant == variant }
-        if alreadyCached {
+        // Phase 1 — resolve the model folder.
+        //
+        // A cached model resolves LOCALLY and never touches the network.
+        // `WhisperKit.download` goes through the HuggingFace Hub API even
+        // when every file is already on disk, so calling it "just to
+        // resolve the folder" cost a round-trip on EVERY launch: measured
+        // twice on 2026-07-28, 6.0s and 6.2s between app start and
+        // "Loading models…", against a CoreML load of 1.1s. That's ~85% of
+        // the startup wait spent asking huggingface.co about a model that
+        // never moved — and a network call an app that promises "nothing
+        // leaves your Mac" shouldn't be making at launch.
+        //
+        // Only a COMPLETE cache short-circuits. A folder that merely
+        // exists isn't enough: `cancelDownload()` is a shipped button, so
+        // an aborted transfer leaves a half-populated
+        // `openai_whisper-<variant>` behind. Accepting that by name would
+        // skip the download forever, `loadKit` would fail every launch,
+        // and nothing recovers — `removeUnusedModels()` deliberately
+        // spares the ACTIVE variant. `cachedModelFolder` requires the
+        // compiled artefacts to actually be there, so a partial folder
+        // falls through and gets re-fetched exactly as before.
+        let folder: URL
+        if let cached = Self.cachedModelFolder(variant: variant) {
             state = .loading(status: String(localized: "Loading transcription model…"))
+            folder = cached
+            log.info("Whisper model resolved from cache — no download check")
         } else {
             state = .downloading(progress: 0)
             downloadProgress = 0
-        }
-
-        let folder: URL
-        do {
-            folder = try await Self.download(variant: variant, repo: repo) { fraction in
-                Task { @MainActor in
-                    // Don't surface download progress for a cached model —
-                    // its callback (if any) shouldn't flip us back to
-                    // `.downloading` after we chose `.loading` above.
-                    guard !alreadyCached else { return }
-                    self.downloadProgress = fraction
-                    self.state = .downloading(progress: fraction)
+            do {
+                folder = try await Self.download(variant: variant, repo: repo) { fraction in
+                    Task { @MainActor in
+                        self.downloadProgress = fraction
+                        self.state = .downloading(progress: fraction)
+                    }
                 }
-            }
-        } catch {
-            // User pressed Cancel (or the app is shutting the task down):
-            // the HuggingFace download is URLSession-backed, so cooperative
-            // cancellation aborts the transfer and surfaces here. Reset to
-            // .notLoaded (a clean "not downloaded" state the user can retry)
-            // rather than .failed (which reads like an error they must fix).
-            if error is CancellationError || Task.isCancelled {
-                log.info("Whisper download cancelled")
-                state = .notLoaded
-                downloadProgress = 0
+            } catch {
+                // User pressed Cancel (or the app is shutting the task
+                // down): the HuggingFace download is URLSession-backed, so
+                // cooperative cancellation aborts the transfer and surfaces
+                // here. Reset to .notLoaded (a clean "not downloaded" state
+                // the user can retry) rather than .failed (which reads like
+                // an error they must fix).
+                if error is CancellationError || Task.isCancelled {
+                    log.info("Whisper download cancelled")
+                    state = .notLoaded
+                    downloadProgress = 0
+                    return
+                }
+                // Offline (e.g. right after a restart before Wi-Fi is up):
+                // don't dead-end at a scary error. Show a clear "we'll
+                // finish when you reconnect" state and auto-retry.
+                if NetworkMonitor.isOfflineError(error) {
+                    log.error("Whisper download offline — will retry on reconnect")
+                    state = .failed(String(localized: "You’re offline — Daisy will finish downloading the transcription model automatically when you reconnect."))
+                    downloadProgress = 0
+                    scheduleReloadOnReconnect()
+                    return
+                }
+                log.error("Whisper download failed: \(error.localizedDescription, privacy: .public)")
+                state = .failed("Download failed: \(error.localizedDescription)")
                 return
             }
-            // Offline (e.g. right after a restart before Wi-Fi is up):
-            // don't dead-end at a scary error. Show a clear "we'll finish
-            // when you reconnect" state and auto-retry on reconnect.
-            if NetworkMonitor.isOfflineError(error) {
-                log.error("Whisper download offline — will retry on reconnect")
-                state = .failed(String(localized: "You’re offline — Daisy will finish downloading the transcription model automatically when you reconnect."))
-                downloadProgress = 0
-                scheduleReloadOnReconnect()
-                return
-            }
-            log.error("Whisper download failed: \(error.localizedDescription, privacy: .public)")
-            state = .failed("Download failed: \(error.localizedDescription)")
-            return
         }
 
         // Phase 2 — load CoreML model
@@ -438,6 +450,27 @@ final class WhisperEngine {
     /// directory — same place WhisperKit.download writes to.
     /// Returns an empty array if the folder doesn't exist yet
     /// (no models ever downloaded).
+    /// Folder for `variant` when it's on disk AND complete — nil
+    /// otherwise, which sends the caller to the downloader.
+    ///
+    /// Deliberately cheap: one directory read, no recursive sizing. It
+    /// sits on the launch path, and `cachedModels()` walks and `stat`s
+    /// every file of every cached model (up to ~1.5 GB of artefacts) to
+    /// build its size report — fine for the Settings screen it was
+    /// written for, wasteful before we've even started loading.
+    ///
+    /// "Complete" = the compiled CoreML bundles are present. WhisperKit
+    /// needs the mel/encoder/decoder trio, so fewer than three
+    /// `.mlmodelc` entries means an interrupted download, not a model.
+    nonisolated static func cachedModelFolder(variant: String) -> URL? {
+        guard let root = whisperCacheRoot() else { return nil }
+        let folder = root.appendingPathComponent("openai_whisper-\(variant)")
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: folder.path)
+        else { return nil }
+        let compiled = contents.filter { $0.hasSuffix(".mlmodelc") }
+        return compiled.count >= 3 ? folder : nil
+    }
+
     nonisolated static func cachedModels() -> [CachedModel] {
         guard let root = whisperCacheRoot() else { return [] }
         let fm = FileManager.default
