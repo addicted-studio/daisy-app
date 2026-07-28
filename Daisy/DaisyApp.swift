@@ -92,6 +92,11 @@ struct DaisyApp: App {
                 Button("Send Log Report…") {
                     LogReporter.sendReport(settings: settings)
                 }
+                // For anyone whose mail is in a browser: the file plus the
+                // questions on the clipboard, no mail client involved.
+                Button("Save Log Report…") {
+                    LogReporter.saveReport(settings: settings)
+                }
             }
             // Replace the default About panel with one that names the
             // studio and links to contact + website. The system's

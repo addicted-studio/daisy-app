@@ -2149,16 +2149,6 @@
         }
       }
     },
-    "Attaches the last 24 hours of Daisy's logs. Review in Mail before sending — nothing is sent automatically." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прикрепит логи Daisy за последние 24 часа. Проверьте в Почте перед отправкой — ничего не отправляется автоматически."
-          }
-        }
-      }
-    },
     "Audio" : {
       "localizations" : {
         "ru" : {
@@ -11435,6 +11425,126 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "По умолчанию считаются только диктовки. Включите — и Daisy будет учиться ещё и на том, что ВЫ говорили на встречах: только ваш микрофон, без стороны собеседника."
+          }
+        }
+      }
+    },
+    "Collecting today's logs…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собираю сегодняшние логи…"
+          }
+        }
+      }
+    },
+    "Couldn't write the log report: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось записать отчёт: %@"
+          }
+        }
+      }
+    },
+    "Couldn't save the log report: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить отчёт: %@"
+          }
+        }
+      }
+    },
+    "Report ready in Mail — just press Send." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Письмо готово в Mail — осталось нажать «Отправить»."
+          }
+        }
+      }
+    },
+    "No mail app set up — the report is in Finder and the questions are on your clipboard. Send both to %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почтовый клиент не настроен — отчёт открыт в Finder, вопросы скопированы в буфер. Отправьте и то и другое на %@."
+          }
+        }
+      }
+    },
+    "Report saved. The questions are on your clipboard — paste them into an email to %@ and attach the file." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отчёт сохранён. Вопросы в буфере обмена — вставьте их в письмо на %@ и приложите файл."
+          }
+        }
+      }
+    },
+    "Save Log Report…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить отчёт…"
+          }
+        }
+      }
+    },
+    "Mail in a browser?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почта в браузере?"
+          }
+        }
+      }
+    },
+    "Report a bug: save a log report to a file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщить о баге: сохранить отчёт в файл"
+          }
+        }
+      }
+    },
+    "Attaches the last 24 hours of Daisy's logs. Nothing is sent automatically — review it first. If your mail lives in a browser, save the file instead and the questions go to your clipboard." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикладывает логи Daisy за последние 24 часа. Ничего не отправляется автоматически — сначала посмотрите сами. Если почта у вас в браузере, сохраните файл: вопросы при этом попадут в буфер обмена."
+          }
+        }
+      }
+    },
+    "Save Log Report" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить отчёт"
+          }
+        }
+      }
+    },
+    "Choose where to keep the report, then attach it to an email." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, куда положить отчёт, — потом приложите его к письму."
           }
         }
       }
