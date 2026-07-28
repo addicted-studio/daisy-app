@@ -113,8 +113,32 @@ struct PreMeetingBriefCard: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+        case .disabled:
+            // The one "can't brief" reason the user can fix right here —
+            // so fix it right here rather than sending them to Settings.
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Pre-meeting briefs are turned off.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                // `prepare`, not `regenerate`: turning the feature on is
+                // not consent to send past notes to a cloud provider, so
+                // this has to be able to land on `.needsConsent`.
+                Button("Turn on") {
+                    settings.preMeetingBriefEnabled = true
+                    Task { await briefStore.prepare(for: meeting, settings: settings) }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
         case .noHistory:
-            EmptyView()
+            // Reachable when history changes under us (or the provider
+            // switches to cloud, which only accepts attendee-email
+            // matches). An empty card under a "Prep for …" header reads
+            // as broken.
+            Text("No past meetings with these people yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

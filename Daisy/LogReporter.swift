@@ -2,14 +2,21 @@
 //  LogReporter.swift
 //  Daisy
 //
-//  Help → "Send Log Report…": collects the last 24 h of Daisy's
-//  os.log output (`/usr/bin/log show`, our subsystem only) plus an
-//  environment header (app/macOS versions, permission states, the
-//  handful of settings that change audio/ML behaviour), writes it to
-//  a temp file and opens a pre-addressed Mail compose window with the
-//  file attached. The user reads the report and presses Send
-//  themselves — nothing leaves the Mac without an explicit, visible
-//  action, consistent with "nothing leaves your Mac".
+//  Two ways out of the same report — the last 24 h of Daisy's os.log
+//  output (`/usr/bin/log show`, our subsystem only) plus an environment
+//  header (app/macOS versions, permission states, the handful of
+//  settings that change audio/ML behaviour):
+//
+//    • `sendReport` — Help → "Send Log Report…": writes a temp file and
+//      opens a pre-addressed Mail compose window with the report
+//      attached and the questions in the body.
+//    • `exportLogs` — Help → "Export Logs…": writes the file where the
+//      user says and reveals it. Nothing else. For anyone whose mail is
+//      in a browser, or who just wants to hand over the log.
+//
+//  Neither one sends anything: Mail waits on the user pressing Send, and
+//  the export just puts a file on disk. Nothing leaves the Mac without an
+//  explicit, visible action, consistent with "nothing leaves your Mac".
 //
 //  Why `log show` and not OSLogStore: OSLogStore's process scope only
 //  covers the CURRENT launch, while tester reports are usually about
@@ -41,7 +48,7 @@ enum LogReporter {
 
     /// Collect → write temp file → open Mail compose.
     ///
-    /// Mail is the convenient path, not the only one — see `saveReport`.
+    /// Mail is the convenient path, not the only one — see `exportLogs`.
     /// `canPerform` only tells us Mail.app EXISTS, not that it has an
     /// account, so this can still land a user in a compose window they
     /// can't send from (Ken, 2026-07-28: "it keeps trying to open the
@@ -64,10 +71,10 @@ enum LogReporter {
                     style: .info
                 )
             } else {
-                // No mail client at all. Fall back to the same place
-                // `saveReport` lands: file revealed, questions on the
-                // clipboard — previously the questions were simply lost
-                // here, leaving the reporter with a log and no prompts.
+                // No mail client at all. This is the ONE place the
+                // clipboard earns its keep: there is no compose window to
+                // put the questions in, so without it the reporter is left
+                // with a log file and no idea what to write around it.
                 copyQuestionsToClipboard(body)
                 NSWorkspace.shared.activateFileViewerSelecting([fileURL])
                 ToastCenter.shared.show(
@@ -79,14 +86,16 @@ enum LogReporter {
         }
     }
 
-    /// Collect → let the user choose where to keep the file → put the
-    /// questions on the clipboard.
+    /// Collect → write the file where the user points → reveal it.
     ///
-    /// The path for anyone whose mail lives in a browser: they need the
-    /// file somewhere they can attach it from, and the questions
-    /// somewhere they can paste. Deliberately reachable WITHOUT first
-    /// failing at Mail.
-    static func saveReport(settings: AppSettings) {
+    /// One job, no side effects. The previous version of this also put the
+    /// question template on the clipboard, which turned out to be actively
+    /// misleading: it looks like the button's output, so you paste it,
+    /// get a form with no diagnostics, and conclude the export is broken —
+    /// "скопировался только шаблон, без логов, а самое важное, это логи"
+    /// (Egor, 2026-07-28). The logs ARE the deliverable; the questions
+    /// belong to the Mail path, which has a body to put them in.
+    static func exportLogs(settings: AppSettings) {
         Task {
             guard let text = await collectReport(settings: settings) else { return }
             let panel = NSSavePanel()
@@ -95,8 +104,8 @@ enum LogReporter {
             }
             panel.canCreateDirectories = true
             panel.nameFieldStringValue = reportFilename()
-            panel.title = String(localized: "Save Log Report")
-            panel.message = String(localized: "Choose where to keep the report, then attach it to an email.")
+            panel.title = String(localized: "Export Logs")
+            panel.message = String(localized: "Daisy's last 24 hours of logs, plus a short environment header.")
             // No `directoryURL`: the panel remembers where this app saved
             // last, which beats dragging the user back to Downloads every
             // time.
@@ -108,16 +117,18 @@ enum LogReporter {
                 try text.write(to: destination, atomically: true, encoding: .utf8)
             } catch {
                 ToastCenter.shared.show(
-                    String(localized: "Couldn't save the log report: \(error.localizedDescription)"),
+                    String(localized: "Couldn't save the log file: \(error.localizedDescription)"),
                     style: .error
                 )
                 return
             }
-            copyQuestionsToClipboard(reportBody())
+            // Reveal rather than just toast: the point of the button is to
+            // end up holding the file.
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
             ToastCenter.shared.show(
-                String(localized: "Report saved. The questions are on your clipboard — paste them into an email to \(recipient) and attach the file."),
+                String(localized: "Logs exported to \(destination.lastPathComponent)."),
                 style: .info,
-                duration: .seconds(10)
+                duration: .seconds(6)
             )
         }
     }
@@ -137,7 +148,7 @@ enum LogReporter {
     }
 
     /// Park the report in a temp file so Mail has something to attach.
-    /// Only the Mail path needs this — `saveReport` writes straight to
+    /// Only the Mail path needs this — `exportLogs` writes straight to
     /// the user's chosen destination, so nothing is left behind when the
     /// save panel is cancelled.
     private static func writeTempReport(_ text: String) -> URL? {

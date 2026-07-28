@@ -283,21 +283,22 @@ struct DayCard: View {
                 .foregroundStyle(.primary)
             Spacer()
             if briefable {
-                // Prep brief toggle — icon-only (questionmark.message),
-                // Egor 2026-07-25; the expanded card below the row is
-                // the open/closed indicator now.
-                Button {
+                // Prep brief toggle. Textual and neutral (Egor
+                // 2026-07-28): the accent-tinted icon-only chip read as a
+                // primary action competing with the record button beside
+                // it. `.bordered` + `.small` + `daisyTextPrimary` is the
+                // app's secondary-button idiom — the same one Settings and
+                // About use. The expanded card below the row is still the
+                // open/closed indicator.
+                Button("Prep") {
                     withAnimation(.easeInOut(duration: 0.15)) {
                         let key = PreMeetingBriefStore.key(for: event)
                         expandedPrepID = (expandedPrepID == key) ? nil : key
                     }
-                } label: {
-                    Image(systemName: "questionmark.message")
-                        .font(.caption)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .tint(Color.daisyHomeAccent)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
                 .help(String(localized: "Prep brief"))
             }
             // Record icon back on the far right (Egor 2026-07-25) —
