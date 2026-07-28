@@ -23,6 +23,7 @@
 
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 enum LogReporter {
@@ -38,42 +39,140 @@ enum LogReporter {
     /// is safe.
     nonisolated private static let maxLogBytes = 5_000_000
 
-    /// Collect → write temp file → open Mail compose. Toasts cover
-    /// the slow parts and the no-Mail-account fallback.
+    /// Collect → write temp file → open Mail compose.
+    ///
+    /// Mail is the convenient path, not the only one — see `saveReport`.
+    /// `canPerform` only tells us Mail.app EXISTS, not that it has an
+    /// account, so this can still land a user in a compose window they
+    /// can't send from (Ken, 2026-07-28: "it keeps trying to open the
+    /// local mail client which I'm not signed into"). There's no API for
+    /// "is Mail signed in", hence a second, visible action rather than a
+    /// cleverer guess.
     static func sendReport(settings: AppSettings) {
-        ToastCenter.shared.show("Collecting today's logs…", style: .info, duration: .seconds(3))
         Task {
-            let logText = await collectLogs()
-            let report = header(settings: settings) + "\n" + logText
-            let dateStamp = ISO8601DateFormatter.daisyDayStamp.string(from: Date())
-            let fileURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("Daisy-log-report-\(dateStamp).txt")
-            do {
-                try report.write(to: fileURL, atomically: true, encoding: .utf8)
-            } catch {
-                ToastCenter.shared.show("Couldn't write the log report: \(error.localizedDescription)", style: .error)
-                return
-            }
-
-            // Subject stays English on purpose: it's the triage line in
-            // the maintainer's inbox, and version + date must be
-            // greppable regardless of the reporter's language.
-            let subject = "Daisy log report — \(appVersionString) — \(dateStamp)"
+            guard let text = await collectReport(settings: settings),
+                  let fileURL = writeTempReport(text) else { return }
             let body = reportBody()
             let service = NSSharingService(named: .composeEmail)
             service?.recipients = [recipient]
-            service?.subject = subject
+            service?.subject = subject()
             let items: [Any] = [body, fileURL]
             if let service, service.canPerform(withItems: items) {
                 service.perform(withItems: items)
-                ToastCenter.shared.show("Report ready in Mail — just press Send.", style: .info)
+                ToastCenter.shared.show(
+                    String(localized: "Report ready in Mail — just press Send."),
+                    style: .info
+                )
             } else {
-                // No Mail.app account configured (Gmail-in-browser
-                // users). Reveal the file so it can be sent manually.
+                // No mail client at all. Fall back to the same place
+                // `saveReport` lands: file revealed, questions on the
+                // clipboard — previously the questions were simply lost
+                // here, leaving the reporter with a log and no prompts.
+                copyQuestionsToClipboard(body)
                 NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-                ToastCenter.shared.show("Mail isn't set up — report saved; send the file to \(recipient).", style: .warning, duration: .seconds(8))
+                ToastCenter.shared.show(
+                    String(localized: "No mail app set up — the report is in Finder and the questions are on your clipboard. Send both to \(recipient)."),
+                    style: .warning,
+                    duration: .seconds(10)
+                )
             }
         }
+    }
+
+    /// Collect → let the user choose where to keep the file → put the
+    /// questions on the clipboard.
+    ///
+    /// The path for anyone whose mail lives in a browser: they need the
+    /// file somewhere they can attach it from, and the questions
+    /// somewhere they can paste. Deliberately reachable WITHOUT first
+    /// failing at Mail.
+    static func saveReport(settings: AppSettings) {
+        Task {
+            guard let text = await collectReport(settings: settings) else { return }
+            let panel = NSSavePanel()
+            if let txt = UTType(filenameExtension: "txt") {
+                panel.allowedContentTypes = [txt]
+            }
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = reportFilename()
+            panel.title = String(localized: "Save Log Report")
+            panel.message = String(localized: "Choose where to keep the report, then attach it to an email.")
+            // No `directoryURL`: the panel remembers where this app saved
+            // last, which beats dragging the user back to Downloads every
+            // time.
+            guard panel.runModal() == .OK, let destination = panel.url else { return }
+            do {
+                // Straight to the destination, atomically — no temp file to
+                // leak and no remove-then-copy window where a failed copy
+                // leaves the user with neither the old file nor the new one.
+                try text.write(to: destination, atomically: true, encoding: .utf8)
+            } catch {
+                ToastCenter.shared.show(
+                    String(localized: "Couldn't save the log report: \(error.localizedDescription)"),
+                    style: .error
+                )
+                return
+            }
+            copyQuestionsToClipboard(reportBody())
+            ToastCenter.shared.show(
+                String(localized: "Report saved. The questions are on your clipboard — paste them into an email to \(recipient) and attach the file."),
+                style: .info,
+                duration: .seconds(10)
+            )
+        }
+    }
+
+    // MARK: - Shared steps
+
+    /// Collect the logs and assemble the full report text. Returns nil
+    /// only if something went wrong loudly enough to toast about.
+    private static func collectReport(settings: AppSettings) async -> String? {
+        ToastCenter.shared.show(
+            String(localized: "Collecting today's logs…"),
+            style: .info,
+            duration: .seconds(3)
+        )
+        let logText = await collectLogs()
+        return header(settings: settings) + "\n" + logText
+    }
+
+    /// Park the report in a temp file so Mail has something to attach.
+    /// Only the Mail path needs this — `saveReport` writes straight to
+    /// the user's chosen destination, so nothing is left behind when the
+    /// save panel is cancelled.
+    private static func writeTempReport(_ text: String) -> URL? {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(reportFilename())
+        do {
+            try text.write(to: fileURL, atomically: true, encoding: .utf8)
+            return fileURL
+        } catch {
+            ToastCenter.shared.show(
+                String(localized: "Couldn't write the log report: \(error.localizedDescription)"),
+                style: .error
+            )
+            return nil
+        }
+    }
+
+    private static func copyQuestionsToClipboard(_ body: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(body, forType: .string)
+    }
+
+    private static func dateStamp() -> String {
+        ISO8601DateFormatter.daisyDayStamp.string(from: Date())
+    }
+
+    private static func reportFilename() -> String {
+        "Daisy-log-report-\(dateStamp()).txt"
+    }
+
+    /// Subject stays English on purpose: it's the triage line in the
+    /// maintainer's inbox, and version + date must be greppable
+    /// regardless of the reporter's language.
+    private static func subject() -> String {
+        "Daisy log report — \(appVersionString) — \(dateStamp())"
     }
 
     // MARK: - The questions

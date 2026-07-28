@@ -174,10 +174,38 @@ struct AboutView: View {
                         Text("Report a bug")
                     }
                 }
+                // Second, EQUALLY visible path. `canPerform` only proves
+                // Mail.app is installed, so the button above can drop a
+                // user into a compose window they can't send from (Ken,
+                // 2026-07-28 — mail lives in his browser). Saving the file
+                // and putting the questions on the clipboard is the whole
+                // job for anyone in that situation; it shouldn't require
+                // failing at Mail first to discover.
+                LabeledContent {
+                    Button {
+                        LogReporter.saveReport(settings: settings)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("Save Log Report…")
+                            Image(systemName: "arrow.down.doc")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(Color.daisyAccent)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Report a bug: save a log report to a file")
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "paperclip")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text("Mail in a browser?")
+                    }
+                }
             } header: {
                 Text("Feedback")
             } footer: {
-                Text("Attaches the last 24 hours of Daisy's logs. Review in Mail before sending — nothing is sent automatically.")
+                Text("Attaches the last 24 hours of Daisy's logs. Nothing is sent automatically — review it first. If your mail lives in a browser, save the file instead and the questions go to your clipboard.")
             }
 
             Section {
