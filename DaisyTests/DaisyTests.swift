@@ -35,6 +35,63 @@ struct DaisyTests {
         #expect(abs(estimate.usd - 22.07) < 0.000_001)
     }
 
+    @Test("Claude Opus 5 is priced at its 2026 list rates")
+    func tokenCostEstimate_anthropicOpus5() {
+        let estimate = TokenCostEstimator.estimate(
+            provider: .anthropic,
+            model: "claude-opus-5",
+            spend: TokenSpend(
+                inputTokens: 1_000_000,
+                outputTokens: 1_000_000,
+                cachedInputTokens: 1_000_000,
+                cacheWriteTokens: 1_000_000,
+                webSearches: 2
+            )
+        )
+        // $5 + $25 + $0.50 + $6.25 + 2 × $0.01
+        #expect(estimate.hasPricedUsage)
+        #expect(abs(estimate.usd - 36.77) < 0.000_001)
+    }
+
+    @Test("GPT-5.6 Terra is priced at its 2026 list rates")
+    func tokenCostEstimate_openAITerra() {
+        let estimate = TokenCostEstimator.estimate(
+            provider: .openai,
+            model: "gpt-5.6-terra",
+            spend: TokenSpend(
+                inputTokens: 1_000_000,
+                outputTokens: 1_000_000,
+                cachedInputTokens: 1_000_000
+            )
+        )
+        // $2.50 + $15 + $0.25. Chat Completions caching is automatic,
+        // so there is no cache-write line to charge for.
+        #expect(estimate.hasPricedUsage)
+        #expect(abs(estimate.usd - 17.75) < 0.000_001)
+    }
+
+    @Test("Every model Settings offers has a price")
+    func tokenCostEstimate_shippedModelsAreAllPriced() {
+        let spend = TokenSpend(inputTokens: 1_000, outputTokens: 1_000)
+        for model in AnthropicAPISummarizer.availableModels.map(\.id) {
+            let estimate = TokenCostEstimator.estimate(provider: .anthropic, model: model, spend: spend)
+            #expect(estimate.hasPricedUsage, "unpriced Anthropic model: \(model)")
+        }
+        for model in OpenAIAPISummarizer.availableModels.map(\.id) {
+            let estimate = TokenCostEstimator.estimate(provider: .openai, model: model, spend: spend)
+            #expect(estimate.hasPricedUsage, "unpriced OpenAI model: \(model)")
+        }
+    }
+
+    @Test("GPT-5 generation gets the newer Chat Completions parameters")
+    func openAIParameterDialect() {
+        #expect(OpenAIAPISummarizer.usesGPT5ParameterSet("gpt-5.6-terra"))
+        #expect(OpenAIAPISummarizer.usesGPT5ParameterSet("gpt-5.6-sol"))
+        #expect(OpenAIAPISummarizer.usesGPT5ParameterSet("o3-mini"))
+        #expect(!OpenAIAPISummarizer.usesGPT5ParameterSet("gpt-4o"))
+        #expect(!OpenAIAPISummarizer.usesGPT5ParameterSet("gpt-4-turbo"))
+    }
+
     @Test("Unknown cloud model is never shown as free")
     func tokenCostEstimate_unknownCloudModelIsUnpriced() {
         let estimate = TokenCostEstimator.estimate(

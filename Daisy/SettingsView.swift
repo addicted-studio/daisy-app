@@ -168,6 +168,7 @@ struct SettingsView: View {
     /// Live `/api/tags` model list for the Ollama picker (empty until
     /// fetched / when the server is unreachable → static catalog).
     @State private var ollamaInstalledModels: [String] = []
+    @State private var lmStudioLoadedModels: [String] = []
     @Bindable private var nav = AppNavigation.shared
 
     var body: some View {
@@ -356,7 +357,7 @@ struct SettingsView: View {
             case .ollama:
                 return """
                 {
-                  "model": "qwen2.5:7b-instruct",
+                  "model": "qwen3.5:4b",
                   "messages": [
                     {"role": "system", "content": "{{system}}"},
                     {"role": "user", "content": "{{transcript}}"}
@@ -370,7 +371,7 @@ struct SettingsView: View {
                 // The prompt drives JSON; the decoder tolerates prose.
                 return """
                 {
-                  "model": "qwen2.5-7b-instruct",
+                  "model": "qwen/qwen3.5-4b",
                   "messages": [
                     {"role": "system", "content": "{{system}}"},
                     {"role": "user", "content": "{{transcript}}"}
@@ -1931,6 +1932,13 @@ struct SettingsView: View {
                 ForEach(AnthropicAPISummarizer.availableModels, id: \.id) { item in
                     Text(item.label).tag(item.id)
                 }
+                // A selection with no matching tag draws an EMPTY menu
+                // button — which is what someone parked on a model we
+                // have since dropped from the list would see. Keep the
+                // id visible instead.
+                if !AnthropicAPISummarizer.availableModels.contains(where: { $0.id == summarizer.anthropicModel }) {
+                    Text(String(localized: "Custom: \(summarizer.anthropicModel)")).tag(summarizer.anthropicModel)
+                }
             }
             .pickerStyle(.menu)
 
@@ -1944,6 +1952,9 @@ struct SettingsView: View {
             Picker("Model", selection: $summarizer.openaiModel) {
                 ForEach(OpenAIAPISummarizer.availableModels, id: \.id) { item in
                     Text(item.label).tag(item.id)
+                }
+                if !OpenAIAPISummarizer.availableModels.contains(where: { $0.id == summarizer.openaiModel }) {
+                    Text(String(localized: "Custom: \(summarizer.openaiModel)")).tag(summarizer.openaiModel)
                 }
             }
             .pickerStyle(.menu)
@@ -1995,14 +2006,25 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
             }
             Picker("Model", selection: $summarizer.lmStudioModel) {
-                ForEach(LMStudioAPISummarizer.availableModels, id: \.id) { item in
+                ForEach(lmStudioModelChoices, id: \.id) { item in
                     Text(item.label).tag(item.id)
                 }
-                if !LMStudioAPISummarizer.availableModels.contains(where: { $0.id == summarizer.lmStudioModel }) {
+                if !lmStudioModelChoices.contains(where: { $0.id == summarizer.lmStudioModel }) {
                     Text("Custom: \(summarizer.lmStudioModel)").tag(summarizer.lmStudioModel)
                 }
             }
             .pickerStyle(.menu)
+            // Read the running server's loaded models on first
+            // appearance and whenever the URL changes. LM Studio ids
+            // change format between versions and depend entirely on what
+            // the user downloaded, so a hardcoded list is the worst of
+            // the three sources — it stays only as an offline fallback.
+            .task(id: summarizer.lmStudioBaseURL) {
+                lmStudioLoadedModels = await LMStudioAPISummarizer.fetchLoadedModels(
+                    baseURL: URL(string: summarizer.lmStudioBaseURL)
+                        ?? URL(string: LMStudioAPISummarizer.defaultBaseURLString)!
+                )
+            }
             LabeledContent("API identifier") {
                 TextField("", text: $summarizer.lmStudioModel, prompt: Text(LMStudioAPISummarizer.defaultModelID))
                     .textFieldStyle(.roundedBorder)
@@ -2117,6 +2139,23 @@ struct SettingsView: View {
             if let known = catalog[name] { return (id: name, label: known) }
             let suffix = OllamaAPISummarizer.isCloudModel(name) ? String(localized: " — cloud (ollama.com)") : ""
             return (id: name, label: name + suffix)
+        }
+    }
+
+    /// Model picker choices for LM Studio. Prefers the live
+    /// `/v1/models` listing (what the server has actually loaded);
+    /// falls back to the static catalog when LM Studio isn't running.
+    /// Known ids reuse the catalog's friendly label.
+    private var lmStudioModelChoices: [(id: String, label: String)] {
+        guard !lmStudioLoadedModels.isEmpty else {
+            return LMStudioAPISummarizer.availableModels
+        }
+        let catalog = Dictionary(
+            LMStudioAPISummarizer.availableModels.map { ($0.id, $0.label) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return lmStudioLoadedModels.map { id in
+            (id: id, label: catalog[id] ?? id)
         }
     }
 

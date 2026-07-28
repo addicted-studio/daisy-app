@@ -43,7 +43,7 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:1234")!,
-        model: String = "qwen2.5-7b-instruct",
+        model: String = defaultModelID,
         urlSession: URLSession = .shared
     ) {
         self.baseURL = baseURL
@@ -171,25 +171,61 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
     // MARK: - Catalog
 
     /// Default model id. LM Studio model IDs depend on what the
-    /// user has downloaded — there's no universal name. We default
-    /// to the most-likely-pulled multilingual 7B; user MUST edit
-    /// this in Settings to match a model they've actually loaded
-    /// in LM Studio. If the id mismatches, LM Studio returns 404.
-    static let defaultModelID = "qwen2.5-7b-instruct"
+    /// user has downloaded — there's no universal name, and the
+    /// identifier format has drifted between LM Studio versions
+    /// (`qwen2.5-7b-instruct` then, `qwen/qwen3.5-4b` now). So this is a
+    /// starting guess only; the picker below reads the running
+    /// server's `/v1/models` and the user can type an id by hand. If
+    /// the id mismatches what's loaded, LM Studio returns 404.
+    static let defaultModelID = "qwen/qwen3.5-4b"
 
     /// Default base URL. Stock LM Studio binds here when its local
     /// server is started.
     static let defaultBaseURLString = "http://127.0.0.1:1234"
 
     /// Catalog of commonly-loaded LM Studio model IDs. Strictly a
-    /// hint — the user's actual loaded model name (visible in
-    /// LM Studio's UI under "API Identifier") is the source of truth.
+    /// hint, and the weakest of the three sources the picker has:
+    /// `fetchLoadedModels` (what the server actually reports) beats it,
+    /// and the user's own typing beats everything. Refreshed
+    /// 2026-07-28 to the current generation and the publisher/model id
+    /// form LM Studio shows under "API Identifier".
     static let availableModels: [(id: String, label: String)] = [
-        ("qwen2.5-7b-instruct",    "Qwen 2.5 7B Instruct — multilingual, recommended"),
-        ("qwen2.5-14b-instruct",   "Qwen 2.5 14B Instruct — multilingual, more capable"),
-        ("llama-3.2-3b-instruct",  "Llama 3.2 3B Instruct — fast"),
-        ("llama-3.1-8b-instruct",  "Llama 3.1 8B Instruct"),
-        ("mistral-7b-instruct-v0.3", "Mistral 7B Instruct v0.3"),
-        ("gemma-2-9b-it",          "Gemma 2 9B Instruct"),
+        ("qwen/qwen3.5-4b",   "Qwen 3.5 4B — multilingual, recommended"),
+        ("qwen/qwen3.5-9b",   "Qwen 3.5 9B — multilingual, more capable"),
+        ("google/gemma-3-4b", "Gemma 3 4B — fast"),
+        ("google/gemma-3-12b", "Gemma 3 12B"),
+        ("openai/gpt-oss-20b", "GPT-OSS 20B"),
     ]
+
+    // MARK: - Loaded-model listing
+
+    private struct ModelsResponse: Decodable {
+        struct Entry: Decodable { let id: String }
+        let data: [Entry]
+    }
+
+    /// The models the running LM Studio server reports via `/v1/models`
+    /// — the same endpoint `isReady()` probes, here read for its
+    /// payload. Mirrors `OllamaAPISummarizer.fetchInstalledModels`, and
+    /// exists for the same reason: a hardcoded catalog of third-party
+    /// model names goes stale within months and then quietly hands the
+    /// user a 404. Returns `[]` on any error (server down, no model
+    /// loaded, decode failure); the caller falls back to
+    /// `availableModels`.
+    static func fetchLoadedModels(
+        baseURL: URL,
+        urlSession: URLSession = .shared
+    ) async -> [String] {
+        var request = URLRequest(url: baseURL.appendingPathComponent("v1/models"))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 2
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode) else { return [] }
+            return try JSONDecoder().decode(ModelsResponse.self, from: data).data.map(\.id)
+        } catch {
+            return []
+        }
+    }
 }

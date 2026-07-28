@@ -12,13 +12,13 @@ import os
 nonisolated struct OpenAIAPISummarizer: SummaryProvider {
     let kind: SummaryProviderKind = .openai
 
-    /// Model identifier. Default is gpt-4o — well-priced + multilingual.
+    /// Model identifier. See `availableModels` for the shipped list.
     let model: String
     let urlSession: URLSession
 
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "OpenAISummarizer")
 
-    init(model: String = "gpt-4o", urlSession: URLSession = .shared) {
+    init(model: String = defaultModelID, urlSession: URLSession = .shared) {
         self.model = model
         self.urlSession = urlSession
     }
@@ -48,19 +48,32 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
         let systemPrompt = SummaryPrompt.systemInstructions(localeHint: localeHint, task: task)
         let userPrompt = SummaryPrompt.userPrompt(title: title, transcript: trimmed, task: task)
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user",   "content": userPrompt]
             ],
             // JSON mode — model is guaranteed to return parseable JSON.
-            "response_format": ["type": "json_object"],
+            "response_format": ["type": "json_object"]
+        ]
+        // The GPT-5 generation speaks a different dialect of the same
+        // endpoint: `max_tokens` is rejected in favour of
+        // `max_completion_tokens`, and `temperature` only accepts its
+        // default. Sending the old shape returns HTTP 400 "Unsupported
+        // parameter", so branch instead of assuming.
+        if Self.usesGPT5ParameterSet(model) {
+            // Higher than the 4096 below on purpose: this budget covers
+            // REASONING tokens as well as the visible answer, and a
+            // summary that spends its whole allowance thinking comes
+            // back with empty content.
+            body["max_completion_tokens"] = 16_384
+        } else {
             // 4096 (was 2048 pre-1.0.3) — see AnthropicAPISummarizer
             // for the long-meeting truncation rationale.
-            "max_tokens": 4096,
-            "temperature": 0.4
-        ]
+            body["max_tokens"] = 4096
+            body["temperature"] = 0.4
+        }
 
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
         request.httpMethod = "POST"
@@ -127,11 +140,41 @@ nonisolated struct OpenAIAPISummarizer: SummaryProvider {
 
     // MARK: - Catalog of model IDs offered in Settings
 
+    /// Refreshed 2026-07-28. `gpt-4-turbo` is gone from the list because
+    /// it is deprecated with a 2026-10-23 shutdown (`gpt-5` /
+    /// `gpt-5-mini` follow on 2026-12-11).
+    /// Prices per MTok in/out: Sol $5/$30, Terra $2.50/$15, Luna $1/$6.
+    /// Terra leads because a meeting summary is a mid-difficulty job on
+    /// a lot of tokens — Sol's headroom rarely shows up in the output
+    /// and always shows up on the bill.
+    ///
+    /// GPT-4o and GPT-4o mini stay on the list. They are not being shut
+    /// down — they only fell out of the current price sheet — and mini
+    /// at $0.15/$0.60 is an order of magnitude cheaper than anything in
+    /// the 5.6 generation. Users on them are not migrated, so dropping
+    /// them here would make the picker a one-way door: switch away once
+    /// and there is no field to type the id back in.
     static let availableModels: [(id: String, label: String)] = [
-        ("gpt-4o",      "GPT-4o (recommended)"),
-        ("gpt-4o-mini", "GPT-4o mini (fast, cheap)"),
-        ("gpt-4-turbo", "GPT-4 Turbo (legacy)"),
+        ("gpt-5.6-terra", "GPT-5.6 Terra (recommended)"),
+        ("gpt-5.6-sol",   "GPT-5.6 Sol (highest quality, slower)"),
+        ("gpt-5.6-luna",  "GPT-5.6 Luna (fastest, cheapest)"),
+        ("gpt-4o",        "GPT-4o (previous generation)"),
+        ("gpt-4o-mini",   "GPT-4o mini (previous generation, cheapest)"),
     ]
 
-    static let defaultModelID = "gpt-4o"
+    static let defaultModelID = "gpt-5.6-terra"
+
+    /// True for the GPT-5 generation and the o-series reasoning models,
+    /// which take `max_completion_tokens` and refuse a custom
+    /// `temperature`. Prefix-matched rather than an allow-list so a
+    /// model released after this build still gets the right dialect —
+    /// and so a user who types their own id into Settings isn't handed
+    /// a 400 we could have avoided.
+    static func usesGPT5ParameterSet(_ model: String) -> Bool {
+        let id = model.lowercased()
+        return id.hasPrefix("gpt-5")
+            || id.hasPrefix("o1")
+            || id.hasPrefix("o3")
+            || id.hasPrefix("o4")
+    }
 }
