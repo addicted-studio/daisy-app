@@ -239,9 +239,15 @@ nonisolated struct TokenCostEstimate: Sendable, Equatable {
 /// Settings, in USD per million tokens. Kept here (rather than fetched at
 /// runtime) so calculating a local estimate never sends usage anywhere.
 ///
-/// Checked 2026-07-27:
-/// - OpenAI GPT-4o / GPT-4o mini / GPT-4 Turbo API pricing
-/// - Anthropic Claude Sonnet 4.6 / Opus 4.6 / Haiku 4.5 API pricing
+/// Models Daisy no longer OFFERS are still priced here: the ledger keeps
+/// ~90 days of per-model buckets, so dropping a price would silently
+/// re-label a month of real spend as "cost unknown".
+///
+/// Checked 2026-07-28:
+/// - OpenAI GPT-5.6 Sol / Terra / Luna, plus retired GPT-4o / 4o mini /
+///   4 Turbo
+/// - Anthropic Claude Sonnet 5 / Opus 5 / Fable 5 / Haiku 4.5, plus the
+///   4.6 generation
 nonisolated enum TokenCostEstimator {
     private struct Price: Sendable {
         var input: Double
@@ -271,10 +277,41 @@ nonisolated enum TokenCostEstimator {
         return TokenCostEstimate(usd: usd, hasPricedUsage: true)
     }
 
+    /// 2026-09-01 00:00 UTC — when Claude Sonnet 5 leaves introductory
+    /// pricing. UTC rather than local: billing boundaries are the
+    /// provider's, and a day either way on one model's rate is noise
+    /// next to picking the wrong rate for a whole month.
+    private static let sonnet5StandardPricingStart: Date = {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 9
+        components.day = 1
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
+        return calendar.date(from: components) ?? .distantFuture
+    }()
+
     private static func price(for provider: SummaryProviderKind, model: String) -> Price? {
         let id = model.lowercased()
         switch provider {
         case .anthropic:
+            if id.hasPrefix("claude-sonnet-5") {
+                // Introductory $2/$10 through 2026-08-31, $3/$15 after.
+                // Date-aware rather than pinned because the card's
+                // window is the CURRENT calendar month — so a given
+                // month is billed entirely at one rate or the other,
+                // and "today's rate" is the right rate for it.
+                let standard = Date() >= Self.sonnet5StandardPricingStart
+                return standard
+                    ? Price(input: 3, output: 15, cachedInput: 0.30, cacheWrite: 3.75, webSearch: 0.01)
+                    : Price(input: 2, output: 10, cachedInput: 0.20, cacheWrite: 2.50, webSearch: 0.01)
+            }
+            if id.hasPrefix("claude-opus-5") {
+                return Price(input: 5, output: 25, cachedInput: 0.50, cacheWrite: 6.25, webSearch: 0.01)
+            }
+            if id.hasPrefix("claude-fable-5") {
+                return Price(input: 10, output: 50, cachedInput: 1.00, cacheWrite: 12.50, webSearch: 0.01)
+            }
             if id.hasPrefix("claude-sonnet-4-6") {
                 // $3 / $15, cache write $3.75, cache read $0.30, web $10 / 1K.
                 return Price(input: 3, output: 15, cachedInput: 0.30, cacheWrite: 3.75, webSearch: 0.01)
@@ -286,6 +323,18 @@ nonisolated enum TokenCostEstimator {
                 return Price(input: 1, output: 5, cachedInput: 0.10, cacheWrite: 1.25, webSearch: 0.01)
             }
         case .openai:
+            // Cached input is 10% of input across the 5.6 family, and
+            // Chat Completions caching is automatic — there is no
+            // separate cache-WRITE charge to model.
+            if id.hasPrefix("gpt-5.6-sol") {
+                return Price(input: 5, output: 30, cachedInput: 0.50, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("gpt-5.6-terra") {
+                return Price(input: 2.50, output: 15, cachedInput: 0.25, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("gpt-5.6-luna") {
+                return Price(input: 1, output: 6, cachedInput: 0.10, cacheWrite: 0, webSearch: 0)
+            }
             if id.hasPrefix("gpt-4o-mini") {
                 return Price(input: 0.15, output: 0.60, cachedInput: 0.075, cacheWrite: 0, webSearch: 0)
             }

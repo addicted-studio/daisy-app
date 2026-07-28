@@ -246,7 +246,7 @@ nonisolated struct MCPSummarizer: SummaryProvider {
 
     static let defaultArgumentsTemplate: String = """
     {
-      "model": "qwen2.5:7b-instruct",
+      "model": "qwen3.5:4b",
       "messages": [
         {"role": "system", "content": "{{system}}"},
         {"role": "user", "content": "{{transcript}}"}

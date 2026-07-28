@@ -2,7 +2,10 @@
 //  UserDefaultsMigration.swift
 //  Daisy
 //
-//  One-shot migration of `hola.*` UserDefaults keys to `daisy.*`.
+//  One-shot UserDefaults migrations, run once each at launch:
+//
+//    1. `hola.*` preference keys renamed to `daisy.*`.
+//    2. Retired cloud summary-model ids remapped to their successors.
 //
 //  Background: a handful of preference keys carried `hola.*` prefixes
 //  from a previous internal codename. Renaming them in source without
@@ -31,12 +34,21 @@ enum UserDefaultsMigration {
         ("hola.lastExportFolderBookmark", "daisy.lastExportFolderBookmark"),
     ]
 
-    /// Run the migration if it hasn't been run yet. Idempotent — the
-    /// sentinel ensures repeat calls are no-ops. Safe to call at any
-    /// point during launch; call BEFORE constructing AppSettings so
-    /// the new keys are populated by the time it reads them.
+    /// Run whichever migrations haven't run yet. Idempotent — each one
+    /// has its own sentinel, so repeat calls are no-ops. Safe to call at
+    /// any point during launch; call BEFORE constructing AppSettings and
+    /// before anything touches `Summarizer.shared`, so the new keys are
+    /// populated by the time they're read.
     static func runIfNeeded() {
         let defaults = UserDefaults.standard
+
+        // Each migration carries its OWN sentinel, so this must run
+        // before — not after — the hola.* guard below. Behind it, it
+        // would only ever execute on a machine that had never launched
+        // Daisy, i.e. one with nothing to migrate: dead code that looks
+        // like a feature.
+        migrateSummaryModelsIfNeeded(defaults: defaults)
+
         guard !defaults.bool(forKey: sentinelKey) else { return }
 
         var migratedCount = 0
@@ -59,5 +71,56 @@ enum UserDefaultsMigration {
         if migratedCount > 0 {
             log.info("Migrated \(migratedCount, privacy: .public) hola.* preference key(s) to daisy.*")
         }
+    }
+
+    // MARK: - Cloud summary models (2026-07)
+
+    /// `_v2`: `_v1` shipped behind the hola.* guard and could only ever
+    /// mark itself done without doing anything. Anyone who ran that
+    /// build carries a true `_v1` flag and would be skipped forever.
+    private static let modelSentinelKey = "daisy.migration.summaryModels2026_07_v2"
+
+    /// Model ids Daisy used to offer, and what each becomes.
+    ///
+    /// Cloud providers ONLY. A local model id is not interchangeable the
+    /// way a hosted one is: `qwen3.5:4b` is a 3.4 GB download the user
+    /// may not have, and rewriting `llama3.2:latest` to it would turn a
+    /// working setup into a 404 at the worst possible moment — the first
+    /// summary after an update. Ollama and LM Studio picks are left
+    /// alone; their pickers read the live server listing anyway, so the
+    /// newer catalog shows up there without touching anyone's choice.
+    ///
+    /// Only ids that are actually going away, or whose successor costs
+    /// the same or less. `gpt-4o` and `gpt-4o-mini` are NOT on OpenAI's
+    /// shutdown list — they just fell out of the current price sheet —
+    /// so anyone on them keeps working, and we leave them alone. That
+    /// matters most for `gpt-4o-mini` at $0.15/$0.60: the cheapest thing
+    /// in the 5.6 generation is Luna at $1/$6, so "migrating" someone
+    /// who deliberately picked the cheap model would multiply their bill
+    /// by ~10 without asking. They still see the refreshed list in
+    /// Settings; their own pick just isn't overwritten (Egor, 2026-07-28).
+    ///
+    /// `gpt-4-turbo` IS being shut down (2026-10-23), and the mapping
+    /// follows OpenAI's own stated replacement. The Claude ones are
+    /// same-tier successors, and Sonnet 5 is currently CHEAPER than the
+    /// 4.6 it replaces ($2/$10 vs $3/$15 until 1 September).
+    private static let modelMapping: [(key: String, from: String, to: String)] = [
+        ("daisy.anthropicModel", "claude-sonnet-4-6", "claude-sonnet-5"),
+        ("daisy.anthropicModel", "claude-opus-4-6",   "claude-opus-5"),
+        ("daisy.openaiModel",    "gpt-4-turbo",       "gpt-5.6-sol"),
+    ]
+
+    /// Move anyone still pointed at a model we no longer list onto its
+    /// successor. Exact-match only: a hand-typed id we don't recognise
+    /// is the user's deliberate choice and stays untouched.
+    private static func migrateSummaryModelsIfNeeded(defaults: UserDefaults) {
+        guard !defaults.bool(forKey: modelSentinelKey) else { return }
+
+        for (key, from, to) in modelMapping where defaults.string(forKey: key) == from {
+            defaults.set(to, forKey: key)
+            log.info("Summary model \(from, privacy: .public) → \(to, privacy: .public)")
+        }
+
+        defaults.set(true, forKey: modelSentinelKey)
     }
 }

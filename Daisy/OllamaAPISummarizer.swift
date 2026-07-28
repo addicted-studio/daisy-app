@@ -45,7 +45,7 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
 
     init(
         baseURL: URL = URL(string: "http://127.0.0.1:11434")!,
-        model: String = "llama3.2:latest",
+        model: String = defaultModelID,
         urlSession: URLSession = .shared
     ) {
         self.baseURL = baseURL
@@ -198,27 +198,38 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
 
     // MARK: - Catalog
 
-    /// Default model. We pick `llama3.2:latest` because it's the
-    /// best balance of small-enough-to-pull (~2GB) and capable-enough-
-    /// for-meeting-summaries. User can override in Settings.
-    static let defaultModelID = "llama3.2:latest"
+    /// Default model. `qwen3.5:4b` is the current best
+    /// small-enough-to-pull / capable-enough-for-meeting-summaries
+    /// trade: ~3.4 GB, strong multilingual (Daisy summarises Russian
+    /// meetings routinely, where the 3B Llamas were visibly weaker),
+    /// and a 256K context so a long meeting doesn't need chunking.
+    /// User can override in Settings.
+    ///
+    /// It is a thinking-capable model, which is fine here: Ollama puts
+    /// the reasoning trace in `message.thinking`, so `message.content`
+    /// is still the bare JSON `format: "json"` asked for.
+    static let defaultModelID = "qwen3.5:4b"
 
     /// Default base URL. Stock Ollama binds here.
     static let defaultBaseURLString = "http://127.0.0.1:11434"
 
-    /// Catalog of well-known Ollama models. Used by the Settings
-    /// model picker. User-typed model IDs are also accepted (free
-    /// text field), this is just convenience for the common cases.
-    /// Sizes are approximate as of mid-2026.
+    /// Catalog of well-known Ollama models. This is a FALLBACK and a
+    /// source of friendly labels — the picker prefers the live
+    /// `/api/tags` listing, so whatever the user has actually pulled
+    /// wins. User-typed model IDs are also accepted (free text field).
+    ///
+    /// Refreshed 2026-07-28; sizes are the default-quant download sizes
+    /// from ollama.com. The previous list was the late-2024 generation
+    /// throughout (Llama 3.2, Qwen 2.5, Mistral 7B, Gemma 2).
     static let availableModels: [(id: String, label: String)] = [
-        ("llama3.2:latest",        "Llama 3.2 (3B, ~2 GB) — recommended"),
-        ("llama3.1:8b",            "Llama 3.1 8B (~4.7 GB)"),
-        ("llama3.1:70b",           "Llama 3.1 70B (~40 GB) — needs 64GB Mac"),
-        ("qwen2.5:7b-instruct",    "Qwen 2.5 7B (~4.7 GB) — multilingual"),
-        ("qwen2.5:14b-instruct",   "Qwen 2.5 14B (~9 GB) — multilingual"),
-        ("mistral:7b-instruct",    "Mistral 7B (~4.1 GB)"),
-        ("gemma2:9b",              "Gemma 2 9B (~5.4 GB)"),
+        ("qwen3.5:4b",             "Qwen 3.5 4B (~3.4 GB) — recommended"),
+        ("qwen3.5:9b",             "Qwen 3.5 9B (~6.6 GB) — more capable"),
+        ("qwen3.5:27b",            "Qwen 3.5 27B (~17 GB) — needs a 32 GB Mac"),
+        ("gemma3:4b",              "Gemma 3 4B (~3.3 GB)"),
+        ("gemma3:12b",             "Gemma 3 12B (~8.1 GB)"),
         ("gpt-oss:20b",            "GPT-OSS 20B (~13 GB)"),
+        ("llama3.1:8b",            "Llama 3.1 8B (~4.7 GB) — older, widely installed"),
+        ("llama3.2:latest",        "Llama 3.2 3B (~2 GB) — older, smallest"),
     ]
 
     // MARK: - Cloud-model detection

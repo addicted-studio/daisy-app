@@ -13,14 +13,14 @@ import os
 nonisolated struct AnthropicAPISummarizer: SummaryProvider {
     let kind: SummaryProviderKind = .anthropic
 
-    /// Model identifier. Defaults to Sonnet 4.6 — strong quality/cost.
+    /// Model identifier. Defaults to Sonnet 5 — strong quality/cost.
     let model: String
     /// Override for testing; production passes URLSession.shared.
     let urlSession: URLSession
 
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "AnthropicSummarizer")
 
-    init(model: String = "claude-sonnet-4-6", urlSession: URLSession = .shared) {
+    init(model: String = defaultModelID, urlSession: URLSession = .shared) {
         self.model = model
         self.urlSession = urlSession
     }
@@ -56,7 +56,7 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
             // summaries hit the 2048 ceiling on hour-long meetings,
             // truncating the clientFollowUp draft mid-sentence. 4096
             // covers the worst realistic case at ~1.5 hour meetings;
-            // cost delta is ~0.5¢ per call at Sonnet 4.6 list.
+            // cost delta is ~0.5¢ per call at Sonnet list pricing.
             "max_tokens": 4096,
             "system": systemPrompt,
             "messages": [
@@ -131,13 +131,26 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
 
     // MARK: - Catalog of model IDs offered in Settings
 
+    /// Refreshed 2026-07-28. Four rungs, cheapest-capable first:
+    /// Sonnet is the one to use, Opus when the meeting is dense, Fable
+    /// when nothing else will do, Haiku when volume matters more than
+    /// nuance. Prices per MTok in/out at the time of writing: Sonnet 5
+    /// $2/$10 (introductory, $3/$15 from 1 Sep 2026), Opus 5 $5/$25,
+    /// Fable 5 $10/$50, Haiku 4.5 $1/$5.
+    ///
+    /// From the 4.6 generation on, a DATELESS Anthropic id is a pinned
+    /// snapshot rather than a moving pointer, so `claude-sonnet-5` is
+    /// safe to ship — it won't silently become a different model.
+    /// Haiku keeps its dated id because that generation predates the
+    /// change.
     static let availableModels: [(id: String, label: String)] = [
-        ("claude-sonnet-4-6", "Claude Sonnet 4.6 (recommended)"),
-        ("claude-opus-4-6",   "Claude Opus 4.6 (highest quality, slower)"),
+        ("claude-sonnet-5", "Claude Sonnet 5 (recommended)"),
+        ("claude-opus-5",   "Claude Opus 5 (highest quality, slower)"),
+        ("claude-fable-5",  "Claude Fable 5 (most capable, priciest)"),
         ("claude-haiku-4-5-20251001", "Claude Haiku 4.5 (fastest, cheapest)"),
     ]
 
-    static let defaultModelID = "claude-sonnet-4-6"
+    static let defaultModelID = "claude-sonnet-5"
     // 2026-05-27 — retry/backoff helpers lifted out into
     // `CloudHTTPRetry.fetch(request:session:log:)`. Shared between
     // Anthropic + OpenAI providers and any future cloud-LLM path.
