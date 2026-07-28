@@ -223,6 +223,17 @@
         }
       }
     },
+    "%@ · local, free" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · локально, бесплатно"
+          }
+        }
+      }
+    },
     "%@ · now" : {
       "localizations" : {
         "ru" : {
@@ -1111,6 +1122,16 @@
         }
       }
     },
+    "≈ %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "≈ %@"
+          }
+        }
+      }
+    },
     "1 day streak" : {
       "localizations" : {
         "ru" : {
@@ -1193,6 +1214,16 @@
         }
       }
     },
+    "1. What happened, and what you expected instead:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1. Что произошло и что вы ожидали:"
+          }
+        }
+      }
+    },
     "2 minutes" : {
       "localizations" : {
         "ru" : {
@@ -1203,12 +1234,52 @@
         }
       }
     },
+    "2. When was the call, and in which app (Zoom, Meet, Teams…):" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "2. Когда был звонок и в каком приложении (Zoom, Meet, Teams…):"
+          }
+        }
+      }
+    },
+    "3. Headphones / mic / speakers at the time — model, and wired or Bluetooth:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "3. Наушники / микрофон / колонки в тот момент — модель, проводные или Bluetooth:"
+          }
+        }
+      }
+    },
+    "4. What was missing: the audio recording, the transcript, the summary, or all of it:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "4. Чего не хватило: аудиозаписи, транскрипта, саммари или всего сразу:"
+          }
+        }
+      }
+    },
     "5 minutes after" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Через 5 минут"
+          }
+        }
+      }
+    },
+    "5. Were you speaking, or mostly listening:" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5. Вы говорили сами или в основном слушали:"
           }
         }
       }
@@ -1305,6 +1376,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ежедневная карточка на главном экране: ваши встречи, открытые задачи из недавних записей и приоритеты."
+          }
+        }
+      }
+    },
+    "A code for other apps on this Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код для других приложений на этом Mac."
           }
         }
       }
@@ -1485,6 +1566,7 @@
       }
     },
     "Add Daisy to Cursor’s shared MCP settings. Restart Cursor after connecting." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2047,6 +2129,16 @@
         }
       }
     },
+    "At least %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Минимум %@"
+          }
+        }
+      }
+    },
     "At the scheduled end" : {
       "localizations" : {
         "ru" : {
@@ -2093,6 +2185,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Аудио и транскрипция остаются на вашем Mac. Для саммари используется %@ по HTTPS."
+          }
+        }
+      }
+    },
+    "Audio recording is off in Settings → Privacy, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись аудио выключена в Настройках → Приватность, а живой транскрипт вышел пустым, так что саммари не сделано. В этом режиме нет аудиофайла, к которому можно вернуться."
           }
         }
       }
@@ -2570,6 +2672,16 @@
         }
       }
     },
+    "Change the port only if it is occupied." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Меняйте порт только если он занят."
+          }
+        }
+      }
+    },
     "chat" : {
       "localizations" : {
         "ru" : {
@@ -2691,6 +2803,7 @@
       }
     },
     "Claude can only connect while Daisy's MCP server is listening. Turn it on, then connect." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2712,6 +2825,7 @@
     },
     "Claude Desktop" : {
       "comment" : "A label displayed above the Claude Desktop section.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "ru" : {
@@ -2734,11 +2848,22 @@
       }
     },
     "Claude Desktop doesn't look installed. You can set it up now; it will connect the next time Claude opens." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Похоже, Claude Desktop не установлен. Его можно настроить сейчас — подключение заработает при следующем запуске Claude."
+          }
+        }
+      }
+    },
+    "Claude Desktop not found" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Desktop не найден"
           }
         }
       }
@@ -2885,11 +3010,22 @@
       }
     },
     "Codex" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Codex"
+          }
+        }
+      }
+    },
+    "Codex not found" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не найден"
           }
         }
       }
@@ -2946,6 +3082,16 @@
         }
       }
     },
+    "Configuration needs fixing." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужно исправить конфигурацию."
+          }
+        }
+      }
+    },
     "Confirm" : {
       "localizations" : {
         "ru" : {
@@ -2997,6 +3143,7 @@
       }
     },
     "Connect Claude and other compatible apps on this Mac to your transcripts and summaries. Your recordings stay on this Mac." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3036,6 +3183,36 @@
         }
       }
     },
+    "Connected — restart Claude Desktop." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено — перезапустите Claude Desktop."
+          }
+        }
+      }
+    },
+    "Connected — restart Cursor." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено — перезапустите Cursor."
+          }
+        }
+      }
+    },
+    "Connected — start a new Codex task." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключено — создайте новую задачу Codex."
+          }
+        }
+      }
+    },
     "Connected as %@" : {
       "localizations" : {
         "ru" : {
@@ -3067,6 +3244,7 @@
       }
     },
     "Connected. Restart Claude Desktop if you haven’t since setting it up." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3077,6 +3255,7 @@
       }
     },
     "Connected. Restart Cursor if you haven’t since setting it up." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3087,11 +3266,22 @@
       }
     },
     "Connected. Start a new Codex task to use Daisy’s tools." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Подключено. Создайте новую задачу Codex, чтобы использовать инструменты Daisy."
+          }
+        }
+      }
+    },
+    "Connection needs an update." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение нужно обновить."
           }
         }
       }
@@ -3306,6 +3496,16 @@
         }
       }
     },
+    "Cost unavailable" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Стоимость недоступна"
+          }
+        }
+      }
+    },
     "Couldn't auto-transcribe a recovered recording — the audio is kept; open the folder to re-process it." : {
       "localizations" : {
         "ru" : {
@@ -3462,6 +3662,16 @@
         }
       }
     },
+    "Couldn't start" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось запустить"
+          }
+        }
+      }
+    },
     "Couldn't update Claude config: %@" : {
       "localizations" : {
         "ru" : {
@@ -3515,6 +3725,7 @@
       }
     },
     "Cursor" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3525,6 +3736,7 @@
       }
     },
     "Cursor's MCP config has invalid JSON, so Daisy won't touch it. Fix the file, then try again — or use the manual configuration below." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3647,6 +3859,7 @@
       }
     },
     "Daisy can’t read Claude Desktop’s configuration. Use the manual setup below instead." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -3657,6 +3870,7 @@
       }
     },
     "Daisy can’t read Cursor’s MCP configuration — see below." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -4029,6 +4243,7 @@
       }
     },
     "Daisy’s connection needs an update." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -4863,6 +5078,7 @@
       }
     },
     "Error" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5176,6 +5392,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "По данным 1 прошлой встречи"
+          }
+        }
+      }
+    },
+    "From cache" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Из кэша"
           }
         }
       }
@@ -5582,6 +5808,16 @@
         }
       }
     },
+    "If you can share it, attach the session folder or just the transcript — that's the fastest way to see what Daisy actually heard." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Если можете — приложите папку сессии или просто транскрипт: так быстрее всего видно, что Daisy реально услышала."
+          }
+        }
+      }
+    },
     "If your endpoint needs Authorization. Leave blank for Slack-style webhooks where the URL is the secret." : {
       "localizations" : {
         "ru" : {
@@ -5744,6 +5980,16 @@
         }
       }
     },
+    "Input" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ввод"
+          }
+        }
+      }
+    },
     "Inside Daisy's container (default)" : {
       "localizations" : {
         "ru" : {
@@ -5755,6 +6001,7 @@
       }
     },
     "Install the ChatGPT app with Codex first, then return here." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5959,11 +6206,22 @@
       }
     },
     "Let AI clients read your sessions" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Разрешить ИИ-клиентам читать ваши записи"
+          }
+        }
+      }
+    },
+    "Lets apps re-summarize and send recordings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешает приложениям повторно делать саммари и отправлять записи."
           }
         }
       }
@@ -6179,6 +6437,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только loopback (127.0.0.1): сервер доступен лишь с этого Mac. Подключённые клиенты могут читать ваши записи и переименовывать запись или спикера. Повторное создание саммари и отправка записей в назначения отключены, пока не включено «Разрешить действия от MCP-клиентов». Они не могут ничего удалять или менять настройки Daisy. «Добавить в Claude Desktop» объединяет запись с ~/Library/Application Support/Claude/claude_desktop_config.json, сохраняя добавленные серверы. Для обоих клиентов нужен Node.js: Claude Desktop связывает SSE→stdio через `npx mcp-remote`, а Claude Code работает с SSE напрямую. Этот фрагмент также подходит для Cursor / Cline / Continue."
+          }
+        }
+      }
+    },
+    "Low disk space" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мало места на диске"
           }
         }
       }
@@ -6705,6 +6973,7 @@
       }
     },
     "Needs a quick repair before Claude Desktop can connect." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -6742,6 +7011,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нужна проверка"
+          }
+        }
+      }
+    },
+    "Needs your attention" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Требует внимания"
           }
         }
       }
@@ -7128,12 +7407,32 @@
         }
       }
     },
+    "Not connected" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не подключено"
+          }
+        }
+      }
+    },
     "Not enough disk space to download the transcription model — need %.1f GB free, only %.2f GB available. Free some space and try again." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Недостаточно места на диске для загрузки модели транскрипции — нужно %.1f ГБ свободного места, доступно только %.2f ГБ. Освободите место и повторите попытку."
+          }
+        }
+      }
+    },
+    "Not enough disk space, so this meeting was recorded without audio — and the live transcript came out empty, so no summary was made. Free up space and the audio comes back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не хватило места на диске, поэтому встреча записалась без аудио — а живой транскрипт вышел пустым, так что саммари не сделано. Освободите место, и аудио вернётся."
           }
         }
       }
@@ -7342,6 +7641,7 @@
       }
     },
     "Off by default: connected apps can only view and rename recordings. Turn this on to let them re-summarize or send recordings to your destinations." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7402,6 +7702,7 @@
       }
     },
     "One click adds Daisy to Codex. Start a new task afterwards to use it." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7412,6 +7713,7 @@
       }
     },
     "One click adds Daisy to Cursor’s global MCP settings." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7422,6 +7724,7 @@
       }
     },
     "One click connects it. Restart Claude Desktop afterwards to see Daisy’s tools." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7461,7 +7764,28 @@
         }
       }
     },
+    "Only %@ left — recordings are being saved without audio, transcript only. Free up space to get audio back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Осталось всего %@ — записи сохраняются без аудио, только транскрипт. Освободите место, чтобы аудио вернулось."
+          }
+        }
+      }
+    },
+    "Only apps on this Mac can connect." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключаться могут только приложения на этом Mac."
+          }
+        }
+      }
+    },
     "Only apps running on this Mac can connect. They can read and rename recordings, but can’t delete anything or change Daisy’s settings." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7768,6 +8092,16 @@
         }
       }
     },
+    "Output" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вывод"
+          }
+        }
+      }
+    },
     "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it." : {
       "localizations" : {
         "ru" : {
@@ -8062,6 +8396,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Порт"
+          }
+        }
+      }
+    },
+    "Port is already in use. Close the other copy of Daisy or change the port." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порт уже занят. Закройте другую копию Daisy или смените порт."
           }
         }
       }
@@ -8416,6 +8760,7 @@
       }
     },
     "Ready — only this Mac can connect." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8458,6 +8803,7 @@
       }
     },
     "Recommended if you use other apps on this Mac. Daisy adds it to Claude Desktop automatically." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9096,6 +9442,16 @@
         }
       }
     },
+    "Running locally" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Работает локально"
+          }
+        }
+      }
+    },
     "Runs automatically once a day. Needs Full Disk Access to read your Voice Memos library — grant it in Settings → Permissions." : {
       "localizations" : {
         "ru" : {
@@ -9433,6 +9789,7 @@
       }
     },
     "Server isn't running" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9698,6 +10055,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Спикеры в транскрипте"
+          }
+        }
+      }
+    },
+    "Spent by Daisy · %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Потрачено Daisy · %@"
           }
         }
       }
@@ -10219,11 +10587,22 @@
         }
       }
     },
+    "The attached log covers the last 24 hours. It holds diagnostics only — no transcript text." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложенный лог — за последние 24 часа. В нём только диагностика, без текста транскриптов."
+          }
+        }
+      }
+    },
     "The brief took too long and was stopped — tap retry." : {
       "comment" : "Error message displayed when a brief request times out.",
       "isCommentAutoGenerated" : true
     },
     "The easiest way to start. Daisy sets this up for you." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10293,6 +10672,16 @@
         }
       }
     },
+    "This recording captured almost no audio, so the transcript is unreliable and no summary was made. Check that the right microphone is selected and that other-side audio is being captured." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта запись почти не поймала звук, поэтому транскрипт ненадёжен и саммари не сделано. Проверьте, выбран ли нужный микрофон и захватывается ли звук собеседника."
+          }
+        }
+      }
+    },
     "This removes the audio, transcript, summary and screenshots from disk and can't be undone." : {
       "localizations" : {
         "ru" : {
@@ -10353,12 +10742,42 @@
         }
       }
     },
+    "Token usage over the last 14 days" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расход токенов за последние 14 дней"
+          }
+        }
+      }
+    },
     "token…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "токен…"
+          }
+        }
+      }
+    },
+    "tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "токенов"
+          }
+        }
+      }
+    },
+    "Tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены"
           }
         }
       }
@@ -10454,6 +10873,7 @@
       }
     },
     "Turn on MCP server" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10464,6 +10884,7 @@
       }
     },
     "Turn this on to connect an app." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10582,6 +11003,7 @@
       }
     },
     "Use Daisy with OpenAI’s coding assistant. Daisy adds a local connection without exposing your recordings online." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10687,6 +11109,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Настроим только нужное — остальное можно включить в любой момент."
+          }
+        }
+      }
+    },
+    "Web searches" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Веб-поисков"
           }
         }
       }
@@ -10897,6 +11329,7 @@
       }
     },
     "Your claude_desktop_config.json has invalid JSON, so Daisy won't touch it. Open it, fix the syntax, and try again — or use the snippet below." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10976,372 +11409,32 @@
         }
       }
     },
-    "A code for other apps on this Mac." : {
+    "Count my speech from meetings too" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Код для других приложений на этом Mac."
+            "value" : "Учитывать и мою речь на встречах"
           }
         }
       }
     },
-    "Change the port only if it is occupied." : {
+    "Only your microphone is used — never the other side. Meeting speech is conversational, so expect a profile that writes closer to how you talk." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Меняйте порт только если он занят."
+            "value" : "Берётся только ваш микрофон — сторона собеседника никогда. Речь на встречах разговорная, так что профиль будет писать ближе к тому, как вы говорите."
           }
         }
       }
     },
-    "Claude Desktop not found" : {
+    "By default only dictation counts. Turn this on and Daisy also learns from what YOU said in meetings — your microphone only, never the other side." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Claude Desktop не найден"
-          }
-        }
-      }
-    },
-    "Codex not found" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Codex не найден"
-          }
-        }
-      }
-    },
-    "Configuration needs fixing." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нужно исправить конфигурацию."
-          }
-        }
-      }
-    },
-    "Connected — restart Claude Desktop." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключено — перезапустите Claude Desktop."
-          }
-        }
-      }
-    },
-    "Connected — restart Cursor." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключено — перезапустите Cursor."
-          }
-        }
-      }
-    },
-    "Connected — start a new Codex task." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключено — создайте новую задачу Codex."
-          }
-        }
-      }
-    },
-    "Connection needs an update." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключение нужно обновить."
-          }
-        }
-      }
-    },
-    "Couldn't start" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось запустить"
-          }
-        }
-      }
-    },
-    "Lets apps re-summarize and send recordings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Разрешает приложениям повторно делать саммари и отправлять записи."
-          }
-        }
-      }
-    },
-    "Not connected" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не подключено"
-          }
-        }
-      }
-    },
-    "Off" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выключен"
-          }
-        }
-      }
-    },
-    "Only apps on this Mac can connect." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Подключаться могут только приложения на этом Mac."
-          }
-        }
-      }
-    },
-    "Port is already in use. Close the other copy of Daisy or change the port." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Порт уже занят. Закройте другую копию Daisy или смените порт."
-          }
-        }
-      }
-    },
-    "Running locally" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Работает локально"
-          }
-        }
-      }
-    },
-    "%@ · local, free" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ · локально, бесплатно"
-          }
-        }
-      }
-    },
-    "From cache" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Из кэша"
-          }
-        }
-      }
-    },
-    "Input" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ввод"
-          }
-        }
-      }
-    },
-    "Output" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вывод"
-          }
-        }
-      }
-    },
-    "Spent by Daisy · %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Потрачено Daisy · %@"
-          }
-        }
-      }
-    },
-    "Tokens" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Токены"
-          }
-        }
-      }
-    },
-    "Web searches" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Веб-поисков"
-          }
-        }
-      }
-    },
-    "1. What happened, and what you expected instead:" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "1. Что произошло и что вы ожидали:"
-          }
-        }
-      }
-    },
-    "2. When was the call, and in which app (Zoom, Meet, Teams…):" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "2. Когда был звонок и в каком приложении (Zoom, Meet, Teams…):"
-          }
-        }
-      }
-    },
-    "3. Headphones / mic / speakers at the time — model, and wired or Bluetooth:" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "3. Наушники / микрофон / колонки в тот момент — модель, проводные или Bluetooth:"
-          }
-        }
-      }
-    },
-    "4. What was missing: the audio recording, the transcript, the summary, or all of it:" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "4. Чего не хватило: аудиозаписи, транскрипта, саммари или всего сразу:"
-          }
-        }
-      }
-    },
-    "5. Were you speaking, or mostly listening:" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "5. Вы говорили сами или в основном слушали:"
-          }
-        }
-      }
-    },
-    "If you can share it, attach the session folder or just the transcript — that's the fastest way to see what Daisy actually heard." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Если можете — приложите папку сессии или просто транскрипт: так быстрее всего видно, что Daisy реально услышала."
-          }
-        }
-      }
-    },
-    "The attached log covers the last 24 hours. It holds diagnostics only — no transcript text." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Приложенный лог — за последние 24 часа. В нём только диагностика, без текста транскриптов."
-          }
-        }
-      }
-    },
-    "Needs your attention" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Требует внимания"
-          }
-        }
-      }
-    },
-    "Low disk space" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Мало места на диске"
-          }
-        }
-      }
-    },
-    "Not enough disk space, so this meeting was recorded without audio — and the live transcript came out empty, so no summary was made. Free up space and the audio comes back." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не хватило места на диске, поэтому встреча записалась без аудио — а живой транскрипт вышел пустым, так что саммари не сделано. Освободите место, и аудио вернётся."
-          }
-        }
-      }
-    },
-    "This recording captured almost no audio, so the transcript is unreliable and no summary was made. Check that the right microphone is selected and that other-side audio is being captured." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Эта запись почти не поймала звук, поэтому транскрипт ненадёжен и саммари не сделано. Проверьте, выбран ли нужный микрофон и захватывается ли звук собеседника."
-          }
-        }
-      }
-    },
-    "Only dictation counts here — meeting recordings don't, because a meeting carries several voices and this profile is about how you write." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Считаются только диктовки — записи встреч нет: во встрече несколько голосов, а профиль про то, как пишете вы."
-          }
-        }
-      }
-    },
-    "Audio recording is off in Settings → Privacy, and the live transcript came out empty, so no summary was made. There's no audio file to fall back on in this mode." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запись аудио выключена в Настройках → Приватность, а живой транскрипт вышел пустым, так что саммари не сделано. В этом режиме нет аудиофайла, к которому можно вернуться."
-          }
-        }
-      }
-    },
-    "Only %@ left — recordings are being saved without audio, transcript only. Free up space to get audio back." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Осталось всего %@ — записи сохраняются без аудио, только транскрипт. Освободите место, чтобы аудио вернулось."
+            "value" : "По умолчанию считаются только диктовки. Включите — и Daisy будет учиться ещё и на том, что ВЫ говорили на встречах: только ваш микрофон, без стороны собеседника."
           }
         }
       }

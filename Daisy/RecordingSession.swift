@@ -1933,6 +1933,34 @@ final class RecordingSession {
             kind: .recording
         )
 
+        // Opt-in: grow the voice corpus with the user's own speech from
+        // this MEETING. Mic-source segments only — the microphone stream
+        // is the user by definition, so no diarization or speaker-map
+        // guesswork is involved and the remote side can't leak in.
+        //
+        // Echo dedup runs FIRST, exactly as MarkdownExporter does it. On
+        // speakers the mic re-captures the other party and Whisper
+        // re-transcribes them as `.microphone` segments — feeding those
+        // in would train "your voice" on whoever was talking. Skipping
+        // this would also make the live path disagree with
+        // `ownSpeech(inTranscript:)`, which reads the already-deduped
+        // transcript on disk.
+        //
+        // Meetings only, matching what the switch promises and what
+        // `backfillFromMeetings` collects; a voice note is left out in
+        // both paths rather than counted in one of them.
+        if currentMode == .meeting, VoiceProfileStore.shared.includesMeetings {
+            let deduped = settings.suppressAcousticEcho
+                ? AcousticEchoDedup.filter(segments)
+                : segments
+            let ownSpeech = deduped
+                .filter { $0.source == .microphone }
+                .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            VoiceProfileStore.shared.appendMeetingSpeech(ownSpeech)
+        }
+
         // ── Granola-style: status → .finished BEFORE summary ──────────
         //
         // Everything user-visible the recording lifecycle needs is on
