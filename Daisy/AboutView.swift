@@ -174,38 +174,39 @@ struct AboutView: View {
                         Text("Report a bug")
                     }
                 }
-                // Second, EQUALLY visible path. `canPerform` only proves
-                // Mail.app is installed, so the button above can drop a
-                // user into a compose window they can't send from (Ken,
-                // 2026-07-28 — mail lives in his browser). Saving the file
-                // and putting the questions on the clipboard is the whole
-                // job for anyone in that situation; it shouldn't require
-                // failing at Mail first to discover.
+                // Second, EQUALLY visible path, and deliberately the dumb
+                // one: it produces the log file and nothing else.
+                // `canPerform` only proves Mail.app is installed, so the
+                // button above can drop a user into a compose window they
+                // can't send from (Ken, 2026-07-28 — mail lives in his
+                // browser). Named for what it hands you, because the
+                // previous "Save Log Report…" wording plus a clipboard
+                // side effect read as "copies a form" (Egor, 2026-07-28).
                 LabeledContent {
                     Button {
-                        LogReporter.saveReport(settings: settings)
+                        LogReporter.exportLogs(settings: settings)
                     } label: {
                         HStack(spacing: 4) {
-                            Text("Save Log Report…")
+                            Text("Export Logs…")
                             Image(systemName: "arrow.down.doc")
                                 .font(.caption)
                         }
                         .foregroundStyle(Color.daisyAccent)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Report a bug: save a log report to a file")
+                    .accessibilityLabel("Export the last 24 hours of logs to a file")
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "paperclip")
+                        Image(systemName: "doc.text")
                             .frame(width: 18)
                             .foregroundStyle(.secondary)
-                        Text("Mail in a browser?")
+                        Text("Just the log file")
                     }
                 }
             } header: {
                 Text("Feedback")
             } footer: {
-                Text("Attaches the last 24 hours of Daisy's logs. Nothing is sent automatically — review it first. If your mail lives in a browser, save the file instead and the questions go to your clipboard.")
+                Text("Both cover the last 24 hours of Daisy's logs — diagnostics only, no transcript text. Nothing is sent automatically; review it first.")
             }
 
             Section {

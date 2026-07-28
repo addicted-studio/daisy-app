@@ -56,6 +56,10 @@ final class PreMeetingBriefStore {
         case ready(PreMeetingBrief)
         /// No past session matched these people — nothing to brief from.
         case noHistory
+        /// Pre-meeting briefs are turned off in Settings → Meetings. A
+        /// distinct state (not `.unavailable`) because it's the one
+        /// "can't brief" reason the user can fix from the card itself.
+        case disabled
         /// A cloud provider is selected: waiting for the user to tap
         /// "Generate" before any data is sent. Carries the provider name.
         case needsConsent(String)
@@ -70,6 +74,29 @@ final class PreMeetingBriefStore {
 
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "PreMeetingBrief")
+
+    /// The generation currently running for a meeting, if any.
+    ///
+    /// Owned by the STORE, not by the view that asked for it. The card
+    /// calls `prepare` from `.task(id:)`, which SwiftUI cancels whenever
+    /// the row collapses, the day re-renders, or the next meeting takes
+    /// over — and a run cancelled between "state = .generating" and the
+    /// first `try await` left `.generating` behind with nothing running.
+    /// Every later `prepare` then hit the "already generating" early
+    /// return, so the card spun forever with no work in flight (Egor,
+    /// 2026-07-28). An unstructured `Task` is not a child of the caller,
+    /// so view cancellation can no longer strand the state; this map is
+    /// also the honest answer to "is something actually running?".
+    @ObservationIgnored
+    private var inFlight: [String: Task<Void, Never>] = [:]
+
+    /// Bumped every time a run starts for a key. A run only writes state
+    /// while it still holds the current number — so a superseded run
+    /// can't clobber its successor's result, and (unlike comparing
+    /// history signatures) there is no case where the loser returns
+    /// having written nothing at all.
+    @ObservationIgnored
+    private var generation: [String: Int] = [:]
 
     /// Signature of the matched session set the current brief was built
     /// from — lets us skip regeneration unless the underlying history
@@ -106,8 +133,23 @@ final class PreMeetingBriefStore {
     }
 
     private func generate(for meeting: DaisyMeeting, settings: AppSettings, force: Bool) async {
-        guard settings.preMeetingBriefEnabled else { return }
         let key = Self.key(for: meeting)
+
+        // Feature switched off. This used to `return` silently, leaving
+        // the state at `.idle` — which the card draws exactly like
+        // `.generating`, i.e. an eternal spinner under a "Prep for …"
+        // header (Egor, 2026-07-28). Say what's wrong instead; the card
+        // offers the switch.
+        //
+        // Drain first: a run started before the switch was flipped would
+        // otherwise finish, overwrite `.disabled` with a brief the user
+        // just turned off — and keep talking to a cloud provider on the
+        // way there.
+        guard settings.preMeetingBriefEnabled else {
+            await drain(key)
+            states[key] = .disabled
+            return
+        }
 
         // Match strength depends on where the data would go. A CLOUD
         // provider only accepts STRONG matches (a shared attendee email),
@@ -130,16 +172,19 @@ final class PreMeetingBriefStore {
         }
 
         let signature = matches.map(\.id).joined(separator: ",")
-        let current = states[key] ?? .idle
-        // Already have (or are building) a brief for this exact history.
-        if builtSignatures[key] == signature {
-            switch current {
-            case .ready, .generating: return
-            default: break
-            }
+        // Don't stack a second generation on top of one that is really
+        // running. Keyed off `inFlight`, NOT off a `.generating` state:
+        // the state is a drawing instruction and can go stale, a live
+        // Task cannot. JOIN it rather than bail — every other exit from
+        // this function leaves a state behind, and a caller that pre-set
+        // `.idle` (see `regenerate`) would otherwise be left drawing a
+        // spinner for a run it never learns the end of.
+        if let running = inFlight[key] {
+            await running.value
+            return
         }
-        // Don't stack a second generation on top of an in-flight one.
-        if case .generating = current { return }
+        // Already have a brief for this exact history.
+        if builtSignatures[key] == signature, case .ready = states[key] ?? .idle { return }
 
         // Cloud provider → require an explicit tap before sending anything.
         if !providerLocal && !force {
@@ -147,34 +192,105 @@ final class PreMeetingBriefStore {
             return
         }
 
-        // Provider must be ready before we commit to a spinner. Without
+        let gen = (generation[key] ?? 0) + 1
+        generation[key] = gen
+        states[key] = .generating
+        builtSignatures[key] = signature
+
+        // Hand the slow part to a task the store owns, then await it. The
+        // caller gets the same "finished when this returns" behaviour, but
+        // cancelling the caller no longer abandons a `.generating` state
+        // with nothing behind it.
+        // Strong `self` on purpose: the store is a singleton, and the
+        // `defer` in `run` is what clears `inFlight`.
+        let task = Task {
+            await self.run(
+                meeting: meeting, settings: settings,
+                key: key, generation: gen, matches: matches, now: now
+            )
+        }
+        inFlight[key] = task
+        await task.value
+    }
+
+    /// Stop whatever is running for `key` and wait for it to unwind, so
+    /// the caller can take ownership of the key. Loops because a run can
+    /// start while we're awaiting the previous one.
+    private func drain(_ key: String) async {
+        while let existing = inFlight[key] {
+            existing.cancel()
+            await existing.value
+        }
+    }
+
+    /// State write from inside a run — ignored once a newer run has taken
+    /// the key, so a superseded generation can't overwrite a fresher
+    /// result (or resurrect a spinner).
+    private func setState(_ state: State, key: String, generation gen: Int) {
+        guard generation[key] == gen else { return }
+        states[key] = state
+    }
+
+    /// The slow half of `generate`: availability → optional web research
+    /// → provider call. Always leaves `states[key]` in a terminal state.
+    private func run(
+        meeting: DaisyMeeting,
+        settings: AppSettings,
+        key: String,
+        generation gen: Int,
+        matches: [StoredSession],
+        now: Date
+    ) async {
+        defer { inFlight[key] = nil }
+        // Every state write below goes through this, so a run that has
+        // been superseded quietly does nothing instead of half-writing.
+        func publish(_ state: State) { setState(state, key: key, generation: gen) }
+        func allowRetry() {
+            guard generation[key] == gen else { return }
+            builtSignatures[key] = nil
+        }
+
+        // Provider must be ready before we keep the spinner up. Without
         // this, runProbe below can block indefinitely — a local summary
         // model still initializing, or an MCP/Ollama endpoint pointed at a
         // host that never answers — leaving the card stuck forever on
         // "Assembling from your past meetings…" (Egor 2026-07-23). Mirror
         // MorningBrief: resolve availability first and bail to
         // `.unavailable` rather than hang. `.unknown` (not yet probed)
-        // proceeds optimistically — the timeout below is the backstop.
+        // proceeds optimistically — the timeouts below are the backstop.
+        //
+        // The probe itself gets a ceiling: `isReady()` for an MCP or
+        // Ollama endpoint is a network round-trip, and a host that accepts
+        // the connection but never answers would hang HERE, before the
+        // generation timeout could ever apply. On timeout we proceed
+        // optimistically rather than declare the provider dead.
         if Summarizer.shared.availability == .unknown {
-            await Summarizer.shared.refreshAvailability()
+            _ = try? await Self.withTimeout(seconds: 15) {
+                await Summarizer.shared.refreshAvailability()
+            }
         }
         if case .unavailable(let why) = Summarizer.shared.availability {
-            states[key] = .unavailable(why)
+            publish(.unavailable(why))
+            allowRetry()
             return
         }
 
-        states[key] = .generating
-        builtSignatures[key] = signature
-
-        // Optional online research (opt-in, Anthropic-key gated).
+        // Optional online research (opt-in, Anthropic-key gated). Its own
+        // ceiling: `CloudHTTPRetry` retries a 45 s request, so the worst
+        // case here is minutes — outside the generation timeout below,
+        // which only wraps the provider call.
         var webBlock: String? = nil
         var webSources: [WebSource] = []
         var usedWeb = false
-        if settings.preMeetingBriefResearchOnline,
-           let research = await AttendeeWebResearch.research(for: meeting) {
-            webBlock = research.text
-            webSources = research.sources
-            usedWeb = !research.text.isEmpty
+        if settings.preMeetingBriefResearchOnline {
+            let researched: AttendeeWebResearch.Result?? = try? await Self.withTimeout(seconds: 60) {
+                await AttendeeWebResearch.research(for: meeting)
+            }
+            if let research = researched ?? nil {
+                webBlock = research.text
+                webSources = research.sources
+                usedWeb = !research.text.isEmpty
+            }
         }
 
         let localeHint = Self.briefLocaleHint(from: matches)
@@ -198,9 +314,6 @@ final class PreMeetingBriefStore {
                     task: .preMeetingBrief(info)
                 )
             }
-            // Guard against a stale write: if the user's history changed
-            // while we were generating, drop this result.
-            guard builtSignatures[key] == signature else { return }
             let brief = PreMeetingBrief(
                 summary: summary,
                 sourceSessionIDs: matches.map(\.id),
@@ -208,14 +321,22 @@ final class PreMeetingBriefStore {
                 webSources: webSources,
                 generatedAt: Date()
             )
-            states[key] = .ready(brief)
+            publish(.ready(brief))
             log.info("Brief ready for \(meeting.title, privacy: .public) from \(matches.count) past session(s)")
         } catch {
+            // Cancelled — `drain` superseded this run, and whoever called
+            // it writes the next state. `publish` is a no-op by then
+            // (a newer generation owns the key), which is the point.
+            if error is CancellationError || Task.isCancelled {
+                publish(.idle)
+                allowRetry()
+                return
+            }
             // Timed out — provider never answered. Surface a clear,
             // retryable failure instead of an endless spinner.
             if error is BriefTimeoutError {
-                states[key] = .failed(String(localized: "The brief took too long and was stopped — tap retry."))
-                builtSignatures[key] = nil
+                publish(.failed(String(localized: "The brief took too long and was stopped — tap retry.")))
+                allowRetry()
                 log.error("Brief timed out for \(meeting.title, privacy: .public)")
                 return
             }
@@ -225,14 +346,14 @@ final class PreMeetingBriefStore {
             if let provErr = error as? SummaryProviderError {
                 switch provErr {
                 case .modelUnavailable, .missingAPIKey:
-                    states[key] = .unavailable(msg)
+                    publish(.unavailable(msg))
                 default:
-                    states[key] = .failed(msg)
+                    publish(.failed(msg))
                 }
             } else {
-                states[key] = .failed(msg)
+                publish(.failed(msg))
             }
-            builtSignatures[key] = nil  // allow a later retry
+            allowRetry()
             log.error("Brief failed for \(meeting.title, privacy: .public): \(msg, privacy: .public)")
         }
     }
@@ -241,6 +362,10 @@ final class PreMeetingBriefStore {
     /// explicit tap counts as consent for a cloud provider.
     func regenerate(for meeting: DaisyMeeting, settings: AppSettings) async {
         let key = Self.key(for: meeting)
+        // Let a run that's still going finish unwinding BEFORE restarting,
+        // otherwise the old run discards its own result and the card is
+        // left spinning on a `.generating` nobody owns.
+        await drain(key)
         builtSignatures[key] = nil
         states[key] = .idle
         await generate(for: meeting, settings: settings, force: true)
