@@ -20,11 +20,19 @@ struct VoiceView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 stateCard
+                includeMeetingsCard
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
             .padding(24)
+        }
+        .task {
+            // Covers the switch being flipped on in an earlier launch
+            // before the Library had loaded. No-op once seeded.
+            if store.includesMeetings, store.meetingCorpus.isEmpty {
+                await seedFromLibrary()
+            }
         }
         .sheet(isPresented: $showingImport) {
             VoiceImportView()
@@ -145,21 +153,10 @@ struct VoiceView: View {
                 ProgressView(value: store.unlockProgress)
                     .progressViewStyle(.linear)
                     .tint(Color.daisyAccent)
-                Text("\(store.corpusWords) of \(VoiceProfileStore.unlockWords) words")
+                Text("\(store.effectiveWords) of \(VoiceProfileStore.unlockWords) words")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .monospacedDigit()
-                // Says out loud what the counter does NOT count. A user
-                // with 76 recorded meetings reads "0 of 300 words" as
-                // broken, not as "you haven't dictated yet" — reported
-                // 2026-07-27. The corpus is fed only from DictationPaste,
-                // and that's on purpose: a meeting carries several voices
-                // and conversational speech, neither of which describes
-                // how this user WRITES.
-                Text("Only dictation counts here — meeting recordings don't, because a meeting carries several voices and this profile is about how you write.")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 // Cold-start shortcut: seed from existing writing or a
                 // ready-made style prompt instead of waiting.
                 Button("Already have your style? Import it…") {
@@ -169,6 +166,60 @@ struct VoiceView: View {
                 .font(.caption)
             }
         }
+    }
+
+    /// Opt-in switch for counting the user's own speech from meetings.
+    ///
+    /// Sits under the state card in EVERY state, not inside the
+    /// pre-unlock card: it's the answer to "why does this say 0 of 300
+    /// when I have 76 recordings" (2026-07-27 report), and it has to stay
+    /// reachable after the profile exists so it can be turned back off —
+    /// a switch that disappears once you're unlocked is a switch you
+    /// can't undo.
+    ///
+    /// Off by default. The caption states the trade-off instead of
+    /// selling the feature: a profile trained on call speech writes the
+    /// way you talk on a call.
+    private var includeMeetingsCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle(isOn: Binding(
+                    get: { store.includesMeetings },
+                    set: { isOn in
+                        store.setIncludesMeetings(isOn)
+                        guard isOn else { return }
+                        Task { await seedFromLibrary() }
+                    }
+                )) {
+                    Text("Count my speech from meetings too")
+                        .font(.caption)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                Text(store.includesMeetings
+                     ? String(localized: "Only your microphone is used — never the other side. Meeting speech is conversational, so expect a profile that writes closer to how you talk.")
+                     : String(localized: "By default only dictation counts. Turn this on and Daisy also learns from what YOU said in meetings — your microphone only, never the other side."))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Fill the meeting corpus from transcripts already on disk.
+    ///
+    /// Refreshes SessionStore first: a user who opens Voice without
+    /// passing through Home or Library has an empty session list, and
+    /// seeding off that would silently add nothing — with the switch
+    /// already flipped, `onChange` would never fire again to retry.
+    /// `backfillFromMeetings` no-ops once the corpus holds anything, so
+    /// running this more than once is free.
+    private func seedFromLibrary() async {
+        await SessionStore.shared.refresh()
+        store.backfillFromMeetings(
+            sessions: SessionStore.shared.sessions,
+            displayName: settings.userDisplayName
+        )
     }
 
     private var emptyCard: some View {
