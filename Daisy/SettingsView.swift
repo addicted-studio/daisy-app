@@ -13,6 +13,7 @@
 import AppKit
 import EventKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
@@ -168,6 +169,9 @@ struct SettingsView: View {
     /// Live `/api/tags` model list for the Ollama picker (empty until
     /// fetched / when the server is unreachable → static catalog).
     @State private var ollamaInstalledModels: [String] = []
+    /// Owns the user-added meeting-app list; @Observable, so the rows
+    /// below refresh as it changes.
+    @Bindable private var detector = MeetingDetector.shared
     @State private var lmStudioLoadedModels: [String] = []
     @Bindable private var nav = AppNavigation.shared
 
@@ -870,6 +874,15 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.menu)
+
+                // Only where app detection actually runs. Under
+                // "Meetings with a link" and "Off" the app-launch
+                // detector is switched off entirely, and a list of apps
+                // sitting there would promise something that can't
+                // happen. See AutoStartPolicy's substrate mapping.
+                if settings.autoStartPolicy == .always || settings.autoStartPolicy == .prompt {
+                    meetingAppsRow
+                }
 
                 Toggle("Record the other side", isOn: $settings.captureSystemAudio)
 
@@ -2146,6 +2159,109 @@ struct SettingsView: View {
             let suffix = OllamaAPISummarizer.isCloudModel(name) ? String(localized: " — cloud (ollama.com)") : ""
             return (id: name, label: name + suffix)
         }
+    }
+
+    // MARK: - Meeting apps
+
+    /// The apps whose launch starts a recording: what Daisy ships with,
+    /// plus whatever the user adds.
+    ///
+    /// A hardcoded list is a support queue with extra steps — Roam this
+    /// week (Ken, 2026-07-28), Around and Whereby the next, and every
+    /// one of them a release for a two-line change. Letting the user
+    /// point at the app closes the whole class, and it answers its own
+    /// question: no one has to look up a bundle identifier.
+    @ViewBuilder
+    private var meetingAppsRow: some View {
+        LabeledContent {
+            Button("Add App…") { addMeetingApp() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Apps that start a recording")
+                Text(meetingAppsSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        ForEach(detector.customApps) { app in
+            HStack(spacing: 8) {
+                Text(app.name)
+                Text(app.bundleID)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                Button {
+                    detector.customApps.removeAll { $0.bundleID == app.bundleID }
+                } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help(String(localized: "Remove \(app.name)"))
+            }
+        }
+    }
+
+    private var meetingAppsSummary: String {
+        // Distinct APPS, not bundle ids: Teams, Webex and Telegram each
+        // ship two ids, and counting raw entries would advertise 11 for
+        // 8 apps — overstating coverage to someone deciding whether they
+        // need to add theirs. `displayName` already owns that mapping.
+        let builtIn = Set(
+            MeetingDetector.builtInMeetingBundleIDs.map(MeetingDetector.displayName(for:))
+        ).count
+        return String(localized: "Daisy knows \(builtIn) meeting apps. Add your own if yours isn't detected — only a NEW launch counts, so quit and reopen the app to test.")
+    }
+
+    /// Standard open panel over /Applications. The bundle id comes from
+    /// the chosen app itself, which is the point: the user knows what
+    /// they clicked, not what its reverse-DNS identifier is.
+    private func addMeetingApp() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.title = String(localized: "Add a Meeting App")
+        panel.message = String(localized: "Pick an app whose launch should start a recording.")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let bundleID = Bundle(url: url)?.bundleIdentifier else {
+            ToastCenter.shared.show(
+                String(localized: "That doesn't look like an app Daisy can identify."),
+                style: .error
+            )
+            return
+        }
+        // Not `FileManager.displayName(atPath:)` — that honours the
+        // user's "Show all filename extensions" setting, which would
+        // bake "Slack.app" into the stored name permanently.
+        let name = (Bundle(url: url)?.infoDictionary?["CFBundleDisplayName"] as? String)
+            ?? url.deletingPathExtension().lastPathComponent
+        if MeetingDetector.builtInMeetingBundleIDs.contains(bundleID) {
+            ToastCenter.shared.show(
+                String(localized: "\(name) is already detected — no need to add it."),
+                style: .info
+            )
+            return
+        }
+        guard !detector.customApps.contains(where: { $0.bundleID == bundleID }) else {
+            // Same intent as picking a built-in app, so the same answer.
+            // Closing the panel with no explanation reads as a failure.
+            ToastCenter.shared.show(
+                String(localized: "\(name) is already detected — no need to add it."),
+                style: .info
+            )
+            return
+        }
+        detector.customApps.append(
+            MeetingDetector.CustomApp(bundleID: bundleID, name: name)
+        )
     }
 
     /// Model picker choices for LM Studio. Prefers the live

@@ -92,9 +92,12 @@ final class ScreenshotCapture {
         // 1. Biggest on-screen window owned by a known meeting app.
         //    Size gate skips join-panels, HUDs and toolbars; the main
         //    call window (the one rendering shared content) is large.
+        // Hoisted: `meetingBundleIDs()` decodes the user's additions
+        // from UserDefaults, and there can be hundreds of windows.
+        let meetingApps = MeetingDetector.meetingBundleIDs()
         let meetingWindows = content.windows.filter { w in
             guard let bid = w.owningApplication?.bundleIdentifier else { return false }
-            return MeetingDetector.knownMeetingBundleIDs.contains(bid)
+            return meetingApps.contains(bid)
                 && w.isOnScreen
                 && w.frame.width >= 300 && w.frame.height >= 200
         }

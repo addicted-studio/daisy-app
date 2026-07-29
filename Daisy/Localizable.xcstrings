@@ -11687,6 +11687,86 @@
         }
       }
     },
+    "Apps that start a recording" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложения, запускающие запись"
+          }
+        }
+      }
+    },
+    "Add App…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить приложение…"
+          }
+        }
+      }
+    },
+    "Daisy knows %lld meeting apps. Add your own if yours isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy знает %lld приложений для звонков. Добавьте своё, если его не находит. Считается только НОВЫЙ запуск — чтобы проверить, закройте приложение и откройте заново."
+          }
+        }
+      }
+    },
+    "Add a Meeting App" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить приложение для звонков"
+          }
+        }
+      }
+    },
+    "Pick an app whose launch should start a recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите приложение, запуск которого должен начинать запись."
+          }
+        }
+      }
+    },
+    "That doesn't look like an app Daisy can identify." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Похоже, это не приложение — Daisy не смогла его опознать."
+          }
+        }
+      }
+    },
+    "%@ is already detected — no need to add it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ и так определяется — добавлять не нужно."
+          }
+        }
+      }
+    },
+    "Remove %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать %@"
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {
