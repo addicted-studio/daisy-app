@@ -351,6 +351,7 @@
       }
     },
     "%@: %lld tokens in, %lld out" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -1106,6 +1107,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "К добавлению: %lld"
+          }
+        }
+      }
+    },
+    "%lld tokens in" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld токенов на входе"
+          }
+        }
+      }
+    },
+    "%lld tokens out" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld токенов на выходе"
           }
         }
       }
@@ -12054,22 +12075,12 @@
         }
       }
     },
-    "%lld tokens in" : {
+    "This model is billed, but Daisy doesn't know its price." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld токенов на входе"
-          }
-        }
-      }
-    },
-    "%lld tokens out" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%lld токенов на выходе"
+            "value" : "Эта модель платная, но её цена Daisy неизвестна."
           }
         }
       }

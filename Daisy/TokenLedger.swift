@@ -238,6 +238,13 @@ nonisolated struct ModelSeriesRow: Identifiable, Sendable {
     /// Daily totals, one entry per elapsed day of this month, oldest
     /// first. Same window as the total above the chart.
     let values: [Int]
+    /// This model's own share of the month's bill. Three outcomes, and
+    /// the UI must tell them apart: priced (show it), billed but
+    /// unpriced — a cloud model Daisy has no tariff for — and not billed
+    /// at all, which is every local provider. Blank means free; an
+    /// unpriced CLOUD model shown as blank would read as free while
+    /// quietly costing money.
+    let cost: TokenCostEstimate
 
     var totalTokens: Int { inputTokens + outputTokens }
 }
@@ -251,6 +258,18 @@ nonisolated struct TokenCostEstimate: Sendable, Equatable {
     var usd: Double = 0
     var hasPricedUsage = false
     var hasUnpricedBilledUsage = false
+
+    /// Merge two estimates. Both flags are sticky on purpose: a bucket
+    /// with one priced and one unpriced model is BOTH "here is a number"
+    /// and "this number is short", and dropping either half would make
+    /// the total look complete when it isn't.
+    static func + (lhs: Self, rhs: Self) -> Self {
+        Self(
+            usd: lhs.usd + rhs.usd,
+            hasPricedUsage: lhs.hasPricedUsage || rhs.hasPricedUsage,
+            hasUnpricedBilledUsage: lhs.hasUnpricedBilledUsage || rhs.hasUnpricedBilledUsage
+        )
+    }
 }
 
 /// Public list prices for the small, curated model lists Daisy exposes in
@@ -496,6 +515,17 @@ final class TokenLedger {
         currentMonthModelSpend().reduce(0) { $0 + $1.totalTokens }
     }
 
+    /// The price estimate for one model's own tokens. Keeping the scope
+    /// this narrow is what stops a Claude row from displaying OpenAI
+    /// spend.
+    func currentMonthCostEstimate(for modelSpend: ModelSpend) -> TokenCostEstimate {
+        costEstimate(
+            matchingDayPrefix: Self.monthKey(for: Date()),
+            provider: modelSpend.provider,
+            model: modelSpend.model
+        )
+    }
+
     /// Rows for the stacked chart + legend, biggest spender first.
     ///
     /// Capped at `limit` distinct models: a stack of eight is mush, and
@@ -504,11 +534,13 @@ final class TokenLedger {
     /// trailing "Other" row rather than dropped — a silently truncated
     /// stack reads as "this is everything".
     func currentMonthModelSeries(limit: Int = 4) -> [ModelSeriesRow] {
-        // Tokens, not `hasActivity`: a model with web searches and no
-        // tokens would otherwise get a legend row reading "0 in, 0 out"
-        // next to a colour swatch it never uses in the chart. Its
-        // searches are still counted — on the card's own web-search line.
-        let all = currentMonthModelSpend().filter { $0.totalTokens > 0 }
+        // `hasActivity`, so the rows' costs add up to the headline: a
+        // model with web searches and no tokens still costs real money
+        // ($0.01 a search), and the headline counts every bucket. Filter
+        // it out of the table and the column silently stops summing to
+        // the number above it. The row reads "0 in, 0 out" with a price
+        // beside it, which is exactly what happened.
+        let all = currentMonthModelSpend().filter(\.hasActivity)
         guard !all.isEmpty else { return [] }
         let leading = all.prefix(limit)
         let merged = all.dropFirst(limit)
@@ -519,7 +551,8 @@ final class TokenLedger {
                 name: Self.friendlyModelName(spend.model, provider: spend.provider),
                 inputTokens: spend.inputTokens + spend.cachedInputTokens + spend.cacheWriteTokens,
                 outputTokens: spend.outputTokens,
-                values: currentMonthTokenSeries(for: spend)
+                values: currentMonthTokenSeries(for: spend),
+                cost: currentMonthCostEstimate(for: spend)
             )
         }
         if !merged.isEmpty {
@@ -533,7 +566,8 @@ final class TokenLedger {
                 name: String(localized: "\(merged.count) other models"),
                 inputTokens: merged.reduce(0) { $0 + $1.inputTokens + $1.cachedInputTokens + $1.cacheWriteTokens },
                 outputTokens: merged.reduce(0) { $0 + $1.outputTokens },
-                values: summed
+                values: summed,
+                cost: merged.reduce(TokenCostEstimate()) { $0 + currentMonthCostEstimate(for: $1) }
             ))
         }
         return rows

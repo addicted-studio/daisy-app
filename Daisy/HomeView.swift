@@ -583,6 +583,38 @@ struct HomeView: View {
         n.formatted(.number.notation(.compactName))
     }
 
+    /// A model's own cost, for the legend table.
+    ///
+    /// Blank for local providers, which is the whole point — nothing to
+    /// pay, nothing to say. But a cloud model whose tariff Daisy doesn't
+    /// know must NOT be blank: blank reads as free, and that one is
+    /// billing the user at a rate we simply can't quote. It gets a mark
+    /// and a tooltip instead (Egor, 2026-07-29).
+    @ViewBuilder
+    private func rowCost(_ estimate: TokenCostEstimate) -> some View {
+        if estimate.hasPricedUsage {
+            let digits = estimate.usd > 0 && estimate.usd < 0.01 ? 4 : 2
+            let amount = estimate.usd.formatted(
+                .currency(code: "USD").precision(.fractionLength(digits))
+            )
+            // Both flags can be true at once — the merged "other models"
+            // row sums a priced model with an unpriced one. Printing the
+            // bare figure there would state a number that is knowingly
+            // short, which is the failure the summing operator was
+            // written to prevent.
+            Text(estimate.hasUnpricedBilledUsage ? String(localized: "At least \(amount)") : amount)
+        } else if estimate.hasUnpricedBilledUsage {
+            Text(verbatim: "?")
+                .help(String(localized: "This model is billed, but Daisy doesn't know its price."))
+                .accessibilityLabel(String(localized: "Cost unavailable"))
+        } else {
+            // Local provider — deliberately empty. The column still
+            // exists so the rows stay aligned.
+            Text(verbatim: "")
+                .accessibilityHidden(true)
+        }
+    }
+
     /// API pricing changes and Daisy only sees calls it made itself, so
     /// this is consciously an estimate — never an invoice.
     private func estimatedCostLabel(_ estimate: TokenCostEstimate) -> String? {
@@ -680,6 +712,9 @@ struct HomeView: View {
                             Text(verbatim: "↑ \(compactTokens(row.outputTokens))")
                                 .help(String(localized: "Output tokens"))
                                 .accessibilityLabel(String(localized: "\(row.outputTokens) tokens out"))
+
+                            rowCost(row.cost)
+                                .gridColumnAlignment(.trailing)
                         }
                     }
                 }
