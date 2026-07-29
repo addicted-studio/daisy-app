@@ -647,26 +647,51 @@ struct HomeView: View {
 
                 // Doubles as the chart's legend — which is why the swatch
                 // is never the only thing telling two models apart.
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(TokenUsageChart.color(at: index))
-                            .frame(width: 7, height: 7)
-                        Text(row.name)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer(minLength: 8)
-                        Text("↓ \(compactTokens(row.inputTokens))")
-                            .help(String(localized: "Input tokens"))
-                        Text("↑ \(compactTokens(row.outputTokens))")
-                            .help(String(localized: "Output tokens"))
+                //
+                // A Grid, not a stack of HStacks: with the numbers merely
+                // pushed right by a Spacer, each row's ↓ and ↑ started
+                // wherever that row's digits happened to end, so the
+                // columns zig-zagged and two models couldn't be compared
+                // down the page. A grid gives every column one width.
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        GridRow {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(TokenUsageChart.color(at: index))
+                                    .frame(width: 7, height: 7)
+                                Text(row.name)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            // Takes the slack so the two number columns
+                            // sit together at the right, still aligned to
+                            // each other's leading edge.
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityLabel(row.name)
+
+                            // `verbatim`: an arrow and a formatted number
+                            // are not translatable text, and letting them
+                            // extract as "↓ %@" would put a glyph in the
+                            // catalogue for a translator to puzzle over.
+                            Text(verbatim: "↓ \(compactTokens(row.inputTokens))")
+                                .help(String(localized: "Input tokens"))
+                                .accessibilityLabel(String(localized: "\(row.inputTokens) tokens in"))
+                            Text(verbatim: "↑ \(compactTokens(row.outputTokens))")
+                                .help(String(localized: "Output tokens"))
+                                .accessibilityLabel(String(localized: "\(row.outputTokens) tokens out"))
+                        }
                     }
-                    .daisyStatLabel()
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(
-                        String(localized: "\(row.name): \(row.inputTokens) tokens in, \(row.outputTokens) out")
-                    )
                 }
+                // Explicit, so the flexible first cell has a width to
+                // take the slack from rather than sizing the grid to its
+                // own content.
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // Monospaced digits so the columns hold still between
+                // rows — proportional figures make a column of numbers
+                // look ragged even when it is perfectly aligned.
+                .daisyStatLabel()
+                .monospacedDigit()
 
                 // Billed per search, not per token, so no token figure
                 // on this card contains them.
