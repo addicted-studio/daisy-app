@@ -590,10 +590,16 @@ struct HomeView: View {
     /// know must NOT be blank: blank reads as free, and that one is
     /// billing the user at a rate we simply can't quote. It gets a mark
     /// and a tooltip instead (Egor, 2026-07-29).
+    /// - Parameter digits: decimals for the WHOLE column, not for this
+    ///   row. Rounding each row to its own comfortable precision made
+    ///   the column stop adding up on screen: $0.1365 printed as "$0.14"
+    ///   beside $0.0025, under a total of $0.14 — so the total looked
+    ///   like it was one model's, not the sum (Egor, 2026-07-29). One
+    ///   precision for every row, chosen by the smallest of them, and
+    ///   the arithmetic is visible again.
     @ViewBuilder
-    private func rowCost(_ estimate: TokenCostEstimate) -> some View {
+    private func rowCost(_ estimate: TokenCostEstimate, digits: Int) -> some View {
         if estimate.hasPricedUsage {
-            let digits = estimate.usd > 0 && estimate.usd < 0.01 ? 4 : 2
             let amount = estimate.usd.formatted(
                 .currency(code: "USD").precision(.fractionLength(digits))
             )
@@ -638,6 +644,13 @@ struct HomeView: View {
             let cost = tokens.currentMonthCostEstimate()
             let searches = tokens.currentMonthWebSearches()
             let cached = tokens.currentMonthCachedInputTokens()
+            // Driven by the SMALLEST priced row: two decimals would round
+            // a cheap model to $0.00 and make it look free, and a mix of
+            // precisions down the column stops it adding up by eye.
+            let hasSubCentRow = rows.contains {
+                $0.cost.hasPricedUsage && $0.cost.usd > 0 && $0.cost.usd < 0.01
+            }
+            let costDigits = hasSubCentRow ? 4 : 2
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline) {
                     Text("Tokens")
@@ -713,7 +726,7 @@ struct HomeView: View {
                                 .help(String(localized: "Output tokens"))
                                 .accessibilityLabel(String(localized: "\(row.outputTokens) tokens out"))
 
-                            rowCost(row.cost)
+                            rowCost(row.cost, digits: costDigits)
                                 .gridColumnAlignment(.trailing)
                         }
                     }
