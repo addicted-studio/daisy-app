@@ -998,18 +998,23 @@ final class AppSettings {
         // a half-configured cloud account. Off-by-default keeps the
         // first-time experience honest; the user flips it on once
         // they've set up a provider.
+        // Resolved into a LOCAL first: `summaryTiming` below derives from
+        // it, and reading `self.autoSummarize` back before every stored
+        // property is initialized is illegal in an initializer.
+        let resolvedAutoSummarize: Bool
         if let storedAutoSummarize = defaults.object(forKey: Self.k_autoSummarize) as? Bool {
-            self.autoSummarize = storedAutoSummarize
+            resolvedAutoSummarize = storedAutoSummarize
         } else if !defaults.bool(forKey: Self.k_hasShownFirstRun), #available(macOS 26.0, *) {
             // Fresh install on macOS 26: the default provider is Apple
             // Intelligence — local and key-free — so the first recording
             // should end in a summary, not a bare transcript. The
             // half-configured-cloud concern above doesn't apply.
             // Existing installs keep their opt-in.
-            self.autoSummarize = true
+            resolvedAutoSummarize = true
         } else {
-            self.autoSummarize = false
+            resolvedAutoSummarize = false
         }
+        self.autoSummarize = resolvedAutoSummarize
         // Derived from the substrate on first read: an existing install
         // that had summaries on means "after each meeting", off means
         // "manually". Nobody is moved onto the scheduler without asking.
@@ -1018,7 +1023,7 @@ final class AppSettings {
             self.summaryTiming = timing
             self.didLoadStoredSummaryTiming = true
         } else {
-            self.summaryTiming = self.autoSummarize ? .afterEachMeeting : .manual
+            self.summaryTiming = resolvedAutoSummarize ? .afterEachMeeting : .manual
         }
         let storedHour = defaults.object(forKey: Self.k_endOfDaySummaryHour) as? Int
         // 20:00: late enough that the day's meetings are done, early
