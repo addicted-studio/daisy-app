@@ -35,6 +35,15 @@ nonisolated enum ScreenTextExtractor {
         let markdown: String
         /// How many distinct screens survived dedup.
         let distinctScreens: Int
+        /// Filenames of the frames that survived, in capture order.
+        ///
+        /// The dedup pass already knows which frame each kept block came
+        /// from; it used to throw that away and report only a count. It
+        /// is the most valuable thing this pass produces for navigation:
+        /// an hour of capture is ~60 near-identical frames, of which
+        /// maybe eight are actually a NEW screen. Stepping through eight
+        /// is browsing; stepping through sixty is a slideshow.
+        let distinctFrames: [String]
     }
 
     /// Minimum word-like characters for a frame to count as "has content"
@@ -58,15 +67,17 @@ nonisolated enum ScreenTextExtractor {
             at: directory,
             includingPropertiesForKeys: nil
         ) else {
-            return Result(markdown: "", distinctScreens: 0)
+            return Result(markdown: "", distinctScreens: 0, distinctFrames: [])
         }
         let pngs = entries
             .filter { $0.pathExtension.lowercased() == "png" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .prefix(maxFrames)
-        guard !pngs.isEmpty else { return Result(markdown: "", distinctScreens: 0) }
+        guard !pngs.isEmpty else { return Result(markdown: "", distinctScreens: 0, distinctFrames: []) }
 
         var kept: [String] = []
+        /// Filename behind each entry of `kept`, index-for-index.
+        var keptFrames: [String] = []
         var lastTokens: Set<String> = []
 
         for url in pngs {
@@ -82,17 +93,22 @@ nonisolated enum ScreenTextExtractor {
                 // animates in) so the retained block is the fullest one.
                 if normalized.count > (kept.last?.count ?? 0) {
                     kept[kept.count - 1] = String(normalized.prefix(maxCharsPerScreen))
+                    // The fuller frame replaces the earlier one as this
+                    // screen's representative — otherwise navigation lands
+                    // on the half-animated version of the slide.
+                    keptFrames[keptFrames.count - 1] = url.lastPathComponent
                 }
                 continue
             }
 
             kept.append(String(normalized.prefix(maxCharsPerScreen)))
+            keptFrames.append(url.lastPathComponent)
             lastTokens = tokens
 
             if kept.reduce(0, { $0 + $1.count }) > maxTotalChars { break }
         }
 
-        guard !kept.isEmpty else { return Result(markdown: "", distinctScreens: 0) }
+        guard !kept.isEmpty else { return Result(markdown: "", distinctScreens: 0, distinctFrames: []) }
 
         var md = ""
         for (i, block) in kept.enumerated() {
@@ -103,7 +119,8 @@ nonisolated enum ScreenTextExtractor {
         log.info("Screen OCR: \(pngs.count, privacy: .public) frames → \(kept.count, privacy: .public) distinct screens")
         return Result(
             markdown: md.trimmingCharacters(in: .whitespacesAndNewlines),
-            distinctScreens: kept.count
+            distinctScreens: kept.count,
+            distinctFrames: keptFrames
         )
     }
 

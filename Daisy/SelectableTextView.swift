@@ -83,7 +83,16 @@ struct SelectableTextView: NSViewRepresentable {
     /// `**` parity is evaluated WITHIN each line (the exporter emits balanced
     /// pairs per line, so the odd-index pieces are the bold ones). Fonts are
     /// computed once up front, not per line.
-    static func renderMarkdown(_ text: String, font: NSFont) -> NSAttributedString {
+    /// - Parameter timecodeLinks: when true, a transcript line's leading
+    ///   `[mm:ss · Speaker]` gets a `daisy-time://<seconds>` link on the
+    ///   TIME only. Off everywhere else — a summary has no timeline, and
+    ///   linking a speaker name would make "who said it" a navigation
+    ///   control by accident.
+    static func renderMarkdown(
+        _ text: String,
+        font: NSFont,
+        timecodeLinks: Bool = false
+    ) -> NSAttributedString {
         let bodyBold = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
         func sized(_ scale: CGFloat) -> NSFont {
             NSFont(descriptor: bodyBold.fontDescriptor, size: font.pointSize * scale) ?? bodyBold
@@ -122,7 +131,15 @@ struct SelectableTextView: NSViewRepresentable {
             let boldAttrs: [NSAttributedString.Key: Any] = [.font: lineBoldFont, .foregroundColor: color]
             for (i, seg) in content.components(separatedBy: "**").enumerated() where !seg.isEmpty {
                 let useBold = wholeLineBold || !i.isMultiple(of: 2)
-                result.append(NSAttributedString(string: seg, attributes: useBold ? boldAttrs : normalAttrs))
+                let piece = NSMutableAttributedString(
+                    string: seg,
+                    attributes: useBold ? boldAttrs : normalAttrs
+                )
+                if timecodeLinks, useBold,
+                   let stamp = TranscriptTimecode.leadingStamp(in: seg) {
+                    piece.addAttribute(.link, value: stamp.url, range: stamp.range)
+                }
+                result.append(piece)
             }
             // Re-insert the newline between lines (base font keeps inter-line
             // spacing uniform even after a large heading).
@@ -332,16 +349,35 @@ struct ScrollableTextView: NSViewRepresentable {
     /// `isVerticallyResizable` and lays out to the TRUE content height, so the
     /// internal scroller always reaches the real bottom — no unscrollable clip.
     var maxHeight: CGFloat?
+    /// Non-nil ⇒ transcript mode: leading `[mm:ss]` stamps become links,
+    /// and this fires with the seconds when one is clicked.
+    var onTimecodeTap: ((Double) -> Void)?
+    /// Scroll target, in seconds. Set it to move the pane to the line
+    /// spoken at that moment; the same value twice in a row is a no-op,
+    /// so a repeated jump needs a distinct request (see `ScrollRequest`).
+    var scrollRequest: ScrollRequest?
+
+    /// A scroll ask that survives being repeated: the id changes even
+    /// when the seconds don't, so "jump again to the same place" works
+    /// after the user has scrolled away.
+    struct ScrollRequest: Equatable {
+        let id: Int
+        let seconds: Double
+    }
 
     init(
         _ text: String,
         font: NSFont = NSFont.preferredFont(forTextStyle: .body),
-        maxHeight: CGFloat? = nil
+        maxHeight: CGFloat? = nil,
+        onTimecodeTap: ((Double) -> Void)? = nil,
+        scrollRequest: ScrollRequest? = nil
     ) {
         self.text = text
         self.font = font
         self.attributed = nil
         self.maxHeight = maxHeight
+        self.onTimecodeTap = onTimecodeTap
+        self.scrollRequest = scrollRequest
     }
 
     init(attributed: NSAttributedString, maxHeight: CGFloat? = nil) {
@@ -349,17 +385,33 @@ struct ScrollableTextView: NSViewRepresentable {
         self.font = NSFont.preferredFont(forTextStyle: .body)
         self.attributed = attributed
         self.maxHeight = maxHeight
+        self.onTimecodeTap = nil
+        self.scrollRequest = nil
     }
 
     private func displayString() -> NSAttributedString {
-        attributed ?? SelectableTextView.renderMarkdown(text, font: font)
+        attributed ?? SelectableTextView.renderMarkdown(
+            text, font: font, timecodeLinks: onTimecodeTap != nil
+        )
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
-    final class Coordinator {
+
+    /// `NSObject` + delegate so timecode links are clickable. Without a
+    /// delegate NSTextView opens the URL in the browser, which for a
+    /// `daisy-time://` scheme means a confusing "no application" alert.
+    final class Coordinator: NSObject, NSTextViewDelegate {
         var lastText: String?
         var lastFont: NSFont?
         var lastAttributed: NSAttributedString?
+        var lastScrollRequest: ScrollRequest?
+        var onTimecodeTap: ((Double) -> Void)?
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let seconds = TranscriptTimecode.seconds(fromLink: link) else { return false }
+            onTimecodeTap?(seconds)
+            return true   // handled — do NOT hand it to NSWorkspace
+        }
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -387,6 +439,16 @@ struct ScrollableTextView: NSViewRepresentable {
         // ⌘F Find Bar inside long transcripts, same as SelectableTextView.
         tv.usesFindBar = true
         tv.isIncrementalSearchingEnabled = true
+        // Deliberately not the system default (blue + underline): the
+        // stamps sit at the head of every single line, and sixty
+        // underlined blue runs would read as a link farm rather than a
+        // transcript. Colour + pointing hand is enough of a signal.
+        tv.linkTextAttributes = [
+            .foregroundColor: NSColor.daisyTimecodeLink,
+            .cursor: NSCursor.pointingHand
+        ]
+        tv.delegate = context.coordinator
+        context.coordinator.onTimecodeTap = onTimecodeTap
         tv.textStorage?.setAttributedString(displayString())
 
         let scroll = NSScrollView()
@@ -406,6 +468,11 @@ struct ScrollableTextView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let tv = scroll.documentView as? NSTextView else { return }
+        context.coordinator.onTimecodeTap = onTimecodeTap
+        // BEFORE the early-outs below: those guard the expensive
+        // re-render, and a jump request usually arrives with the text
+        // unchanged — that's the normal case, not the exception.
+        defer { applyScrollRequest(scroll, context) }
         // Rebuild only on a real change. Attributed mode (summary) re-derives
         // the string each body pass, so compare by equality; markdown mode
         // (transcript / follow-up) compares source text + font.
@@ -420,6 +487,20 @@ struct ScrollableTextView: NSViewRepresentable {
         context.coordinator.lastAttributed = attributed
         tv.font = font
         tv.textStorage?.setAttributedString(displayString())
+    }
+
+    /// Move the pane to the line spoken at `scrollRequest.seconds`, and
+    /// select its stamp so the landing point is visible rather than
+    /// merely on-screen.
+    private func applyScrollRequest(_ scroll: NSScrollView, _ context: Context) {
+        guard let request = scrollRequest,
+              context.coordinator.lastScrollRequest != request,
+              let tv = scroll.documentView as? NSTextView,
+              let storage = tv.textStorage else { return }
+        context.coordinator.lastScrollRequest = request
+        guard let range = TranscriptTimecode.range(at: request.seconds, in: storage) else { return }
+        tv.scrollRangeToVisible(range)
+        tv.setSelectedRange(range)
     }
 
     /// Self-sizing for the capped (Summary / Follow-up) case. Returns `nil`
@@ -674,6 +755,23 @@ func summaryAttributedString(_ summary: MeetingSummary, compact: Bool, includeSt
 // MARK: - Selection colour
 
 extension NSColor {
+    /// Colour for a clickable `[mm:ss]` stamp in the transcript. The
+    /// app's home accent, resolved for AppKit — deliberately NOT the
+    /// system link blue, which would sit at the head of every line and
+    /// turn the transcript into a wall of underlined blue.
+    nonisolated static let daisyTimecodeLink = NSColor(
+        name: nil,
+        dynamicProvider: { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return NSColor(
+                calibratedRed: 0xF5 / 255.0,
+                green: 0xA1 / 255.0,
+                blue: 0x4B / 255.0,
+                alpha: isDark ? 1.0 : 0.95
+            )
+        }
+    )
+
     /// Text-selection wash for the NSTextView wrappers. The system
     /// selection colour follows the user's Highlight setting and, on the
     /// app's cream light-theme cards, can be nearly invisible (and drops

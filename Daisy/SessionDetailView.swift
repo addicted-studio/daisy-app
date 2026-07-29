@@ -55,6 +55,19 @@ struct SessionDetailView: View {
     /// observable SessionStore — it's a per-session file). Cheap: the
     /// sidecar is a handful of bytes and only re-read on the tick.
     @State private var suggestionRefreshTick = 0
+    /// Frame shown by the screen-preview sheet — set by tapping a
+    /// `[mm:ss]` stamp in the transcript.
+    @State private var previewedScreenshot: PreviewedFrame?
+    /// Pending "scroll the transcript to this moment" ask. Carries an id
+    /// so asking twice for the same second still moves the pane.
+    @State private var transcriptScroll: ScrollableTextView.ScrollRequest?
+    /// Position in `session.distinctScreenshots` for the header stepper.
+    /// -1 = not started, so the first tap lands on frame 1.
+    @State private var screenStep = -1
+    /// Frame the strip should scroll to. Set by the stepper and by a
+    /// timecode tap, so both keep the two panes pointing at the same
+    /// moment.
+    @State private var stripTarget: URL?
     /// Local draft for the tag field in the header. Mirrors
     /// `session.tag` and commits to disk on blur / Enter — same
     /// save-on-blur idiom the title editor below uses.
@@ -189,7 +202,8 @@ struct SessionDetailView: View {
                     title: "Transcript",
                     storageKey: "daisy.session.detail.transcriptExpanded",
                     copyLabel: "Copy transcript",
-                    copyText: { mappedTranscriptText }
+                    copyText: { mappedTranscriptText },
+                    accessory: { screenStepper }
                 ) {
                     transcriptSection
                 }
@@ -213,6 +227,107 @@ struct SessionDetailView: View {
         } message: {
             Text("Audio, transcript, summary and screenshots will be removed from disk. This can't be undone.")
         }
+        // A sheet rather than a popover: the strip's 160pt thumbnails are
+        // too small to read a slide off, and a popover anchored to a
+        // click inside an NSTextView has nothing stable to attach to.
+        .sheet(item: $previewedScreenshot) { frame in
+            screenPreview(frame.url)
+        }
+    }
+
+    // MARK: - Screen stepper
+
+    /// Walks the meeting by what was SHOWN: each tap moves to the next
+    /// new screen and takes the transcript with it.
+    ///
+    /// Deliberately steps `distinctScreenshots` rather than every frame.
+    /// An hour of capture is ~60 shots of which maybe eight are actually
+    /// a new screen; stepping sixty near-identical slides is a slideshow,
+    /// stepping eight is browsing. (When OCR found nothing legible —
+    /// a video, a grid of faces — `distinctScreenshots` falls back to
+    /// every frame, so the control still works, just less sharply.)
+    ///
+    /// Its presence is itself the signal that this session has pictures.
+    /// No frames, or no timeline index, and there's no button at all
+    /// rather than a dead one.
+    @ViewBuilder
+    private var screenStepper: some View {
+        let frames = session.hasScreenTimeline ? session.distinctScreenshots : []
+        if !frames.isEmpty {
+            Button {
+                advanceScreenStep(frames)
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "photo")
+                        .font(.caption)
+                    // Position, the way a pinned-message bar shows it —
+                    // without it there's no way to tell where you are or
+                    // that the list has wrapped.
+                    // `verbatim`: a bare counter isn't translatable text,
+                    // and letting it extract as "%lld/%lld" invites a
+                    // translation that reorders the two numbers.
+                    Text(verbatim: "\(max(screenStep, 0) + 1)/\(frames.count)")
+                        .font(.caption.monospacedDigit())
+                }
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+            .help(String(localized: "Jump to the next screen shown"))
+        }
+    }
+
+    private func advanceScreenStep(_ frames: [URL]) {
+        guard !frames.isEmpty else { return }
+        let next = (screenStep + 1) % frames.count
+        screenStep = next
+        let frame = frames[next]
+        stripTarget = frame
+        guard let seconds = session.offset(of: frame) else { return }
+        // A fresh id every time, so tapping through frames that share a
+        // transcript line still counts as a new request.
+        transcriptScroll = ScrollableTextView.ScrollRequest(
+            id: (transcriptScroll?.id ?? 0) + 1,
+            seconds: seconds
+        )
+    }
+
+    // MARK: - Screen preview
+
+    @ViewBuilder
+    private func screenPreview(_ url: URL) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+                if let timecode = ScreenshotIndex.timecode(
+                    for: url, offsets: session.screenshotOffsets
+                ) {
+                    Text("On screen at \(timecode)")
+                        .font(.headline)
+                }
+                Spacer()
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .tint(Color.daisyTextPrimary)
+                Button("Done") { previewedScreenshot = nil }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(14)
+
+            Divider()
+
+            AsyncImage(url: url) { image in
+                image.resizable().scaledToFit()
+            } placeholder: {
+                ProgressView()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(14)
+        }
+        .frame(minWidth: 720, idealWidth: 1_000, minHeight: 480, idealHeight: 700)
     }
 
     // MARK: - Toolbar items (top-right corner of window)
@@ -529,6 +644,17 @@ struct SessionDetailView: View {
         .onChange(of: session.id) { _, _ in
             tagDraft = session.tag
             titleDraft = session.title
+            // The detail pane is presented without an `.id`, so switching
+            // sessions in the Library REUSES this view and every @State
+            // survives. Screen-navigation state must not: frames are named
+            // `001.png` in every session, so a preview left open would look
+            // up its filename in the NEW session's index and print a
+            // timecode from a different recording — confidently wrong,
+            // which is the failure mode this whole feature exists to avoid.
+            screenStep = -1
+            stripTarget = nil
+            previewedScreenshot = nil
+            transcriptScroll = nil
         }
         .onChange(of: session.tag) { _, newValue in
             // External edit (e.g., from another window or a future
@@ -910,6 +1036,21 @@ struct SessionDetailView: View {
     }
 
     private var screenshotStrip: some View {
+        ScrollViewReader { proxy in
+            screenshotRow
+                // Keeps the picture and the words pointing at the same
+                // moment: the stepper moves both panes, so the frame is
+                // on screen by the time the transcript lands on its line.
+                .onChange(of: stripTarget) { _, target in
+                    guard let target else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(target, anchor: .center)
+                    }
+                }
+        }
+    }
+
+    private var screenshotRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(session.screenshotURLs, id: \.self) { url in
@@ -935,8 +1076,35 @@ struct SessionDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .id(url)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(
+                                stripTarget == url ? Color.daisyHomeAccent : .clear,
+                                lineWidth: 2
+                            )
+                    )
+                    // Double first: SwiftUI resolves the higher count
+                    // before falling back to the single tap. Belt and
+                    // braces below — if arbitration ever swallows the
+                    // double-tap, opening the frame is still reachable.
+                    .contextMenu {
+                        Button("Open Screenshot") { NSWorkspace.shared.open(url) }
+                        Button("Reveal in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                        }
+                    }
                     .onTapGesture(count: 2) {
                         NSWorkspace.shared.open(url)
+                    }
+                    // The reverse trip — saw the slide, want the words.
+                    .onTapGesture {
+                        stripTarget = url
+                        guard let seconds = session.offset(of: url) else { return }
+                        transcriptScroll = ScrollableTextView.ScrollRequest(
+                            id: (transcriptScroll?.id ?? 0) + 1,
+                            seconds: seconds
+                        )
                     }
                 }
             }
@@ -978,7 +1146,21 @@ struct SessionDetailView: View {
                 // (Egor 2026-06-16). ScrollableTextView scrolls internally,
                 // so give it a bounded pane height. (600pt is a tunable
                 // default — can be made window-relative later.)
-                ScrollableTextView(mappedTranscriptText)
+                ScrollableTextView(
+                    mappedTranscriptText,
+                    // nil ⇒ no links rendered at all. A session with no
+                    // frames, or one recorded before the timeline index
+                    // existed, gets a plain transcript rather than
+                    // stamps that look clickable and aren't.
+                    onTimecodeTap: session.hasScreenTimeline
+                        ? { seconds in
+                            let frame = session.screenshot(at: seconds)
+                            stripTarget = frame
+                            previewedScreenshot = frame.map(PreviewedFrame.init)
+                        }
+                        : nil,
+                    scrollRequest: transcriptScroll
+                )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(height: 600)
                     .clipped()
@@ -1775,7 +1957,15 @@ struct SessionDetailView: View {
 // nesting as "this card holds N cards" rather than "two different
 // component families coexisting".
 
-private struct CollapsibleBlock<Content: View>: View {
+/// Wrapper so a frame URL can drive `.sheet(item:)`. A retroactive
+/// `URL: Identifiable` would be visible to the whole module for the sake
+/// of one sheet.
+private struct PreviewedFrame: Identifiable {
+    let url: URL
+    var id: String { url.path }
+}
+
+private struct CollapsibleBlock<Accessory: View, Content: View>: View {
     let title: String
     let storageKey: String
     let copyLabel: String
@@ -1784,6 +1974,10 @@ private struct CollapsibleBlock<Content: View>: View {
     /// block, whose copy is served by the toolbar + the follow-up button,
     /// so the block doesn't show a second redundant copy control (Egor).
     let showsCopy: Bool
+    /// Extra control in the header, left of the copy button. Empty for
+    /// every block but the transcript, which puts the screen-stepper
+    /// there.
+    let accessory: () -> Accessory
     let content: () -> Content
 
     @AppStorage private var isExpanded: Bool
@@ -1794,6 +1988,7 @@ private struct CollapsibleBlock<Content: View>: View {
         copyLabel: String,
         copyText: @escaping () -> String,
         showsCopy: Bool = true,
+        @ViewBuilder accessory: @escaping () -> Accessory,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
@@ -1801,6 +1996,7 @@ private struct CollapsibleBlock<Content: View>: View {
         self.copyLabel = copyLabel
         self.copyText = copyText
         self.showsCopy = showsCopy
+        self.accessory = accessory
         self.content = content
         // @AppStorage with a dynamic key: have to use the underlying
         // wrapper init directly. Default to expanded — first-run users
@@ -1854,6 +2050,8 @@ private struct CollapsibleBlock<Content: View>: View {
 
             Spacer()
 
+            accessory()
+
             if showsCopy {
                 Button {
                     let text = copyText()
@@ -1875,6 +2073,28 @@ private struct CollapsibleBlock<Content: View>: View {
                 .help(copyLabel)
             }
         }
+    }
+}
+
+extension CollapsibleBlock where Accessory == EmptyView {
+    /// The common case: no extra header control.
+    init(
+        title: String,
+        storageKey: String,
+        copyLabel: String,
+        copyText: @escaping () -> String,
+        showsCopy: Bool = true,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.init(
+            title: title,
+            storageKey: storageKey,
+            copyLabel: copyLabel,
+            copyText: copyText,
+            showsCopy: showsCopy,
+            accessory: { EmptyView() },
+            content: content
+        )
     }
 }
 

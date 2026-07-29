@@ -217,6 +217,11 @@ extension RecordingSession {
             let t_ocr = Date()
             let ocr = await ScreenTextExtractor.extract(from: screenshotsDir)
             signposter.endInterval("screen_ocr", ocrState)
+            // Which frames were a NEW screen, for the transcript's
+            // screen-stepper. Written even when the markdown is dropped
+            // below — the navigation value is independent of whether the
+            // text is worth putting in the summary.
+            ScreenshotIndex.writeHighlights(ocr.distinctFrames, to: screenshotsDir)
             if !ocr.markdown.isEmpty {
                 screenSharedText = ocr.markdown
                 let mdURL = directory.appendingPathComponent("transcript.md")
@@ -968,6 +973,7 @@ extension RecordingSession {
             // index is empty for the same reason the URLs are.
             screenshotURLs: [],
             screenshotOffsets: [:],
+            screenshotHighlights: [],
             summary: summary,
             transcriptURL: FileManager.default.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
