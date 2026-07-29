@@ -878,20 +878,24 @@ private struct TokenUsageChart: View {
             // in exactly the columns a reader is squinting at. One solid
             // band for the day's dominant model is the honest answer at
             // this size.
-            if columnHeight < CGFloat(live.count) + gaps {
-                TokenUsageChart.color(at: live[0])
-                    .frame(width: width, height: columnHeight)
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(live, id: \.self) { index in
-                        let value = rows[index].values.indices.contains(day) ? rows[index].values[day] : 0
-                        TokenUsageChart.color(at: index)
-                            // 1pt floor, not 2: a hairline keeps a tiny
-                            // contributor visible without inventing
-                            // height for it. A model at 0.001% of the day
-                            // should look like nothing, not like 4% of
-                            // the column.
-                            .frame(width: width, height: max(1, fill * CGFloat(value) / CGFloat(total)))
+            // `Group`, because the frame and clip below apply to the
+            // WHOLE column: modifiers can't be chained onto a bare
+            // if/else in a ViewBuilder.
+            Group {
+                if columnHeight < CGFloat(live.count) + gaps {
+                    TokenUsageChart.color(at: live[0])
+                } else {
+                    VStack(spacing: 2) {
+                        ForEach(live, id: \.self) { index in
+                            let value = rows[index].values.indices.contains(day) ? rows[index].values[day] : 0
+                            TokenUsageChart.color(at: index)
+                                // 1pt floor, not 2: a hairline keeps a
+                                // tiny contributor visible without
+                                // inventing height for it. A model at
+                                // 0.001% of the day should look like
+                                // nothing, not like 4% of the column.
+                                .frame(width: width, height: max(1, fill * CGFloat(value) / CGFloat(total)))
+                        }
                     }
                 }
             }
