@@ -201,11 +201,18 @@ enum ServiceWiring {
         }
     }
 
+    /// Start or stop the end-of-day summary poll. Idempotent; the
+    /// scheduler itself no-ops for any timing other than `.endOfDay`.
+    static func applyEndOfDaySummaries(settings: AppSettings, session: RecordingSession) {
+        EndOfDaySummaries.shared.apply(settings: settings, session: session)
+    }
+
     /// Convenience for full initial wiring at launch.
     static func applyAll(settings: AppSettings, session: RecordingSession) {
         applyAllHotkeys(settings: settings, session: session)
         applyMeetingAutoStart(settings: settings, session: session)
         applyCalendar(settings: settings, session: session)
         applyMCPServer(settings: settings)
+        applyEndOfDaySummaries(settings: settings, session: session)
     }
 }

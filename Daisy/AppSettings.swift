@@ -95,8 +95,51 @@ final class AppSettings {
     var ingestVoiceMemos: Bool {
         didSet { defaults.set(ingestVoiceMemos, forKey: Self.k_ingestVoiceMemos) }
     }
+    /// WHEN the summarizer runs. Substrate for `summaryTiming` — kept
+    /// as a stored Bool because two paths read it directly, including
+    /// `QuitFinalizeRecovery`, which reads UserDefaults from a context
+    /// with no `AppSettings` at all. Same shape as
+    /// `autoStartPolicy` → `autoStartOnMeeting`.
+    ///
+    /// True == summarize inline in the post-stop pipeline. False covers
+    /// BOTH "never" and "later tonight" — the scheduler is what tells
+    /// them apart, and it must not run inline either way.
     var autoSummarize: Bool {
         didSet { defaults.set(autoSummarize, forKey: Self.k_autoSummarize) }
+    }
+
+    /// When summaries happen. Replaces a bare on/off switch, because
+    /// the real question was never whether to summarize — it was
+    /// whether to do it while the user is still holding the laptop.
+    ///
+    /// A local model summarizing right after Stop lands on a machine
+    /// that has just finished a final Whisper pass, speaker matching and
+    /// screen OCR; that pile-up is what "Daisy melts my Mac" actually
+    /// is (Ken, 2026-07-29). Deferring the LLM to a quiet hour costs
+    /// nothing but patience.
+    var summaryTiming: SummaryTiming {
+        didSet {
+            guard summaryTiming != oldValue else { return }
+            defaults.set(summaryTiming.rawValue, forKey: Self.k_summaryTiming)
+            // Write through: `.afterEachMeeting` is the ONLY value that
+            // may run inline.
+            if autoSummarize != (summaryTiming == .afterEachMeeting) {
+                autoSummarize = (summaryTiming == .afterEachMeeting)
+            }
+        }
+    }
+
+    /// Transient: true iff `summaryTiming` came from an explicit stored
+    /// value rather than being derived from `autoSummarize`. Gates the
+    /// end-of-init reconcile — deriving then writing back would be a
+    /// no-op, and on the legacy path the Bool is the source of truth.
+    @ObservationIgnored
+    private var didLoadStoredSummaryTiming = false
+
+    /// Hour of day (0-23, local) the end-of-day pass runs at. Only
+    /// meaningful for `.endOfDay`.
+    var endOfDaySummaryHour: Int {
+        didSet { defaults.set(endOfDaySummaryHour, forKey: Self.k_endOfDaySummaryHour) }
     }
 
     /// Pre-meeting brief: when ON, Home assembles a short brief for an
@@ -967,6 +1010,20 @@ final class AppSettings {
         } else {
             self.autoSummarize = false
         }
+        // Derived from the substrate on first read: an existing install
+        // that had summaries on means "after each meeting", off means
+        // "manually". Nobody is moved onto the scheduler without asking.
+        if let stored = defaults.string(forKey: Self.k_summaryTiming),
+           let timing = SummaryTiming(rawValue: stored) {
+            self.summaryTiming = timing
+            self.didLoadStoredSummaryTiming = true
+        } else {
+            self.summaryTiming = self.autoSummarize ? .afterEachMeeting : .manual
+        }
+        let storedHour = defaults.object(forKey: Self.k_endOfDaySummaryHour) as? Int
+        // 20:00: late enough that the day's meetings are done, early
+        // enough that the Mac is plausibly still awake.
+        self.endOfDaySummaryHour = (storedHour.map { (0...23).contains($0) ? $0 : 20 }) ?? 20
         // Default OFF — opt-in; a cloud provider also needs a per-meeting
         // consent tap (see PreMeetingBriefStore).
         self.preMeetingBriefEnabled = defaults.object(forKey: Self.k_preMeetingBriefEnabled) as? Bool ?? false
@@ -1256,6 +1313,16 @@ final class AppSettings {
         if didLoadStoredAutoStartPolicy {
             applyAutoStartPolicyToSubstrate()
         }
+        // Same reconcile for the summary substrate, and for the same
+        // reason: `didSet` doesn't fire during init, so a stored
+        // `summaryTiming` could sit next to a contradictory
+        // `autoSummarize` — an older build's toggle writes the Bool and
+        // knows nothing about the timing key. That combination would
+        // summarize inline after every Stop AND again in the evening.
+        if didLoadStoredSummaryTiming,
+           autoSummarize != (summaryTiming == .afterEachMeeting) {
+            autoSummarize = (summaryTiming == .afterEachMeeting)
+        }
     }
 
     var hasNotionCredentials: Bool {
@@ -1287,6 +1354,8 @@ final class AppSettings {
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_screenTextInSummary = "daisy.screenTextInSummary"
+    private static let k_summaryTiming = "daisy.summaryTiming"
+    private static let k_endOfDaySummaryHour = "daisy.endOfDaySummaryHour"
     private static let k_ingestVoiceMemos = "daisy.ingestVoiceMemos"
     private static let k_autoSummarize = "daisy.autoSummarize"
     private static let k_preMeetingBriefEnabled = "daisy.preMeetingBriefEnabled"
@@ -1355,6 +1424,29 @@ final class AppSettings {
     private static let k_mcpSummarizerURL = "daisy.mcpSummarizer.url"
     private static let k_mcpSummarizerToolName = "daisy.mcpSummarizer.toolName"
     private static let k_mcpSummarizerArgsTemplate = "daisy.mcpSummarizer.argsTemplate"
+}
+
+// MARK: - SummaryTiming
+
+/// When Daisy runs the summarizer.
+nonisolated enum SummaryTiming: String, CaseIterable, Identifiable, Sendable {
+    /// Inline in the post-stop pipeline, as it always did.
+    case afterEachMeeting
+    /// Queued and run in one batch at a set hour — see
+    /// `EndOfDaySummaries`.
+    case endOfDay
+    /// Only when the user asks, from a session's own Re-summarize.
+    case manual
+
+    nonisolated var id: String { rawValue }
+
+    nonisolated var displayName: String {
+        switch self {
+        case .afterEachMeeting: return String(localized: "After each meeting")
+        case .endOfDay:         return String(localized: "At the end of the day")
+        case .manual:           return String(localized: "Only when I ask")
+        }
+    }
 }
 
 // MARK: - AutoStartPolicy

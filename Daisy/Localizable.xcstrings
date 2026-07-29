@@ -11797,6 +11797,146 @@
         }
       }
     },
+    "After each meeting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После каждой встречи"
+          }
+        }
+      }
+    },
+    "At the end of the day" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В конце дня"
+          }
+        }
+      }
+    },
+    "Only when I ask" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только по запросу"
+          }
+        }
+      }
+    },
+    "Daisy summarizes any meeting from the last week that still has none, in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including after the Mac was asleep or Daisy was closed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy разом обработает все встречи за последнюю неделю, у которых ещё нет саммари. Во время записи не запускается, а пропущенное берёт при следующем запуске — в том числе после сна Mac или закрытия Daisy."
+          }
+        }
+      }
+    },
+    "Summarizing 1 meeting from today…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для 1 встречи…"
+          }
+        }
+      }
+    },
+    "Summarizing %lld meetings from today…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для %lld встреч…"
+          }
+        }
+      }
+    },
+    "1 meeting summarized." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Саммари готово для 1 встречи."
+          }
+        }
+      }
+    },
+    "%lld meetings summarized." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Саммари готовы: %lld встреч."
+          }
+        }
+      }
+    },
+    "Run at" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запускать в"
+          }
+        }
+      }
+    },
+    "Summarizing 1 meeting…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для 1 встречи…"
+          }
+        }
+      }
+    },
+    "Summarizing %lld meetings…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для %lld встреч…"
+          }
+        }
+      }
+    },
+    "Couldn't summarize tonight — the summary provider isn't available." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подготовить саммари: провайдер недоступен."
+          }
+        }
+      }
+    },
+    "Couldn't summarize tonight's meetings — check the summary provider in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подготовить саммари — проверьте провайдера в настройках."
+          }
+        }
+      }
+    },
+    "Summarizing %lld of %lld…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари: %1$lld из %2$lld…"
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {

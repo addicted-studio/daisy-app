@@ -172,6 +172,10 @@ struct SettingsView: View {
     /// Owns the user-added meeting-app list; @Observable, so the rows
     /// below refresh as it changes.
     @Bindable private var detector = MeetingDetector.shared
+    /// Read for its progress while a batch runs — the pass is
+    /// unattended by design, so the one place it's configured is where
+    /// it should be visible.
+    @Bindable private var endOfDay = EndOfDaySummaries.shared
     @State private var lmStudioLoadedModels: [String] = []
     @Bindable private var nav = AppNavigation.shared
 
@@ -1861,10 +1865,36 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Toggle(isOn: $settings.autoSummarize) {
-                    Text("Summarize when recording stops")
+                Picker("Summarize", selection: $settings.summaryTiming) {
+                    ForEach(SummaryTiming.allCases) { timing in
+                        Text(timing.displayName).tag(timing)
+                    }
                 }
+                .pickerStyle(.menu)
                 .disabled(!summarizerAvailable)
+                if settings.summaryTiming == .endOfDay {
+                    // Not the bare "At" the morning-brief row uses: that
+                    // key is still untranslated in the catalog, and this
+                    // row reads better with a verb anyway.
+                    Picker("Run at", selection: $settings.endOfDaySummaryHour) {
+                        ForEach(Array(16...23), id: \.self) { hour in
+                            Text(verbatim: String(format: "%02d:00", hour)).tag(hour)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    if case .running(let current, let total) = endOfDay.state {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Summarizing \(current) of \(total)…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("Daisy summarizes any meeting from the last week that still has none, in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including after the Mac was asleep or Daisy was closed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !summarizerAvailable {
                     Text("Provider isn’t ready yet — set it up above first.")
                         .font(.caption)
