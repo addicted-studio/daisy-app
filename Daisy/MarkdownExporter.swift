@@ -239,8 +239,16 @@ enum MarkdownExporter {
         if !shots.isEmpty {
             lines.append("## Screenshots")
             lines.append("")
+            // Alt text carries the timecode so the gallery is navigable
+            // against the transcript below it — the two share an origin.
+            // Falls back to the filename for sessions with no index.
+            let shotOffsets = shots.first.map {
+                ScreenshotIndex.load(from: $0.deletingLastPathComponent())
+            } ?? [:]
             for url in shots {
-                lines.append("![\(url.lastPathComponent)](\(url.path))")
+                let caption = ScreenshotIndex.timecode(for: url, offsets: shotOffsets)
+                    ?? url.lastPathComponent
+                lines.append("![\(caption)](\(url.path))")
                 lines.append("")
             }
         }
