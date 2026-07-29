@@ -2,8 +2,15 @@
 //  EndOfDaySummaries.swift
 //  Daisy
 //
-//  Runs the summarizer over everything still missing a summary, once a
-//  day, at an hour the user picks.
+//  Runs the summarizer over the day's meetings, once a day, at an hour
+//  the user picks.
+//
+//  "The day's meetings" is expressed as "recordings that still have no
+//  summary", not as "recordings started today". Same set on any normal
+//  evening — everything older already got one — but it self-heals:
+//  a night the provider was down, an interrupted pass, and a meeting
+//  recorded at 21:00 after the pass already ran are all picked up next
+//  evening, with no bookkeeping about what was attempted when.
 //
 //  Why this exists: summarizing inline after Stop puts a heavy LLM pass
 //  on the machine at the exact moment the user has finished the meeting
@@ -41,14 +48,19 @@ final class EndOfDaySummaries {
 
     private(set) var state: State = .idle
 
-    /// How far back a pass will reach. A first run must not turn a year
-    /// of un-summarized history into one night's API bill — and a
-    /// six-month-old meeting is not what "end of day" means to anyone.
-    /// Older sessions stay available through their own Re-summarize.
-    nonisolated static let lookbackDays = 7
-    /// Ceiling per pass. Whatever is left is picked up tomorrow; the
-    /// count is logged rather than silently dropped.
-    nonisolated static let maxPerRun = 25
+    /// Safety net, not the rule. A pass takes THE DAY'S meetings —
+    /// which in practice is everything unsummarized, because anything
+    /// older already has a summary from a previous evening. This bound
+    /// only matters when something went wrong: a first run on an install
+    /// with months of history, or a week away from the machine. Without
+    /// it, turning the setting on could sweep a year into one night's
+    /// API bill. Older sessions stay reachable through Re-summarize.
+    ///
+    /// Deliberately NOT a session count. The day is its own bound —
+    /// nobody records forty meetings between breakfast and eight — and a
+    /// count cap would split a normal Tuesday across two evenings for no
+    /// reason (Egor, 2026-07-29).
+    nonisolated static let maxLookbackDays = 7
 
     @ObservationIgnored
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "EndOfDaySummaries")
@@ -180,10 +192,12 @@ final class EndOfDaySummaries {
         guard !Task.isCancelled, settings.summaryTiming == .endOfDay else { return }
         let pending = Self.pendingSessions()
 
-        // Mark before running, not after: the `maxPerRun` cap means a
-        // pass legitimately leaves work behind, and the remainder is
-        // tomorrow's. An interrupted run costs one day, which the 7-day
-        // lookback makes recoverable.
+        // Mark before running, not after. An interrupted pass then costs
+        // one day — acceptable because nothing is lost: the sessions it
+        // didn't reach still have no summary, so tomorrow's pass takes
+        // them. Marking afterwards would instead re-run the whole batch
+        // every five minutes for the rest of any evening the user
+        // interrupted.
         markRanToday()
         guard !pending.isEmpty else { return }
         await run(pending)
@@ -210,28 +224,37 @@ final class EndOfDaySummaries {
 
     // MARK: - Selection
 
-    /// Recordings from the last `lookbackDays` with a transcript and no
-    /// summary, oldest first so a capped run leaves the FRESHEST work
-    /// for tomorrow — the opposite would keep re-deferring the same old
-    /// backlog forever.
+    /// Recordings with a transcript and no summary, NEWEST first.
+    ///
+    /// "No summary" is the whole state machine: a session leaves this
+    /// list by getting one, so an interrupted pass, a night the provider
+    /// was down, and a meeting recorded at 21:00 after the pass already
+    /// ran are all picked up by the next evening without any bookkeeping
+    /// about what was attempted when. That self-healing is why the
+    /// window is a few days wide rather than literally today — a
+    /// today-only rule would silently abandon the 21:00 meeting, since
+    /// tomorrow's pass would no longer consider it.
     static func pendingSessions() -> [StoredSession] {
-        let cutoff = Date().addingTimeInterval(-Double(lookbackDays) * 86_400)
+        let cutoff = Date().addingTimeInterval(-Double(maxLookbackDays) * 86_400)
         return SessionStore.shared.sessions
             .filter { $0.kind == .recording }
             .filter { $0.summary == nil }
             .filter { !$0.transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .filter { $0.startedAt >= cutoff }
-            .sorted { $0.startedAt < $1.startedAt }
+            // Newest first, because anything that stops the pass early
+            // — the failure breaker, a recording starting, the user
+            // switching the setting off — should cost the OLDEST work,
+            // not today's. Oldest-first would let three permanently
+            // failing sessions from Monday (a local model that can't fit
+            // them, say) trip the breaker before tonight's meetings are
+            // reached, every evening, until they age past the cutoff.
+            .sorted { $0.startedAt > $1.startedAt }
     }
 
     // MARK: - The pass
 
-    private func run(_ all: [StoredSession]) async {
-        let batch = Array(all.prefix(Self.maxPerRun))
-        let deferred = all.count - batch.count
-        if deferred > 0 {
-            log.info("End-of-day summaries: \(batch.count, privacy: .public) now, \(deferred, privacy: .public) left for tomorrow")
-        }
+    private func run(_ batch: [StoredSession]) async {
+        log.info("End-of-day summaries: \(batch.count, privacy: .public) session(s)")
         state = .running(current: 1, total: batch.count)
         ToastCenter.shared.show(
             batch.count == 1
