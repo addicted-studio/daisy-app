@@ -224,6 +224,24 @@ nonisolated struct ModelSpend: Identifiable, Sendable {
     var displayName: String { model.isEmpty ? provider.rawValue : model }
 }
 
+/// One model's row in the token card: its daily series for the stacked
+/// chart, and the totals for its legend line.
+nonisolated struct ModelSeriesRow: Identifiable, Sendable {
+    let id: String
+    let name: String
+    /// Input INCLUDING cache reads and cache writes. Those are input
+    /// tokens billed at a different rate, not a separate quantity — and
+    /// splitting them out here would leave `input + output` short of the
+    /// total printed above the chart, which reads as an arithmetic bug.
+    let inputTokens: Int
+    let outputTokens: Int
+    /// Daily totals, one entry per elapsed day of this month, oldest
+    /// first. Same window as the total above the chart.
+    let values: [Int]
+
+    var totalTokens: Int { inputTokens + outputTokens }
+}
+
 // MARK: - Approximate API cost
 
 /// Price estimate for Daisy's own calls during a period. It deliberately
@@ -467,14 +485,102 @@ final class TokenLedger {
         modelSpend(matchingDayPrefix: Self.monthKey(for: Date()))
     }
 
-    func heroModelSpend(active: SummaryProviderKind) -> ModelSpend? {
-        let all = currentMonthModelSpend().filter(\.hasActivity)
-        return all.first { $0.provider == active } ?? all.first
+    /// Every token Daisy spent this month, across every model.
+    ///
+    /// Summing tokens across models is fine as a VOLUME measure and
+    /// wrong as a cost proxy — a Haiku token and an Opus token are the
+    /// same unit of work and five times apart in price. That's why the
+    /// money next to it comes from `currentMonthCostEstimate()`, which
+    /// prices each model separately, rather than from this number.
+    func currentMonthTotalTokens() -> Int {
+        currentMonthModelSpend().reduce(0) { $0 + $1.totalTokens }
     }
 
-    func secondaryModelSpend(active: SummaryProviderKind) -> [ModelSpend] {
-        guard let hero = heroModelSpend(active: active) else { return [] }
-        return currentMonthModelSpend().filter { $0.hasActivity && $0.id != hero.id }
+    /// Rows for the stacked chart + legend, biggest spender first.
+    ///
+    /// Capped at `limit` distinct models: a stack of eight is mush, and
+    /// the categorical palette only has four slots that survive a
+    /// colour-blindness check. Anything past the cap is merged into one
+    /// trailing "Other" row rather than dropped — a silently truncated
+    /// stack reads as "this is everything".
+    func currentMonthModelSeries(limit: Int = 4) -> [ModelSeriesRow] {
+        // Tokens, not `hasActivity`: a model with web searches and no
+        // tokens would otherwise get a legend row reading "0 in, 0 out"
+        // next to a colour swatch it never uses in the chart. Its
+        // searches are still counted — on the card's own web-search line.
+        let all = currentMonthModelSpend().filter { $0.totalTokens > 0 }
+        guard !all.isEmpty else { return [] }
+        let leading = all.prefix(limit)
+        let merged = all.dropFirst(limit)
+
+        var rows = leading.map { spend in
+            ModelSeriesRow(
+                id: spend.id,
+                name: Self.friendlyModelName(spend.model, provider: spend.provider),
+                inputTokens: spend.inputTokens + spend.cachedInputTokens + spend.cacheWriteTokens,
+                outputTokens: spend.outputTokens,
+                values: currentMonthTokenSeries(for: spend)
+            )
+        }
+        if !merged.isEmpty {
+            let series = merged.map { currentMonthTokenSeries(for: $0) }
+            let length = series.map(\.count).max() ?? 0
+            let summed = (0..<length).map { day in
+                series.reduce(0) { $0 + ($1.indices.contains(day) ? $1[day] : 0) }
+            }
+            rows.append(ModelSeriesRow(
+                id: "other",
+                name: String(localized: "\(merged.count) other models"),
+                inputTokens: merged.reduce(0) { $0 + $1.inputTokens + $1.cachedInputTokens + $1.cacheWriteTokens },
+                outputTokens: merged.reduce(0) { $0 + $1.outputTokens },
+                values: summed
+            ))
+        }
+        return rows
+    }
+
+    /// Web searches this month across every model — billed per search
+    /// rather than per token, so they are invisible in any token figure
+    /// and have to be named separately.
+    func currentMonthWebSearches() -> Int {
+        currentMonthModelSpend().reduce(0) { $0 + $1.webSearches }
+    }
+
+    /// Input tokens served from a provider's prompt cache this month.
+    /// Counted inside the input figures, but billed at roughly a tenth —
+    /// so it's the line that explains a small bill next to a large token
+    /// count, and it is invisible in every other number on the card.
+    func currentMonthCachedInputTokens() -> Int {
+        currentMonthModelSpend().reduce(0) { $0 + $1.cachedInputTokens }
+    }
+
+    /// Readable model name. Conservative on purpose: it strips the two
+    /// things that make an id ugly — Anthropic's `claude-` prefix and a
+    /// trailing `-YYYYMMDD` snapshot stamp — and rewrites the Claude
+    /// family's dashed version into a dotted one. Everything else is
+    /// passed through untouched, because a guessed prettier name that
+    /// doesn't match what the user picked in Settings is worse than a
+    /// plain identifier.
+    nonisolated static func friendlyModelName(_ model: String, provider: SummaryProviderKind) -> String {
+        guard !model.isEmpty else { return provider.rawValue }
+        guard provider == .anthropic, model.hasPrefix("claude-") else { return model }
+        var parts = model.dropFirst("claude-".count).split(separator: "-").map(String.init)
+        // Trailing snapshot stamp: 8 digits, e.g. 20251001.
+        if let last = parts.last, last.count == 8, last.allSatisfy(\.isNumber) {
+            parts.removeLast()
+        }
+        guard let family = parts.first else { return model }
+        // Every component after the family must be a number, or this
+        // isn't the `family-major-minor` shape and we'd be inventing a
+        // name. `claude-3-5-sonnet-20241022` would otherwise come out as
+        // "3 5.sonnet" — worse than the id the user actually chose.
+        let versionParts = parts.dropFirst()
+        guard versionParts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else {
+            return model
+        }
+        let version = versionParts.joined(separator: ".")
+        let name = family.prefix(1).uppercased() + family.dropFirst()
+        return version.isEmpty ? name : "\(name) \(version)"
     }
 
     /// Daily values for the small chart in the model card, oldest first.
@@ -512,16 +618,6 @@ final class TokenLedger {
     /// set so the UI can avoid presenting a misleading total.
     func currentMonthCostEstimate() -> TokenCostEstimate {
         costEstimate(matchingDayPrefix: Self.monthKey(for: Date()))
-    }
-
-    /// The price estimate next to a model's own token count. Keeping the
-    /// same scope prevents a Claude card from displaying OpenAI spend.
-    func currentMonthCostEstimate(for modelSpend: ModelSpend) -> TokenCostEstimate {
-        costEstimate(
-            matchingDayPrefix: Self.monthKey(for: Date()),
-            provider: modelSpend.provider,
-            model: modelSpend.model
-        )
     }
 
     private func spend(matchingDayPrefix prefix: String) -> [ProviderSpend] {

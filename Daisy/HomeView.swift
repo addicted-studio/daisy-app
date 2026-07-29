@@ -600,20 +600,16 @@ struct HomeView: View {
 
     @ViewBuilder
     private var tokensCard: some View {
-        if let hero = tokens.heroModelSpend(active: summarizer.providerKind) {
-            let others = tokens.secondaryModelSpend(active: summarizer.providerKind)
-            let periodCost = tokens.currentMonthCostEstimate(for: hero)
+        let rows = tokens.currentMonthModelSeries()
+        if !rows.isEmpty {
+            let total = tokens.currentMonthTotalTokens()
+            let cost = tokens.currentMonthCostEstimate()
+            let searches = tokens.currentMonthWebSearches()
+            let cached = tokens.currentMonthCachedInputTokens()
             VStack(alignment: .leading, spacing: 4) {
-                // The word "tokens" used to appear twice — as a chip up
-                // here and again beside the number. The period is the
-                // thing that was actually missing: it scopes the total,
-                // the cost AND the chart, so it takes the corner slot.
                 HStack(alignment: .firstTextBaseline) {
-                    Text(hero.displayName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    Text("Tokens")
+                        .daisyStatLabel()
                     Spacer()
                     // Standalone symbol, not `.dateTime.month(.wide)`:
                     // that one is the FORMAT context, which in Russian
@@ -622,17 +618,25 @@ struct HomeView: View {
                     Text(Self.standaloneMonthName())
                         .daisyStatLabel()
                 }
-                Text(compactTokens(hero.totalTokens))
-                    .font(.title.weight(.semibold))
-                    .foregroundStyle(.primary)
-                if let costLabel = estimatedCostLabel(periodCost) {
-                    Text(costLabel)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                // One headline for the whole month, not one model's.
+                // The card used to lead with a single model chosen as
+                // "the active one", which it got wrong: the match was on
+                // PROVIDER, so with two Claude models it led with the
+                // bigger spender and labelled it as the user's pick.
+                // A total needs no such guess (Egor, 2026-07-29).
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(compactTokens(total))
+                        .font(.title.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if let costLabel = estimatedCostLabel(cost) {
+                        Text(costLabel)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
-                TokenUsageSparkline(values: tokens.currentMonthTokenSeries(for: hero))
-                    .frame(height: 30)
+                TokenUsageChart(rows: rows)
+                    .frame(height: 44)
                     .padding(.top, 4)
 
                 Rectangle()
@@ -641,51 +645,49 @@ struct HomeView: View {
                     .padding(.horizontal, -16)
                     .padding(.vertical, 4)
 
-                // In and out are one pair of numbers, so they read as a
-                // pair: left and right ends of the same line rather than
-                // a stack the eye has to add up vertically.
-                HStack(spacing: 6) {
-                    Text(compactTokens(hero.inputTokens))
-                    Text("Input")
-                    Spacer()
-                    Text(compactTokens(hero.outputTokens))
-                    Text("Output")
-                }
-                .daisyStatLabel()
-                // The two extras follow the same left/right shape. Cache
-                // reads are billed cheaper and web searches are billed per
-                // search rather than per token — neither is inside the
-                // totals above, so they'd be invisible if not named.
-                if hero.cachedInputTokens > 0 || hero.webSearches > 0 {
+                // Doubles as the chart's legend — which is why the swatch
+                // is never the only thing telling two models apart.
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                     HStack(spacing: 6) {
-                        if hero.cachedInputTokens > 0 {
-                            Text(compactTokens(hero.cachedInputTokens))
-                            Text("From cache")
+                        Circle()
+                            .fill(TokenUsageChart.color(at: index))
+                            .frame(width: 7, height: 7)
+                        Text(row.name)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        Text("↓ \(compactTokens(row.inputTokens))")
+                            .help(String(localized: "Input tokens"))
+                        Text("↑ \(compactTokens(row.outputTokens))")
+                            .help(String(localized: "Output tokens"))
+                    }
+                    .daisyStatLabel()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(
+                        String(localized: "\(row.name): \(row.inputTokens) tokens in, \(row.outputTokens) out")
+                    )
+                }
+
+                // Billed per search, not per token, so no token figure
+                // on this card contains them.
+                if searches > 0 || cached > 0 {
+                    HStack(spacing: 6) {
+                        if cached > 0 {
+                            // "of which": cache reads are INSIDE the ↓
+                            // figures above, priced at about a tenth.
+                            // Web searches next to them are the opposite
+                            // — billed per search and in no token count
+                            // on this card — so the wording has to carry
+                            // the difference, or a reader adds both.
+                            Text("of which \(compactTokens(cached)) from cache")
                         }
                         Spacer()
-                        if hero.webSearches > 0 {
-                            Text(hero.webSearches.formatted(.number))
-                            Text("Web searches")
+                        if searches > 0 {
+                            Text("plus \(searches.formatted(.number)) web searches")
                         }
                     }
                     .daisyStatLabel()
-                }
-
-                if !others.isEmpty {
-                    Rectangle()
-                        .fill(Color.daisyDivider.opacity(0.5))
-                        .frame(height: 1)
-                        .padding(.horizontal, -16)
-                        .padding(.vertical, 4)
-                    ForEach(others) { other in
-                        HStack(spacing: 6) {
-                            Text(compactTokens(other.totalTokens))
-                            Text(other.displayName)
-                                .lineLimit(1)
-                            Spacer()
-                        }
-                        .daisyStatLabel()
-                    }
+                    .padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -771,32 +773,142 @@ private let homeRowMinHeight: CGFloat = 36
 /// A quiet month-to-date usage graph for one model. It deliberately has no axes:
 /// the card already gives the exact total, while the bars answer the more
 /// useful question of whether usage was steady or happened in one burst.
-private struct TokenUsageSparkline: View {
-    let values: [Int]
+/// Daily token spend for the current month, stacked by model.
+///
+/// Stacked rather than one bar per model side by side: the question the
+/// card answers is "how much did Daisy spend", and the split is the
+/// second question. A grouped chart would make the day's total something
+/// the eye has to add up.
+///
+/// Colour is the only thing distinguishing the segments inside a column,
+/// which is why the legend rows below the chart carry the same swatch
+/// beside a written model name — identity is never colour alone. The
+/// palette is validated for colour-blind separation (see `palette`); the
+/// adjacent-pair margin sits in the band that is only legal WITH that
+/// secondary encoding, so the legend is load-bearing, not decoration.
+private struct TokenUsageChart: View {
+    let rows: [ModelSeriesRow]
+
+    /// Fixed categorical order — a model keeps its colour when another
+    /// model appears or drops out of the month. Assigned by position in
+    /// `rows`, which is ordered by spend, so the biggest is always the
+    /// first hue rather than a colour that shifts with rank.
+    ///
+    /// Validated with the dataviz palette checker against both card
+    /// surfaces (light #FBF9F5, dark #151816): lightness band, chroma
+    /// floor, normal-vision separation and 3:1 contrast all pass in both
+    /// modes; adjacent-pair CVD separation lands at ΔE 8.0, the floor
+    /// that requires the written labels the legend already provides.
+    private static let palette: [Color] = [
+        Color(light: Color(hex: 0xC96A10), dark: Color(hex: 0xC87720)),  // amber — the app's own accent family
+        Color(light: Color(hex: 0x2E6EC8), dark: Color(hex: 0x5386DA)),  // blue
+        Color(light: Color(hex: 0x1F7A55), dark: Color(hex: 0x279C6B)),  // green
+        Color(light: Color(hex: 0xA0468F), dark: Color(hex: 0xB563A3)),  // plum
+    ]
+
+    /// Never cycles: past the palette the caller has already merged the
+    /// tail into one "Other" row, so this can only be reached by a bug —
+    /// and a grey band reads as "the rest" rather than as a fifth model.
+    static func color(at index: Int) -> Color {
+        palette.indices.contains(index) ? palette[index] : Color.daisyTextTertiary
+    }
+
+    /// Total per day across every row — the column heights.
+    private var dailyTotals: [Int] {
+        let length = rows.map(\.values.count).max() ?? 0
+        return (0..<length).map { day in
+            rows.reduce(0) { $0 + ($1.values.indices.contains(day) ? $1.values[day] : 0) }
+        }
+    }
 
     var body: some View {
         GeometryReader { proxy in
-            let highest = max(values.max() ?? 0, 1)
+            let totals = dailyTotals
+            let highest = max(totals.max() ?? 0, 1)
             let gap: CGFloat = 3
-            let width = max(2, (proxy.size.width - gap * CGFloat(max(values.count - 1, 0))) / CGFloat(max(values.count, 1)))
+            let columns = max(totals.count, 1)
+            let width = max(2, (proxy.size.width - gap * CGFloat(max(columns - 1, 0))) / CGFloat(columns))
 
             HStack(alignment: .bottom, spacing: gap) {
-                ForEach(values.indices, id: \.self) { index in
-                    let value = values[index]
-                    RoundedRectangle(cornerRadius: 2, style: .continuous)
-                        .fill(value == 0 ? Color.daisyDivider.opacity(0.45) : Color.daisyAccent)
-                        .frame(
-                            width: width,
-                            height: value == 0
-                                ? 3
-                                : max(4, proxy.size.height * CGFloat(value) / CGFloat(highest))
-                        )
+                ForEach(totals.indices, id: \.self) { day in
+                    column(day: day, height: proxy.size.height, width: width, highest: highest)
                 }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Token usage day by day this month"))
+        .accessibilityLabel(String(localized: "Token usage day by day this month, by model"))
+    }
+
+    @ViewBuilder
+    private func column(day: Int, height: CGFloat, width: CGFloat, highest: Int) -> some View {
+        let total = rows.reduce(0) { $0 + ($1.values.indices.contains(day) ? $1.values[day] : 0) }
+        if total == 0 {
+            // A quiet day is context, not missing data — but it must not
+            // look like a tiny bar either, so it stays a baseline tick.
+            RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                .fill(Color.daisyDivider.opacity(0.45))
+                .frame(width: width, height: 3)
+        } else {
+            let columnHeight = max(4, height * CGFloat(total) / CGFloat(highest))
+            let live = rows.indices.filter { index in
+                let row = rows[index]
+                return (row.values.indices.contains(day) ? row.values[day] : 0) > 0
+            }
+            // 2pt of surface between segments so two fills never touch —
+            // adjacent hues sharing an edge are much harder to separate
+            // than ones with a gap, and this is where the colour-blind
+            // margin is thinnest.
+            //
+            // Taken OUT of the column, not added on top of it. Segment
+            // heights already sum to `columnHeight`, so N-1 gaps of
+            // spacing made every multi-model column overflow — and the
+            // damage scaled inversely with the value, because a quiet
+            // day's 4pt column carried the same fixed 6pt of gaps as a
+            // full-height one. Quiet days rendered TALLER than busy ones,
+            // which is the opposite of what the chart is for.
+            let gaps = CGFloat(max(live.count - 1, 0)) * 2
+            let fill = max(0, columnHeight - gaps)
+            // Below this the split cannot physically fit — four models
+            // in a 4pt column need 4pt of bars plus 6pt of gaps. Drawn
+            // anyway, the stack lays out at 10pt and the frame clips it
+            // to the BOTTOM 4 — and since rows are ordered by spend, the
+            // bottom is the SMALLEST models. A light day would show the
+            // two colours that mattered least, contradicting the legend
+            // in exactly the columns a reader is squinting at. One solid
+            // band for the day's dominant model is the honest answer at
+            // this size.
+            if columnHeight < CGFloat(live.count) + gaps {
+                TokenUsageChart.color(at: live[0])
+                    .frame(width: width, height: columnHeight)
+            } else {
+                VStack(spacing: 2) {
+                    ForEach(live, id: \.self) { index in
+                        let value = rows[index].values.indices.contains(day) ? rows[index].values[day] : 0
+                        TokenUsageChart.color(at: index)
+                            // 1pt floor, not 2: a hairline keeps a tiny
+                            // contributor visible without inventing
+                            // height for it. A model at 0.001% of the day
+                            // should look like nothing, not like 4% of
+                            // the column.
+                            .frame(width: width, height: max(1, fill * CGFloat(value) / CGFloat(total)))
+                    }
+                }
+            }
+            // Frame BEFORE the clip so residual rounding is contained by
+            // the shape rather than escaping around it.
+            .frame(width: width, height: columnHeight, alignment: .bottom)
+            // Rounded at the top only, anchored to the baseline — the
+            // data end is the top of the column, and rounding the bottom
+            // would lift the fill off the axis it's measured from.
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 2, bottomLeadingRadius: 0,
+                    bottomTrailingRadius: 0, topTrailingRadius: 2,
+                    style: .continuous
+                )
+            )
+        }
     }
 }
 
