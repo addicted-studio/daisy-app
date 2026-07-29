@@ -963,7 +963,11 @@ extension RecordingSession {
             transcriptText: transcriptText,
             hasMicAudio: FileManager.default.fileExists(atPath: micURL.path),
             hasSystemAudio: FileManager.default.fileExists(atPath: systemURL.path),
+            // This in-memory builder has never carried screenshots
+            // (post-stop MCP auto-send + the Send-to snapshot), so the
+            // index is empty for the same reason the URLs are.
             screenshotURLs: [],
+            screenshotOffsets: [:],
             summary: summary,
             transcriptURL: FileManager.default.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,

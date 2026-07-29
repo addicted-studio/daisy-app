@@ -1362,7 +1362,11 @@ final class RecordingSession {
         // Optional screenshots.
         if settings.screenshotsEnabled, let dir {
             let screenshotsDir = dir.appendingPathComponent("screenshots", isDirectory: true)
-            await screenshots.start(intervalSec: settings.screenshotIntervalSec, into: screenshotsDir)
+            await screenshots.start(
+                intervalSec: settings.screenshotIntervalSec,
+                elapsed: { [weak self] in self?.elapsed ?? 0 },
+                into: screenshotsDir
+            )
         }
 
         // Manual-start fallback: if the user hit the hotkey before
@@ -1513,7 +1517,13 @@ final class RecordingSession {
         systemTranscriber.resume()
         if settings.screenshotsEnabled, let dir = sessionDirectory {
             let screenshotsDir = dir.appendingPathComponent("screenshots", isDirectory: true)
-            await screenshots.start(intervalSec: settings.screenshotIntervalSec, into: screenshotsDir)
+            // `elapsed` already carries the pre-pause total, so a
+            // resume continues the timeline instead of restarting it.
+            await screenshots.start(
+                intervalSec: settings.screenshotIntervalSec,
+                elapsed: { [weak self] in self?.elapsed ?? 0 },
+                into: screenshotsDir
+            )
         }
         silenceMonitor.resume()
         // Late-binding safety net: a user could have granted Calendar

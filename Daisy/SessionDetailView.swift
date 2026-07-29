@@ -913,13 +913,28 @@ struct SessionDetailView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(session.screenshotURLs, id: \.self) { url in
-                    AsyncImage(url: url) { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        Color.gray.opacity(0.2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        AsyncImage(url: url) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.gray.opacity(0.2)
+                        }
+                        .frame(width: 160, height: 100)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        // Where the frame sits on the recording's
+                        // timeline, on the same clock as the transcript's
+                        // [mm:ss] markers — which is the whole point:
+                        // read a moment in the transcript, find the
+                        // picture. Absent for sessions recorded before
+                        // the index existed.
+                        if let timecode = ScreenshotIndex.timecode(
+                            for: url, offsets: session.screenshotOffsets
+                        ) {
+                            Text(timecode)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .frame(width: 160, height: 100)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
                     .onTapGesture(count: 2) {
                         NSWorkspace.shared.open(url)
                     }

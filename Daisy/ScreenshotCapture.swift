@@ -5,6 +5,22 @@
 //  Periodic screen capture via SCScreenshotManager. Writes PNGs into the
 //  session folder so the markdown export can reference them inline.
 //
+//  Alongside the PNGs it writes `index.json` — filename → position on
+//  the recording's timeline. The filenames alone (`001.png`, `002.png`)
+//  carry only ORDER, and order times nothing: multiplying by the capture
+//  interval breaks the moment a session is paused (capture stops, the
+//  wall clock doesn't), and breaks again for anyone who changed the
+//  interval since.
+//
+//  The offset is AUDIO CAPTURED, not wall-clock elapsed, because that is
+//  what the transcript measures. A `[mm:ss]` marker there comes from
+//  `TranscriptSegment.startedAt`, which the transcribers build as
+//  `sessionStart + samplesSeen / sampleRate` — a pause synthesises no
+//  samples, so media time freezes while `Date()` keeps running. Stamping
+//  screenshots with a `Date` delta would leave every frame after a pause
+//  later than the line spoken beside it, by exactly the paused duration.
+//  `RecordingSession.elapsed` is the same clock, so the two agree.
+//
 
 import Foundation
 import ScreenCaptureKit
@@ -22,6 +38,16 @@ final class ScreenshotCapture {
     private var timer: Timer?
     private var outputDir: URL?
     private var index = 0
+    /// Reads the recording's own clock — active recording time, pauses
+    /// excluded. Supplied by `RecordingSession` rather than measured
+    /// here, because the only clock worth stamping with is the one the
+    /// transcript uses.
+    private var elapsedProvider: (@MainActor () -> TimeInterval)?
+    /// filename → position on the recording's timeline, in seconds.
+    /// Rewritten whole on each capture: it is a few dozen entries, and a
+    /// full atomic write costs nothing next to a screen grab while
+    /// surviving a crash with at most the last frame missing.
+    private var offsets: [String: Double] = [:]
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Screenshots")
 
     /// Display captured on the previous tick — only used to log
@@ -30,9 +56,23 @@ final class ScreenshotCapture {
 
     /// Begin periodic capture every `intervalSec` seconds. Writes files
     /// numbered `001.png`, `002.png`, … into the given directory.
-    func start(intervalSec: Int, into directory: URL) async {
+    /// - Parameter elapsed: media time of the recording, in seconds.
+    ///   Pass `RecordingSession.elapsed`; see the file header for why a
+    ///   `Date` delta is the wrong clock. Note this is the MIC
+    ///   recorder's measure, so a session whose microphone never
+    ///   delivered frames stamps zeros — deliberately. That session's
+    ///   transcript has no `[mm:ss]` progression either, so a wall-clock
+    ///   fallback wouldn't be a second-best clock, it would be timecodes
+    ///   aligned to nothing, stated with full confidence. Zeros are
+    ///   visibly broken; plausible numbers are not.
+    func start(
+        intervalSec: Int,
+        elapsed: @escaping @MainActor () -> TimeInterval,
+        into directory: URL
+    ) async {
         guard intervalSec > 0 else { return }
         outputDir = directory
+        elapsedProvider = elapsed
         do {
             try FileManager.default.createDirectory(
                 at: directory,
@@ -55,6 +95,9 @@ final class ScreenshotCapture {
         screenshotURLs = existing
         // Next filename = (highest existing number) + 1, via %03d(index+1).
         index = existing.compactMap { Int($0.deletingPathExtension().lastPathComponent) }.max() ?? 0
+        // Resume path: keep the offsets already on disk. Recomputing
+        // them now would date every pre-pause frame to the resume.
+        offsets = ScreenshotIndex.load(from: directory)
 
         // Take one right away, then schedule.
         await captureOne()
@@ -168,11 +211,71 @@ final class ScreenshotCapture {
             let url = dir.appendingPathComponent(filename)
             try png.write(to: url)
 
+            // Past the `try` above, so the file is on disk before it
+            // gets an index entry — no orphan pointing at nothing.
+            if let elapsedProvider {
+                offsets[filename] = max(0, elapsedProvider())
+                ScreenshotIndex.write(offsets, to: dir)
+            }
+
             screenshotURLs.append(url)
             index += 1
         } catch {
             log.error("Screenshot failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
         }
+    }
+}
+
+// MARK: - Timeline index
+
+/// `screenshots/index.json` — filename → position on the recording's
+/// timeline, in seconds of audio captured (the transcript's clock, not
+/// the wall clock; see this file's header).
+///
+/// Deliberately a sidecar rather than a filename convention or EXIF: the
+/// PNGs are an exported artifact people copy into Obsidian vaults and
+/// mail to each other, and renaming them to carry a timestamp would break
+/// every existing link. A sibling JSON file is ignorable by everything
+/// that doesn't want it — including `ScreenTextExtractor` and
+/// `SessionStore`, which both filter the folder to `.png`.
+///
+/// Sessions recorded before this existed have no index, and there is no
+/// way to reconstruct one: the capture interval is a global setting that
+/// may have changed since, and a paused session breaks the arithmetic
+/// anyway. Those sessions show no timestamps, which is the honest
+/// outcome — a plausible wrong time is worse than none.
+nonisolated enum ScreenshotIndex {
+    static let filename = "index.json"
+
+    static func url(in directory: URL) -> URL {
+        directory.appendingPathComponent(filename)
+    }
+
+    static func load(from directory: URL) -> [String: Double] {
+        guard let data = try? Data(contentsOf: url(in: directory)),
+              let decoded = try? JSONDecoder().decode([String: Double].self, from: data) else {
+            return [:]
+        }
+        return decoded
+    }
+
+    static func write(_ offsets: [String: Double], to directory: URL) {
+        guard let data = try? JSONEncoder().encode(offsets) else { return }
+        try? data.write(to: url(in: directory), options: .atomic)
+    }
+
+    /// `12:04` for a screenshot URL — directly comparable to a
+    /// `[mm:ss]` marker in the transcript. Nil when this session
+    /// predates the index, or the frame somehow isn't in it.
+    static func timecode(for screenshot: URL, offsets: [String: Double]) -> String? {
+        guard let seconds = offsets[screenshot.lastPathComponent] else { return nil }
+        let total = Int(seconds.rounded())
+        let hours = total / 3_600
+        let minutes = (total % 3_600) / 60
+        let secs = total % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, secs)
+            : String(format: "%d:%02d", minutes, secs)
     }
 }

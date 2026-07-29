@@ -995,6 +995,9 @@ final class SessionStore {
                 .filter { $0.pathExtension.lowercased() == "png" }
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
         }
+        // Empty for anything recorded before the index existed — the UI
+        // then shows frames without times rather than guessing.
+        let screenshotOffsets = ScreenshotIndex.load(from: screenshotsDir)
 
         // Folder slug + tag + speaker mapping + system-audio status
         // — parsed once at load. NB: `parsedFm` here is the
@@ -1057,6 +1060,7 @@ final class SessionStore {
             hasMicAudio: fm.fileExists(atPath: micURL.path),
             hasSystemAudio: fm.fileExists(atPath: systemURL.path),
             screenshotURLs: screenshots,
+            screenshotOffsets: screenshotOffsets,
             summary: summary,
             transcriptURL: fm.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
@@ -1157,6 +1161,11 @@ struct StoredSession: Identifiable, Sendable {
     let hasMicAudio: Bool
     let hasSystemAudio: Bool
     let screenshotURLs: [URL]
+    /// Screenshot filename → position on the recording's timeline, from
+    /// `screenshots/index.json`. Same clock as the transcript's [mm:ss]
+    /// markers. Empty for sessions recorded before the index existed;
+    /// see `ScreenshotIndex`.
+    let screenshotOffsets: [String: Double]
     let summary: MeetingSummary?
     let transcriptURL: URL?
     /// Folder slug, taken from `daisy_folder:` frontmatter. Defaults
