@@ -11957,6 +11957,86 @@
         }
       }
     },
+    "Tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены"
+          }
+        }
+      }
+    },
+    "Input tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены на входе"
+          }
+        }
+      }
+    },
+    "Output tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены на выходе"
+          }
+        }
+      }
+    },
+    "%@: %lld tokens in, %lld out" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: %2$lld токенов на входе, %3$lld на выходе"
+          }
+        }
+      }
+    },
+    "%lld other models" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ещё %lld моделей"
+          }
+        }
+      }
+    },
+    "Token usage day by day this month, by model" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расход токенов по дням в этом месяце, по моделям"
+          }
+        }
+      }
+    },
+    "of which %@ from cache" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "из них %@ из кэша"
+          }
+        }
+      }
+    },
+    "plus %@ web searches" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "плюс %@ веб-поисков"
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {
