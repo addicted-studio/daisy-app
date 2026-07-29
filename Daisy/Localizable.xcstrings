@@ -282,6 +282,36 @@
         }
       }
     },
+    "%@ couldn't be read back. This transcript is roughly %lld tokens — if that's more than the model's context length, %@ cut the top of the prompt and the summary instructions went with it. Raise the context length, or pick a cloud provider for meetings this long." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать ответ %1$@. В транскрипте примерно %2$lld токенов — если это больше контекста модели, %3$@ обрезал начало запроса вместе с инструкциями для саммари. Увеличьте контекст или выберите облачного провайдера для встреч такой длины."
+          }
+        }
+      }
+    },
+    "%@ cut this transcript down to %lld tokens out of roughly %lld — the summary instructions were in the part it dropped. Raise the model's context length in %@, or pick a cloud provider for meetings this long." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ обрезал транскрипт до %2$lld токенов из примерно %3$lld — инструкции для саммари остались в отброшенной части. Увеличьте контекст модели в %4$@ или выберите облачного провайдера для встреч такой длины."
+          }
+        }
+      }
+    },
+    "%@ is already detected — no need to add it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ и так определяется — добавлять не нужно."
+          }
+        }
+      }
+    },
     "%@ is ready for summaries." : {
       "localizations" : {
         "ru" : {
@@ -316,6 +346,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@: %@"
+          }
+        }
+      }
+    },
+    "%@: %lld tokens in, %lld out" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@: %2$lld токенов на входе, %3$lld на выходе"
           }
         }
       }
@@ -558,6 +598,16 @@
         }
       }
     },
+    "%lld meetings summarized." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Саммари готовы: %lld встреч."
+          }
+        }
+      }
+    },
     "%lld models · %@" : {
       "localizations" : {
         "en" : {
@@ -676,6 +726,16 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "%lld other models" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ещё %lld моделей"
           }
         }
       }
@@ -1152,6 +1212,16 @@
         }
       }
     },
+    "1 meeting summarized." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Саммари готово для 1 встречи."
+          }
+        }
+      }
+    },
     "1 minute" : {
       "localizations" : {
         "ru" : {
@@ -1545,6 +1615,16 @@
         }
       }
     },
+    "Add a Meeting App" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить приложение для звонков"
+          }
+        }
+      }
+    },
     "Add a new word" : {
       "localizations" : {
         "ru" : {
@@ -1561,6 +1641,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавить слово в словарь диктовки"
+          }
+        }
+      }
+    },
+    "Add App…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавить приложение…"
           }
         }
       }
@@ -1737,6 +1827,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Для опытных — исходный JSON-шаблон"
+          }
+        }
+      }
+    },
+    "After each meeting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "После каждой встречи"
           }
         }
       }
@@ -2067,6 +2167,16 @@
         }
       }
     },
+    "Apps that start a recording" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложения, запускающие запись"
+          }
+        }
+      }
+    },
     "Are we done?" : {
       "localizations" : {
         "ru" : {
@@ -2139,12 +2249,33 @@
         }
       }
     },
+    "At the end of the day" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В конце дня"
+          }
+        }
+      }
+    },
     "At the scheduled end" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "В запланированное время окончания"
+          }
+        }
+      }
+    },
+    "Attaches the last 24 hours of Daisy's logs. Nothing is sent automatically — review it first. If your mail lives in a browser, save the file instead and the questions go to your clipboard." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прикладывает логи Daisy за последние 24 часа. Ничего не отправляется автоматически — сначала посмотрите сами. Если почта у вас в браузере, сохраните файл: вопросы при этом попадут в буфер обмена."
           }
         }
       }
@@ -2465,6 +2596,16 @@
         }
       }
     },
+    "Both cover the last 24 hours of Daisy's logs — diagnostics only, no transcript text. Nothing is sent automatically; review it first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оба варианта содержат логи Daisy за последние 24 часа — только диагностика, без текста транскриптов. Ничего не отправляется автоматически: сначала просмотрите файл."
+          }
+        }
+      }
+    },
     "Brand site · homepage direction review" : {
       "localizations" : {
         "ru" : {
@@ -2533,6 +2674,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Массовый импорт словаря"
+          }
+        }
+      }
+    },
+    "By default only dictation counts. Turn this on and Daisy also learns from what YOU said in meetings — your microphone only, never the other side." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По умолчанию считаются только диктовки. Включите — и Daisy будет учиться ещё и на том, что ВЫ говорили на встречах: только ваш микрофон, без стороны собеседника."
           }
         }
       }
@@ -2792,6 +2943,17 @@
         }
       }
     },
+    "Choose where to keep the report, then attach it to an email." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите, куда положить отчёт, — потом приложите его к письму."
+          }
+        }
+      }
+    },
     "Claude can only connect while Daisy's MCP server is listening. Turn it on, then connect." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3036,6 +3198,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Свернуть"
+          }
+        }
+      }
+    },
+    "Collecting today's logs…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собираю сегодняшние логи…"
           }
         }
       }
@@ -3642,6 +3814,27 @@
         }
       }
     },
+    "Couldn't save the log file: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить файл логов: %@"
+          }
+        }
+      }
+    },
+    "Couldn't save the log report: %@" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось сохранить отчёт: %@"
+          }
+        }
+      }
+    },
     "Couldn’t save transcript file. Check Console for details." : {
       "localizations" : {
         "ru" : {
@@ -3658,6 +3851,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось запустить"
+          }
+        }
+      }
+    },
+    "Couldn't summarize tonight — the summary provider isn't available." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подготовить саммари: провайдер недоступен."
+          }
+        }
+      }
+    },
+    "Couldn't summarize tonight's meetings — check the summary provider in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось подготовить саммари — проверьте провайдера в настройках."
           }
         }
       }
@@ -3688,6 +3901,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось обновить Cursor: %@"
+          }
+        }
+      }
+    },
+    "Couldn't write the log report: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось записать отчёт: %@"
+          }
+        }
+      }
+    },
+    "Count my speech from meetings too" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учитывать и мою речь на встречах"
           }
         }
       }
@@ -4010,6 +4243,16 @@
         }
       }
     },
+    "Daisy knows %lld meeting apps. Add your own if yours isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy знает %lld приложений для звонков. Добавьте своё, если его не находит. Считается только НОВЫЙ запуск — чтобы проверить, закройте приложение и откройте заново."
+          }
+        }
+      }
+    },
     "Daisy labels a recognized person automatically as soon as a recording finishes — by their voice, or by their email if the meeting came from your calendar. This is the default." : {
       "localizations" : {
         "ru" : {
@@ -4142,6 +4385,38 @@
         }
       }
     },
+    "Daisy summarizes any meeting from the last week that still has none, in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including after the Mac was asleep or Daisy was closed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy разом обработает все встречи за последнюю неделю, у которых ещё нет саммари. Во время записи не запускается, а пропущенное берёт при следующем запуске — в том числе после сна Mac или закрытия Daisy."
+          }
+        }
+      }
+    },
+    "Daisy summarizes the day's meetings in one pass, plus anything from the last week that still has no summary. It waits if you're recording, and picks up whatever it missed next time — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy разом обработает встречи за день, а также всё за последнюю неделю, у чего ещё нет саммари. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
+          }
+        }
+      }
+    },
+    "Daisy summarizes the day's meetings in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy разом обработает встречи за день. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
+          }
+        }
+      }
+    },
     "Daisy. Paused. Tap to resume." : {
       "localizations" : {
         "ru" : {
@@ -4239,6 +4514,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Подключение Daisy нужно обновить."
+          }
+        }
+      }
+    },
+    "Daisy's last 24 hours of logs, plus a short environment header." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логи Daisy за последние 24 часа и короткая сводка об окружении."
           }
         }
       }
@@ -5108,6 +5393,36 @@
         }
       }
     },
+    "Export Logs" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выгрузить логи"
+          }
+        }
+      }
+    },
+    "Export Logs…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выгрузить логи…"
+          }
+        }
+      }
+    },
+    "Export the last 24 hours of logs to a file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выгрузить логи за последние 24 часа в файл"
+          }
+        }
+      }
+    },
     "Failed" : {
       "localizations" : {
         "ru" : {
@@ -5387,6 +5702,7 @@
       }
     },
     "From cache" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5971,11 +6287,22 @@
       }
     },
     "Input" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ввод"
+          }
+        }
+      }
+    },
+    "Input tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены на входе"
           }
         }
       }
@@ -6053,12 +6380,32 @@
         }
       }
     },
+    "Jump to the next screen shown" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перейти к следующему показанному экрану"
+          }
+        }
+      }
+    },
     "Just dictation" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только диктовка"
+          }
+        }
+      }
+    },
+    "Just the log file" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только файл логов"
           }
         }
       }
@@ -6420,6 +6767,16 @@
         }
       }
     },
+    "Logs exported to %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Логи выгружены в %@."
+          }
+        }
+      }
+    },
     "Loopback-only (127.0.0.1) — the server is reachable only from this Mac. Connected clients can read your sessions and rename a session or speaker. Re-summarizing and sending sessions to destinations stay off unless you enable “Allow actions from MCP clients” above. They can't delete anything or change Daisy's settings. Add to Claude Desktop merges the entry into ~/Library/Application Support/Claude/claude_desktop_config.json, preserving any servers you already have. Both clients need Node.js installed: Claude Desktop bridges SSE→stdio via `npx mcp-remote`; Claude Code speaks SSE natively. The raw snippet works the same for Cursor / Cline / Continue." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -6467,6 +6824,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сделано студией Addicted Studio. Открытый исходный код под лицензией Apache 2.0."
+          }
+        }
+      }
+    },
+    "Mail in a browser?" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почта в браузере?"
           }
         }
       }
@@ -7101,6 +7469,16 @@
         }
       }
     },
+    "No mail app set up — the report is in Finder and the questions are on your clipboard. Send both to %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почтовый клиент не настроен — отчёт открыт в Finder, вопросы скопированы в буфер. Отправьте и то и другое на %@."
+          }
+        }
+      }
+    },
     "No MCP integrations yet. Add one to push finished recordings into Linear, a custom Notion database, or any other MCP-compatible service." : {
       "localizations" : {
         "ru" : {
@@ -7163,6 +7541,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Без родительского проекта (верхний уровень)"
+          }
+        }
+      }
+    },
+    "No past meetings with these people yet." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "С этими людьми ещё не было встреч."
           }
         }
       }
@@ -7620,6 +8008,16 @@
         }
       }
     },
+    "of which %@ from cache" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "из них %@ из кэша"
+          }
+        }
+      }
+    },
     "Off" : {
       "localizations" : {
         "ru" : {
@@ -7637,6 +8035,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "По умолчанию выключено: подключённые приложения могут только просматривать и переименовывать записи. Включите, чтобы разрешить им повторно создавать саммари или отправлять записи в ваши назначения."
+          }
+        }
+      }
+    },
+    "Off keeps it in the transcript and in search, but out of the summary — useful when what's on screen is unrelated to the conversation." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено — текст останется в транскрипте и в поиске, но не попадёт в саммари. Полезно, когда на экране не то, о чём разговор."
           }
         }
       }
@@ -7667,6 +8075,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ollama (локально)"
+          }
+        }
+      }
+    },
+    "On screen at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На экране в %@"
           }
         }
       }
@@ -7815,6 +8233,26 @@
         }
       }
     },
+    "Only when I ask" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только по запросу"
+          }
+        }
+      }
+    },
+    "Only your microphone is used — never the other side. Meeting speech is conversational, so expect a profile that writes closer to how you talk." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Берётся только ваш микрофон — сторона собеседника никогда. Речь на встречах разговорная, так что профиль будет писать ближе к тому, как вы говорите."
+          }
+        }
+      }
+    },
     "Only your voice — click to fix" : {
       "localizations" : {
         "ru" : {
@@ -7913,6 +8351,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Открыть настройки конфиденциальности"
+          }
+        }
+      }
+    },
+    "Open Screenshot" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть скриншот"
           }
         }
       }
@@ -8083,6 +8531,7 @@
       }
     },
     "Output" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8108,6 +8557,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Устройство вывода изменилось — захват системного звука продолжается."
+          }
+        }
+      }
+    },
+    "Output tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены на выходе"
           }
         }
       }
@@ -8308,6 +8767,16 @@
         }
       }
     },
+    "Pick an app whose launch should start a recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите приложение, запуск которого должен начинать запись."
+          }
+        }
+      }
+    },
     "Pick from attendees of \"%@\"" : {
       "localizations" : {
         "ru" : {
@@ -8364,6 +8833,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Звук идёт через динамики Mac — микрофон услышит и собеседника. С наушниками стороны записи не смешиваются."
+          }
+        }
+      }
+    },
+    "plus %@ web searches" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "плюс %@ веб-поисков"
           }
         }
       }
@@ -8430,8 +8909,17 @@
         }
       }
     },
+    "Pre-meeting briefs are turned off." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Брифы перед встречами выключены."
+          }
+        }
+      }
+    },
     "Prep" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9072,6 +9560,16 @@
         }
       }
     },
+    "Remove %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Убрать %@"
+          }
+        }
+      }
+    },
     "Remove echo from my mic" : {
       "localizations" : {
         "ru" : {
@@ -9172,12 +9670,44 @@
         }
       }
     },
+    "Report a bug: save a log report to a file" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сообщить о баге: сохранить отчёт в файл"
+          }
+        }
+      }
+    },
     "Report a bug: send a log report" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сообщить об ошибке: отправить отчёт с логами"
+          }
+        }
+      }
+    },
+    "Report ready in Mail — just press Send." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Письмо готово в Mail — осталось нажать «Отправить»."
+          }
+        }
+      }
+    },
+    "Report saved. The questions are on your clipboard — paste them into an email to %@ and attach the file." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отчёт сохранён. Вопросы в буфере обмена — вставьте их в письмо на %@ и приложите файл."
           }
         }
       }
@@ -9390,6 +9920,16 @@
         }
       }
     },
+    "Run at" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запускать в"
+          }
+        }
+      }
+    },
     "Run Test connection before enabling auto-send." : {
       "localizations" : {
         "ru" : {
@@ -9488,6 +10028,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сохранить и завершить"
+          }
+        }
+      }
+    },
+    "Save Log Report" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить отчёт"
+          }
+        }
+      }
+    },
+    "Save Log Report…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранить отчёт…"
           }
         }
       }
@@ -10302,6 +10864,7 @@
       }
     },
     "Summarize when recording stops" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10323,6 +10886,58 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Создать сводку вашего дня с помощью %@? Ваши открытые задачи будут отправлены в %@."
+          }
+        }
+      }
+    },
+    "Summarizing %lld meetings from today…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для %lld встреч…"
+          }
+        }
+      }
+    },
+    "Summarizing %lld meetings…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для %lld встреч…"
+          }
+        }
+      }
+    },
+    "Summarizing %lld of %lld…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари: %1$lld из %2$lld…"
+          }
+        }
+      }
+    },
+    "Summarizing 1 meeting from today…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для 1 встречи…"
+          }
+        }
+      }
+    },
+    "Summarizing 1 meeting…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Готовлю саммари для 1 встречи…"
           }
         }
       }
@@ -10567,6 +11182,16 @@
         }
       }
     },
+    "That doesn't look like an app Daisy can identify." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Похоже, это не приложение — Daisy не смогла его опознать."
+          }
+        }
+      }
+    },
     "The 32-character ID at the end of the page or database URL — with or without dashes." : {
       "localizations" : {
         "ru" : {
@@ -10740,12 +11365,43 @@
         }
       }
     },
+    "Token usage day by day this month" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расход токенов по дням в этом месяце"
+          }
+        }
+      }
+    },
+    "Token usage day by day this month, by model" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расход токенов по дням в этом месяце, по моделям"
+          }
+        }
+      }
+    },
     "token…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "токен…"
+          }
+        }
+      }
+    },
+    "Tokens" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Токены"
           }
         }
       }
@@ -10836,6 +11492,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Попробуйте записать снова"
+          }
+        }
+      }
+    },
+    "Turn on" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включить"
           }
         }
       }
@@ -10981,6 +11647,16 @@
         }
       }
     },
+    "Use screen text in summaries" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учитывать текст с экрана в саммари"
+          }
+        }
+      }
+    },
     "Use template for" : {
       "localizations" : {
         "ru" : {
@@ -11082,6 +11758,7 @@
       }
     },
     "Web searches" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -11377,662 +12054,22 @@
         }
       }
     },
-    "Count my speech from meetings too" : {
+    "%lld tokens in" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Учитывать и мою речь на встречах"
+            "value" : "%lld токенов на входе"
           }
         }
       }
     },
-    "Only your microphone is used — never the other side. Meeting speech is conversational, so expect a profile that writes closer to how you talk." : {
+    "%lld tokens out" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Берётся только ваш микрофон — сторона собеседника никогда. Речь на встречах разговорная, так что профиль будет писать ближе к тому, как вы говорите."
-          }
-        }
-      }
-    },
-    "By default only dictation counts. Turn this on and Daisy also learns from what YOU said in meetings — your microphone only, never the other side." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "По умолчанию считаются только диктовки. Включите — и Daisy будет учиться ещё и на том, что ВЫ говорили на встречах: только ваш микрофон, без стороны собеседника."
-          }
-        }
-      }
-    },
-    "Collecting today's logs…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Собираю сегодняшние логи…"
-          }
-        }
-      }
-    },
-    "Couldn't write the log report: %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось записать отчёт: %@"
-          }
-        }
-      }
-    },
-    "Couldn't save the log report: %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось сохранить отчёт: %@"
-          }
-        }
-      }
-    },
-    "Report ready in Mail — just press Send." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Письмо готово в Mail — осталось нажать «Отправить»."
-          }
-        }
-      }
-    },
-    "No mail app set up — the report is in Finder and the questions are on your clipboard. Send both to %@." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Почтовый клиент не настроен — отчёт открыт в Finder, вопросы скопированы в буфер. Отправьте и то и другое на %@."
-          }
-        }
-      }
-    },
-    "Report saved. The questions are on your clipboard — paste them into an email to %@ and attach the file." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отчёт сохранён. Вопросы в буфере обмена — вставьте их в письмо на %@ и приложите файл."
-          }
-        }
-      }
-    },
-    "Save Log Report…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сохранить отчёт…"
-          }
-        }
-      }
-    },
-    "Mail in a browser?" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Почта в браузере?"
-          }
-        }
-      }
-    },
-    "Report a bug: save a log report to a file" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сообщить о баге: сохранить отчёт в файл"
-          }
-        }
-      }
-    },
-    "Attaches the last 24 hours of Daisy's logs. Nothing is sent automatically — review it first. If your mail lives in a browser, save the file instead and the questions go to your clipboard." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Прикладывает логи Daisy за последние 24 часа. Ничего не отправляется автоматически — сначала посмотрите сами. Если почта у вас в браузере, сохраните файл: вопросы при этом попадут в буфер обмена."
-          }
-        }
-      }
-    },
-    "Save Log Report" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сохранить отчёт"
-          }
-        }
-      }
-    },
-    "Choose where to keep the report, then attach it to an email." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите, куда положить отчёт, — потом приложите его к письму."
-          }
-        }
-      }
-    },
-    "Token usage day by day this month" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Расход токенов по дням в этом месяце"
-          }
-        }
-      }
-    },
-    "Export Logs" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выгрузить логи"
-          }
-        }
-      }
-    },
-    "Export Logs…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выгрузить логи…"
-          }
-        }
-      }
-    },
-    "Export the last 24 hours of logs to a file" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выгрузить логи за последние 24 часа в файл"
-          }
-        }
-      }
-    },
-    "Daisy's last 24 hours of logs, plus a short environment header." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Логи Daisy за последние 24 часа и короткая сводка об окружении."
-          }
-        }
-      }
-    },
-    "Couldn't save the log file: %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось сохранить файл логов: %@"
-          }
-        }
-      }
-    },
-    "Logs exported to %@." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Логи выгружены в %@."
-          }
-        }
-      }
-    },
-    "Just the log file" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Только файл логов"
-          }
-        }
-      }
-    },
-    "Both cover the last 24 hours of Daisy's logs — diagnostics only, no transcript text. Nothing is sent automatically; review it first." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Оба варианта содержат логи Daisy за последние 24 часа — только диагностика, без текста транскриптов. Ничего не отправляется автоматически: сначала просмотрите файл."
-          }
-        }
-      }
-    },
-    "Pre-meeting briefs are turned off." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Брифы перед встречами выключены."
-          }
-        }
-      }
-    },
-    "Turn on" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Включить"
-          }
-        }
-      }
-    },
-    "No past meetings with these people yet." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "С этими людьми ещё не было встреч."
-          }
-        }
-      }
-    },
-    "Use screen text in summaries" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Учитывать текст с экрана в саммари"
-          }
-        }
-      }
-    },
-    "Off keeps it in the transcript and in search, but out of the summary — useful when what's on screen is unrelated to the conversation." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выключено — текст останется в транскрипте и в поиске, но не попадёт в саммари. Полезно, когда на экране не то, о чём разговор."
-          }
-        }
-      }
-    },
-    "%@ cut this transcript down to %lld tokens out of roughly %lld — the summary instructions were in the part it dropped. Raise the model's context length in %@, or pick a cloud provider for meetings this long." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@ обрезал транскрипт до %2$lld токенов из примерно %3$lld — инструкции для саммари остались в отброшенной части. Увеличьте контекст модели в %4$@ или выберите облачного провайдера для встреч такой длины."
-          }
-        }
-      }
-    },
-    "%@ couldn't be read back. This transcript is roughly %lld tokens — if that's more than the model's context length, %@ cut the top of the prompt and the summary instructions went with it. Raise the context length, or pick a cloud provider for meetings this long." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось прочитать ответ %1$@. В транскрипте примерно %2$lld токенов — если это больше контекста модели, %3$@ обрезал начало запроса вместе с инструкциями для саммари. Увеличьте контекст или выберите облачного провайдера для встреч такой длины."
-          }
-        }
-      }
-    },
-    "Apps that start a recording" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Приложения, запускающие запись"
-          }
-        }
-      }
-    },
-    "Add App…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Добавить приложение…"
-          }
-        }
-      }
-    },
-    "Daisy knows %lld meeting apps. Add your own if yours isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy знает %lld приложений для звонков. Добавьте своё, если его не находит. Считается только НОВЫЙ запуск — чтобы проверить, закройте приложение и откройте заново."
-          }
-        }
-      }
-    },
-    "Add a Meeting App" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Добавить приложение для звонков"
-          }
-        }
-      }
-    },
-    "Pick an app whose launch should start a recording." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выберите приложение, запуск которого должен начинать запись."
-          }
-        }
-      }
-    },
-    "That doesn't look like an app Daisy can identify." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Похоже, это не приложение — Daisy не смогла его опознать."
-          }
-        }
-      }
-    },
-    "%@ is already detected — no need to add it." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ и так определяется — добавлять не нужно."
-          }
-        }
-      }
-    },
-    "Remove %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Убрать %@"
-          }
-        }
-      }
-    },
-    "On screen at %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "На экране в %@"
-          }
-        }
-      }
-    },
-    "Jump to the next screen shown" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Перейти к следующему показанному экрану"
-          }
-        }
-      }
-    },
-    "Open Screenshot" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть скриншот"
-          }
-        }
-      }
-    },
-    "After each meeting" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "После каждой встречи"
-          }
-        }
-      }
-    },
-    "At the end of the day" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "В конце дня"
-          }
-        }
-      }
-    },
-    "Only when I ask" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Только по запросу"
-          }
-        }
-      }
-    },
-    "Daisy summarizes any meeting from the last week that still has none, in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including after the Mac was asleep or Daisy was closed." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy разом обработает все встречи за последнюю неделю, у которых ещё нет саммари. Во время записи не запускается, а пропущенное берёт при следующем запуске — в том числе после сна Mac или закрытия Daisy."
-          }
-        }
-      }
-    },
-    "Summarizing 1 meeting from today…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готовлю саммари для 1 встречи…"
-          }
-        }
-      }
-    },
-    "Summarizing %lld meetings from today…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готовлю саммари для %lld встреч…"
-          }
-        }
-      }
-    },
-    "1 meeting summarized." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Саммари готово для 1 встречи."
-          }
-        }
-      }
-    },
-    "%lld meetings summarized." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Саммари готовы: %lld встреч."
-          }
-        }
-      }
-    },
-    "Run at" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Запускать в"
-          }
-        }
-      }
-    },
-    "Summarizing 1 meeting…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готовлю саммари для 1 встречи…"
-          }
-        }
-      }
-    },
-    "Summarizing %lld meetings…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готовлю саммари для %lld встреч…"
-          }
-        }
-      }
-    },
-    "Couldn't summarize tonight — the summary provider isn't available." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось подготовить саммари: провайдер недоступен."
-          }
-        }
-      }
-    },
-    "Couldn't summarize tonight's meetings — check the summary provider in Settings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось подготовить саммари — проверьте провайдера в настройках."
-          }
-        }
-      }
-    },
-    "Summarizing %lld of %lld…" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Готовлю саммари: %1$lld из %2$lld…"
-          }
-        }
-      }
-    },
-    "Daisy summarizes the day's meetings in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy разом обработает встречи за день. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
-          }
-        }
-      }
-    },
-    "Daisy summarizes the day's meetings in one pass, plus anything from the last week that still has no summary. It waits if you're recording, and picks up whatever it missed next time — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy разом обработает встречи за день, а также всё за последнюю неделю, у чего ещё нет саммари. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
-          }
-        }
-      }
-    },
-    "Tokens" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Токены"
-          }
-        }
-      }
-    },
-    "Input tokens" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Токены на входе"
-          }
-        }
-      }
-    },
-    "Output tokens" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Токены на выходе"
-          }
-        }
-      }
-    },
-    "%@: %lld tokens in, %lld out" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@: %2$lld токенов на входе, %3$lld на выходе"
-          }
-        }
-      }
-    },
-    "%lld other models" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ещё %lld моделей"
-          }
-        }
-      }
-    },
-    "Token usage day by day this month, by model" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Расход токенов по дням в этом месяце, по моделям"
-          }
-        }
-      }
-    },
-    "of which %@ from cache" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "из них %@ из кэша"
-          }
-        }
-      }
-    },
-    "plus %@ web searches" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "плюс %@ веб-поисков"
+            "value" : "%lld токенов на выходе"
           }
         }
       }
