@@ -252,6 +252,29 @@ nonisolated enum ScreenshotIndex {
         directory.appendingPathComponent(filename)
     }
 
+    /// `screenshots/highlights.json` — the frames OCR dedup judged to be
+    /// a NEW screen rather than the same one again. Written once at
+    /// finalize; absent when nothing legible was captured (a video call
+    /// grid, a demo video), in which case callers walk every frame.
+    static let highlightsFilename = "highlights.json"
+
+    static func highlightsURL(in directory: URL) -> URL {
+        directory.appendingPathComponent(highlightsFilename)
+    }
+
+    static func loadHighlights(from directory: URL) -> [String] {
+        guard let data = try? Data(contentsOf: highlightsURL(in: directory)),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    static func writeHighlights(_ frames: [String], to directory: URL) {
+        guard !frames.isEmpty, let data = try? JSONEncoder().encode(frames) else { return }
+        try? data.write(to: highlightsURL(in: directory), options: .atomic)
+    }
+
     static func load(from directory: URL) -> [String: Double] {
         guard let data = try? Data(contentsOf: url(in: directory)),
               let decoded = try? JSONDecoder().decode([String: Double].self, from: data) else {

@@ -11767,6 +11767,36 @@
         }
       }
     },
+    "On screen at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "На экране в %@"
+          }
+        }
+      }
+    },
+    "Jump to the next screen shown" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перейти к следующему показанному экрану"
+          }
+        }
+      }
+    },
+    "Open Screenshot" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть скриншот"
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {

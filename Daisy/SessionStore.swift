@@ -998,6 +998,9 @@ final class SessionStore {
         // Empty for anything recorded before the index existed — the UI
         // then shows frames without times rather than guessing.
         let screenshotOffsets = ScreenshotIndex.load(from: screenshotsDir)
+        // Empty when OCR found nothing legible — callers fall back to
+        // every frame rather than hiding the affordance.
+        let screenshotHighlights = ScreenshotIndex.loadHighlights(from: screenshotsDir)
 
         // Folder slug + tag + speaker mapping + system-audio status
         // — parsed once at load. NB: `parsedFm` here is the
@@ -1061,6 +1064,7 @@ final class SessionStore {
             hasSystemAudio: fm.fileExists(atPath: systemURL.path),
             screenshotURLs: screenshots,
             screenshotOffsets: screenshotOffsets,
+            screenshotHighlights: screenshotHighlights,
             summary: summary,
             transcriptURL: fm.fileExists(atPath: transcriptURL.path) ? transcriptURL : nil,
             folderSlug: folderSlug,
@@ -1166,6 +1170,10 @@ struct StoredSession: Identifiable, Sendable {
     /// markers. Empty for sessions recorded before the index existed;
     /// see `ScreenshotIndex`.
     let screenshotOffsets: [String: Double]
+    /// Frames OCR dedup judged to be a new screen, in capture order.
+    /// Empty when nothing legible was captured — see
+    /// `distinctScreenshots`, which falls back to every frame.
+    let screenshotHighlights: [String]
     let summary: MeetingSummary?
     let transcriptURL: URL?
     /// Folder slug, taken from `daisy_folder:` frontmatter. Defaults
@@ -1225,6 +1233,57 @@ struct StoredSession: Identifiable, Sendable {
 
     var hasSummary: Bool { summary != nil }
     var hasScreenshots: Bool { !screenshotURLs.isEmpty }
+
+    /// True when this session can navigate between transcript and
+    /// screenshots — it has frames AND the timeline index that says when
+    /// each was taken. False for anything recorded before the index
+    /// existed, where the controls are simply absent.
+    var hasScreenTimeline: Bool {
+        !screenshotURLs.isEmpty && !screenshotOffsets.isEmpty
+    }
+
+    /// The frame that was on screen at `seconds` — the last one captured
+    /// at or BEFORE that moment.
+    ///
+    /// Not "nearest": capture runs on an interval, so an exact match
+    /// essentially never happens, and the nearest frame is often the
+    /// NEXT one — a slide that was switched to ten seconds after the
+    /// line was spoken. What was actually on screen is the previous one.
+    /// Falls back to the earliest frame for a moment that predates every
+    /// capture.
+    func screenshot(at seconds: Double) -> URL? {
+        var best: URL?
+        var bestOffset = -Double.infinity
+        for url in screenshotURLs {
+            guard let offset = screenshotOffsets[url.lastPathComponent] else { continue }
+            if offset <= seconds, offset > bestOffset {
+                bestOffset = offset
+                best = url
+            }
+        }
+        return best ?? screenshotURLs.first
+    }
+
+    /// Where a frame sits on the timeline, if it's indexed.
+    func offset(of screenshot: URL) -> Double? {
+        screenshotOffsets[screenshot.lastPathComponent]
+    }
+
+    /// The frames worth stepping through: distinct screens when OCR
+    /// found any, otherwise every frame.
+    ///
+    /// Falling back rather than hiding the control is deliberate. Dedup
+    /// works on recognised TEXT, so a screen-share with no legible text
+    /// — a video, a photo, a grid of faces — yields nothing at all. The
+    /// pictures still exist and are still worth walking; a control that
+    /// vanishes for those sessions reads as a bug, and a slideshow is a
+    /// smaller cost than a missing feature (Egor, 2026-07-29).
+    var distinctScreenshots: [URL] {
+        guard !screenshotHighlights.isEmpty else { return screenshotURLs }
+        let wanted = Set(screenshotHighlights)
+        let matched = screenshotURLs.filter { wanted.contains($0.lastPathComponent) }
+        return matched.isEmpty ? screenshotURLs : matched
+    }
 
     /// Cheap full-text search across title, body, summary, and
     /// tag — so "mediacube" in the search box finds every session
