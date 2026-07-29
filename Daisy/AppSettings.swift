@@ -72,6 +72,22 @@ final class AppSettings {
     var screenshotIntervalSec: Int {
         didSet { defaults.set(screenshotIntervalSec, forKey: Self.k_screenshotInterval) }
     }
+    /// Whether text read off the screen also goes to the SUMMARIZER.
+    /// Independent of `screenshotsEnabled`: turning this off still writes
+    /// the "Shared on screen" section into transcript.md and still makes
+    /// it searchable — it only stops the text being appended to the
+    /// summary prompt. On by default, which is the behaviour that
+    /// shipped.
+    ///
+    /// Asked for by a tester who believed screen content was filling his
+    /// local model's context window (Ken, 2026-07-28). It wasn't — the
+    /// extract is capped at 5000 characters, roughly 1.7k tokens against
+    /// 20-30k for an hour of speech — but the switch is cheap, and
+    /// someone summarising a screen-share of unrelated work has a real
+    /// reason to want it.
+    var screenTextInSummary: Bool {
+        didSet { defaults.set(screenTextInSummary, forKey: Self.k_screenTextInSummary) }
+    }
     /// Opt-in: import Apple Voice Memos recordings as transcripts into a
     /// "Voice Memos" subfolder of the transcripts folder. Off by default.
     /// Reading the Voice Memos library needs Full Disk Access (the
@@ -928,6 +944,8 @@ final class AppSettings {
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
+        // Default ON — matches what shipped before the switch existed.
+        self.screenTextInSummary = defaults.object(forKey: Self.k_screenTextInSummary) as? Bool ?? true
         // Default OFF — opt-in, and reading Voice Memos needs Full Disk Access.
         self.ingestVoiceMemos = defaults.bool(forKey: Self.k_ingestVoiceMemos)
         // Default OFF — when the user hasn't picked a summarizer
@@ -1268,6 +1286,7 @@ final class AppSettings {
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
+    private static let k_screenTextInSummary = "daisy.screenTextInSummary"
     private static let k_ingestVoiceMemos = "daisy.ingestVoiceMemos"
     private static let k_autoSummarize = "daisy.autoSummarize"
     private static let k_preMeetingBriefEnabled = "daisy.preMeetingBriefEnabled"

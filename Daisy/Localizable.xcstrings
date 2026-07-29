@@ -11647,6 +11647,46 @@
         }
       }
     },
+    "Use screen text in summaries" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учитывать текст с экрана в саммари"
+          }
+        }
+      }
+    },
+    "Off keeps it in the transcript and in search, but out of the summary — useful when what's on screen is unrelated to the conversation." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено — текст останется в транскрипте и в поиске, но не попадёт в саммари. Полезно, когда на экране не то, о чём разговор."
+          }
+        }
+      }
+    },
+    "%@ cut this transcript down to %lld tokens out of roughly %lld — the summary instructions were in the part it dropped. Raise the model's context length in %@, or pick a cloud provider for meetings this long." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ обрезал транскрипт до %2$lld токенов из примерно %3$lld — инструкции для саммари остались в отброшенной части. Увеличьте контекст модели в %4$@ или выберите облачного провайдера для встреч такой длины."
+          }
+        }
+      }
+    },
+    "%@ couldn't be read back. This transcript is roughly %lld tokens — if that's more than the model's context length, %@ cut the top of the prompt and the summary instructions went with it. Raise the context length, or pick a cloud provider for meetings this long." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать ответ %1$@. В транскрипте примерно %2$lld токенов — если это больше контекста модели, %3$@ обрезал начало запроса вместе с инструкциями для саммари. Увеличьте контекст или выберите облачного провайдера для встреч такой длины."
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {

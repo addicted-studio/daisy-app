@@ -193,6 +193,14 @@ enum SummaryProviderError: LocalizedError {
     case parseFailed(provider: String, message: String)
     case modelUnavailable(provider: String, reason: String)
     case transcriptTooShort
+    /// A LOCAL provider almost certainly cut the prompt to fit the
+    /// model's context window. Its own case because the fix is
+    /// completely different from a normal parse failure — and because
+    /// the failure is otherwise invisible: the server truncates from the
+    /// TOP, which is where the system prompt with the JSON schema
+    /// lives, so the model answers a bare transcript with no
+    /// instructions and we blamed the JSON. See `LocalContextGuard`.
+    case contextOverflow(provider: String, approxPromptTokens: Int, reportedPromptTokens: Int?)
 
     var errorDescription: String? {
         switch self {
@@ -210,7 +218,84 @@ enum SummaryProviderError: LocalizedError {
             return "\(p): \(reason)"
         case .transcriptTooShort:
             return String(localized: "Not enough was said yet — try a recording over a minute long.")
+        case .contextOverflow(let p, let approx, let reported):
+            if let reported {
+                // The server told us what it actually read. No hedging.
+                return String(localized: "\(p) cut this transcript down to \(reported) tokens out of roughly \(approx) — the summary instructions were in the part it dropped. Raise the model's context length in \(p), or pick a cloud provider for meetings this long.")
+            }
+            return String(localized: "\(p) couldn't be read back. This transcript is roughly \(approx) tokens — if that's more than the model's context length, \(p) cut the top of the prompt and the summary instructions went with it. Raise the context length, or pick a cloud provider for meetings this long.")
         }
+    }
+}
+
+// MARK: - Local context guard
+
+/// Tells a truncated prompt apart from a model that simply answered
+/// badly — the difference between "raise your context length" and
+/// "try another model", which the user cannot guess from a JSON error.
+///
+/// Only local providers need this. A cloud model's context (200k+) is
+/// far past any meeting, and its API rejects an over-long prompt with an
+/// explicit HTTP error instead of silently trimming it. LM Studio and
+/// Ollama both trim, and both trim from the top.
+nonisolated enum LocalContextGuard {
+    /// ~3 characters per token. Deliberately conservative: Cyrillic and
+    /// other non-Latin scripts tokenize far denser than English's ~4,
+    /// and an estimate that runs low would under-report exactly the
+    /// long Russian meetings this exists for.
+    static func estimatedTokens(promptChars: Int) -> Int {
+        promptChars / 3
+    }
+
+    /// LM Studio's stock window for a freshly-loaded model. Used as the
+    /// assumed window there because its context is pinned at load time
+    /// and the OpenAI-shaped API has no per-request equivalent of
+    /// Ollama's `num_ctx` — so this is the best guess available.
+    /// Ollama passes the `num_ctx` it actually asked for instead.
+    static let stockLocalContextTokens = 4_096
+
+    /// A JSON number that is only meaningful when it's above zero.
+    /// Missing, unparseable and zero all collapse to nil — "the server
+    /// didn't tell us", which is a different claim from "the server read
+    /// 0 tokens".
+    static func positive(_ any: Any?) -> Int? {
+        let value: Int
+        switch any {
+        case let n as Int: value = n
+        case let n as NSNumber: value = n.intValue
+        default: return nil
+        }
+        return value > 0 ? value : nil
+    }
+
+    /// Was the reply unreadable BECAUSE the prompt was trimmed?
+    ///
+    /// With a reported prompt-token count this is close to certain: a
+    /// server that read less than half of what we sent dropped the rest.
+    /// Half, rather than something tighter, because `estimatedTokens` is
+    /// an estimate — real truncation is a 5-10x gap, not a 20% one.
+    ///
+    /// Without one, all we have is "the prompt was bigger than the
+    /// window we believe this request got", which is a suspicion — and
+    /// the message for that case is worded as one.
+    ///
+    /// `windowTokens` must be the window THIS request actually got, not
+    /// a constant. Ollama sizes `num_ctx` from the prompt itself, so a
+    /// hardcoded 4096 would declare an overflow on any meeting past
+    /// ~12 minutes whenever the token count is missing — and it goes
+    /// missing on a warm prompt cache, which is exactly what hitting
+    /// Re-summarize produces. Confidently misdiagnosing a model that
+    /// read the whole prompt is worse than the vague error this
+    /// replaces.
+    static func truncationSuspected(
+        estimatedTokens: Int,
+        reportedPromptTokens: Int?,
+        windowTokens: Int
+    ) -> Bool {
+        if let reported = reportedPromptTokens, reported > 0 {
+            return reported * 2 < estimatedTokens
+        }
+        return estimatedTokens > windowTokens
     }
 }
 

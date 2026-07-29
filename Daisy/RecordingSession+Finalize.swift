@@ -261,7 +261,7 @@ extension RecordingSession {
             // "captured whether said or shown"). Clearly fenced so the
             // model treats it as shown-not-spoken context.
             var transcriptText = fullTranscriptText
-            if !screenSharedText.isEmpty {
+            if !screenSharedText.isEmpty, settings.screenTextInSummary {
                 transcriptText += "\n\n[Content shared on screen during the meeting — text extracted from slides/documents shown, not spoken:]\n\(screenSharedText)"
             }
             let summarizeState = signposter.beginInterval("summarize", id: signposter.makeSignpostID())
