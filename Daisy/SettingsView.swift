@@ -894,6 +894,12 @@ struct SettingsView: View {
                         Text("2 minutes").tag(120)
                     }
                     .pickerStyle(.menu)
+                    Toggle(isOn: $settings.screenTextInSummary) {
+                        Text("Use screen text in summaries")
+                        Text("Off keeps it in the transcript and in search, but out of the summary — useful when what's on screen is unrelated to the conversation.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 // Calendar-only. Merged on/off + grace: -1 → off, 0 → stop

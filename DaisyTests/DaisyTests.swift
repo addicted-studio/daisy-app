@@ -92,6 +92,48 @@ struct DaisyTests {
         #expect(!OpenAIAPISummarizer.usesGPT5ParameterSet("gpt-4-turbo"))
     }
 
+    // MARK: - Local context guard
+
+    @Test("A server that read half of what we sent is treated as truncation")
+    func contextGuard_reportedCountWins() {
+        // 30k-token prompt, model read 4096 — a stock LM Studio window.
+        #expect(LocalContextGuard.truncationSuspected(
+            estimatedTokens: 30_000, reportedPromptTokens: 4_096, windowTokens: 4_096
+        ))
+        // Read nearly all of it: the model is at fault, not the window.
+        #expect(!LocalContextGuard.truncationSuspected(
+            estimatedTokens: 25_000, reportedPromptTokens: 20_000, windowTokens: 4_096
+        ))
+        // An honest count OVERRIDES a suspicious window — this is the
+        // Re-summarize case, where a warm cache used to make Daisy
+        // accuse a 256k model of truncating.
+        #expect(!LocalContextGuard.truncationSuspected(
+            estimatedTokens: 30_000, reportedPromptTokens: 30_500, windowTokens: 4_096
+        ))
+    }
+
+    @Test("Without a reported count the window we asked for decides")
+    func contextGuard_windowFallback() {
+        #expect(LocalContextGuard.truncationSuspected(
+            estimatedTokens: 30_000, reportedPromptTokens: nil, windowTokens: 4_096
+        ))
+        // Ollama sizes num_ctx from the prompt, so this is the normal
+        // case there and must NOT read as an overflow.
+        #expect(!LocalContextGuard.truncationSuspected(
+            estimatedTokens: 30_000, reportedPromptTokens: nil, windowTokens: 34_096
+        ))
+    }
+
+    @Test("A missing or zero token count is not a count of zero")
+    func contextGuard_positive() {
+        #expect(LocalContextGuard.positive(nil) == nil)
+        #expect(LocalContextGuard.positive(0) == nil)
+        #expect(LocalContextGuard.positive(-3) == nil)
+        #expect(LocalContextGuard.positive("nope") == nil)
+        #expect(LocalContextGuard.positive(4_096) == 4_096)
+        #expect(LocalContextGuard.positive(NSNumber(value: 512)) == 512)
+    }
+
     @Test("Unknown cloud model is never shown as free")
     func tokenCostEstimate_unknownCloudModelIsUnpriced() {
         let estimate = TokenCostEstimator.estimate(

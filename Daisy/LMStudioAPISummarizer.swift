@@ -161,6 +161,45 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
             let dto = try CloudSummaryDTO.decode(from: content)
             return dto.toMeetingSummary()
         } catch {
+            // Before blaming the JSON: LM Studio pins the context window
+            // when the model is LOADED, and there is no per-request knob
+            // to widen it the way Ollama's `num_ctx` allows. An hour of
+            // speech is 20-30k tokens against a stock 4096, so the server
+            // trims — from the top, taking the system prompt and its
+            // schema with it. What comes back is a model improvising on a
+            // bare transcript, and "couldn't parse JSON" sends the user
+            // hunting for the wrong bug (Ken, 2026-07-28: he concluded
+            // screenshots were filling the context, when the screen text
+            // is capped at 5000 characters and the speech was the load).
+            //
+            // Raw `prompt_tokens`, not the ledger's cache-adjusted
+            // figure: this is a size comparison, and a missing or zero
+            // count has to read as "the server didn't say" rather than
+            // "the server read nothing".
+            let reported = LocalContextGuard.positive(
+                (json["usage"] as? [String: Any])?["prompt_tokens"]
+            )
+            let estimated = LocalContextGuard.estimatedTokens(
+                promptChars: systemPrompt.count + userPrompt.count
+            )
+            // Meetings only. The same `summarize` also serves the
+            // pre-meeting brief, the voice profile and dictation polish,
+            // whose inputs are dossiers and corpora — "this transcript"
+            // and "meetings this long" would both be lies there, and a
+            // confidently wrong diagnosis is worse than the generic
+            // parse error.
+            if case .meeting = task, LocalContextGuard.truncationSuspected(
+                estimatedTokens: estimated,
+                reportedPromptTokens: reported,
+                windowTokens: LocalContextGuard.stockLocalContextTokens
+            ) {
+                log.error("LM Studio context overflow: est ~\(estimated) tokens, server read \(reported ?? -1)")
+                throw SummaryProviderError.contextOverflow(
+                    provider: "LM Studio",
+                    approxPromptTokens: estimated,
+                    reportedPromptTokens: reported
+                )
+            }
             throw SummaryProviderError.parseFailed(
                 provider: "LM Studio",
                 message: error.localizedDescription

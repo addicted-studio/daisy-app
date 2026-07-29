@@ -189,6 +189,29 @@ nonisolated struct OllamaAPISummarizer: SummaryProvider {
             let dto = try CloudSummaryDTO.decode(from: content)
             return dto.toMeetingSummary()
         } catch {
+            // `num_ctx` above asks for a window wide enough, but Ollama
+            // CLAMPS it to the model's own maximum — so a model built at
+            // 8k still trims a 30k prompt, from the top, taking the JSON
+            // schema with it. Same misdiagnosis as LM Studio, same fix:
+            // name the real problem instead of blaming the JSON.
+            let estimated = LocalContextGuard.estimatedTokens(promptChars: promptChars)
+            let reported = LocalContextGuard.positive(json["prompt_eval_count"])
+            // `numCtx`, not a constant: we already asked for a window
+            // sized to this prompt, so an overflow here means the
+            // MODEL's own ceiling clamped us — the only case worth
+            // reporting. Meetings only, for the same reason as LM Studio.
+            if case .meeting = task, LocalContextGuard.truncationSuspected(
+                estimatedTokens: estimated,
+                reportedPromptTokens: reported,
+                windowTokens: numCtx
+            ) {
+                log.error("Ollama context overflow: est ~\(estimated) tokens, model read \(reported ?? -1)")
+                throw SummaryProviderError.contextOverflow(
+                    provider: "Ollama",
+                    approxPromptTokens: estimated,
+                    reportedPromptTokens: reported
+                )
+            }
             throw SummaryProviderError.parseFailed(
                 provider: "Ollama",
                 message: error.localizedDescription
