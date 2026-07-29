@@ -961,6 +961,14 @@ private struct AutoStartWiring: ViewModifier {
             .onChange(of: settings.autoStartFromCalendar) { _, _ in
                 ServiceWiring.applyCalendar(settings: settings, session: session)
             }
+            .onChange(of: settings.summaryTiming) { _, _ in
+                ServiceWiring.applyEndOfDaySummaries(settings: settings, session: session)
+            }
+            // Changing the hour re-arms the poll, so moving it EARLIER
+            // than the current time fires tonight rather than tomorrow.
+            .onChange(of: settings.endOfDaySummaryHour) { _, _ in
+                ServiceWiring.applyEndOfDaySummaries(settings: settings, session: session)
+            }
     }
 }
 
