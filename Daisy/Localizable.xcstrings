@@ -11937,6 +11937,26 @@
         }
       }
     },
+    "Daisy summarizes the day's meetings in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy разом обработает встречи за день. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
+          }
+        }
+      }
+    },
+    "Daisy summarizes the day's meetings in one pass, plus anything from the last week that still has no summary. It waits if you're recording, and picks up whatever it missed next time — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy разом обработает встречи за день, а также всё за последнюю неделю, у чего ещё нет саммари. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
+          }
+        }
+      }
+    },
     "Русский" : {
       "localizations" : {
         "ru" : {

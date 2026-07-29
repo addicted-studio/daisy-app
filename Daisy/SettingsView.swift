@@ -1890,7 +1890,12 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text("Daisy summarizes any meeting from the last week that still has none, in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including after the Mac was asleep or Daisy was closed.")
+                    // Names the week explicitly: on any normal evening
+                    // this is just today's meetings, but the FIRST pass
+                    // after switching over from "Only when I ask" reaches
+                    // back through everything that never got one — which
+                    // is the one time a user needs warning.
+                    Text("Daisy summarizes the day's meetings in one pass, plus anything from the last week that still has no summary. It waits if you're recording, and picks up whatever it missed next time — including meetings recorded after the hour, and evenings when the Mac was asleep or Daisy was closed.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
