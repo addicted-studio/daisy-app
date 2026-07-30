@@ -2700,6 +2700,7 @@
       }
     },
     "By default only dictation counts. Turn this on and Daisy also learns from what YOU said in meetings — your microphone only, never the other side." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -11306,6 +11307,16 @@
         }
       }
     },
+    "This model is billed, but Daisy doesn't know its price." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель платная, но её цена Daisy неизвестна."
+          }
+        }
+      }
+    },
     "This recording captured almost no audio — a Bluetooth headset (e.g. AirPods) likely took over the mic and system audio. The transcript is empty or unreliable, so no summary was generated. Use the built-in mic and speakers for meetings." : {
       "localizations" : {
         "ru" : {
@@ -12071,16 +12082,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ваш голосовой профиль готов!"
-          }
-        }
-      }
-    },
-    "This model is billed, but Daisy doesn't know its price." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Эта модель платная, но её цена Daisy неизвестна."
           }
         }
       }
