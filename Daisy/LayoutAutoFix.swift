@@ -2,58 +2,72 @@
 //  LayoutAutoFix.swift
 //  Daisy
 //
-//  Fixing the wrong keyboard layout as you type, without being asked.
-//  Off by default, and it should stay that way: everything below is a
-//  negotiation between "useful" and "silently rewrote what someone
-//  typed".
+//  Fixing the wrong keyboard layout as you type. Off by default.
 //
-//  WHAT IT WATCHES. A LISTEN-ONLY event tap on key-down (plus mouse
-//  clicks, to know the caret moved). Listen-only is not a detail: a tap
-//  that can modify events can also drop them, and a bug in this file
-//  would then mean keys that never arrive. This one cannot break typing
-//  even if every line of it is wrong. It needs Input Monitoring to
-//  listen and Accessibility to type the correction back.
+//  HOW IT CATCHES A WORD BEFORE RETURN SENDS IT. The tap is ACTIVE, so
+//  the window server hands us each key press and waits for us to hand it
+//  back. A boundary key — space, comma, Return, Tab — can therefore be
+//  swallowed: we drop it, post the correction, and post the boundary
+//  ourselves. The app sees «привет» and then Return, in that order, and
+//  the message it sends is the fixed one. Compensating after the fact
+//  cannot do this: an already-sent message cannot be unsent, which is why
+//  the first version left Return alone.
+//
+//  THE COST OF AN ACTIVE TAP, AND WHAT PAYS IT. Everything typed on this
+//  Mac now waits on this code. So the decision is NOT made here: it is
+//  made between keystrokes, on the main actor, and stored as a verdict —
+//  "if this word ends now, delete N presses and type X". The tap callback
+//  reads that verdict under a lock and posts events. No dictionary
+//  lookup, no Accessibility round trip, no allocation of consequence.
+//  Everything expensive happens while the user is still typing letters.
+//
+//  For the same reason the tap does not live on the main run loop. It has
+//  its own thread: a summarizer or a SwiftUI layout pass blocking the
+//  main actor must not be able to block the keyboard. If this file hangs
+//  anyway, macOS notices and disables the tap — keys flow again and the
+//  feature goes quiet, which is the right way round. If Daisy crashes,
+//  the tap dies with the process and typing is unaffected.
 //
 //  WHAT IT NEVER DOES. Nothing is logged, stored, or sent: the buffer is
-//  one word, in memory, cleared at every boundary, click, chord, app
+//  one word, in memory, dropped at every boundary, click, chord, app
 //  switch, and while macOS reports secure input anywhere on the system.
 //  Terminals, IDEs, remote desktops and password managers are excluded
-//  outright — see `excludedBundleIDs` for why each one is there.
+//  outright — see `excludedBundleIDs`.
 //
-//  WHY IT REFUSES SO OFTEN. Deleting and retyping is destructive, and
-//  the app is guessing about a text field it cannot see. Five things must
-//  ALL hold before a single character is touched:
+//  WHY IT REFUSES SO OFTEN. Five things must hold before a verdict is
+//  even recorded, and each is a way this would otherwise have eaten text:
 //
-//    1. Accessibility says the focus is editable text. Letters typed
-//       into a message list are type-select, not text — and backspaces
-//       there delete mail. This check is the difference between a fixer
-//       and a shredder.
-//    2. Nothing was typed between the word finishing and this code
-//       running. The decision happens a main-actor hop later, and on a
-//       busy machine that hop is long enough to type two more words.
-//    3. The characters in front of the caret are the ones we think we
-//       typed — asked through Accessibility where the app will answer.
-//       This is what catches macOS text replacement ("omw" → "On my
+//    1. Accessibility says the focus is editable text. Letters typed into
+//       a mail list are type-select, and the backspaces that would fix a
+//       word there delete messages instead. This check is the difference
+//       between a fixer and a shredder.
+//    2. The characters in front of the caret are the ones we think we
+//       typed — which catches macOS text replacement ("omw" → "On my
 //       way!"), inline autocomplete, and auto-paired brackets.
-//    4. The word is unknown to the spell checker as typed and a real
-//       word converted (see LayoutFix).
-//    5. Number of BACKSPACES equals number of KEY PRESSES, which is not
-//       the same as the number of characters — one press can produce a
-//       combining mark that merges into the previous grapheme.
+//    3. The word is unknown to the spell checker as typed and a real word
+//       converted (see LayoutFix).
+//    4. Nothing has been typed since the verdict was recorded. Every key
+//       press bumps a generation counter and the verdict carries the one
+//       it was computed for.
+//    5. Backspaces are counted in KEY PRESSES, not characters — one press
+//       can produce a combining mark that merges into the previous
+//       grapheme.
 //
-//  THE ONE THING IT DELIBERATELY CANNOT DO: fix a word ended with Return
-//  or Tab. Punto Switcher can, because it swallows the key, holds it,
-//  decides, then re-sends. Ours arrives after the fact — and if the
-//  Return already sent a chat message, deleting the word and retyping it
-//  would send a SECOND message. A missed fix is an annoyance; a
-//  duplicate message to a client is not. Those words are what the fix
-//  key is for.
+//  And if a verdict is not ready when the boundary arrives, the boundary
+//  passes through untouched and the old after-the-fact path fixes the
+//  word — except after Return, where there is nothing left to fix.
 //
 
 import AppKit
 import ApplicationServices
 import Carbon.HIToolbox
 import os
+
+/// What the tap should do with the event it was handed.
+nonisolated enum TapDecision {
+    case pass
+    case swallow
+}
 
 /// The tap's C callback. A file-level function rather than a closure
 /// property: it must convert to `@convention(c)`, and a top-level
@@ -67,17 +81,14 @@ private nonisolated func daisyLayoutTapCallback(
 ) -> Unmanaged<CGEvent>? {
     switch type {
     case .keyDown:
-        LayoutAutoFix.handle(event)
-    case .leftMouseDown, .rightMouseDown:
+        if LayoutAutoFix.handle(event, proxy: proxy) == .swallow { return nil }
+    case .leftMouseDown, .rightMouseDown, .otherMouseDown:
         // The caret may have moved anywhere; the word in flight is no
         // longer the word in front of it, and it is no longer a candidate
         // for the fix key either.
         LayoutAutoFix.buffer.discard()
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
-        // macOS switches a tap off if it ever blocks. Ours is
-        // listen-only so it can't, but a machine under real load can
-        // still trip it. Everything typed while we were deaf is
-        // unaccounted for, so the buffer goes with it.
+        // Everything typed while we were deaf is unaccounted for.
         LayoutAutoFix.buffer.discard()
         Task { @MainActor in LayoutAutoFix.shared.reenable() }
     default:
@@ -95,21 +106,29 @@ final class LayoutAutoFix {
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var activationObserver: (any NSObjectProtocol)?
-    /// Read for `layoutFixSwitchesSource` only. Weak because settings
-    /// outlive nothing here and a dangling reference must not keep the
-    /// object alive; a missing one means "don't switch", the quieter of
-    /// the two behaviours.
+    private var watchdog: Timer?
+    private let host = TapHost()
+    /// Read for `layoutFixSwitchesSource` only. A missing reference means
+    /// "don't switch", the quieter of the two behaviours.
     private weak var settings: AppSettings?
 
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "LayoutAutoFix")
 
-    /// The word being typed. Lives outside the actor because the event
-    /// tap's C callback reaches it, and hopping to the main actor on
-    /// every keystroke would put our latency inside the user's typing.
+    /// The word being typed and the verdict about it. Lives outside the
+    /// actor because the tap's callback reaches it on its own thread —
+    /// that is the whole point of the design.
     nonisolated static let buffer = WordBuffer()
 
+    /// How long the user must pause before we spend a dictionary lookup
+    /// and an Accessibility round trip on the word so far. Typing "прив"
+    /// through to "привет" would otherwise cost four of each. Kept well
+    /// under a fast typist's inter-key gap: a verdict that isn't ready when
+    /// the boundary lands is a word that doesn't get fixed before Return,
+    /// which is the whole reason this path exists.
+    private static let verdictDelay: Duration = .milliseconds(45)
+
     /// How stale a just-finished word may be and still be fixable by the
-    /// key. The hotkey's own key-down clears the buffer on its way past
+    /// fix key. The key's own key-down clears the buffer on its way past
     /// the tap, so without this the key would always find nothing.
     private static let recentWordWindow: TimeInterval = 3
 
@@ -122,17 +141,23 @@ final class LayoutAutoFix {
         guard !isRunning else { return }
         guard KeyboardLayouts.shared.installed.count > 1 else { return }
 
-        // Input Monitoring — to hear the keys.
-        guard CGPreflightListenEventAccess() else {
-            CGRequestListenEventAccess()
-            ToastCenter.shared.show(
-                String(localized: "Automatic layout fixing needs Input Monitoring. Grant it in System Settings, then quit and reopen Daisy."),
-                style: .warning
-            )
+        // Turned off and on again: the tap and its thread are built once
+        // per process and only enabled and disabled after that. Unwinding a
+        // run loop and invalidating a mach port while the window server may
+        // be inside our callback is a race with nothing to gain — a
+        // disabled tap costs a parked thread and no CPU.
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            beginObserving()
+            isRunning = true
+            log.info("Layout auto-fix re-enabled")
             return
         }
-        // Accessibility — to type the correction back, and to see whether
-        // the focus is text at all.
+
+        // An ACTIVE tap on keyboard events is gated on Accessibility —
+        // the same grant we already need to type a correction back. (The
+        // Input Monitoring grant is what a listen-only tap needs; this one
+        // supersedes it.)
         guard AXIsProcessTrusted() else {
             let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
             _ = AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
@@ -146,59 +171,79 @@ final class LayoutAutoFix {
         let mask: CGEventMask =
             (1 << CGEventType.keyDown.rawValue) |
             (1 << CGEventType.leftMouseDown.rawValue) |
-            (1 << CGEventType.rightMouseDown.rawValue)
+            (1 << CGEventType.rightMouseDown.rawValue) |
+            (1 << CGEventType.otherMouseDown.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .tailAppendEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: daisyLayoutTapCallback,
             userInfo: nil
         ) else {
             log.error("CGEvent.tapCreate returned nil — layout auto-fix not started")
             ToastCenter.shared.show(
-                String(localized: "Couldn't start automatic layout fixing. Check Input Monitoring for Daisy in System Settings."),
+                String(localized: "Couldn't start automatic layout fixing. Check Accessibility for Daisy in System Settings, then quit and reopen Daisy."),
                 style: .error
             )
             return
         }
-        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            log.error("CFMachPortCreateRunLoopSource returned nil")
+            return
+        }
         CGEvent.tapEnable(tap: tap, enable: true)
+        // Its OWN thread, deliberately: with an active tap the system
+        // waits for our callback, and a main actor busy with a summarizer
+        // would then be a keyboard that stutters.
+        host.startIfNeeded(source: source)
 
         self.tap = tap
         self.runLoopSource = source
+        beginObserving()
         isRunning = true
-        // A word half-typed in one app has nothing to do with the next.
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { _ in LayoutAutoFix.buffer.discard() }
         // Spin the spell-check service up now, not inside the first
         // keystroke that needs an answer.
         LayoutFix.warmUp()
-        log.info("Layout auto-fix started")
+        log.info("Layout auto-fix started (active tap, own thread)")
     }
 
     func stop() {
-        LayoutAutoFix.buffer.clear()
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        if let activationObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
-        }
-        tap = nil
-        runLoopSource = nil
-        activationObserver = nil
+        LayoutAutoFix.buffer.discard()
+        endObserving()
+        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
         guard isRunning else { return }
         isRunning = false
         log.info("Layout auto-fix stopped")
+    }
+
+    private func beginObserving() {
+        // A word half-typed in one app has nothing to do with the next.
+        if activationObserver == nil {
+            activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification,
+                object: nil,
+                queue: .main
+            ) { _ in LayoutAutoFix.buffer.discard() }
+        }
+        // macOS disables a tap it thinks is slow, and the disable
+        // notification can be missed. Without this the feature would go
+        // quiet for the rest of the session.
+        if watchdog == nil {
+            watchdog = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.reenableIfDisabled() }
+            }
+        }
+    }
+
+    private func endObserving() {
+        watchdog?.invalidate()
+        watchdog = nil
+        if let activationObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationObserver)
+        }
+        activationObserver = nil
     }
 
     func apply(settings: AppSettings) {
@@ -215,39 +260,51 @@ final class LayoutAutoFix {
         log.warning("Layout auto-fix tap was disabled by the system — re-enabled")
     }
 
-    // MARK: - Reading the keyboard (off the main actor)
+    private func reenableIfDisabled() {
+        guard isRunning, let tap, !CGEvent.tapIsEnabled(tap: tap) else { return }
+        reenable()
+    }
 
-    nonisolated static func handle(_ event: CGEvent) {
+    // MARK: - The tap (its own thread, no main actor, no I/O)
+
+    /// Runs for every key press on the machine. Everything here is a lock
+    /// acquisition and, at most, posting a handful of events. Anything
+    /// that could block belongs in `verdict(for:)` on the main actor.
+    nonisolated static func handle(_ event: CGEvent, proxy: CGEventTapProxy) -> TapDecision {
         // Never analyse our own typing.
-        guard !SyntheticEvents.isOurs(event) else { return }
+        guard !SyntheticEvents.isOurs(event) else { return .pass }
         // A password field somewhere on the system: don't even buffer.
-        guard !IsSecureEventInputEnabled() else {
+        guard !secureInputIsOn() else {
             buffer.discard()
-            return
+            return .pass
         }
 
         let flags = event.flags
         if flags.contains(.maskCommand) || flags.contains(.maskControl) || flags.contains(.maskAlternate) {
             buffer.clear()   // a chord is a command, not a word
-            return
+            return .pass
         }
-        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        // `truncatingIfNeeded`, not `UInt16(_:)`: any process can post an
+        // event with an out-of-range keycode field, and a trap here would
+        // crash the app from inside the tap — mid-swallow, worst possible
+        // moment.
+        let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         if caretMovingKeyCodes.contains(keyCode) {
             buffer.discard()
-            return
+            return .pass
         }
         if keyCode == UInt16(kVK_Delete) {
             // Backspacing inside a word is ordinary typing, so track it
             // instead of giving up — but a delete on an empty buffer
             // means we no longer know what is in front of the caret.
             if !buffer.deleteLast() { buffer.discard() }
-            return
+            return .pass
         }
         if keyCode == UInt16(kVK_ForwardDelete) {
             // Removes what is AFTER the caret — never anything we
             // buffered, so our picture of the field is now wrong.
             buffer.discard()
-            return
+            return .pass
         }
 
         var length = 0
@@ -257,143 +314,72 @@ final class LayoutAutoFix {
             // No character (dead key, F-key, modifier alone) — we can't
             // account for what the app did with it.
             buffer.clear()
-            return
+            return .pass
         }
         let character = Character(scalar)
+
+        // Still inside a word: keep it, and ask the main actor for a
+        // verdict once it is long enough to have one.
         if character.isLetter || character == "'" || character == "-" {
-            buffer.append(character)
-            return
+            let snapshot = buffer.append(character)
+            if snapshot.presses >= LayoutFix.minAutomaticWordLength {
+                Task { @MainActor in await LayoutAutoFix.shared.prepareVerdict(for: snapshot) }
+            }
+            return .pass
         }
-        // A boundary — the word just ended. Only for characters that
-        // really are text: function keys and Help report private-use
-        // scalars, and retyping one of those would insert garbage into
-        // the document.
-        let finished = buffer.take()
-        guard isTextBoundary(character), let finished,
-              finished.word.count >= LayoutFix.minAutomaticWordLength else { return }
-        // Return and Tab may have submitted the text already — see the
-        // file header for why those are left alone. Not even as a
-        // candidate for the fix key: after a Return the caret is on the
-        // next line (or in the next field), so the word is no longer in
-        // front of it.
+
+        // A boundary — the word just ended. Only characters that really
+        // are text count: function keys and Help report private-use
+        // scalars, and retyping one of those would insert garbage.
+        guard isTextBoundary(character) else {
+            buffer.clear()
+            return .pass
+        }
+
+        // The verdict path: swallow the boundary, fix, and put the
+        // boundary back ourselves. This is the only path that can save a
+        // word ended with Return.
+        if let verdict = buffer.matchingVerdict(),
+           applyFromTap(verdict, boundary: event, character: character, proxy: proxy) {
+            buffer.discard()
+            let target = verdict.targetLayoutID
+            Task { @MainActor in LayoutAutoFix.shared.settle(targetLayoutID: target) }
+            return .swallow
+        }
+
+        // No verdict ready. Let the boundary through and fall back to
+        // fixing after the fact — except after Return or Tab, where the
+        // text may already have been sent and a retype would send it
+        // twice.
+        let finished = buffer.take(boundary: character)
         guard !character.isNewline, character != "\t" else {
             buffer.discard()
-            return
+            return .pass
         }
+        guard let finished, finished.word.count >= LayoutFix.minAutomaticWordLength else { return .pass }
         Task { @MainActor in
             LayoutAutoFix.shared.consider(finished, boundary: character)
         }
+        return .pass
     }
 
-    nonisolated private static func isTextBoundary(_ character: Character) -> Bool {
-        character == " " || character.isNumber || character.isPunctuation || character.isSymbol
-            || character.isNewline || character == "\t"
-    }
-
-    /// Keys after which we no longer know what sits in front of the
-    /// caret: arrows, Home/End, Page up/down, Escape.
-    nonisolated private static let caretMovingKeyCodes: Set<UInt16> = [
-        UInt16(kVK_LeftArrow), UInt16(kVK_RightArrow), UInt16(kVK_UpArrow), UInt16(kVK_DownArrow),
-        UInt16(kVK_Home), UInt16(kVK_End), UInt16(kVK_PageUp), UInt16(kVK_PageDown),
-        UInt16(kVK_Escape),
-    ]
-
-    // MARK: - Deciding (on the main actor)
-
-    private func consider(_ finished: WordBuffer.Word, boundary: Character) {
-        // Cheapest first, and in this order on purpose: nearly every word
-        // stops at `LayoutFix.automatic`, and the checks after it each
-        // cost a round trip to another process.
-        guard isRunning, contextAllows() else { return }
-        // Anything typed since the boundary means the caret has moved on
-        // and our arithmetic is stale. This is the common case on a busy
-        // machine, not an exotic one.
-        guard LayoutAutoFix.buffer.generation == finished.generation else { return }
-        guard let fix = LayoutFix.automatic(word: finished.word) else { return }
-        guard focusIsEditableText() else { return }
-
-        // The boundary character is deleted and retyped with the word:
-        // the field already has it, and deleting the word alone would
-        // leave the space in the wrong place.
-        let presses = finished.presses + 1
-        let expected = finished.word + String(boundary)
-        guard confirmBeforeCaret(expected) else { return }
-        guard replaceInFlight(deleting: presses, typing: fix.text + String(boundary)) else { return }
-        settle(fix)
-        log.info("Auto-fixed a word into \(fix.target.id, privacy: .public)")
-    }
-
-    /// The fix key's second source: the word just typed. The user asked,
-    /// so this uses `deliberate` (no dictionary needed) and leaves the
-    /// boundary alone — there isn't one yet.
-    func fixWordInFlight() -> LayoutFix.Fix? {
-        guard isRunning, contextAllows() else { return nil }
-        guard let candidate = LayoutAutoFix.buffer.wordInFlightOrJustFinished(
-            within: Self.recentWordWindow
-        ), candidate.word.count > 1 else { return nil }
-        guard let fix = LayoutFix.deliberate(candidate.word) else { return nil }
-        guard focusIsEditableText(), confirmBeforeCaret(candidate.word) else { return nil }
-        guard replaceInFlight(deleting: candidate.presses, typing: fix.text) else { return nil }
-        settle(fix)
-        return fix
-    }
-
-    /// Conditions that have to hold at the moment of acting, not at the
-    /// moment the feature was switched on.
-    private func contextAllows() -> Bool {
-        guard !IsSecureEventInputEnabled() else { return false }
-        // An input method (Japanese, Pinyin, Hangul) composes text from
-        // keystrokes on its own; what we saw is not what landed.
-        guard !KeyboardLayouts.shared.isInputMethodActive else { return false }
-        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        return !Self.isExcluded(frontmost)
-    }
-
-    /// The one check that keeps backspaces out of mail lists, Finder and
-    /// single-key-shortcut web apps — where letters are commands and a
-    /// Delete is not an edit but a deletion. Costs an Accessibility round
-    /// trip, so it runs last.
-    private func focusIsEditableText() -> Bool {
-        AXFocus.kind() == .editable
-    }
-
-    /// Does the text in front of the caret actually end with what we
-    /// believe we typed? Nil answers (an app that won't say) are allowed
-    /// through — most apps outside AppKit won't answer, and refusing them
-    /// all would leave the feature working nowhere. A WRONG answer is
-    /// refused: that is text replacement or autocomplete having changed
-    /// the field under us.
-    private func confirmBeforeCaret(_ expected: String) -> Bool {
-        let units = expected.utf16.count
-        guard let actual = AXFocus.textBeforeCaret(count: units) else { return true }
-        return actual == expected
-    }
-
-    private func settle(_ fix: LayoutFix.Fix) {
-        // Our own typing is marked and skipped by the tap, so the buffer
-        // would otherwise still hold the pre-fix word — and the fix key
-        // must not be able to "fix" it a second time.
-        LayoutAutoFix.buffer.discard()
-        if settings?.layoutFixSwitchesSource ?? false {
-            KeyboardLayouts.shared.select(fix.target)
-        }
-        UsageStats.shared.recordFixes(polished: 1)
-    }
-
-    // MARK: - Typing back
-
-    /// Delete `count` key presses' worth of text and type `text`.
-    /// Every event is built BEFORE any of them is posted: half of this
-    /// operation — backspaces with no replacement — is the one outcome
-    /// worse than not running at all.
-    private func replaceInFlight(deleting count: Int, typing text: String) -> Bool {
-        guard count > 0, count < 128 else { return false }
-        guard let source = CGEventSource(stateID: .privateState) else { return false }
-        let units = Array(text.utf16)
+    /// Post the correction and the swallowed boundary, in order, from the
+    /// tap's own thread. Every event is built BEFORE any is posted: half
+    /// of this operation — backspaces with no replacement, or a swallowed
+    /// Return that never comes back — is worse than not running at all.
+    nonisolated private static func applyFromTap(
+        _ verdict: WordBuffer.Verdict,
+        boundary: CGEvent,
+        character: Character,
+        proxy: CGEventTapProxy
+    ) -> Bool {
+        guard verdict.presses > 0, verdict.presses <= WordBuffer.maxPresses else { return false }
+        guard let source = eventSource else { return false }
+        let units = Array(verdict.replacement.utf16)
         guard !units.isEmpty else { return false }
 
         var events: [CGEvent] = []
-        for _ in 0..<count {
+        for _ in 0..<verdict.presses {
             guard let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: true),
                   let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: false)
             else { return false }
@@ -411,10 +397,226 @@ final class LayoutAutoFix {
         events.append(textDown)
         events.append(textUp)
 
+        // The boundary goes back as a copy of what the user pressed —
+        // same key code, same flags, so a Return really is a Return in the
+        // app that receives it. The CHARACTER is pinned onto it as well: a
+        // copy carries only a key code, and `settle` may switch the input
+        // source a moment later, at which point key code 47 stops being
+        // "." and becomes "ю". Built before anything is posted, because a
+        // swallowed Return that never comes back is the one outcome worse
+        // than not running at all. Only the key-DOWN is injected: the
+        // physical key-up was never tapped and arrives on its own, so
+        // synthesizing one would hand the app two.
+        guard let boundaryDown = boundary.copy() else { return false }
+        let boundaryUnits = Array(String(character).utf16)
+        boundaryDown.keyboardSetUnicodeString(
+            stringLength: boundaryUnits.count,
+            unicodeString: boundaryUnits
+        )
+        events.append(boundaryDown)
+
         for event in events {
-            // Flags cleared explicitly. A synthesized Delete that
-            // inherits a physically-held Option is ⌥Delete — it deletes
-            // a whole WORD per press, and this posts several.
+            // Flags cleared on everything we invented; the boundary copy
+            // keeps its own, because shift is what makes it "!" rather
+            // than "1". A synthesized Delete that inherits a physically
+            // held Option is ⌥Delete — it deletes a whole WORD per press,
+            // and this posts several.
+            if event !== boundaryDown { event.flags = [] }
+            event.setIntegerValueField(.eventSourceUserData, value: SyntheticEvents.marker)
+            // `tapPostEvent`, not `post(tap:)`: it injects DOWNSTREAM of
+            // this tap. Our events don't traverse the session chain again,
+            // so they can't re-enter our own callback and no other app's
+            // active tap gets to drop the Return we just promised to put
+            // back. It is also far cheaper, which matters while the window
+            // server is blocked on this callback.
+            event.tapPostEvent(proxy)
+        }
+        return true
+    }
+
+    /// One event source for the life of the process: creating one per fix
+    /// is an allocation and a window-server round trip inside the
+    /// callback. `.privateState` so synthesized events never inherit the
+    /// modifiers the user is physically holding.
+    nonisolated(unsafe) private static let eventSource = CGEventSource(stateID: .privateState)
+
+    /// `IsSecureEventInputEnabled` is not free in every macOS release and
+    /// this runs on every key press in the system, so the answer is cached
+    /// briefly. Short enough to be safe: the flag flips when a password
+    /// field takes focus, which is always before the first character of a
+    /// password is typed.
+    nonisolated private static func secureInputIsOn() -> Bool {
+        let now = DispatchTime.now().uptimeNanoseconds
+        return secureInputCache.withLock { cache in
+            if let cached = cache, now &- cached.at < 200_000_000 { return cached.value }
+            let value = IsSecureEventInputEnabled()
+            cache = (value, now)
+            return value
+        }
+    }
+
+    nonisolated private static let secureInputCache =
+        OSAllocatedUnfairLock<(value: Bool, at: UInt64)?>(initialState: nil)
+
+    nonisolated private static func isTextBoundary(_ character: Character) -> Bool {
+        character == " " || character.isNumber || character.isPunctuation || character.isSymbol
+            || character.isNewline || character == "\t"
+    }
+
+    /// Keys after which we no longer know what sits in front of the
+    /// caret: arrows, Home/End, Page up/down, Escape.
+    nonisolated private static let caretMovingKeyCodes: Set<UInt16> = [
+        UInt16(kVK_LeftArrow), UInt16(kVK_RightArrow), UInt16(kVK_UpArrow), UInt16(kVK_DownArrow),
+        UInt16(kVK_Home), UInt16(kVK_End), UInt16(kVK_PageUp), UInt16(kVK_PageDown),
+        UInt16(kVK_Escape),
+    ]
+
+    // MARK: - Deciding (main actor, between keystrokes)
+
+    /// Debounced verdict: wait for a pause, check the word is still the
+    /// word, then spend the dictionary lookup and the Accessibility round
+    /// trip. Every keystroke schedules one of these and all but the last
+    /// die on the generation check — which is cheaper than it sounds and
+    /// far cheaper than checking on every letter.
+    private func prepareVerdict(for snapshot: WordBuffer.Word) async {
+        try? await Task.sleep(for: Self.verdictDelay)
+        guard self.isRunning else { return }
+        guard LayoutAutoFix.buffer.generation == snapshot.generation else { return }
+        guard self.contextAllows() else { return }
+        guard let fix = LayoutFix.automatic(word: snapshot.word) else { return }
+        // The expensive, load-bearing pair: is this even a text field,
+            // and is what's in front of the caret what we think it is.
+        // Fails CLOSED here, unlike the after-the-fact path: this verdict
+        // authorises swallowing a key the user pressed, so an app that
+        // won't say what it contains doesn't get to have its Return eaten
+        // on a guess.
+        guard focusIsEditableText(), matchesBeforeCaret(snapshot.word) else { return }
+        LayoutAutoFix.buffer.record(
+            WordBuffer.Verdict(
+                generation: snapshot.generation,
+                presses: snapshot.presses,
+                replacement: fix.text,
+                targetLayoutID: fix.target.id,
+                at: DispatchTime.now().uptimeNanoseconds
+            )
+        )
+    }
+
+    /// The after-the-fact path: no verdict was ready, the boundary has
+    /// already landed, and the word is still in front of the caret.
+    private func consider(_ finished: WordBuffer.Word, boundary: Character) {
+        guard isRunning, contextAllows() else { return }
+        guard LayoutAutoFix.buffer.generation == finished.generation else { return }
+        guard let fix = LayoutFix.automatic(word: finished.word) else { return }
+        guard focusIsEditableText() else { return }
+        let expected = finished.word + String(boundary)
+        guard confirmBeforeCaret(expected) else { return }
+        guard replace(presses: finished.presses + 1, with: fix.text + String(boundary)) else { return }
+        settle(targetLayoutID: fix.target.id)
+        log.info("Auto-fixed a word into \(fix.target.id, privacy: .public)")
+    }
+
+    /// The fix key's second source: the word just typed. The user asked,
+    /// so this uses `deliberate` (no dictionary needed) and leaves the
+    /// boundary alone — there isn't one yet.
+    func fixWordInFlight() -> LayoutFix.Fix? {
+        guard isRunning, contextAllows() else { return nil }
+        guard let candidate = LayoutAutoFix.buffer.wordInFlightOrJustFinished(
+            within: Self.recentWordWindow
+        ), candidate.word.count > 1 else { return nil }
+        guard let fix = LayoutFix.deliberate(candidate.word) else { return nil }
+        guard focusIsEditableText() else { return nil }
+        // A word already finished has its boundary in front of the caret,
+        // so that has to be deleted and put back too. And because the
+        // count comes from memory rather than from the screen, this branch
+        // demands a positive answer from Accessibility — deleting one
+        // character too many here eats whatever preceded the word.
+        let trailing = candidate.boundary.map(String.init) ?? ""
+        let expected = candidate.word + trailing
+        if candidate.boundary != nil {
+            guard matchesBeforeCaret(expected) else { return nil }
+        } else {
+            guard confirmBeforeCaret(expected) else { return nil }
+        }
+        guard replace(
+            presses: candidate.presses + (candidate.boundary == nil ? 0 : 1),
+            with: fix.text + trailing
+        ) else { return nil }
+        settle(targetLayoutID: fix.target.id)
+        return fix
+    }
+
+    /// Cheap checks: no I/O, no cross-process calls.
+    private func contextAllows() -> Bool {
+        guard !IsSecureEventInputEnabled() else { return false }
+        // An input method (Japanese, Pinyin, Hangul) composes text from
+        // keystrokes on its own; what we saw is not what landed.
+        guard !KeyboardLayouts.shared.isInputMethodActive else { return false }
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        return !Self.isExcluded(frontmost)
+    }
+
+    /// The one check that keeps backspaces out of mail lists, Finder and
+    /// single-key-shortcut web apps — where letters are commands and a
+    /// Delete is not an edit but a deletion.
+    private func focusIsEditableText() -> Bool {
+        AXFocus.kind() == .editable
+    }
+
+    /// Does the text in front of the caret actually end with what we
+    /// believe we typed? Nil answers (an app that won't say) are allowed
+    /// through — most apps outside AppKit won't answer, and refusing them
+    /// all would leave the feature working nowhere. A WRONG answer is
+    /// refused: that is text replacement or autocomplete having changed
+    /// the field under us.
+    private func confirmBeforeCaret(_ expected: String) -> Bool {
+        guard let actual = AXFocus.textBeforeCaret(count: expected.utf16.count) else { return true }
+        return actual == expected
+    }
+
+    /// The same question answered strictly: "no answer" counts as no.
+    private func matchesBeforeCaret(_ expected: String) -> Bool {
+        AXFocus.textBeforeCaret(count: expected.utf16.count) == expected
+    }
+
+    fileprivate func settle(targetLayoutID: String) {
+        // Our own typing is marked and skipped by the tap, so the buffer
+        // would otherwise still hold the pre-fix word — and the fix key
+        // must not be able to "fix" it a second time.
+        LayoutAutoFix.buffer.discard()
+        if settings?.layoutFixSwitchesSource ?? false,
+           let target = KeyboardLayouts.shared.installed.first(where: { $0.id == targetLayoutID }) {
+            KeyboardLayouts.shared.select(target)
+        }
+        UsageStats.shared.recordFixes(polished: 1)
+    }
+
+    /// Delete `presses` key presses' worth of text and type `text`. Used
+    /// by the two paths that run on the main actor; the tap has its own
+    /// copy that also puts the boundary back.
+    private func replace(presses: Int, with text: String) -> Bool {
+        guard presses > 0, presses <= WordBuffer.maxPresses + 1 else { return false }
+        guard let source = Self.eventSource else { return false }
+        let units = Array(text.utf16)
+        guard !units.isEmpty else { return false }
+
+        var events: [CGEvent] = []
+        for _ in 0..<presses {
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_Delete), keyDown: false)
+            else { return false }
+            events.append(down)
+            events.append(up)
+        }
+        guard let textDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let textUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+        else { return false }
+        textDown.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+        textUp.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+        events.append(textDown)
+        events.append(textUp)
+
+        for event in events {
             event.flags = []
             event.setIntegerValueField(.eventSourceUserData, value: SyntheticEvents.marker)
             event.post(tap: .cgSessionEventTap)
@@ -471,8 +673,56 @@ final class LayoutAutoFix {
     ]
 }
 
-/// The one word being typed, behind a lock so the event tap's callback
-/// can reach it without a hop to the main actor.
+// MARK: - The tap's thread
+
+/// Owns the thread the event tap runs on. Its own run loop, because an
+/// active tap makes every keystroke on the Mac wait for our callback and
+/// the main actor is busy with recording, transcription and SwiftUI.
+nonisolated private final class TapHost: @unchecked Sendable {
+    /// CF types carry no `Sendable` conformance and this one doesn't need
+    /// it: the source is handed to exactly one thread and never read again.
+    /// The box is what says so out loud — `OSAllocatedUnfairLock` would
+    /// refuse the type outright.
+    private final class Box<T>: @unchecked Sendable {
+        let value: T
+        init(_ value: T) { self.value = value }
+    }
+
+    private let started = OSAllocatedUnfairLock<Bool>(initialState: false)
+
+    /// Started once per process, and deliberately without a `stop`: taking
+    /// a run loop down while the window server may be inside our callback
+    /// is a race against nothing. Disabling the tap is what "off" means,
+    /// and a parked thread costs no CPU.
+    func startIfNeeded(source: CFRunLoopSource) {
+        let shouldStart = started.withLock { flag in
+            guard !flag else { return false }
+            flag = true
+            return true
+        }
+        guard shouldStart else { return }
+
+        let box = Box(source)
+        let thread = Thread {
+            let runLoop = CFRunLoopGetCurrent()
+            CFRunLoopAddSource(runLoop, box.value, .commonModes)
+            // Parks here for the life of the process, waking only to hand
+            // events to the tap callback.
+            CFRunLoopRun()
+        }
+        thread.name = "app.essazanov.Daisy.layout-tap"
+        // The keyboard waits on this thread. Nothing on the machine has a
+        // better claim to being scheduled.
+        thread.qualityOfService = .userInteractive
+        thread.start()
+    }
+}
+
+// MARK: - The word, and the verdict about it
+
+/// The one word being typed, plus the decision about what to do if it
+/// ends now. Behind a lock: the tap's thread reads and writes it, the
+/// main actor writes the verdict.
 ///
 /// Tracks KEY PRESSES as well as characters, because the number of
 /// backspaces needed is the number of presses: a layout whose keys emit
@@ -480,9 +730,9 @@ final class LayoutAutoFix {
 /// deleting by character count would leave a stray mark glued to the
 /// correction.
 ///
-/// `generation` counts every key-down the tap saw. Work that starts on
-/// the main actor carries the generation it was decided at and refuses to
-/// act if it has moved — the user kept typing while we were thinking.
+/// `generation` counts every key press the tap saw. Anything decided on
+/// the main actor carries the generation it was decided at, and is
+/// refused if it has moved — the user kept typing while we were thinking.
 nonisolated final class WordBuffer: @unchecked Sendable {
     struct Word: Sendable {
         let word: String
@@ -490,29 +740,57 @@ nonisolated final class WordBuffer: @unchecked Sendable {
         let generation: UInt64
     }
 
+    /// "If the word ends now, delete `presses` and type `replacement`."
+    /// Computed between keystrokes so the tap has nothing to think about.
+    struct Verdict: Sendable {
+        let generation: UInt64
+        let presses: Int
+        let replacement: String
+        let targetLayoutID: String
+        /// When it was decided, `DispatchTime` nanoseconds. The generation
+        /// check only proves nothing was TYPED since; a document can also
+        /// change without a keystroke — a collaborative edit, another
+        /// automation tool, the app's own autocorrect — so a verdict also
+        /// expires.
+        let at: UInt64
+    }
+
     private struct State {
         var word = ""
         var presses = 0
         var generation: UInt64 = 0
-        /// Last non-empty word and when it was cleared, in
-        /// `DispatchTime` nanoseconds. The fix key needs this: the
-        /// hotkey's own key-down reaches the tap first and clears the
-        /// buffer, so by the time the hotkey handler runs the word is
-        /// already gone.
-        var recent: (word: String, presses: Int, at: UInt64)?
+        var verdict: Verdict?
+        /// Last non-empty word and when it was dropped, in `DispatchTime`
+        /// nanoseconds. The fix key needs this: its own key-down reaches
+        /// the tap first and clears the buffer, so by the time the handler
+        /// runs the word is already gone.
+        /// The last word that was dropped, what followed it, and when.
+        /// The boundary matters: after "privet." the caret is past the
+        /// dot, so fixing that word means deleting one more press and
+        /// typing the dot back.
+        var recent: (word: String, presses: Int, boundary: Character?, at: UInt64)?
     }
 
-    private static let maxPresses = 64
+    static let maxPresses = 64
+    /// How long a verdict stays good. Long enough to cover a pause
+    /// mid-word, short enough that it can't be applied to a field someone
+    /// walked away from.
+    private static let verdictLifetime: UInt64 = 5_000_000_000
     private let lock = OSAllocatedUnfairLock<State>(initialState: State())
 
     var generation: UInt64 { lock.withLock { $0.generation } }
 
-    func append(_ character: Character) {
+    /// Append and return the word as it now stands, so the caller can ask
+    /// for a verdict without a second lock acquisition.
+    func append(_ character: Character) -> Word {
         lock.withLock { state in
             state.generation &+= 1
-            guard state.presses < Self.maxPresses else { return }
-            state.word.append(character)
-            state.presses += 1
+            state.verdict = nil
+            if state.presses < Self.maxPresses {
+                state.word.append(character)
+                state.presses += 1
+            }
+            return Word(word: state.word, presses: state.presses, generation: state.generation)
         }
     }
 
@@ -521,6 +799,7 @@ nonisolated final class WordBuffer: @unchecked Sendable {
     func deleteLast() -> Bool {
         lock.withLock { state in
             state.generation &+= 1
+            state.verdict = nil
             guard state.presses > 0, !state.word.isEmpty else { return false }
             state.word.removeLast()
             state.presses -= 1
@@ -535,7 +814,8 @@ nonisolated final class WordBuffer: @unchecked Sendable {
     func clear() {
         lock.withLock { state in
             state.generation &+= 1
-            stash(&state)
+            state.verdict = nil
+            stash(&state, boundary: nil)
             state.word = ""
             state.presses = 0
         }
@@ -547,17 +827,20 @@ nonisolated final class WordBuffer: @unchecked Sendable {
     func discard() {
         lock.withLock { state in
             state.generation &+= 1
+            state.verdict = nil
             state.word = ""
             state.presses = 0
             state.recent = nil
         }
     }
 
-    /// Read and clear — the word is finished.
-    func take() -> Word? {
+    /// Read and clear — the word is finished. `boundary` is what ended it,
+    /// remembered so the fix key can put it back.
+    func take(boundary: Character? = nil) -> Word? {
         lock.withLock { state in
             state.generation &+= 1
-            stash(&state)
+            state.verdict = nil
+            stash(&state, boundary: boundary)
             let finished = Word(word: state.word, presses: state.presses, generation: state.generation)
             state.word = ""
             state.presses = 0
@@ -565,22 +848,50 @@ nonisolated final class WordBuffer: @unchecked Sendable {
         }
     }
 
+    func record(_ verdict: Verdict) {
+        lock.withLock { state in
+            // Only if nothing has been typed since it was decided.
+            guard state.generation == verdict.generation else { return }
+            state.verdict = verdict
+        }
+    }
+
+    /// The verdict, if it still describes what is on screen. Read on the
+    /// tap's thread, in the middle of a key press: one lock, no work.
+    func matchingVerdict() -> Verdict? {
+        let now = DispatchTime.now().uptimeNanoseconds
+        return lock.withLock { state in
+            guard let verdict = state.verdict,
+                  verdict.generation == state.generation,
+                  verdict.presses == state.presses,
+                  now &- verdict.at < Self.verdictLifetime else { return nil }
+            return verdict
+        }
+    }
+
     /// What the fix key should act on: the word being typed, or the one
-    /// that was cleared moments ago (by the fix key's own keystroke).
-    func wordInFlightOrJustFinished(within window: TimeInterval) -> Word? {
+    /// that was dropped moments ago (by the fix key's own keystroke).
+    /// What the fix key should act on: the word being typed, or the one
+    /// dropped moments ago — by the fix key's own keystroke, which reaches
+    /// the tap before the hotkey handler runs. `boundary` is nil for a word
+    /// still in flight and set for a finished one, and the caller must
+    /// account for it: the caret is past it.
+    func wordInFlightOrJustFinished(
+        within window: TimeInterval
+    ) -> (word: String, presses: Int, boundary: Character?)? {
         lock.withLock { state in
             if !state.word.isEmpty {
-                return Word(word: state.word, presses: state.presses, generation: state.generation)
+                return (state.word, state.presses, nil)
             }
             guard let recent = state.recent else { return nil }
             let elapsed = Double(DispatchTime.now().uptimeNanoseconds &- recent.at) / 1_000_000_000
             guard elapsed <= window else { return nil }
-            return Word(word: recent.word, presses: recent.presses, generation: state.generation)
+            return (recent.word, recent.presses, recent.boundary)
         }
     }
 
-    private func stash(_ state: inout State) {
+    private func stash(_ state: inout State, boundary: Character?) {
         guard !state.word.isEmpty else { return }
-        state.recent = (state.word, state.presses, DispatchTime.now().uptimeNanoseconds)
+        state.recent = (state.word, state.presses, boundary, DispatchTime.now().uptimeNanoseconds)
     }
 }

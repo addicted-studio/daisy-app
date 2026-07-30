@@ -1212,7 +1212,7 @@ struct SettingsView: View {
                 Toggle(isOn: $settings.layoutFixAuto) {
                     Text("Fix the layout as I type")
                 }
-                .help("Watches finished words and corrects the ones that are gibberish in one layout and a real word in another. Needs Input Monitoring and Accessibility.")
+                .help("Corrects words that are gibberish in one layout and a real word in another, as you finish them — including the word you press Return on. Needs Accessibility access.")
 
                 Toggle(isOn: $settings.layoutFixSwitchesSource) {
                     Text("Switch the input source after a fix")
@@ -1221,7 +1221,7 @@ struct SettingsView: View {
             } header: {
                 Text("Keyboard layout")
             } footer: {
-                Text("The shortcut works anywhere and fixes whatever you select. Automatic fixing reads finished words to decide, using the spell-check dictionaries already on your Mac — nothing is stored or sent, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. A word you end with Return isn't touched: it may already have been sent.")
+                Text("The shortcut works anywhere and fixes whatever you select. Automatic fixing decides while you're still typing the word, using the spell-check dictionaries already on your Mac, so a word you finish with Return is corrected before it's sent. Nothing is stored or sent anywhere, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. Needs Accessibility access.")
             }
 
             // Diarization above Language in 1.0.6: it's a structural
