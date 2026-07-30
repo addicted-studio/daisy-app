@@ -11,6 +11,7 @@
 //
 
 import AppKit
+import os
 import Foundation
 
 @MainActor
@@ -36,6 +37,67 @@ enum VersionInfo {
     /// number disambiguates re-signed or hotfixed binaries.
     static var supportPayload: String {
         "Daisy \(marketingVersion) (\(buildNumber))"
+    }
+
+    // MARK: - What this Mac has actually run
+
+    /// Every build that has run on this Mac, oldest first, each stamped
+    /// with when it first ran.
+    ///
+    /// Exists because of a question nobody could answer: a tester reported
+    /// having to update several times in a row after skipping versions,
+    /// and neither he nor the log report could say which versions those
+    /// were. The report knows only what is running RIGHT NOW, Sparkle logs
+    /// under its own subsystem and never reaches our report, and a PID
+    /// change tells you an app relaunched, not what it relaunched into.
+    /// Two entries three minutes apart is the whole diagnosis: it means
+    /// Sparkle offered an intermediate build instead of the newest, which
+    /// is a feed problem. One entry means it jumped straight there and the
+    /// complaint is release cadence.
+    ///
+    /// Written once per build change, so it costs one defaults read per
+    /// launch and stays short. Capped — the last handful is what any
+    /// diagnosis needs.
+    static func recordLaunch() {
+        let current = "\(marketingVersion) (\(buildNumber))"
+        var trail = UserDefaults.standard.stringArray(forKey: k_versionTrail) ?? []
+        // Same build as last launch: nothing new to say.
+        if let last = trail.last, last.hasPrefix(current) { return }
+        let previous = trail.last
+        trail.append("\(current) \(launchStamp())")
+        if trail.count > maxTrailEntries {
+            trail.removeFirst(trail.count - maxTrailEntries)
+        }
+        UserDefaults.standard.set(trail, forKey: k_versionTrail)
+        // Also in the log body, which survives changes to the report
+        // header format.
+        if let previous {
+            log.info("Now running \(current, privacy: .public) — previous build on this Mac: \(previous, privacy: .public)")
+        } else {
+            log.info("First run recorded: \(current, privacy: .public)")
+        }
+    }
+
+    /// The trail as one line for the log report, newest last. "first run"
+    /// when this build is the only one this Mac has seen.
+    static func versionTrailLine() -> String {
+        let trail = UserDefaults.standard.stringArray(forKey: k_versionTrail) ?? []
+        guard trail.count > 1 else { return trail.first ?? "first run" }
+        return trail.suffix(5).joined(separator: " → ")
+    }
+
+    private static let maxTrailEntries = 8
+    private static let k_versionTrail = "daisy.versionTrail"
+    private static let log = Logger(subsystem: "app.essazanov.Daisy", category: "Version")
+
+    /// Fixed format, fixed locale: this string is read by whoever is
+    /// debugging a bug report, not by the user, and it has to sort and
+    /// compare across machines and languages.
+    private static func launchStamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: Date())
     }
 
     /// Copy the support payload to clipboard and show a toast

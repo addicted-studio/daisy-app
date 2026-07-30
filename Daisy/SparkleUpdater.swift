@@ -33,6 +33,7 @@
 
 import Foundation
 import SwiftUI
+import os
 
 /// A pending update Daisy has been told about by Sparkle but that the
 /// user hasn't installed yet. Drives the quiet "Обновиться" affordance in
@@ -166,6 +167,18 @@ private final class DaisyUpdaterDelegate: NSObject, SPUUpdaterDelegate {
     nonisolated func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         let found = AvailableUpdate(shortVersion: item.displayVersionString,
                                     build: item.versionString)
+        // Logged, not just badged: WHICH item Sparkle picked out of the
+        // feed is the only way to tell "the feed offered an intermediate
+        // build" from "another release shipped while you were updating" —
+        // the two causes of being asked to update twice in a row. Sparkle's
+        // own logs go to its subsystem and never reach our bug report.
+        Logger(subsystem: "app.essazanov.Daisy", category: "Updates").info(
+            // `displayVersionString` / `versionString` are non-optional in
+            // Sparkle 2 — the AvailableUpdate init two lines up assigns
+            // them straight into `String` fields. Only `channel` is
+            // nullable, and its absence means the stable channel.
+            "Update offered: \(item.displayVersionString, privacy: .public) (build \(item.versionString, privacy: .public)), channel=\(item.channel ?? "stable", privacy: .public)"
+        )
         Task { @MainActor in SparkleUpdater.shared.availableUpdate = found }
     }
 
