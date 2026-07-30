@@ -347,7 +347,7 @@ final class AppSettings {
 
     /// Fix the layout automatically, word by word, without a keypress.
     /// OFF by default and deliberately hard to turn on by accident: it
-    /// needs Input Monitoring, and it rewrites text nobody asked it to
+    /// needs Accessibility access, and it rewrites text nobody asked it to
     /// touch. See LayoutAutoFix for what it does and does not watch.
     var layoutFixAuto: Bool {
         didSet { defaults.set(layoutFixAuto, forKey: Self.k_layoutFixAuto) }

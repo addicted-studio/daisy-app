@@ -96,7 +96,7 @@ final class KeyboardLayouts {
         // layout added or removed in System Settings. The selection
         // notification is observed too because it is the reliable one,
         // and re-reading costs a few milliseconds once.
-        for name in [
+        for case let name? in [
             kTISNotifyEnabledKeyboardInputSourcesChanged,
             kTISNotifySelectedKeyboardInputSourceChanged,
         ] {
