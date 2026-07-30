@@ -278,8 +278,8 @@ struct SettingsView: View {
     /// made all three modes feel interchangeable.
     @ViewBuilder
     private func shortcutRow(
-        title: String,
-        caption: String,
+        title: LocalizedStringKey,
+        caption: LocalizedStringKey,
         binding: Binding<HotkeyChoice>
     ) -> some View {
         LabeledContent {
@@ -304,10 +304,16 @@ struct SettingsView: View {
                     Button {
                         binding.wrappedValue = preset
                     } label: {
+                        if preset.keyCode == nil {
+                            if preset == binding.wrappedValue {
+                                Label("Disabled", systemImage: "checkmark")
+                            } else {
+                                Text("Disabled")
+                            }
                         // Fn preset gets the SF Symbol globe icon
                         // — matches the modern Mac keyboard glyph
                         // for the same key (kVK_Function).
-                        if preset.isFnOnly {
+                        } else if preset.isFnOnly {
                             Label(preset.label, systemImage: preset == binding.wrappedValue ? "checkmark" : "globe")
                         } else if preset == binding.wrappedValue {
                             Label(preset.label, systemImage: "checkmark")
