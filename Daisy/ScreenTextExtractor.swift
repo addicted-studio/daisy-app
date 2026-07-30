@@ -57,7 +57,7 @@ nonisolated enum ScreenTextExtractor {
     private static let maxTotalChars = 5_000
     private static let maxFrames = 400
 
-    /// OCR every PNG in `directory` (sorted by name = capture order),
+    /// OCR every frame in `directory` (in capture order),
     /// dedup consecutive identical screens, and return a consolidated
     /// markdown block. Best-effort: unreadable frames are skipped, and a
     /// missing/empty directory yields an empty result.
@@ -69,23 +69,21 @@ nonisolated enum ScreenTextExtractor {
         ) else {
             return Result(markdown: "", distinctScreens: 0, distinctFrames: [])
         }
-        let pngs = entries
-            .filter { $0.pathExtension.lowercased() == "png" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .prefix(maxFrames)
-        guard !pngs.isEmpty else { return Result(markdown: "", distinctScreens: 0, distinctFrames: []) }
+        let frames = ScreenshotFile.ordered(entries).prefix(maxFrames)
+        guard !frames.isEmpty else { return Result(markdown: "", distinctScreens: 0, distinctFrames: []) }
 
         var kept: [String] = []
         /// Filename behind each entry of `kept`, index-for-index.
         var keptFrames: [String] = []
         var lastTokens: Set<String> = []
 
-        for url in pngs {
+        for url in frames {
             // One autorelease pool PER FRAME, and it is load-bearing.
             //
-            // A full-screen PNG decodes to width × height × 4 bytes — ~6 MB
-            // on a laptop display, ~33 MB on a 4K monitor — and both the
-            // decoded `CGImage` and Vision's internal buffers are
+            // A frame decodes to width × height × 4 bytes NO MATTER how
+            // small the file on disk is — ~6 MB on a laptop display, ~33 MB
+            // on a 4K monitor at 1×; the switch to JPEG shrank the folder,
+            // not this. Both the decoded `CGImage` and Vision's buffers are
             // autoreleased. Without a pool inside the loop they accumulate
             // for the WHOLE run: 15-second capture over a 30-minute
             // meeting is 120 frames, so the peak was hundreds of megabytes
@@ -140,7 +138,7 @@ nonisolated enum ScreenTextExtractor {
             md += block
             md += "\n\n"
         }
-        log.info("Screen OCR: \(pngs.count, privacy: .public) frames → \(kept.count, privacy: .public) distinct screens")
+        log.info("Screen OCR: \(frames.count, privacy: .public) frames → \(kept.count, privacy: .public) distinct screens")
         return Result(
             markdown: md.trimmingCharacters(in: .whitespacesAndNewlines),
             distinctScreens: kept.count,

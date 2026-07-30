@@ -988,12 +988,11 @@ final class SessionStore {
             summary = try? JSONDecoder().decode(MeetingSummary.self, from: data)
         }
 
-        // Screenshot files (sorted by filename — they're zero-padded).
+        // Screenshot files, in capture order (by frame number — see
+        // ScreenshotFile.ordered).
         var screenshots: [URL] = []
         if let entries = try? fm.contentsOfDirectory(at: screenshotsDir, includingPropertiesForKeys: nil) {
-            screenshots = entries
-                .filter { $0.pathExtension.lowercased() == "png" }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            screenshots = ScreenshotFile.ordered(entries)
         }
         // Empty for anything recorded before the index existed — the UI
         // then shows frames without times rather than guessing.
