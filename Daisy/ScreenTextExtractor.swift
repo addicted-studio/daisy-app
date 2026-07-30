@@ -81,10 +81,34 @@ nonisolated enum ScreenTextExtractor {
         var lastTokens: Set<String> = []
 
         for url in pngs {
-            guard let cg = loadCGImage(url) else { continue }
-            let text = recognizeText(in: cg)
-            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard contentCharCount(normalized) >= minContentChars else { continue }
+            // One autorelease pool PER FRAME, and it is load-bearing.
+            //
+            // A full-screen PNG decodes to width × height × 4 bytes — ~6 MB
+            // on a laptop display, ~33 MB on a 4K monitor — and both the
+            // decoded `CGImage` and Vision's internal buffers are
+            // autoreleased. Without a pool inside the loop they accumulate
+            // for the WHOLE run: 15-second capture over a 30-minute
+            // meeting is 120 frames, so the peak was hundreds of megabytes
+            // to several gigabytes rather than one frame's worth.
+            //
+            // That peak is not merely wasteful, it broke summarizing.
+            // LM Studio's MLX AutoFit picks a model's context length from
+            // the memory FREE WHEN THE MODEL LOADS — and the model loads
+            // immediately after this pass, in the same post-stop pipeline.
+            // Holding gigabytes here made AutoFit choose a small window,
+            // the prompt didn't fit, and the summary came back unusable.
+            // Which is exactly the shape of the report: failing on every
+            // meeting WITH screen capture, including 20-minute ones, and
+            // fine on hour-long meetings WITHOUT it (Ken, 2026-07-30).
+            //
+            // Only the recognised text escapes the pool.
+            let normalized: String? = autoreleasepool {
+                guard let cg = loadCGImage(url) else { return nil }
+                let text = recognizeText(in: cg)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return contentCharCount(text) >= minContentChars ? text : nil
+            }
+            guard let normalized else { continue }
 
             let tokens = tokenSet(normalized)
             if !lastTokens.isEmpty, jaccard(tokens, lastTokens) >= dedupThreshold {
