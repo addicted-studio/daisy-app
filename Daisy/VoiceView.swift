@@ -183,32 +183,36 @@ struct VoiceView: View {
     /// a switch that disappears once you're unlocked is a switch you
     /// can't undo.
     ///
-    /// Off by default. The caption states the trade-off instead of
-    /// selling the feature: a profile trained on call speech writes the
-    /// way you talk on a call.
+    /// Off by default, and drawn as a Settings row rather than as a
+    /// caption-sized control with a paragraph under it (Egor,
+    /// 2026-07-30): body-weight label, full-size switch on the trailing
+    /// edge, trade-off in the tooltip. Settings does the same wherever
+    /// the explanation is a nicety rather than a warning (e.g. "Fix
+    /// product names") — the label already says what the switch does, and
+    /// two lines of tertiary text under one row made this card look like
+    /// the page's main content instead of a single preference.
+    ///
+    /// `LabeledContent` for the trailing-edge layout, and the switch
+    /// needs `.toggleStyle(.switch)` explicitly: nested in
+    /// LabeledContent it has no Form row context and falls back to a
+    /// checkbox (same note as the toggles in AboutView).
     private var includeMeetingsCard: some View {
         card {
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle(isOn: Binding(
+            LabeledContent {
+                Toggle("", isOn: Binding(
                     get: { store.includesMeetings },
                     set: { isOn in
                         store.setIncludesMeetings(isOn)
                         guard isOn else { return }
                         Task { await seedFromLibrary() }
                     }
-                )) {
-                    Text("Count my speech from meetings too")
-                        .font(.caption)
-                }
+                ))
+                .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.mini)
-                Text(store.includesMeetings
-                     ? String(localized: "Only your microphone is used — never the other side. Meeting speech is conversational, so expect a profile that writes closer to how you talk.")
-                     : String(localized: "By default only dictation counts. Turn this on and Daisy also learns from what YOU said in meetings — your microphone only, never the other side."))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+            } label: {
+                Text("Count my speech from meetings too")
             }
+            .help("Only your microphone is used — never the other side. Meeting speech is conversational, so expect a profile that writes closer to how you talk.")
         }
     }
 
