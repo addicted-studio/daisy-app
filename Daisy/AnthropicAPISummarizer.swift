@@ -113,8 +113,31 @@ nonisolated struct AnthropicAPISummarizer: SummaryProvider {
         // before validating the content Daisy needs to parse.
         TokenLedgerSink.recordAnthropic(model: model, json: json)
 
-        guard let content = json["content"] as? [[String: Any]],
-              let firstText = content.first?["text"] as? String else {
+        // Every TEXT block, joined — not `content.first`.
+        //
+        // A message's content array is a list of typed blocks, and text is
+        // not guaranteed to be the first of them: a `thinking` block, a
+        // `server_tool_use`, a `web_search_tool_result` all legitimately
+        // come before it. Reading `content.first?["text"]` then finds nil
+        // on a perfectly good 2xx response and reports "unexpected
+        // response from the API" — which is exactly what a tester hit on
+        // a voice profile that succeeded on the very next attempt
+        // (1.0.7.51, 2026-07-30). The attendee-research path next door
+        // already walks the blocks, because a web-search response forced
+        // it to; this one only ever saw single-block replies and got away
+        // with the shortcut.
+        guard let content = json["content"] as? [[String: Any]] else {
+            throw SummaryProviderError.invalidResponse(provider: "Anthropic")
+        }
+        let firstText = content
+            .filter { ($0["type"] as? String) == "text" }
+            .compactMap { $0["text"] as? String }
+            .joined()
+        guard !firstText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            // No text at all: log why, since the block types are the whole
+            // diagnosis and they carry no user content.
+            let types = content.compactMap { $0["type"] as? String }.joined(separator: ",")
+            log.error("Anthropic reply had no text block (types: \(types, privacy: .public))")
             throw SummaryProviderError.invalidResponse(provider: "Anthropic")
         }
 
