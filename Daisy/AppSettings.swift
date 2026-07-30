@@ -334,6 +334,32 @@ final class AppSettings {
         }
     }
 
+    /// Global hotkey for "fix the keyboard layout" — «ghbdtn» becomes
+    /// «привет». Fixes the selection, or the word being typed when the
+    /// automatic watcher is running. `.none` (default) disables.
+    var layoutFixHotkey: HotkeyChoice {
+        didSet {
+            if let data = try? JSONEncoder().encode(layoutFixHotkey) {
+                defaults.set(data, forKey: Self.k_layoutFixHotkey)
+            }
+        }
+    }
+
+    /// Fix the layout automatically, word by word, without a keypress.
+    /// OFF by default and deliberately hard to turn on by accident: it
+    /// needs Input Monitoring, and it rewrites text nobody asked it to
+    /// touch. See LayoutAutoFix for what it does and does not watch.
+    var layoutFixAuto: Bool {
+        didSet { defaults.set(layoutFixAuto, forKey: Self.k_layoutFixAuto) }
+    }
+
+    /// After a fix, switch the active input source to the layout the text
+    /// belonged to. On by default — without it the fix is one word and
+    /// the next word goes wrong the same way.
+    var layoutFixSwitchesSource: Bool {
+        didSet { defaults.set(layoutFixSwitchesSource, forKey: Self.k_layoutFixSwitchesSource) }
+    }
+
     /// When ON, Daisy auto-starts a recording the moment one of the
     /// known meeting apps (Zoom / Teams / Telegram / etc.) launches.
     ///
@@ -1102,6 +1128,16 @@ final class AppSettings {
         } else {
             self.rewriteSelectionHotkey = .none
         }
+        // Layout fixer — same opt-in default as the other hotkeys, and
+        // the automatic mode is opt-in on top of that.
+        if let data = defaults.data(forKey: Self.k_layoutFixHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
+            self.layoutFixHotkey = decoded
+        } else {
+            self.layoutFixHotkey = .none
+        }
+        self.layoutFixAuto = defaults.bool(forKey: Self.k_layoutFixAuto)
+        self.layoutFixSwitchesSource = defaults.object(forKey: Self.k_layoutFixSwitchesSource) as? Bool ?? true
         // Default OFF — auto-starting a recording the moment Zoom
         // / Teams / Telegram opens is surprising on first install
         // ("Daisy started recording a personal call I made
@@ -1389,6 +1425,9 @@ final class AppSettings {
     private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
     private static let k_dictationHotkey = "daisy.dictationHotkey"
     private static let k_rewriteSelectionHotkey = "daisy.rewriteSelectionHotkey"
+    private static let k_layoutFixHotkey = "daisy.layoutFixHotkey"
+    private static let k_layoutFixAuto = "daisy.layoutFixAuto"
+    private static let k_layoutFixSwitchesSource = "daisy.layoutFixSwitchesSource"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"
     private static let k_autoStartPolicy = "daisy.autoStartPolicy"
     private static let k_autoStartPromptMode = "daisy.autoStartPromptMode"

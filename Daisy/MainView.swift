@@ -923,6 +923,14 @@ private struct HotkeyStopWiring: ViewModifier {
             .onChange(of: settings.rewriteSelectionHotkey) { _, _ in
                 ServiceWiring.applyAllHotkeys(settings: settings, session: session)
             }
+            .onChange(of: settings.layoutFixHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
+            // The as-you-type watcher is a keyboard tap, not a hotkey —
+            // it starts and stops on its own toggle.
+            .onChange(of: settings.layoutFixAuto) { _, _ in
+                ServiceWiring.applyLayoutAutoFix(settings: settings)
+            }
             // Dictation registration is deferred until first-run
             // completes (Input Monitoring prompt timing — see
             // ServiceWiring); re-apply the moment onboarding closes so

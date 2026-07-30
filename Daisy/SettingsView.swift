@@ -860,6 +860,11 @@ struct SettingsView: View {
                     caption: "Select text anywhere, tap to rewrite it in your tone (needs a Voice Profile)",
                     binding: $settings.rewriteSelectionHotkey
                 )
+                shortcutRow(
+                    title: "Fix the keyboard layout",
+                    caption: "«ghbdtn» becomes «привет» — the selection, or the word you're typing",
+                    binding: $settings.layoutFixHotkey
+                )
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Shortcuts")
@@ -1196,6 +1201,27 @@ struct SettingsView: View {
                 .pickerStyle(.menu)
             } header: {
                 Text("Transcription")
+            }
+
+            // ── Keyboard layout ───────────────────────────────
+            // Typed-text sibling of "Fix product names" above: same job
+            // (put the characters the user meant on screen), different
+            // input. The shortcut itself is bound in Recording →
+            // Shortcuts with the others.
+            Section {
+                Toggle(isOn: $settings.layoutFixAuto) {
+                    Text("Fix the layout as I type")
+                }
+                .help("Watches finished words and corrects the ones that are gibberish in one layout and a real word in another. Needs Input Monitoring and Accessibility.")
+
+                Toggle(isOn: $settings.layoutFixSwitchesSource) {
+                    Text("Switch the input source after a fix")
+                }
+                .help("Otherwise the fix lands on one word and the next one goes wrong the same way.")
+            } header: {
+                Text("Keyboard layout")
+            } footer: {
+                Text("The shortcut works anywhere and fixes whatever you select. Automatic fixing reads finished words to decide, using the spell-check dictionaries already on your Mac — nothing is stored or sent, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. A word you end with Return isn't touched: it may already have been sent.")
             }
 
             // Diarization above Language in 1.0.6: it's a structural

@@ -89,6 +89,22 @@ enum ServiceWiring {
                 Task { await SelectionRewrite.shared.trigger() }
             }
         )
+        // Fix-the-layout — one tap re-types the selection (or the word in
+        // flight) in the layout it should have been typed with.
+        HotkeyManager.shared.register(
+            slot: .fixLayout,
+            choice: settings.layoutFixHotkey,
+            action: .toggle {
+                Task { await LayoutFixService.shared.trigger(settings: settings) }
+            }
+        )
+    }
+
+    /// Start or stop the as-you-type layout watcher from settings.
+    /// Idempotent, and safe to call when nothing changed — the watcher
+    /// itself no-ops on a redundant start.
+    static func applyLayoutAutoFix(settings: AppSettings) {
+        LayoutAutoFix.shared.apply(settings: settings)
     }
 
     /// Enable or disable foreground-app meeting auto-detection
@@ -214,5 +230,6 @@ enum ServiceWiring {
         applyCalendar(settings: settings, session: session)
         applyMCPServer(settings: settings)
         applyEndOfDaySummaries(settings: settings, session: session)
+        applyLayoutAutoFix(settings: settings)
     }
 }
