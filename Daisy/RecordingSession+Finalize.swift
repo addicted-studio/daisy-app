@@ -305,6 +305,30 @@ extension RecordingSession {
                 signposter.endInterval("write_summary", writeState)
                 log.info("post-stop write_summary: \(ms(t_writeSummary), privacy: .public)ms")
             }
+
+            // Voice pass over the follow-up, AFTER summary.json exists.
+            // Order matters more than it looks: this is a second provider
+            // call of up to 25 s, and the user has already closed the
+            // laptop. Polishing before the write would put the whole
+            // summary inside that window — lid down, nothing on disk, and
+            // a session that looks finished because transcript.md is
+            // final and the recording marker is gone. This way the worst
+            // case is losing the polish, not the summary.
+            if let draft = summary {
+                let voiced = await FollowUpVoice.polished(draft)
+                if voiced.clientFollowUp != draft.clientFollowUp {
+                    summary = voiced
+                    // The UI and the auto-send stage below read
+                    // `lastSummary`, so it has to move too.
+                    summarizer.adopt(voiced)
+                    let url = directory.appendingPathComponent("summary.json")
+                    do {
+                        try JSONEncoder().encode(voiced).write(to: url)
+                    } catch {
+                        log.error("Failed to rewrite summary.json after voice polish: \(error.localizedDescription, privacy: .public)")
+                    }
+                }
+            }
         }
 
         // ── Stage 5: Auto-send to downstream destinations ────────────

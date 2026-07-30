@@ -1938,6 +1938,22 @@ struct SettingsView: View {
                         .foregroundStyle(Color.daisyWarning)
                 }
 
+                // The follow-up is the one part of a summary that leaves
+                // the building with the user's name on it, so it is the
+                // one part worth spending a second pass on. Needs a Voice
+                // Profile to have anything to imitate — shown either way,
+                // with the reason, rather than hidden (a toggle that
+                // appears out of nowhere later is worse than one that
+                // explains itself now).
+                Toggle(isOn: $settings.followUpsInMyVoice) {
+                    Text("Write follow-ups in my voice")
+                    Text(voiceProfileExists
+                         ? "Rewrites just the follow-up draft using your Voice Profile, after the summary is written. One extra request per meeting that has one."
+                         : "Needs a Voice Profile first — open Voice in the sidebar. Rewrites just the follow-up draft, at the cost of one extra request per meeting that has one.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Toggle(isOn: $settings.morningBriefEnabled) {
                     Text("Morning brief")
                     Text("A card on Home each day: your meetings, open action items from recent sessions, and what to focus on.")
@@ -2436,6 +2452,14 @@ struct SettingsView: View {
     private var summarizerAvailable: Bool {
         if case .available = summarizer.availability { return true }
         return false
+    }
+
+    /// Whether there is a Voice Profile to imitate. Read straight from the
+    /// store rather than observed: this gates one toggle's copy, and the
+    /// profile is generated on another screen — a stale read here costs a
+    /// reopen of Settings, not correctness.
+    private var voiceProfileExists: Bool {
+        VoiceProfileStore.shared.profile?.styleInstruction.isEmpty == false
     }
 
     private var summaryTestStatusView: some View {
