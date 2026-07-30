@@ -270,13 +270,10 @@ struct SelectableTextView: NSViewRepresentable {
         context.coordinator.lastAttributed = attributed
         nsView.font = font
         nsView.textStorage?.setAttributedString(displayString())
-        // Force layout-manager flush so the next sizeThatFits call reads
-        // a fresh usedRect (otherwise a transcript that grew mid-session
-        // — e.g. live append — could measure against stale glyph ranges
-        // and underflow).
-        if let lm = nsView.layoutManager, let tc = nsView.textContainer {
-            lm.ensureLayout(for: tc)
-        }
+        // No live layout flush here any more: `sizeThatFits` measures on a
+        // throwaway TextKit stack (see below), so there is no stale
+        // `usedRect` on this view to freshen — and touching the live
+        // layout manager mid-update only risks re-dirtying layout.
         nsView.invalidateIntrinsicContentSize()
     }
 
@@ -287,36 +284,102 @@ struct SelectableTextView: NSViewRepresentable {
     /// proposed width, returns that height. Runs on each layout pass
     /// the parent makes; cost is one glyph layout per resize event.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
-        guard let width = proposal.width, width > 0 else { return nil }
-        guard let container = nsView.textContainer,
-              let layoutManager = nsView.layoutManager else {
-            return nil
+        let display = displayString()
+        // Three DIFFERENT questions arrive here and SwiftUI asks all of
+        // them — an unspecified proposal (ideal size), a zero one (how
+        // narrow can you get) and an infinite one (how greedy are you).
+        // The old code answered the first two with `nil`, which defers to
+        // AppKit's `fittingSize` — and this view's text container is
+        // deliberately zero-width (see `makeNSView`), so AppKit answers
+        // with the narrowest layout the text admits: one hyphenated
+        // fragment per line. Correct for the minimum, catastrophic as an
+        // ideal — that is the ~55pt ribbon of "Этот / чело- / век" the
+        // Voice Profile card drew down the left of a full-width card
+        // (Egor, 2026-07-30).
+        //
+        // Ideal: a measured, readable column.
+        guard let proposed = proposal.width else {
+            let ideal = Self.idealSize(of: display, font: font)
+            Self.pinWrapWidth(ideal.width, on: nsView)
+            return ideal
         }
-        container.containerSize = NSSize(
+        // Minimum: AppKit's narrowest layout IS the right answer here, and
+        // deferring costs us no measurement.
+        guard proposed > 0 else { return nil }
+        // Maximum: keep claiming an infinite width (that is what marks us
+        // flexible), but measure at a finite column — `usedRect` is not
+        // defined for an infinite container, and the LIVE container must
+        // never be left holding one or nothing would wrap again.
+        let measureWidth = proposed.isFinite ? proposed : Self.idealWidthCap
+        if proposed.isFinite {
+            Self.pinWrapWidth(proposed, on: nsView)
+        }
+        // Height measured on a THROWAWAY TextKit stack rather than this
+        // view's layout manager: same numbers, but it cannot be defeated by
+        // the live stack being unavailable or mid-invalidation — and a nil
+        // from that guard used to fall through to the fitting-size path.
+        return CGSize(
+            width: proposed,
+            height: Self.measuredSize(of: display, width: measureWidth, font: font).height
+        )
+    }
+
+    /// Pin the width the DRAWN text wraps to. It comes from the live text
+    /// container, not from the view's frame (`widthTracksTextView` is off —
+    /// see `makeNSView`), so every path out of `sizeThatFits` that reports a
+    /// width has to set it, or the view draws at whatever width it was left
+    /// at. Only the container is touched: mutating the view's own geometry
+    /// inside `sizeThatFits` re-enters AppKit's layout pass and crashed b72
+    /// (see ScrollableTextView).
+    private static func pinWrapWidth(_ width: CGFloat, on nsView: NSTextView) {
+        nsView.textContainer?.containerSize = NSSize(
             width: width,
             height: CGFloat.greatestFiniteMagnitude
         )
-        // `ensureLayout` forces the layout manager to *complete*
-        // layout for the entire container (not just generate glyph
-        // ranges). `glyphRange` alone left the trailing paragraph
-        // un-laid-out on long transcripts, so usedRect reported a
-        // height shorter than what NSTextView actually drew — the
-        // last few lines fell outside the SwiftUI frame and
-        // visually spilled below the outer CollapsibleBlock's
-        // rounded background.
+    }
+
+    // MARK: - Measurement (detached TextKit stack)
+
+    /// Widest line we will ask for when nothing constrains us. A summary
+    /// paragraph laid out without wrapping runs to thousands of points,
+    /// which is a useless ideal width for a card; a readable column is a
+    /// useful one.
+    fileprivate static let idealWidthCap: CGFloat = 640
+
+    /// Ideal size: what the text wants when nothing forces it to wrap,
+    /// capped to `idealWidthCap` (and re-measured at the cap so the height
+    /// matches the width we report).
+    static func idealSize(of attributed: NSAttributedString, font: NSFont) -> CGSize {
+        let natural = measuredSize(of: attributed, width: 1_000_000, font: font)
+        guard natural.width > idealWidthCap else { return natural }
+        return measuredSize(of: attributed, width: idealWidthCap, font: font)
+    }
+
+    /// Lay `attributed` out at `width` on a DETACHED TextKit 1 stack and
+    /// return the used size. Touches no live view, so it is safe to call
+    /// during a layout pass.
+    ///
+    /// `ensureLayout` (not `glyphRange`) forces layout to COMPLETE for the
+    /// whole container — `glyphRange` alone left the trailing paragraph
+    /// un-laid-out on long text, under-reporting the height. The extra
+    /// line of height is slack: on macOS 26 TK1 can still under-report the
+    /// trailing line fragment by ~one row, and this view draws whatever it
+    /// laid out even if SwiftUI gave the parent card less room, so the last
+    /// line spilled below the card's rounded background (Egor, 2026-06-04).
+    /// Worst case the slack is one row of bottom breathing room.
+    static func measuredSize(of attributed: NSAttributedString, width: CGFloat, font: NSFont) -> CGSize {
+        let storage = NSTextStorage(attributedString: attributed)
+        let container = NSTextContainer(
+            size: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        )
+        container.lineFragmentPadding = 0
+        let layoutManager = NSLayoutManager()
+        layoutManager.addTextContainer(container)
+        storage.addLayoutManager(layoutManager)
         layoutManager.ensureLayout(for: container)
         let used = layoutManager.usedRect(for: container)
-        // Pad by a FULL line height (was +2). On macOS 26 the TK1
-        // `usedRect` can under-report the trailing line fragment by ~one
-        // row, so NSTextView draws one line past the height SwiftUI gives
-        // the parent CollapsibleBlock → the last transcript line spilled
-        // below the card's rounded background (Egor, 2026-06-04). A full
-        // line of slack guarantees the card always covers the drawn text;
-        // worst case it's one row of bottom breathing room — harmless in a
-        // reader. (Proper long-term fix: measure via TextKit 2
-        // `usageBoundsForTextContainer`; deferred — needs on-device check.)
         let lineHeight = layoutManager.defaultLineHeight(for: font)
-        return CGSize(width: width, height: ceil(used.height) + ceil(lineHeight))
+        return CGSize(width: ceil(used.width), height: ceil(used.height) + ceil(lineHeight))
     }
 }
 
@@ -520,26 +583,21 @@ struct ScrollableTextView: NSViewRepresentable {
     /// stays reentrancy-free.
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
         guard let maxHeight else { return nil }
-        guard let width = proposal.width, width > 0 else { return nil }
-        let content = Self.measuredHeight(of: displayString(), width: width, font: font)
-        return CGSize(width: width, height: min(content, maxHeight))
-    }
-
-    /// Lay out `attributed` at `width` on a detached TextKit stack and return
-    /// its content height (+ one line of slack — macOS-26 TK1 can under-report
-    /// the trailing fragment). No live view is touched, so this is safe to call
-    /// from `sizeThatFits` inside a layout pass.
-    private static func measuredHeight(of attributed: NSAttributedString, width: CGFloat, font: NSFont) -> CGFloat {
-        let storage = NSTextStorage(attributedString: attributed)
-        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = 0
-        let layoutManager = NSLayoutManager()
-        layoutManager.addTextContainer(container)
-        storage.addLayoutManager(layoutManager)
-        layoutManager.ensureLayout(for: container)
-        let used = layoutManager.usedRect(for: container)
-        let lineHeight = layoutManager.defaultLineHeight(for: font)
-        return ceil(used.height) + ceil(lineHeight)
+        let display = displayString()
+        // Same three questions, same answers as SelectableTextView above:
+        // a measured column for the ideal (an NSScrollView's own fitting
+        // size has nothing to do with its document's text), AppKit's
+        // narrowest for the minimum, and a finite measurement behind an
+        // infinite claim. Nothing pins a container here — the inner text
+        // view tracks its own frame width.
+        guard let proposed = proposal.width else {
+            let ideal = SelectableTextView.idealSize(of: display, font: font)
+            return CGSize(width: ideal.width, height: min(ideal.height, maxHeight))
+        }
+        guard proposed > 0 else { return nil }
+        let measureWidth = proposed.isFinite ? proposed : SelectableTextView.idealWidthCap
+        let content = SelectableTextView.measuredSize(of: display, width: measureWidth, font: font).height
+        return CGSize(width: proposed, height: min(content, maxHeight))
     }
 }
 

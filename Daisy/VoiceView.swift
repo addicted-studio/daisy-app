@@ -19,8 +19,14 @@ struct VoiceView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                stateCard
+                // Above the profile, not under it (Egor, 2026-07-30): the
+                // profile text is the long block on this page — anything
+                // parked below it is below the fold, and this switch is
+                // the answer to "why does this say 0 of 300 when I have 76
+                // recordings", which is a question you have BEFORE you
+                // read the profile.
                 includeMeetingsCard
+                stateCard
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: 720, alignment: .leading)
@@ -170,7 +176,7 @@ struct VoiceView: View {
 
     /// Opt-in switch for counting the user's own speech from meetings.
     ///
-    /// Sits under the state card in EVERY state, not inside the
+    /// Sits above the state card in EVERY state, not inside the
     /// pre-unlock card: it's the answer to "why does this say 0 of 300
     /// when I have 76 recordings" (2026-07-27 report), and it has to stay
     /// reachable after the profile exists so it can be turned back off —
@@ -255,17 +261,36 @@ struct VoiceView: View {
             // (no "Meeting"/"Next actions"/follow-up frames — and an
             // imported profile duplicates its text into clientFollowUp,
             // which would render twice).
-            SelectableTextView(
+            //
+            // ScrollableTextView, not SelectableTextView (2026-07-30,
+            // Egor: "что-то поехало"). Two bugs, one cause — the bare
+            // intrinsic-height NSTextView. Its text container is
+            // zero-width until `sizeThatFits` pins it, so any layout pass
+            // that asked for an ideal size instead of proposing a width
+            // got AppKit's fitting size: the narrowest layout the text
+            // admits, one hyphenated word per line in a ~55pt ribbon down
+            // the left of a full-width card. And a 400-word profile
+            // measured taller than the card it was given, so the tail was
+            // clipped with no way to reach it. The scrollable variant
+            // wraps to its own frame instead. Same move the Summary and
+            // Transcript blocks already made.
+            //
+            // The cap is a backstop, not a reading height: this page
+            // already scrolls, so a cap a real profile could reach would
+            // put a second scroller inside the first one and swallow the
+            // wheel over the card. It sits above any plausible profile and
+            // below AppKit's ~16k-pt view-height ceiling, so a pathological
+            // imported profile scrolls inside the card rather than being
+            // clipped with no way to reach the end.
+            ScrollableTextView(
                 attributed: summaryAttributedString(
                     profile.display,
                     compact: true,
                     includeStructural: false
-                )
+                ),
+                maxHeight: 4000
             )
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Same defense-in-depth as the summary cards: never paint
-            // outside the card on a mis-measured line.
-            .clipped()
         }
     }
 
