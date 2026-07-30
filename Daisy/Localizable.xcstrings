@@ -1656,6 +1656,16 @@
         }
       }
     },
+    "Add a second keyboard layout in System Settings — there's nothing to switch between." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавьте вторую раскладку в «Системных настройках» — переключать пока не между чем."
+          }
+        }
+      }
+    },
     "Add a word to your dictation vocabulary" : {
       "localizations" : {
         "ru" : {
@@ -2521,6 +2531,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Автоматически"
+          }
+        }
+      }
+    },
+    "Automatic layout fixing needs Accessibility access — grant it in System Settings, then turn it on again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для автоматического исправления раскладки нужен доступ к «Универсальному доступу» — выдайте его в «Системных настройках», затем включите функцию снова."
           }
         }
       }
@@ -3680,6 +3700,16 @@
         }
       }
     },
+    "Corrects words that are gibberish in one layout and a real word in another, as you finish them — including the word you press Return on. Needs Accessibility access." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправляет слова, которые выглядят бессмыслицей в одной раскладке, но являются настоящими словами в другой, когда вы заканчиваете их ввод — в том числе словом, после которого нажимаете Return. Нужен доступ к «Универсальному доступу»."
+          }
+        }
+      }
+    },
     "Cost unavailable" : {
       "localizations" : {
         "ru" : {
@@ -3873,6 +3903,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось запустить"
+          }
+        }
+      }
+    },
+    "Couldn't start automatic layout fixing. Check Accessibility for Daisy in System Settings, then quit and reopen Daisy." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось запустить автоматическое исправление раскладки. Проверьте доступ к «Универсальному доступу» для Daisy в «Системных настройках», затем перезапустите Daisy."
           }
         }
       }
@@ -4171,6 +4211,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy обнаружила встречу. Записать её?"
+          }
+        }
+      }
+    },
+    "Daisy doesn't rewrite text in this app — it's on the excluded list." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не изменяет текст в этом приложении — оно находится в списке исключений."
           }
         }
       }
@@ -5549,12 +5599,32 @@
         }
       }
     },
+    "Fix the layout as I type" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправлять раскладку при вводе"
+          }
+        }
+      }
+    },
     "Fixes made by Daisy" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Исправлений от Daisy"
+          }
+        }
+      }
+    },
+    "Fixing the layout needs Accessibility access — grant it in System Settings and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для исправления раскладки нужен доступ к «Универсальному доступу» — выдайте его в «Системных настройках» и попробуйте снова."
           }
         }
       }
@@ -6488,6 +6558,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Хранится на вашем Mac 24 часа, затем удаляется. Нажмите, чтобы скопировать."
+          }
+        }
+      }
+    },
+    "Keyboard layout" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Раскладка клавиатуры"
           }
         }
       }
@@ -7908,6 +7988,16 @@
         }
       }
     },
+    "Nothing to fix — select the text, or type a word first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нечего исправлять — выделите текст или сначала введите слово."
+          }
+        }
+      }
+    },
     "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone." : {
       "localizations" : {
         "ru" : {
@@ -8548,6 +8638,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Аудио собеседника неполное — захват начался, но файл не увеличивался. Транскрипт всё ещё может быть полезен; исходное аудио частичное."
+          }
+        }
+      }
+    },
+    "Otherwise the fix lands on one word and the next one goes wrong the same way." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Иначе исправится только одно слово, а следующее снова будет набрано в неверной раскладке."
           }
         }
       }
@@ -10192,6 +10292,16 @@
         }
       }
     },
+    "Select the text you want fixed, then press the shortcut." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выделите текст, который нужно исправить, затем нажмите сочетание клавиш."
+          }
+        }
+      }
+    },
     "Selected: %@" : {
       "localizations" : {
         "ru" : {
@@ -11054,6 +11164,16 @@
         }
       }
     },
+    "Switch the input source after a fix" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переключать раскладку после исправления"
+          }
+        }
+      }
+    },
     "System" : {
       "localizations" : {
         "ru" : {
@@ -11204,6 +11324,16 @@
         }
       }
     },
+    "That already looks like the layout you meant." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Похоже, текст уже набран в нужной раскладке."
+          }
+        }
+      }
+    },
     "That doesn't look like an app Daisy can identify." : {
       "localizations" : {
         "ru" : {
@@ -11293,6 +11423,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Собеседник замолчал и, возможно, больше не записывается. Проверьте устройство вывода."
+          }
+        }
+      }
+    },
+    "The shortcut fixes selected text in compatible apps. Automatic fixing decides while you're still typing the word, using the spell-check dictionaries already on your Mac, so a word you finish with Return is corrected before it's sent. Nothing is stored or sent anywhere, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. Needs Accessibility access." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сочетание исправляет выделенный текст в поддерживаемых приложениях. Автоматическое исправление принимает решение, пока вы ещё печатаете слово, используя словари проверки орфографии на вашем Mac — поэтому слово, после которого вы нажимаете Return, исправляется до отправки. Ничего не сохраняется и никуда не отправляется; функция не работает в полях паролей, терминалах, IDE, менеджерах паролей и удалённых рабочих столах. Нужен доступ к «Универсальному доступу»."
           }
         }
       }
@@ -12082,6 +12222,106 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Ваш голосовой профиль готов!"
+          }
+        }
+      }
+    },
+    "Disabled" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено"
+          }
+        }
+      }
+    },
+    "Fix the keyboard layout" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исправить раскладку клавиатуры"
+          }
+        }
+      }
+    },
+    "Hold to talk, release to paste" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удерживайте, чтобы говорить; отпустите, чтобы вставить текст"
+          }
+        }
+      }
+    },
+    "Record a meeting" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записать встречу"
+          }
+        }
+      }
+    },
+    "Rewrite in my voice" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Переписать моим голосом"
+          }
+        }
+      }
+    },
+    "Select text anywhere, tap to rewrite it in your tone (needs a Voice Profile)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выделите текст в любом приложении и нажмите сочетание — Daisy перепишет его в вашем тоне (нужен голосовой профиль)"
+          }
+        }
+      }
+    },
+    "Tap once to start, tap again to pause / resume" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите один раз, чтобы начать; ещё раз — чтобы приостановить или продолжить"
+          }
+        }
+      }
+    },
+    "Tap once to start, tap again to stop" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите один раз, чтобы начать; ещё раз — чтобы остановить"
+          }
+        }
+      }
+    },
+    "Voice note" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Голосовая заметка"
+          }
+        }
+      }
+    },
+    "«ghbdtn» becomes «привет» — the selection, or the word you're typing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«ghbdtn» превращается в «привет» — исправляет выделенный текст или слово, которое вы печатаете"
           }
         }
       }
