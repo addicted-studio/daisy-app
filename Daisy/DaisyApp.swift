@@ -47,6 +47,10 @@ struct DaisyApp: App {
         // `ServiceWiring` so both call sites can't drift apart.
         ServiceWiring.applyAll(settings: s, session: sess)
 
+        // Note the build we just launched into, so a later bug report can
+        // say what this Mac updated FROM and when (see VersionInfo).
+        VersionInfo.recordLaunch()
+
         // Start Sparkle's normal background cycle immediately after launch.
         // This honours the Automatic update setting, does not interrupt the
         // user with a manual-check sheet, and ensures a newly published

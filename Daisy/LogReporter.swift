@@ -294,6 +294,7 @@ enum LogReporter {
         Mic device: \(AudioInputDevices.describe(AudioInputDevices.systemDefaultInputID()))
         Bundle:     \(Bundle.main.bundleURL.path)
         Auto-stop:  fromCalendar=\(settings.autoStopFromCalendar) graceSec=\(settings.autoStopGraceSec) promptMode=\(settings.autoStopPromptMode) notifyOnStop=\(settings.notifyOnAutoStop)
+        Versions:   \(VersionInfo.versionTrailLine())
         Updates:    \(updaterLine())
         ─────────────────────────────────────────────────
         """
