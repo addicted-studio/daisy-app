@@ -2,11 +2,19 @@
 //  ScreenshotCapture.swift
 //  Daisy
 //
-//  Periodic screen capture via SCScreenshotManager. Writes PNGs into the
-//  session folder so the markdown export can reference them inline.
+//  Periodic screen capture via SCScreenshotManager. Writes frames into
+//  the session folder so the markdown export can reference them inline.
 //
-//  Alongside the PNGs it writes `index.json` — filename → position on
-//  the recording's timeline. The filenames alone (`001.png`, `002.png`)
+//  2026-07-30: JPEG instead of a lossless PNG per frame. A screen
+//  captured every 15 seconds for an hour is 240 frames, and at 1–6 MB
+//  each that is hundreds of megabytes to a gigabyte per meeting sitting
+//  in the session folder forever — for pictures whose job is to be
+//  glanced at and OCR'd. Resolution is deliberately UNCHANGED; see
+//  `ScreenshotFile`. Frames written before this are PNG and stay
+//  readable; nothing is re-encoded or deleted.
+//
+//  Alongside the frames it writes `index.json` — filename → position on
+//  the recording's timeline. The filenames alone (`001.jpg`, `002.jpg`)
 //  carry only ORDER, and order times nothing: multiplying by the capture
 //  interval breaks the moment a session is paused (capture stops, the
 //  wall clock doesn't), and breaks again for anyone who changed the
@@ -25,7 +33,9 @@
 import Foundation
 import ScreenCaptureKit
 import AppKit
+import ImageIO
 import Observation
+import UniformTypeIdentifiers
 import os
 
 @Observable
@@ -55,7 +65,7 @@ final class ScreenshotCapture {
     private var lastPickedDisplayID: CGDirectDisplayID?
 
     /// Begin periodic capture every `intervalSec` seconds. Writes files
-    /// numbered `001.png`, `002.png`, … into the given directory.
+    /// numbered `001.jpg`, `002.jpg`, … into the given directory.
     /// - Parameter elapsed: media time of the recording, in seconds.
     ///   Pass `RecordingSession.elapsed`; see the file header for why a
     ///   `Date` delta is the wrong clock. Note this is the MIC
@@ -84,17 +94,18 @@ final class ScreenshotCapture {
         }
 
         // Resume-safe: pause→resume calls start() again on the SAME
-        // directory. Continue numbering after any existing NNN.png instead
-        // of resetting to 0 and overwriting the earlier screenshots (which
-        // broke the OCR chronology). A fresh session's dir is empty → 0.
-        let existing = ((try? FileManager.default.contentsOfDirectory(
+        // directory. Continue numbering after any existing NNN.<ext>
+        // instead of resetting to 0 and overwriting the earlier
+        // screenshots (which broke the OCR chronology). A fresh session's
+        // dir is empty → 0. A session that started before this app version
+        // holds PNGs and resumes into JPEGs; `ordered` counts both and
+        // sorts on the number, so a mixed folder needs no special case.
+        let existing = ScreenshotFile.ordered((try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil
         )) ?? [])
-            .filter { $0.pathExtension.lowercased() == "png" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
         screenshotURLs = existing
-        // Next filename = (highest existing number) + 1, via %03d(index+1).
-        index = existing.compactMap { Int($0.deletingPathExtension().lastPathComponent) }.max() ?? 0
+        // Next filename = (highest existing number) + 1.
+        index = existing.compactMap(ScreenshotFile.number(of:)).max() ?? 0
         // Resume path: keep the offsets already on disk. Recomputing
         // them now would date every pre-pause frame to the resume.
         offsets = ScreenshotIndex.load(from: directory)
@@ -190,6 +201,8 @@ final class ScreenshotCapture {
             )
 
             let config = SCStreamConfiguration()
+            // Point dimensions, i.e. a 1× capture — see `ScreenshotFile`
+            // for why this is NOT the place to save bytes.
             config.width = display.width
             config.height = display.height
             config.showsCursor = false
@@ -200,16 +213,18 @@ final class ScreenshotCapture {
                 configuration: config
             )
 
-            // Save as PNG.
-            let bitmap = NSBitmapImageRep(cgImage: cgImage)
-            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+            guard let encoded = ScreenshotFile.encode(cgImage) else {
                 lastError = "Could not encode screenshot."
                 return
             }
 
-            let filename = String(format: "%03d.png", index + 1)
+            let filename = ScreenshotFile.name(number: index + 1)
             let url = dir.appendingPathComponent(filename)
-            try png.write(to: url)
+            // Atomic: the strip in the detail view lists this folder while
+            // recording is still going, and a half-written frame is a
+            // broken image in the UI rather than a frame that shows up a
+            // second later.
+            try encoded.write(to: url, options: .atomic)
 
             // Past the `try` above, so the file is on disk before it
             // gets an index entry — no orphan pointing at nothing.
@@ -227,6 +242,108 @@ final class ScreenshotCapture {
     }
 }
 
+// MARK: - Frame file format
+
+/// How a captured frame is encoded, named and ordered — one place,
+/// because four files have to agree on it (capture, OCR, the Library's
+/// folder scan, and the markdown export's links).
+///
+/// JPEG, not PNG (2026-07-30, Egor): a screen stored losslessly is 1–6 MB
+/// depending on the display, and capture every 15 s means 240 of them an
+/// hour. At this quality the same frame is a few hundred KB — a 4–6× cut
+/// on a file whose whole purpose is being glanced at and read by OCR.
+/// JPEG rather than HEIC despite HEIC being better at both: these files
+/// get dragged into Obsidian vaults, pasted into Notion and mailed
+/// around, and HEIC still renders as a broken image in half of that.
+///
+/// Quality is set high for a lossy format because the primary reader is
+/// not a person, it is Vision: JPEG ringing lands on glyph edges, which
+/// is the one thing OCR cannot spare. 0.9 rather than the usual 0.8 buys
+/// that back for roughly a third more bytes, and the bytes were never
+/// the scarce thing here — a gigabyte of PNG was.
+///
+/// RESOLUTION IS NOT A KNOB HERE, and the reason is easy to lose.
+/// `SCDisplay.width` is in POINTS while `SCStreamConfiguration.width` is
+/// in PIXELS, so the capture has always been 1× — half-linear on any
+/// Retina panel. That is already the floor for OCR: Vision needs text
+/// tall enough in pixels, and 1× system text is ~13 px of cap height.
+/// Capping the long side would therefore change nothing for the displays
+/// that actually cost disk (a Retina laptop reports ~1500 pt, a 4K
+/// monitor in HiDPI ~1920 pt) and would cut into legibility on exactly
+/// the ones it did touch — a 5120×1440 ultrawide driven at 1× would land
+/// at 2560×720, halving text height on a frame that was already 1×.
+/// Compression is the free axis; resolution is not. If frames ever need
+/// to get cheaper again, the next lever is writing FEWER of them (a
+/// perceptual hash against the previous frame at capture time — an idle
+/// screen is most of a long meeting), not smaller ones.
+nonisolated enum ScreenshotFile {
+    static let jpegQuality: CGFloat = 0.9
+
+    /// Extension written for new frames.
+    static let writtenExtension = "jpg"
+    /// Extensions recognised when READING a session folder: `png` is
+    /// every frame captured before 2026-07-30. Old sessions are neither
+    /// re-encoded nor hidden.
+    static let readableExtensions: Set<String> = ["jpg", "jpeg", "png"]
+
+    /// A frame is a readable image type whose name is JUST its number.
+    /// The number requirement is not pedantry: `screenshots/` travels —
+    /// into Obsidian vaults, onto network shares — and comes back with
+    /// `001 copy.jpg` and `._001.jpg` in it. Those sort unpredictably,
+    /// have no entry in `index.json`, and in the AppleDouble case aren't
+    /// decodable at all, so they have no business being frames.
+    static func isFrame(_ url: URL) -> Bool {
+        readableExtensions.contains(url.pathExtension.lowercased())
+            && number(of: url) != nil
+    }
+
+    /// `001.jpg`, zero-padded — but see `ordered(_:)`: padding is for
+    /// human eyes, ordering does not depend on it.
+    static func name(number: Int) -> String {
+        String(format: "%03d", number) + "." + writtenExtension
+    }
+
+    static func number(of url: URL) -> Int? {
+        Int(url.deletingPathExtension().lastPathComponent)
+    }
+
+    /// The frames of a session folder, in CAPTURE order. Sorted by number
+    /// rather than by name, which matters twice: `%03d` stops padding at
+    /// the 1000th frame, and `"1000.jpg" < "999.jpg"` lexically — so a
+    /// 4-hour session used to put its tail at the head, which silently
+    /// mis-paired every frame with a timecode and made the OCR pass dedup
+    /// non-adjacent frames. It also makes order independent of the file
+    /// format, so a session that started as PNG and resumed as JPEG needs
+    /// no special case.
+    static func ordered(_ urls: [URL]) -> [URL] {
+        urls.compactMap { url -> (number: Int, url: URL)? in
+            guard isFrame(url), let number = number(of: url) else { return nil }
+            return (number, url)
+        }
+        .sorted { $0.number < $1.number }
+        .map { $0.url }
+    }
+
+    /// Encode via ImageIO rather than `NSBitmapImageRep`: a captured frame
+    /// is BGRA with an ignored alpha channel, and the AppKit path has to be
+    /// talked out of premultiplying it.
+    static func encode(_ image: CGImage) -> Data? {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        let options: [String: Any] = [
+            kCGImageDestinationLossyCompressionQuality as String: jpegQuality
+        ]
+        CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+}
+
 // MARK: - Timeline index
 
 /// `screenshots/index.json` — filename → position on the recording's
@@ -234,11 +351,12 @@ final class ScreenshotCapture {
 /// the wall clock; see this file's header).
 ///
 /// Deliberately a sidecar rather than a filename convention or EXIF: the
-/// PNGs are an exported artifact people copy into Obsidian vaults and
+/// frames are an exported artifact people copy into Obsidian vaults and
 /// mail to each other, and renaming them to carry a timestamp would break
 /// every existing link. A sibling JSON file is ignorable by everything
 /// that doesn't want it — including `ScreenTextExtractor` and
-/// `SessionStore`, which both filter the folder to `.png`.
+/// `SessionStore`, which both filter the folder through
+/// `ScreenshotFile.isFrame`.
 ///
 /// Sessions recorded before this existed have no index, and there is no
 /// way to reconstruct one: the capture interval is a global setting that

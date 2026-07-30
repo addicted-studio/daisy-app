@@ -646,8 +646,8 @@ struct SessionDetailView: View {
             titleDraft = session.title
             // The detail pane is presented without an `.id`, so switching
             // sessions in the Library REUSES this view and every @State
-            // survives. Screen-navigation state must not: frames are named
-            // `001.png` in every session, so a preview left open would look
+            // survives. Screen-navigation state must not: every session
+            // numbers its frames from `001`, so a preview left open would look
             // up its filename in the NEW session's index and print a
             // timecode from a different recording — confidently wrong,
             // which is the failure mode this whole feature exists to avoid.
