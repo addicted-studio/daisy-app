@@ -125,7 +125,13 @@ final class LayoutAutoFix {
     /// under a fast typist's inter-key gap: a verdict that isn't ready when
     /// the boundary lands is a word that doesn't get fixed before Return,
     /// which is the whole reason this path exists.
-    private static let verdictDelay: Duration = .milliseconds(45)
+    /// Keep this shorter than a normal key-to-space gap.  The first
+    /// release used 45 ms, which made the fallback do almost all the
+    /// work for quick typists and meant Return frequently arrived before
+    /// a verdict existed.  Twelve milliseconds still moves the
+    /// dictionary and AX work off the tap thread, but gives the verdict a
+    /// realistic chance to be ready before the word boundary.
+    private static let verdictDelay: Duration = .milliseconds(12)
 
     /// How stale a just-finished word may be and still be fixable by the
     /// fix key. The key's own key-down clears the buffer on its way past
@@ -484,13 +490,15 @@ final class LayoutAutoFix {
         guard LayoutAutoFix.buffer.generation == snapshot.generation else { return }
         guard self.contextAllows() else { return }
         guard let fix = LayoutFix.automatic(word: snapshot.word) else { return }
-        // The expensive, load-bearing pair: is this even a text field,
-            // and is what's in front of the caret what we think it is.
-        // Fails CLOSED here, unlike the after-the-fact path: this verdict
-        // authorises swallowing a key the user pressed, so an app that
-        // won't say what it contains doesn't get to have its Return eaten
-        // on a guess.
-        guard focusIsEditableText(), matchesBeforeCaret(snapshot.word) else { return }
+        // Verify a positive answer, but don't demand that every app expose
+        // its text through Accessibility.  Web and Electron editors often
+        // identify themselves as editable while refusing AXStringForRange;
+        // the old strict gate therefore made automatic fixing appear dead
+        // in chats and browser editors.  `confirmBeforeCaret` still
+        // rejects an explicit mismatch (autocomplete, text replacement),
+        // while the editable-focus and excluded-app checks keep us away
+        // from lists, terminals and password fields.
+        guard focusIsEditableText(), confirmBeforeCaret(snapshot.word) else { return }
         LayoutAutoFix.buffer.record(
             WordBuffer.Verdict(
                 generation: snapshot.generation,
@@ -534,7 +542,7 @@ final class LayoutAutoFix {
         let trailing = candidate.boundary.map(String.init) ?? ""
         let expected = candidate.word + trailing
         if candidate.boundary != nil {
-            guard matchesBeforeCaret(expected) else { return nil }
+            guard confirmBeforeCaret(expected) else { return nil }
         } else {
             guard confirmBeforeCaret(expected) else { return nil }
         }
@@ -572,11 +580,6 @@ final class LayoutAutoFix {
     private func confirmBeforeCaret(_ expected: String) -> Bool {
         guard let actual = AXFocus.textBeforeCaret(count: expected.utf16.count) else { return true }
         return actual == expected
-    }
-
-    /// The same question answered strictly: "no answer" counts as no.
-    private func matchesBeforeCaret(_ expected: String) -> Bool {
-        AXFocus.textBeforeCaret(count: expected.utf16.count) == expected
     }
 
     fileprivate func settle(targetLayoutID: String) {
