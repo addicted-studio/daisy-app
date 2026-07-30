@@ -334,6 +334,15 @@ final class AppSettings {
         }
     }
 
+    /// Rewrite the client follow-up in the user's own voice, using the
+    /// Voice Profile, before it is saved or sent anywhere. OFF by default:
+    /// it is a second provider call on every meeting that has a follow-up.
+    /// See FollowUpVoice for why it is a second pass and not a longer
+    /// summary prompt.
+    var followUpsInMyVoice: Bool {
+        didSet { defaults.set(followUpsInMyVoice, forKey: Self.k_followUpsInMyVoice) }
+    }
+
     /// Global hotkey for "fix the keyboard layout" — «ghbdtn» becomes
     /// «привет». Fixes the selection, or the word being typed when the
     /// automatic watcher is running. `.none` (default) disables.
@@ -1128,6 +1137,7 @@ final class AppSettings {
         } else {
             self.rewriteSelectionHotkey = .none
         }
+        self.followUpsInMyVoice = defaults.bool(forKey: Self.k_followUpsInMyVoice)
         // Layout fixer — same opt-in default as the other hotkeys, and
         // the automatic mode is opt-in on top of that.
         if let data = defaults.data(forKey: Self.k_layoutFixHotkey),
@@ -1390,6 +1400,13 @@ final class AppSettings {
         UserDefaults.standard.string(forKey: k_summaryLanguage) ?? "auto"
     }
 
+    /// Read where no `AppSettings` instance is in reach — the summarizer
+    /// is handed a transcript, not the settings object. Same pattern as
+    /// `currentSummaryLanguage` above.
+    nonisolated static var followUpsInMyVoiceEnabled: Bool {
+        UserDefaults.standard.bool(forKey: k_followUpsInMyVoice)
+    }
+
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
@@ -1425,6 +1442,7 @@ final class AppSettings {
     private static let k_voiceNoteHotkey = "daisy.voiceNoteHotkey"
     private static let k_dictationHotkey = "daisy.dictationHotkey"
     private static let k_rewriteSelectionHotkey = "daisy.rewriteSelectionHotkey"
+    nonisolated private static let k_followUpsInMyVoice = "daisy.followUpsInMyVoice"
     private static let k_layoutFixHotkey = "daisy.layoutFixHotkey"
     private static let k_layoutFixAuto = "daisy.layoutFixAuto"
     private static let k_layoutFixSwitchesSource = "daisy.layoutFixSwitchesSource"

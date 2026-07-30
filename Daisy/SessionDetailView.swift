@@ -1600,7 +1600,13 @@ struct SessionDetailView: View {
         )
 
         if let summary = result {
-            await SessionStore.shared.updateSummary(summary, for: session)
+            // Explicit user action with a spinner up: the extra pass over
+            // the follow-up is honest latency here, unlike in the
+            // scheduled evening pass or an MCP call where nobody is
+            // watching and both are deliberately left out.
+            let voiced = await FollowUpVoice.polished(summary)
+            Summarizer.shared.adopt(voiced)
+            await SessionStore.shared.updateSummary(voiced, for: session)
             ToastCenter.shared.show(String(localized: "Summary updated"), style: .success)
         } else if let err = Summarizer.shared.lastError {
             ToastCenter.shared.show(err, style: .error)
@@ -1664,12 +1670,15 @@ struct SessionDetailView: View {
                     style: .warning
                 )
             } else {
-                let merged = MeetingSummary(
-                    summary: existing.summary,
-                    sections: existing.sections,
-                    actionItems: existing.actionItems,
-                    clientFollowUp: trimmedFollowUp
+                let merged = await FollowUpVoice.polished(
+                    MeetingSummary(
+                        summary: existing.summary,
+                        sections: existing.sections,
+                        actionItems: existing.actionItems,
+                        clientFollowUp: trimmedFollowUp
+                    )
                 )
+                Summarizer.shared.adopt(merged)
                 await SessionStore.shared.updateSummary(merged, for: session)
                 ToastCenter.shared.show(String(localized: "Follow-up drafted"), style: .success)
             }

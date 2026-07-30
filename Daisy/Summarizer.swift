@@ -397,6 +397,14 @@ final class Summarizer {
     /// new code paths (e.g. RecordingSession's detached post-Stop task)
     /// prefer the return value to avoid a race when a second recording
     /// starts before the first summary lands.
+    /// Replace the cached summary after a caller rewrote part of it — the
+    /// voice pass over the follow-up is the only user today. Without this,
+    /// `lastSummary` (which the UI and the auto-send stage read) would
+    /// disagree with what was written to summary.json.
+    func adopt(_ summary: MeetingSummary) {
+        lastSummary = summary
+    }
+
     @discardableResult
     func summarize(
         transcript: String,
