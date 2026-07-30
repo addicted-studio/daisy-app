@@ -46,14 +46,17 @@ enum AXFocus {
         if role == kAXTextFieldRole || role == kAXTextAreaRole || role == kAXComboBoxRole {
             return .editable
         }
+        // Browser and Electron editors commonly expose the focused
+        // contenteditable area as AXWebArea rather than AXTextArea.  A
+        // settable selection range is the evidence that this particular
+        // web area is accepting text; a read-only page does not qualify.
+        if role == "AXWebArea", isSettable(element, kAXSelectedTextRangeAttribute as CFString) {
+            return .editable
+        }
         // Web and Electron inputs often report something else entirely.
         // A settable value attribute is the next best evidence that this
         // is a place text can be edited.
-        var settable: DarwinBoolean = false
-        guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success else {
-            return .unknown
-        }
-        return settable.boolValue ? .editable : .unknown
+        return isSettable(element, kAXValueAttribute as CFString) ? .editable : .unknown
     }
 
     /// The `count` characters immediately before the caret, when the app
@@ -129,5 +132,11 @@ enum AXFocus {
         var raw: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else { return nil }
         return raw as? String
+    }
+
+    private static func isSettable(_ element: AXUIElement, _ attribute: CFString) -> Bool {
+        var settable: DarwinBoolean = false
+        guard AXUIElementIsAttributeSettable(element, attribute, &settable) == .success else { return false }
+        return settable.boolValue
     }
 }
