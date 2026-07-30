@@ -37,7 +37,7 @@ final class PasteboardProxy {
 
     /// How long we wait for the frontmost app to service the ⌘C before
     /// reading the pasteboard.
-    static let copyGraceSeconds: TimeInterval = 0.25
+    nonisolated static let copyGraceSeconds: TimeInterval = 0.25
     /// Restore delay after a paste. Short — the ⌘V lands within a beat
     /// and the user's own clipboard should come straight back.
     private static let restoreSeconds: TimeInterval = 1.5
@@ -82,9 +82,11 @@ final class PasteboardProxy {
             try? await Task.sleep(for: .milliseconds(15))
         }
         guard NSPasteboard.general.changeCount != before else { return nil }
-        let text = (NSPasteboard.general.string(forType: .string) ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : text
+        // Preserve the selection exactly: it is about to be replaced in
+        // full. Trimming here would delete a selected trailing space and
+        // merge the corrected word with the word after it.
+        let text = NSPasteboard.general.string(forType: .string) ?? ""
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 
     /// Write `text`, synthesize ⌘V over the still-active selection, and

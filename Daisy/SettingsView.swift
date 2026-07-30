@@ -1221,7 +1221,7 @@ struct SettingsView: View {
             } header: {
                 Text("Keyboard layout")
             } footer: {
-                Text("The shortcut works anywhere and fixes whatever you select. Automatic fixing decides while you're still typing the word, using the spell-check dictionaries already on your Mac, so a word you finish with Return is corrected before it's sent. Nothing is stored or sent anywhere, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. Needs Accessibility access.")
+                Text("The shortcut fixes selected text in compatible apps. Automatic fixing decides while you're still typing the word, using the spell-check dictionaries already on your Mac, so a word you finish with Return is corrected before it's sent. Nothing is stored or sent anywhere, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. Needs Accessibility access.")
             }
 
             // Diarization above Language in 1.0.6: it's a structural
