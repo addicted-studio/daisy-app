@@ -636,6 +636,11 @@ struct FirstRunView: View {
                                 text: $settings.openaiAPIKey)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 280)
+                case .kimi:
+                    SecureField(String(localized: "Kimi API key"),
+                                text: $settings.kimiAPIKey)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
                 case .appleIntelligence:
                     Text("Runs on-device — no API key needed.")
                         .font(.caption)

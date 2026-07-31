@@ -2044,6 +2044,23 @@ struct SettingsView: View {
             }
             .pickerStyle(.menu)
 
+        case .kimi:
+            LabeledContent("API key") {
+                SecureField("", text: $settings.kimiAPIKey, prompt: Text("sk-…"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+            }
+            Picker("Model", selection: $summarizer.kimiModel) {
+                ForEach(KimiAPISummarizer.availableModels, id: \.id) { item in
+                    Text(item.label).tag(item.id)
+                }
+                if !KimiAPISummarizer.availableModels.contains(where: { $0.id == summarizer.kimiModel }) {
+                    Text(String(localized: "Custom: \(summarizer.kimiModel)")).tag(summarizer.kimiModel)
+                }
+            }
+            .pickerStyle(.menu)
+
         case .openai:
             LabeledContent("API key") {
                 SecureField("", text: $settings.openaiAPIKey, prompt: Text("sk-proj-…"))
@@ -2191,6 +2208,7 @@ struct SettingsView: View {
         case .appleIntelligence: return true
         case .anthropic: return settings.anthropicAPIKey.isEmpty
         case .openai: return settings.openaiAPIKey.isEmpty
+        case .kimi: return settings.kimiAPIKey.isEmpty
         case .ollama: return summarizer.ollamaBaseURL.isEmpty || summarizer.ollamaModel.isEmpty
         case .lmStudio: return summarizer.lmStudioBaseURL.isEmpty || summarizer.lmStudioModel.isEmpty
         case .mcp:
@@ -2211,6 +2229,8 @@ struct SettingsView: View {
             return String(localized: "Transcripts are sent to Anthropic over HTTPS using your own API key. Create one at console.anthropic.com/settings/keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
         case .openai:
             return String(localized: "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
+        case .kimi:
+            return String(localized: "Transcripts are sent to Moonshot over HTTPS using your own API key — and Moonshot's documentation states that requests to its international endpoint are processed in China. Create a key at platform.kimi.ai — it's stored in your macOS Keychain. Cheapest of the cloud providers here: roughly $0.005–0.02 per summary on K2.6.")
         case .ollama:
             if OllamaAPISummarizer.isCloudModel(summarizer.ollamaModel) {
                 return String(localized: "“\(summarizer.ollamaModel)” is an Ollama cloud model: your local Ollama daemon proxies the request to ollama.com, so the transcript LEAVES your Mac (Ollama bills the usage). For fully on-device summaries pick a model without a `:cloud`/`-cloud` tag.")
