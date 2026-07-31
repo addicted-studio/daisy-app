@@ -287,6 +287,9 @@ final class Summarizer {
     var anthropicModel: String {
         didSet { UserDefaults.standard.set(anthropicModel, forKey: Self.kAnthropicModel) }
     }
+    var kimiModel: String {
+        didSet { UserDefaults.standard.set(kimiModel, forKey: Self.kKimiModel) }
+    }
     var openaiModel: String {
         didSet { UserDefaults.standard.set(openaiModel, forKey: Self.kOpenAIModel) }
     }
@@ -318,6 +321,7 @@ final class Summarizer {
     private static let kProvider = "daisy.summaryProvider"
     private static let kAnthropicModel = "daisy.anthropicModel"
     private static let kOpenAIModel = "daisy.openaiModel"
+    private static let kKimiModel = "daisy.kimiModel"
     private static let kOllamaModel = "daisy.ollamaModel"
     private static let kOllamaBaseURL = "daisy.ollamaBaseURL"
     private static let kLMStudioModel = "daisy.lmStudioModel"
@@ -341,6 +345,8 @@ final class Summarizer {
             ?? AnthropicAPISummarizer.defaultModelID
         self.openaiModel = UserDefaults.standard.string(forKey: Self.kOpenAIModel)
             ?? OpenAIAPISummarizer.defaultModelID
+        self.kimiModel = UserDefaults.standard.string(forKey: Self.kKimiModel)
+            ?? KimiAPISummarizer.defaultModelID
         self.ollamaModel = UserDefaults.standard.string(forKey: Self.kOllamaModel)
             ?? OllamaAPISummarizer.defaultModelID
         self.ollamaBaseURL = UserDefaults.standard.string(forKey: Self.kOllamaBaseURL)
@@ -380,6 +386,8 @@ final class Summarizer {
             return "Anthropic API key is missing. Add it in Settings → Summary Provider."
         case .openai:
             return "OpenAI API key is missing. Add it in Settings → Summary Provider."
+        case .kimi:
+            return "Kimi API key is missing. Add it in Settings → Summary Provider."
         case .ollama:
             return "Couldn't reach Ollama at \(ollamaBaseURL). Open Terminal and run `ollama serve`, then pull a model with `ollama pull \(OllamaAPISummarizer.defaultModelID)`."
         case .lmStudio:
@@ -508,7 +516,7 @@ final class Summarizer {
     var providerIsEffectivelyLocal: Bool {
         switch providerKind {
         case .appleIntelligence: return true
-        case .anthropic, .openai: return false
+        case .anthropic, .openai, .kimi: return false
         case .ollama: return Self.isLoopbackURL(URL(string: ollamaBaseURL))
         case .lmStudio: return Self.isLoopbackURL(URL(string: lmStudioBaseURL))
         case .mcp:
@@ -542,6 +550,8 @@ final class Summarizer {
             return AnthropicAPISummarizer(model: anthropicModel)
         case .openai:
             return OpenAIAPISummarizer(model: openaiModel)
+        case .kimi:
+            return KimiAPISummarizer(model: kimiModel)
         case .ollama:
             // Parse base URL with fallback to default if user typed
             // something malformed. Both adapters tolerate a missing

@@ -359,6 +359,24 @@ nonisolated enum TokenCostEstimator {
             if id.hasPrefix("claude-haiku-4-5") {
                 return Price(input: 1, output: 5, cachedInput: 0.10, cacheWrite: 1.25, webSearch: 0.01)
             }
+        case .kimi:
+            // platform.kimi.ai, 2026-07-31. K3's cached input is a tenth
+            // of input; K2.7 Code publishes $0.19 cached. K2.6 has no
+            // published cache rate, so it is left at zero rather than
+            // guessed — an invented discount would under-report the bill,
+            // which is the one direction this table must never err in.
+            if id.hasPrefix("kimi-k3") {
+                return Price(input: 3, output: 15, cachedInput: 0.30, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("kimi-k2.7") {
+                return Price(input: 0.95, output: 4, cachedInput: 0.19, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("kimi-k2.6") {
+                return Price(input: 0.95, output: 4, cachedInput: 0, cacheWrite: 0, webSearch: 0)
+            }
+            if id.hasPrefix("kimi-k2.5") {
+                return Price(input: 0.60, output: 3, cachedInput: 0, cacheWrite: 0, webSearch: 0)
+            }
         case .openai:
             // Cached input is 10% of input across the 5.6 family, and
             // Chat Completions caching is automatic — there is no
@@ -765,7 +783,7 @@ final class TokenLedger {
     /// rather than showing a number we'd be inventing.
     nonisolated static func isBilled(_ kind: SummaryProviderKind) -> Bool {
         switch kind {
-        case .anthropic, .openai: return true
+        case .anthropic, .openai, .kimi: return true
         case .appleIntelligence, .ollama, .lmStudio, .mcp: return false
         }
     }

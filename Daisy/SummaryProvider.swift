@@ -23,6 +23,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     case appleIntelligence
     case anthropic
     case openai
+    /// Kimi (Moonshot AI) via its OpenAI-compatible endpoint. Added
+    /// 2026-07-31: a 256K-context model at a fifth of GPT-5.6 Terra's
+    /// price is a real option for hour-long meetings. Carries a data
+    /// residency caveat the other cloud providers don't — see
+    /// `privacyTag` and KimiAPISummarizer's header.
+    case kimi
     /// Ollama (https://ollama.com) on `127.0.0.1:11434` via its native
     /// `/api/chat` REST endpoint. Build 40 added this as a first-class
     /// provider after the pre-PH audit caught the MCP-shim disguise:
@@ -48,6 +54,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .appleIntelligence: return String(localized: "Apple Intelligence (on-device)")
         case .anthropic: return String(localized: "Anthropic Claude API")
         case .openai: return String(localized: "OpenAI GPT API")
+        case .kimi: return String(localized: "Kimi API (Moonshot)")
         case .ollama: return String(localized: "Ollama (local)")
         case .lmStudio: return String(localized: "LM Studio (local)")
         case .mcp: return String(localized: "Custom MCP server (advanced)")
@@ -59,6 +66,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .appleIntelligence: return "Apple Intelligence"
         case .anthropic: return String(localized: "Anthropic")
         case .openai: return String(localized: "OpenAI")
+        case .kimi: return String(localized: "Kimi")
         case .ollama: return String(localized: "Ollama")
         case .lmStudio: return String(localized: "LM Studio")
         case .mcp: return String(localized: "MCP")
@@ -70,7 +78,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     }
 
     var requiresAPIKey: Bool {
-        self == .anthropic || self == .openai
+        self == .anthropic || self == .openai || self == .kimi
     }
 
     /// Six-words-ish, parallel structure so users can compare
@@ -83,6 +91,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
             return String(localized: "Sent to Anthropic over HTTPS, using your API key.")
         case .openai:
             return String(localized: "Sent to OpenAI over HTTPS, using your API key.")
+        case .kimi:
+            // Says where, because Moonshot's own docs say the
+            // international endpoint is served from China and a user
+            // choosing where their meetings go deserves to read it here
+            // rather than find out later.
+            return String(localized: "Sent to Moonshot over HTTPS, using your API key — processed in China.")
         case .ollama:
             return String(localized: "Sent to your local Ollama on 127.0.0.1 — stays on your Mac.")
         case .lmStudio:

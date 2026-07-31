@@ -968,6 +968,12 @@ final class AppSettings {
             Task { @MainActor in await Summarizer.shared.refreshAvailability() }
         }
     }
+    var kimiAPIKey: String {
+        didSet {
+            Self.persist(kimiAPIKey, account: SecretKey.kimiAPIKey, label: String(localized: "Kimi API key"))
+            Task { @MainActor in await Summarizer.shared.refreshAvailability() }
+        }
+    }
 
     @MainActor
     private static func persist(_ value: String, account: String, label: String) {
@@ -1348,6 +1354,7 @@ final class AppSettings {
         self.notionParentID = KeychainStore.get(account: SecretKey.notionParentID) ?? ""
         self.anthropicAPIKey = KeychainStore.get(account: SecretKey.anthropicAPIKey) ?? ""
         self.openaiAPIKey = KeychainStore.get(account: SecretKey.openaiAPIKey) ?? ""
+        self.kimiAPIKey = KeychainStore.get(account: SecretKey.kimiAPIKey) ?? ""
 
         // Reconcile substrate to the policy ONCE at launch — but ONLY
         // when the policy came from an explicit stored value. `didSet`
