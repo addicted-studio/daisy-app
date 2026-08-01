@@ -512,16 +512,16 @@ final class LayoutAutoFix {
     private func prepareVerdict(for snapshot: WordBuffer.Word) async {
         try? await Task.sleep(for: Self.verdictDelay)
         guard self.isRunning else { return }
-        guard LayoutAutoFix.buffer.generation == snapshot.generation else { return }
+        // The ordinary outcome of a fast typist: the word moved on before
+        // the debounce fired. Indistinguishable from a hang without this —
+        // the 1 Aug run had rows of silence that were this, not a bug.
+        guard LayoutAutoFix.buffer.generation == snapshot.generation else {
+            return note("kept typing before the verdict was ready")
+        }
         if let reason = contextRefusal() { return note(reason) }
         let judgement = LayoutFix.judge(snapshot.word)
         guard let fix = judgement.fix else {
-            // Only the structural reasons are worth saying out loud: a
-            // word the dictionary already knows is the normal case, and
-            // logging it would bury the one line that matters.
-            if let refusal = judgement.refusal, refusal.isStructural {
-                note("dictionaries can't judge this — \(refusal.rawValue)")
-            }
+            noteJudgement(refusal: judgement.refusal)
             return
         }
         // Verify a positive answer, but don't demand that every app expose
@@ -557,9 +557,7 @@ final class LayoutAutoFix {
         guard LayoutAutoFix.buffer.generation == finished.generation else { return }
         let judgement = LayoutFix.judge(finished.word)
         guard let fix = judgement.fix else {
-            if let refusal = judgement.refusal, refusal.isStructural {
-                note("dictionaries can't judge this — \(refusal.rawValue)")
-            }
+            noteJudgement(refusal: judgement.refusal)
             return
         }
         guard focusIsEditableText() else {
@@ -646,6 +644,21 @@ final class LayoutAutoFix {
         let extra = detail()
         let line = extra.isEmpty ? reason : "\(reason) — \(extra)"
         log.info("Layout fix stood down: \(line, privacy: .public)")
+    }
+
+    /// Every reason `judge` can decline, not just the structural ones — a
+    /// word the dictionary already knows is the normal case, but "normal"
+    /// and "the feature is dead" look identical from the outside if only
+    /// one of them is logged. The source layout goes in `detail`, not the
+    /// dedupe key: it's what actually explains a wrong call ("typed
+    /// latin, but the active layout was already Russian") and it belongs
+    /// with a specific instance of the reason, not baked into it.
+    private func noteJudgement(refusal: LayoutFix.Refusal?) {
+        guard let refusal else { return }
+        note(
+            "word declined — \(refusal.rawValue)",
+            detail: "source=\(KeyboardLayouts.shared.current?.id ?? "?")"
+        )
     }
 
     /// The one check that keeps backspaces out of mail lists, Finder and
