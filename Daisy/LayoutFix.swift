@@ -16,13 +16,14 @@
 //     precisely when it matters (passwords typed into a visible field,
 //     product names, slang).
 //
-//   - `automatic` — nobody asked. The bar has to be high enough that
-//     being wrong is rare, because being wrong here means silently
-//     rewriting what someone typed. The word must be unknown to the
-//     system spell checker in the language it was typed in AND a real
-//     word in the language it converts to. Both dictionaries must
-//     actually be installed; without them we do nothing rather than
-//     guess.
+//   - `judge` — the automatic path, and nobody asked for it. The bar
+//     has to be high enough that being wrong is rare, because being
+//     wrong here means silently rewriting what someone typed. The word
+//     must be unknown to the system spell checker in the language it
+//     was typed in AND a real word in the language it converts to. Both
+//     dictionaries must actually be installed; without them we do
+//     nothing rather than guess — and say which one was missing, since
+//     from the outside that is indistinguishable from a broken feature.
 //
 //  The spell checker is `NSSpellChecker`, i.e. the dictionaries the user
 //  already has for the languages they already type in. No word list of
@@ -30,6 +31,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 
 @MainActor
 enum LayoutFix {
@@ -85,27 +87,88 @@ enum LayoutFix {
 
     // MARK: - Automatic (nobody asked)
 
-    /// A finished word, judged strictly. Nil means "leave it alone",
-    /// which is the answer most of the time and has to stay cheap.
-    static func automatic(word: String) -> Fix? {
+    /// Why a word was left alone. The REASON only — never the word,
+    /// which is someone's typing and has no business in a log.
+    ///
+    /// This exists because "nothing happens" has half a dozen causes
+    /// that look identical from the outside, and the first bug report
+    /// said exactly that and nothing more.
+    enum Refusal: String, Sendable {
+        case tooShort
+        case noSecondLayout
+        case noCurrentLayout
+        /// No spell-check dictionary for the language of the layout the
+        /// word was typed on.
+        case noDictionaryForSourceLayout
+        /// Dictionaries exist for the source but for none of the targets.
+        case noDictionaryForTargetLayout
+        case alreadyARealWord
+        case nothingRealOnTheOtherSide
+
+        /// True when the reason is a property of the MACHINE rather than
+        /// of the word. Those are the ones worth a log line: they mean
+        /// the feature is dead until something changes, where the others
+        /// just mean this particular word was fine.
+        var isStructural: Bool {
+            switch self {
+            case .noSecondLayout, .noCurrentLayout,
+                 .noDictionaryForSourceLayout, .noDictionaryForTargetLayout:
+                return true
+            case .tooShort, .alreadyARealWord, .nothingRealOnTheOtherSide:
+                return false
+            }
+        }
+    }
+
+    /// A finished word, judged strictly. A nil `fix` means "leave it
+    /// alone", which is the answer most of the time and has to stay
+    /// cheap; `refusal` says why, for the log.
+    static func judge(_ word: String) -> (fix: Fix?, refusal: Refusal?) {
         guard word.count >= minAutomaticWordLength,
-              word.contains(where: { $0.isLetter }) else { return nil }
+              word.contains(where: { $0.isLetter }) else { return (nil, .tooShort) }
         let layouts = KeyboardLayouts.shared.installed
-        guard layouts.count > 1, let source = KeyboardLayouts.shared.current else { return nil }
+        guard layouts.count > 1 else { return (nil, .noSecondLayout) }
+        guard let source = KeyboardLayouts.shared.current else { return (nil, .noCurrentLayout) }
         // A word we can't judge in the language it was typed in is a word
         // we don't touch.
-        guard let sourceLanguage = checkerLanguage(for: source) else { return nil }
+        guard let sourceLanguage = checkerLanguage(for: source) else {
+            return (nil, .noDictionaryForSourceLayout)
+        }
         // Already a real word where it stands → by definition not a
         // layout mistake, however odd it looks to us.
-        guard !isSpelled(word, language: sourceLanguage) else { return nil }
+        guard !isSpelled(word, language: sourceLanguage) else { return (nil, .alreadyARealWord) }
 
+        var anyTargetJudgeable = false
         for target in layouts where target.id != source.id {
-            guard let language = checkerLanguage(for: target),
-                  let converted = source.converting(word, to: target),
+            guard let language = checkerLanguage(for: target) else { continue }
+            anyTargetJudgeable = true
+            guard let converted = source.converting(word, to: target),
                   isSpelled(converted, language: language) else { continue }
-            return Fix(text: converted, target: target)
+            return (Fix(text: converted, target: target), nil)
         }
-        return nil
+        return (nil, anyTargetJudgeable ? .nothingRealOnTheOtherSide : .noDictionaryForTargetLayout)
+    }
+
+    /// One line for the log report: the layouts we can convert between
+    /// and, for each, the spell-checker language it resolves to.
+    ///
+    /// `none` in that column is the likeliest reason automatic fixing
+    /// does nothing on a Mac where every switch looks on — without a
+    /// dictionary for the language a word was typed in we cannot tell a
+    /// mistake from a word, and standing down is the only safe answer.
+    /// Cheap enough to compute on demand and it names the whole failure
+    /// class without asking the user to reproduce anything.
+    static func diagnostics() -> String {
+        let layouts = KeyboardLayouts.shared.installed
+        guard !layouts.isEmpty else { return "layouts=none" }
+        let described = layouts.map { layout in
+            let short = layout.id.replacingOccurrences(of: "com.apple.keylayout.", with: "")
+            return "\(short)[\(layout.language ?? "?")→\(checkerLanguage(for: layout) ?? "none")]"
+        }
+        return "layouts=\(described.joined(separator: ", "))"
+            + " current=\(KeyboardLayouts.shared.current?.name ?? "?")"
+            + " inputMethod=\(KeyboardLayouts.shared.isInputMethodActive)"
+            + " secureInput=\(IsSecureEventInputEnabled())"
     }
 
     /// Spin the spell-check service up ahead of the first keystroke that
