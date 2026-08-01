@@ -247,9 +247,16 @@ private final class KeyCaptureBox {
             DispatchQueue.main.async { capture?(choice) }
             return nil
         }
-        // Bare letter / modifier-less keystroke (not a function key)
-        // — beep but stay listening so the user can try a real combo.
+        // Rejected — either a bare letter with no modifier, or ⌘
+        // (± ⇧) with no ⌃/⌥, which is what a system or app shortcut
+        // looks like. Beep alone reads as "did my keypress even
+        // register?"; the toast says why nothing got recorded and
+        // stays listening so the user can try a real combo.
         NSSound.beep()
+        ToastCenter.shared.show(
+            String(localized: "That shortcut needs ⌃ or ⌥ so it can't take over a system one like ⌘C."),
+            style: .warning
+        )
         return nil
     }
 }

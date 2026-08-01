@@ -10,6 +10,8 @@
 import Testing
 import Foundation
 import AVFoundation
+import AppKit
+import Carbon.HIToolbox
 @testable import Daisy
 
 @Suite("Smoke suite (pure-function regression locks)")
@@ -817,5 +819,52 @@ struct DecodeProfileTests {
         #expect(p.temperatureFallbackCount == 1)
         #expect(p.topK == 1)
         #expect(p.concurrentWorkerCount == 4)
+    }
+}
+
+// MARK: - HotkeyChoice recording safety
+//
+// A global hotkey with no ⌃/⌥ is indistinguishable from a system or
+// app shortcut, and Carbon registers it anyway — it was possible to
+// record bare ⌘C as "rewrite in my voice" and lose system-wide Copy
+// for as long as Daisy ran. `fromKeyCode` must refuse every such
+// combo, not just the one that got caught by hand.
+
+@Suite("HotkeyChoice recording safety")
+@MainActor
+struct HotkeyChoiceTests {
+
+    @Test("Bare Cmd+letter system shortcuts are refused")
+    func fromKeyCode_refusesBareCommandSystemShortcuts() {
+        let reserved: [UInt16] = [
+            UInt16(kVK_ANSI_C), UInt16(kVK_ANSI_V), UInt16(kVK_ANSI_X), UInt16(kVK_ANSI_A),
+            UInt16(kVK_ANSI_Z), UInt16(kVK_ANSI_S), UInt16(kVK_ANSI_W), UInt16(kVK_ANSI_Q),
+            UInt16(kVK_ANSI_N), UInt16(kVK_ANSI_T), UInt16(kVK_ANSI_F), UInt16(kVK_ANSI_P),
+        ]
+        for keyCode in reserved {
+            #expect(HotkeyChoice.fromKeyCode(keyCode, modifierFlags: .command) == nil)
+        }
+    }
+
+    @Test("Cmd+Shift with no Control/Option is refused too")
+    func fromKeyCode_refusesCommandShiftWithoutControlOrOption() {
+        #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_ANSI_R), modifierFlags: [.command, .shift]) == nil)
+    }
+
+    @Test("A bare letter with no modifier at all is refused")
+    func fromKeyCode_refusesBareLetter() {
+        #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_ANSI_R), modifierFlags: []) == nil)
+    }
+
+    @Test("Control or Option present is accepted, Cmd riding along or not")
+    func fromKeyCode_acceptsControlOrOptionCombos() {
+        #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_ANSI_C), modifierFlags: [.control, .command]) != nil)
+        #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_ANSI_C), modifierFlags: .option) != nil)
+        #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_ANSI_R), modifierFlags: [.control, .option, .command]) != nil)
+    }
+
+    @Test("A bare function key is still accepted with no modifier")
+    func fromKeyCode_acceptsBareFunctionKey() {
+        #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_F5), modifierFlags: []) != nil)
     }
 }

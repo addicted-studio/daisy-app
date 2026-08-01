@@ -122,13 +122,22 @@ struct HotkeyChoice: Hashable, Codable, Sendable, Identifiable {
     /// holding ⌘/⌃/⌥.
     ///
     /// Accepted:
-    ///   • any key + at least one of ⌘ / ⌃ / ⌥
+    ///   • any key + at least one of ⌃ / ⌥ (⌘ may ride along, e.g.
+    ///     ⌃⌥⌘R, but never on its own — see below)
     ///   • function keys (F1–F20) on their own (rarely typed,
     ///     no risk of hijacking ordinary input)
+    ///
+    /// ⌘ alone (with or without ⇧) is NOT accepted as a global hotkey:
+    /// a bare ⌘+letter is indistinguishable from a system or app
+    /// shortcut, and Carbon's `RegisterEventHotKey` is happy to
+    /// register one anyway — it shadows Copy/Paste/Cut/Select
+    /// All/Undo/Save/Close/Quit/New/... everywhere on the Mac for as
+    /// long as Daisy runs. One did get recorded as "rewrite in my
+    /// voice" during testing: ⌘C, which ate Copy system-wide.
     static func fromKeyCode(_ keyCode: UInt16, modifierFlags: NSEvent.ModifierFlags) -> HotkeyChoice? {
         let carbonKey = UInt32(keyCode)
         let carbonMods = nsToCarbonModifiers(modifierFlags)
-        let strongMods: UInt32 = UInt32(cmdKey | controlKey | optionKey)
+        let strongMods: UInt32 = UInt32(controlKey | optionKey)
         let hasStrongModifier = (carbonMods & strongMods) != 0
         let isBareFunctionKey = Self.functionKeyCodes.contains(carbonKey) && carbonMods == 0
         guard hasStrongModifier || isBareFunctionKey else { return nil }
