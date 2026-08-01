@@ -59,6 +59,19 @@ enum AXFocus {
         return isSettable(element, kAXValueAttribute as CFString) ? .editable : .unknown
     }
 
+    /// What the focused element looks like, for the log report and for
+    /// the one-line refusal notes. Roles and subroles are AX CLASS names
+    /// ("AXTextField", "AXWebArea") — the shape of the UI, never its
+    /// content, so this is safe to log where the text itself would not
+    /// be.
+    static func describeFocus() -> String {
+        guard let element = focusedElement() else { return "no focused element" }
+        let role = string(element, kAXRoleAttribute) ?? "?"
+        let subrole = string(element, kAXSubroleAttribute) ?? "-"
+        let settable = isSettable(element, kAXValueAttribute as CFString)
+        return "role=\(role) subrole=\(subrole) valueSettable=\(settable)"
+    }
+
     /// The `count` characters immediately before the caret, when the app
     /// will say. Used to CONFIRM that what we are about to delete is what
     /// we think it is — the difference between fixing a word and eating

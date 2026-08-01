@@ -10,7 +10,7 @@
 //
 //  WHAT IS DELIBERATELY NOT HERE, so nobody reads green as covered:
 //  building layouts from a live `uchr` table (needs the machine's
-//  installed layouts), `LayoutFix.automatic` (needs the system spell
+//  installed layouts), `LayoutFix.judge` (needs the system spell
 //  checker and whichever dictionaries the user has), the ⌘C/⌘V round
 //  trip, and the event tap. Those are the device-QA list, not unit tests.
 //

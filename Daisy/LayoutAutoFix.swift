@@ -28,11 +28,17 @@
 //  feature goes quiet, which is the right way round. If Daisy crashes,
 //  the tap dies with the process and typing is unaffected.
 //
-//  WHAT IT NEVER DOES. Nothing is logged, stored, or sent: the buffer is
-//  one word, in memory, dropped at every boundary, click, chord, app
-//  switch, and while macOS reports secure input anywhere on the system.
-//  Terminals, IDEs, remote desktops and password managers are excluded
-//  outright — see `excludedBundleIDs`.
+//  WHAT IT NEVER DOES. No typed text is logged, stored, or sent: the
+//  buffer is one word, in memory, dropped at every boundary, click,
+//  chord, app switch, and while macOS reports secure input anywhere on
+//  the system. Terminals, IDEs, remote desktops and password managers
+//  are excluded outright — see `excludedBundleIDs`.
+//
+//  What IS logged is why a fix did NOT happen: the name of the gate that
+//  closed, plus Accessibility role names — never content, never the word
+//  and never which app was excluded. "It does nothing" was the whole of
+//  the first bug report, and every gate here fails the same silent way,
+//  so without these notes the answer isn't in the log to be found.
 //
 //  WHY IT REFUSES SO OFTEN. Five things must hold before a verdict is
 //  even recorded, and each is a way this would otherwise have eaten text:
@@ -114,6 +120,20 @@ final class LayoutAutoFix {
 
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "LayoutAutoFix")
 
+    /// When each stand-down reason was last logged. "It does nothing"
+    /// was the entire first bug report, and the feature had no way to
+    /// answer it: every gate returned the same silence. These notes name
+    /// the gate — never the word, which is someone's typing — and each
+    /// reason repeats at most every `noteInterval`.
+    ///
+    /// Per REASON, not a single last-reason slot: two reasons that
+    /// alternate (a slow app that sometimes answers Accessibility and
+    /// sometimes times out) would defeat one slot completely and log on
+    /// every keystroke. The key set is small and fixed, so the dictionary
+    /// cannot grow.
+    private var lastNotes: [String: Date] = [:]
+    private static let noteInterval: TimeInterval = 30
+
     /// The word being typed and the verdict about it. Lives outside the
     /// actor because the tap's callback reaches it on its own thread —
     /// that is the whole point of the design.
@@ -145,7 +165,12 @@ final class LayoutAutoFix {
     func start(settings: AppSettings) {
         self.settings = settings
         guard !isRunning else { return }
-        guard KeyboardLayouts.shared.installed.count > 1 else { return }
+        // A single enabled layout is a top candidate for "it does nothing
+        // at all", and used to leave no trace anywhere.
+        guard KeyboardLayouts.shared.installed.count > 1 else {
+            log.info("Layout auto-fix not started: only one usable keyboard layout is enabled")
+            return
+        }
 
         // Turned off and on again: the tap and its thread are built once
         // per process and only enabled and disabled after that. Unwinding a
@@ -349,7 +374,7 @@ final class LayoutAutoFix {
            applyFromTap(verdict, boundary: event, character: character, proxy: proxy) {
             buffer.discard()
             let target = verdict.targetLayoutID
-            Task { @MainActor in LayoutAutoFix.shared.settle(targetLayoutID: target) }
+            Task { @MainActor in LayoutAutoFix.shared.settle(targetLayoutID: target, via: "before the boundary") }
             return .swallow
         }
 
@@ -488,8 +513,17 @@ final class LayoutAutoFix {
         try? await Task.sleep(for: Self.verdictDelay)
         guard self.isRunning else { return }
         guard LayoutAutoFix.buffer.generation == snapshot.generation else { return }
-        guard self.contextAllows() else { return }
-        guard let fix = LayoutFix.automatic(word: snapshot.word) else { return }
+        if let reason = contextRefusal() { return note(reason) }
+        let judgement = LayoutFix.judge(snapshot.word)
+        guard let fix = judgement.fix else {
+            // Only the structural reasons are worth saying out loud: a
+            // word the dictionary already knows is the normal case, and
+            // logging it would bury the one line that matters.
+            if let refusal = judgement.refusal, refusal.isStructural {
+                note("dictionaries can't judge this — \(refusal.rawValue)")
+            }
+            return
+        }
         // Verify a positive answer, but don't demand that every app expose
         // its text through Accessibility.  Web and Electron editors often
         // identify themselves as editable while refusing AXStringForRange;
@@ -498,7 +532,12 @@ final class LayoutAutoFix {
         // rejects an explicit mismatch (autocomplete, text replacement),
         // while the editable-focus and excluded-app checks keep us away
         // from lists, terminals and password fields.
-        guard focusIsEditableText(), confirmBeforeCaret(snapshot.word) else { return }
+        guard focusIsEditableText() else {
+            return note("focus is not editable text", detail: AXFocus.describeFocus())
+        }
+        guard confirmBeforeCaret(snapshot.word) else {
+            return note("what is in front of the caret is not what we typed")
+        }
         LayoutAutoFix.buffer.record(
             WordBuffer.Verdict(
                 generation: snapshot.generation,
@@ -513,15 +552,27 @@ final class LayoutAutoFix {
     /// The after-the-fact path: no verdict was ready, the boundary has
     /// already landed, and the word is still in front of the caret.
     private func consider(_ finished: WordBuffer.Word, boundary: Character) {
-        guard isRunning, contextAllows() else { return }
+        guard isRunning else { return }
+        if let reason = contextRefusal() { return note(reason) }
         guard LayoutAutoFix.buffer.generation == finished.generation else { return }
-        guard let fix = LayoutFix.automatic(word: finished.word) else { return }
-        guard focusIsEditableText() else { return }
+        let judgement = LayoutFix.judge(finished.word)
+        guard let fix = judgement.fix else {
+            if let refusal = judgement.refusal, refusal.isStructural {
+                note("dictionaries can't judge this — \(refusal.rawValue)")
+            }
+            return
+        }
+        guard focusIsEditableText() else {
+            return note("focus is not editable text", detail: AXFocus.describeFocus())
+        }
         let expected = finished.word + String(boundary)
-        guard confirmBeforeCaret(expected) else { return }
-        guard replace(presses: finished.presses + 1, with: fix.text + String(boundary)) else { return }
-        settle(targetLayoutID: fix.target.id)
-        log.info("Auto-fixed a word into \(fix.target.id, privacy: .public)")
+        guard confirmBeforeCaret(expected) else {
+            return note("what is in front of the caret is not what we typed")
+        }
+        guard replace(presses: finished.presses + 1, with: fix.text + String(boundary)) else {
+            return note("couldn't post the replacement")
+        }
+        settle(targetLayoutID: fix.target.id, via: "after the fact")
     }
 
     /// The fix key's second source: the word just typed. The user asked,
@@ -550,18 +601,51 @@ final class LayoutAutoFix {
             presses: candidate.presses + (candidate.boundary == nil ? 0 : 1),
             with: fix.text + trailing
         ) else { return nil }
-        settle(targetLayoutID: fix.target.id)
+        settle(targetLayoutID: fix.target.id, via: "fix key")
         return fix
     }
 
-    /// Cheap checks: no I/O, no cross-process calls.
-    private func contextAllows() -> Bool {
-        guard !IsSecureEventInputEnabled() else { return false }
+    /// Cheap checks: no I/O, no cross-process calls. Returns the reason
+    /// we're standing down, or nil when the context is fine — phrased as
+    /// the reason rather than as a Bool so the caller can say WHICH gate
+    /// closed without duplicating the conditions.
+    private func contextRefusal() -> String? {
+        if IsSecureEventInputEnabled() {
+            return "secure input is on somewhere on the system"
+        }
         // An input method (Japanese, Pinyin, Hangul) composes text from
         // keystrokes on its own; what we saw is not what landed.
-        guard !KeyboardLayouts.shared.isInputMethodActive else { return false }
+        if KeyboardLayouts.shared.isInputMethodActive {
+            return "an input method is composing"
+        }
         let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        return !Self.isExcluded(frontmost)
+        // The identifier is deliberately NOT logged. The excluded list is
+        // terminals, IDEs, password managers and remote desktops, so
+        // naming the app would inventory which of those the user runs —
+        // into a file they are about to email us. Which app it is, they
+        // already know: it is the one they were typing in.
+        if frontmost.isEmpty { return "couldn't identify the frontmost app" }
+        if Self.isExcluded(frontmost) { return "the frontmost app is on the excluded list" }
+        return nil
+    }
+
+    private func contextAllows() -> Bool { contextRefusal() == nil }
+
+    /// Log a stand-down reason, de-duplicated per reason.
+    ///
+    /// `detail` is an autoclosure because the details worth having are
+    /// not free: `AXFocus.describeFocus()` is four cross-process calls
+    /// with a 200 ms timeout each, on the main actor. Paying for them to
+    /// build a line we then drop would slow down exactly the apps being
+    /// diagnosed — the slow ones. It also keeps the dedupe key stable,
+    /// since the detail is the part that varies between keystrokes.
+    private func note(_ reason: String, detail: @autoclosure () -> String = "") {
+        let now = Date()
+        guard now.timeIntervalSince(lastNotes[reason] ?? .distantPast) > Self.noteInterval else { return }
+        lastNotes[reason] = now
+        let extra = detail()
+        let line = extra.isEmpty ? reason : "\(reason) — \(extra)"
+        log.info("Layout fix stood down: \(line, privacy: .public)")
     }
 
     /// The one check that keeps backspaces out of mail lists, Finder and
@@ -582,7 +666,7 @@ final class LayoutAutoFix {
         return actual == expected
     }
 
-    fileprivate func settle(targetLayoutID: String) {
+    fileprivate func settle(targetLayoutID: String, via path: String) {
         // Our own typing is marked and skipped by the tap, so the buffer
         // would otherwise still hold the pre-fix word — and the fix key
         // must not be able to "fix" it a second time.
@@ -592,6 +676,7 @@ final class LayoutAutoFix {
             KeyboardLayouts.shared.select(target)
         }
         UsageStats.shared.recordFixes(polished: 1)
+        log.info("Layout fixed (\(path, privacy: .public)) → \(targetLayoutID, privacy: .public)")
     }
 
     /// Delete `presses` key presses' worth of text and type `text`. Used
