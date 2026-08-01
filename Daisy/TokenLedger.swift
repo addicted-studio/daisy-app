@@ -235,10 +235,10 @@ nonisolated struct ModelSeriesRow: Identifiable, Sendable {
     /// total printed above the chart, which reads as an arithmetic bug.
     let inputTokens: Int
     let outputTokens: Int
-    /// Daily totals, one entry per elapsed day of this month, oldest
+    /// Daily totals, one entry per day of the display window, oldest
     /// first. Same window as the total above the chart.
     let values: [Int]
-    /// This model's own share of the month's bill. Three outcomes, and
+    /// This model's own share of the window's bill. Three outcomes, and
     /// the UI must tell them apart: priced (show it), billed but
     /// unpriced — a cloud model Daisy has no tariff for — and not billed
     /// at all, which is every local provider. Blank means free; an
@@ -278,7 +278,7 @@ nonisolated struct TokenCostEstimate: Sendable, Equatable {
 ///
 /// Models Daisy no longer OFFERS are still priced here: the ledger keeps
 /// ~90 days of per-model buckets, so dropping a price would silently
-/// re-label a month of real spend as "cost unknown".
+/// re-label weeks of real spend as "cost unknown".
 ///
 /// Checked 2026-07-28:
 /// - OpenAI GPT-5.6 Sol / Terra / Luna, plus retired GPT-4o / 4o mini /
@@ -294,14 +294,20 @@ nonisolated enum TokenCostEstimator {
         var webSearch: Double
     }
 
+    /// `dayKey` is the `yyyy-MM-dd` the spend was recorded on, and it
+    /// exists because a tariff can change mid-window: the rolling window
+    /// spans two calendar months, so "today's rate" is the wrong rate
+    /// for the older half of it. Defaulted to today for callers that are
+    /// pricing a hypothetical rather than a recorded day.
     static func estimate(
         provider: SummaryProviderKind,
         model: String,
-        spend: TokenSpend
+        spend: TokenSpend,
+        on dayKey: String = UsageStats.dayKey(for: Date())
     ) -> TokenCostEstimate {
         guard spend.hasActivity else { return TokenCostEstimate() }
         guard TokenLedger.isBilled(provider) else { return TokenCostEstimate() }
-        guard let price = price(for: provider, model: model) else {
+        guard let price = price(for: provider, model: model, on: dayKey) else {
             return TokenCostEstimate(hasUnpricedBilledUsage: true)
         }
 
@@ -314,31 +320,30 @@ nonisolated enum TokenCostEstimator {
         return TokenCostEstimate(usd: usd, hasPricedUsage: true)
     }
 
-    /// 2026-09-01 00:00 UTC — when Claude Sonnet 5 leaves introductory
-    /// pricing. UTC rather than local: billing boundaries are the
-    /// provider's, and a day either way on one model's rate is noise
-    /// next to picking the wrong rate for a whole month.
-    private static let sonnet5StandardPricingStart: Date = {
-        var components = DateComponents()
-        components.year = 2026
-        components.month = 9
-        components.day = 1
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .gmt
-        return calendar.date(from: components) ?? .distantFuture
-    }()
+    /// The day Claude Sonnet 5 leaves introductory pricing, as a day
+    /// KEY — compared against `UsageStats.dayKey`, which sorts
+    /// chronologically as a string, so no date parsing per bucket.
+    /// The provider's boundary is UTC and the keys are local, so a
+    /// single day's spend either side may be priced at the other rate;
+    /// that is noise next to pricing four weeks of spend at one rate
+    /// because of what today happens to be.
+    private static let sonnet5StandardPricingStartDay = "2026-09-01"
 
-    private static func price(for provider: SummaryProviderKind, model: String) -> Price? {
+    private static func price(
+        for provider: SummaryProviderKind,
+        model: String,
+        on dayKey: String
+    ) -> Price? {
         let id = model.lowercased()
         switch provider {
         case .anthropic:
             if id.hasPrefix("claude-sonnet-5") {
-                // Introductory $2/$10 through 2026-08-31, $3/$15 after.
-                // Date-aware rather than pinned because the card's
-                // window is the CURRENT calendar month — so a given
-                // month is billed entirely at one rate or the other,
-                // and "today's rate" is the right rate for it.
-                let standard = Date() >= Self.sonnet5StandardPricingStart
+                // Introductory $2/$10 through 2026-08-31, $3/$15 after,
+                // applied per RECORDED DAY: the card's window rolls
+                // across the month boundary, so days on either side of
+                // the change sit in the same total and have to be priced
+                // separately.
+                let standard = dayKey >= Self.sonnet5StandardPricingStartDay
                 return standard
                     ? Price(input: 3, output: 15, cachedInput: 0.30, cacheWrite: 3.75, webSearch: 0.01)
                     : Price(input: 2, output: 10, cachedInput: 0.20, cacheWrite: 2.50, webSearch: 0.01)
@@ -416,14 +421,65 @@ nonisolated enum TokenCostEstimator {
 final class TokenLedger {
     static let shared = TokenLedger()
 
-    /// How much per-day history is kept. The display window is the
-    /// current calendar MONTH (that's what providers bill on, so it's
-    /// the only number comparable to their console) — retention runs
-    /// wider so a "last month" comparison or a sparkline can be added
-    /// later without having thrown the data away. Pruning is silent by
-    /// design but bounded and documented here; at ~a handful of buckets
-    /// per active day the whole store is tens of KB.
+    /// How much per-day history is kept — wider than the display window
+    /// so a longer comparison or a sparkline can be added later without
+    /// having thrown the data away. Pruning is silent by design but
+    /// bounded and documented here; at ~a handful of buckets per active
+    /// day the whole store is tens of KB.
     static let retentionDays = 90
+
+    /// The display window: the last `windowDays` days, today included.
+    ///
+    /// Rolling, not the calendar month. A month-to-date card is empty on
+    /// the 1st — 759 tokens under a full-width bar reads as a broken
+    /// widget, not as a quiet month (Egor, 2026-08-01) — while the
+    /// question the card is actually asked, "what is this costing me
+    /// lately", does not reset at midnight on the 1st. The cost of the
+    /// change is that the figure is no longer directly comparable to a
+    /// provider's monthly console, which is why the label above the card
+    /// names the window out loud instead of showing a month.
+    nonisolated static let windowDays = 28
+
+    /// Day keys covering the window, oldest first — the x-axis of the
+    /// chart AND the filter behind every figure on the card, so the two
+    /// describe the same period by construction rather than by comment.
+    ///
+    /// Gregorian explicitly, matching `UsageStats.dayKey`: `Calendar
+    /// .current` follows the user's locale calendar, and stepping days
+    /// on a Hebrew or Islamic calendar would produce keys the ledger was
+    /// never written with.
+    nonisolated static func windowDayKeys(endingAt end: Date = Date()) -> [String] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        return (0..<windowDays).reversed().compactMap { back in
+            calendar.date(byAdding: .day, value: -back, to: end)
+                .map { UsageStats.dayKey(for: $0) }
+        }
+    }
+
+    /// The window, computed once per day rather than once per query.
+    ///
+    /// Rendering the card asks for it about a dozen times (the total, the
+    /// cost, the searches, the cache figure, then a series and a cost per
+    /// model row), and building it is 28 date additions and 28 string
+    /// formats. Caching also removes a subtler bug the per-query version
+    /// had: each call took its own `Date()`, so a render that straddled
+    /// local midnight could pair a 28-day chart with a 28-day total
+    /// shifted by one day.
+    ///
+    /// `@ObservationIgnored`: it is derived state, and letting SwiftUI
+    /// observe a value written DURING a body evaluation is how you get a
+    /// re-render loop.
+    @ObservationIgnored private var cachedWindow: (day: String, keys: [String], set: Set<String>)?
+
+    private func window() -> (day: String, keys: [String], set: Set<String>) {
+        let today = UsageStats.dayKey(for: Date())
+        if let cachedWindow, cachedWindow.day == today { return cachedWindow }
+        let keys = Self.windowDayKeys()
+        let fresh = (day: today, keys: keys, set: Set(keys))
+        cachedWindow = fresh
+        return fresh
+    }
 
     private static let defaultsKey = "daisy.tokenLedger"
 
@@ -483,62 +539,62 @@ final class TokenLedger {
 
     // MARK: Queries
 
-    /// Roll-up per provider for the current calendar month, biggest
+    /// Roll-up per provider over the display window, biggest
     /// spender first. Buckets whose provider no longer maps to a known
     /// kind are skipped rather than guessed at.
-    func currentMonthSpend() -> [ProviderSpend] {
-        spend(matchingDayPrefix: Self.monthKey(for: Date()))
+    func recentSpend() -> [ProviderSpend] {
+        spend(in: window().set)
     }
 
     /// Gate for showing the Home card: at least one provider produced
-    /// tokens this month. Local providers count — for them the card
+    /// tokens in the window. Local providers count — for them the card
     /// reports volume and says "free" instead of implying a bill, which
     /// is more useful than hiding the card from the majority of users
     /// who never point Daisy at a paid API.
-    var hasSpendThisMonth: Bool {
-        currentMonthSpend().contains(where: \.hasActivity)
+    var hasRecentSpend: Bool {
+        recentSpend().contains(where: \.hasActivity)
     }
 
     /// The provider whose number the card leads with: the one currently
-    /// selected if it spent anything this month, otherwise the biggest
+    /// selected if it spent anything in the window, otherwise the biggest
     /// spender. Never a cross-provider sum.
     func heroSpend(active: SummaryProviderKind) -> ProviderSpend? {
-        let all = currentMonthSpend().filter(\.hasActivity)
+        let all = recentSpend().filter(\.hasActivity)
         return all.first { $0.provider == active } ?? all.first
     }
 
     /// Everything except the hero, biggest first — the small rows under
     /// the divider. Non-empty exactly when more than one provider was
-    /// used this month (switched provider mid-month, or a cloud
+    /// used in the window (switched provider partway, or a cloud
     /// pre-meeting brief alongside a local summarizer).
     func secondarySpend(active: SummaryProviderKind) -> [ProviderSpend] {
         guard let hero = heroSpend(active: active) else { return [] }
-        return currentMonthSpend().filter { $0.hasActivity && $0.id != hero.id }
+        return recentSpend().filter { $0.hasActivity && $0.id != hero.id }
     }
 
     /// Model-level roll-up for the Home card. A model is never mixed with
     /// another model just because both happen to use the same provider.
-    func currentMonthModelSpend() -> [ModelSpend] {
-        modelSpend(matchingDayPrefix: Self.monthKey(for: Date()))
+    func recentModelSpend() -> [ModelSpend] {
+        modelSpend(in: window().set)
     }
 
-    /// Every token Daisy spent this month, across every model.
+    /// Every token Daisy spent in the window, across every model.
     ///
     /// Summing tokens across models is fine as a VOLUME measure and
     /// wrong as a cost proxy — a Haiku token and an Opus token are the
     /// same unit of work and five times apart in price. That's why the
-    /// money next to it comes from `currentMonthCostEstimate()`, which
+    /// money next to it comes from `recentCostEstimate()`, which
     /// prices each model separately, rather than from this number.
-    func currentMonthTotalTokens() -> Int {
-        currentMonthModelSpend().reduce(0) { $0 + $1.totalTokens }
+    func recentTotalTokens() -> Int {
+        recentModelSpend().reduce(0) { $0 + $1.totalTokens }
     }
 
     /// The price estimate for one model's own tokens. Keeping the scope
     /// this narrow is what stops a Claude row from displaying OpenAI
     /// spend.
-    func currentMonthCostEstimate(for modelSpend: ModelSpend) -> TokenCostEstimate {
+    func recentCostEstimate(for modelSpend: ModelSpend) -> TokenCostEstimate {
         costEstimate(
-            matchingDayPrefix: Self.monthKey(for: Date()),
+            in: window().set,
             provider: modelSpend.provider,
             model: modelSpend.model
         )
@@ -551,14 +607,14 @@ final class TokenLedger {
     /// colour-blindness check. Anything past the cap is merged into one
     /// trailing "Other" row rather than dropped — a silently truncated
     /// stack reads as "this is everything".
-    func currentMonthModelSeries(limit: Int = 4) -> [ModelSeriesRow] {
+    func recentModelSeries(limit: Int = 4) -> [ModelSeriesRow] {
         // `hasActivity`, so the rows' costs add up to the headline: a
         // model with web searches and no tokens still costs real money
         // ($0.01 a search), and the headline counts every bucket. Filter
         // it out of the table and the column silently stops summing to
         // the number above it. The row reads "0 in, 0 out" with a price
         // beside it, which is exactly what happened.
-        let all = currentMonthModelSpend().filter(\.hasActivity)
+        let all = recentModelSpend().filter(\.hasActivity)
         guard !all.isEmpty else { return [] }
         let leading = all.prefix(limit)
         let merged = all.dropFirst(limit)
@@ -569,12 +625,12 @@ final class TokenLedger {
                 name: Self.friendlyModelName(spend.model, provider: spend.provider),
                 inputTokens: spend.inputTokens + spend.cachedInputTokens + spend.cacheWriteTokens,
                 outputTokens: spend.outputTokens,
-                values: currentMonthTokenSeries(for: spend),
-                cost: currentMonthCostEstimate(for: spend)
+                values: recentTokenSeries(for: spend),
+                cost: recentCostEstimate(for: spend)
             )
         }
         if !merged.isEmpty {
-            let series = merged.map { currentMonthTokenSeries(for: $0) }
+            let series = merged.map { recentTokenSeries(for: $0) }
             let length = series.map(\.count).max() ?? 0
             let summed = (0..<length).map { day in
                 series.reduce(0) { $0 + ($1.indices.contains(day) ? $1[day] : 0) }
@@ -585,25 +641,25 @@ final class TokenLedger {
                 inputTokens: merged.reduce(0) { $0 + $1.inputTokens + $1.cachedInputTokens + $1.cacheWriteTokens },
                 outputTokens: merged.reduce(0) { $0 + $1.outputTokens },
                 values: summed,
-                cost: merged.reduce(TokenCostEstimate()) { $0 + currentMonthCostEstimate(for: $1) }
+                cost: merged.reduce(TokenCostEstimate()) { $0 + recentCostEstimate(for: $1) }
             ))
         }
         return rows
     }
 
-    /// Web searches this month across every model — billed per search
+    /// Web searches in the window across every model — billed per search
     /// rather than per token, so they are invisible in any token figure
     /// and have to be named separately.
-    func currentMonthWebSearches() -> Int {
-        currentMonthModelSpend().reduce(0) { $0 + $1.webSearches }
+    func recentWebSearches() -> Int {
+        recentModelSpend().reduce(0) { $0 + $1.webSearches }
     }
 
-    /// Input tokens served from a provider's prompt cache this month.
+    /// Input tokens served from a provider's prompt cache in the window.
     /// Counted inside the input figures, but billed at roughly a tenth —
     /// so it's the line that explains a small bill next to a large token
     /// count, and it is invisible in every other number on the card.
-    func currentMonthCachedInputTokens() -> Int {
-        currentMonthModelSpend().reduce(0) { $0 + $1.cachedInputTokens }
+    func recentCachedInputTokens() -> Int {
+        recentModelSpend().reduce(0) { $0 + $1.cachedInputTokens }
     }
 
     /// Readable model name. Conservative on purpose: it strips the two
@@ -638,47 +694,33 @@ final class TokenLedger {
     /// Daily values for the small chart in the model card, oldest first.
     /// Empty days intentionally stay as zero-height bars: the quiet gaps
     /// are useful context, not missing data.
-    func currentMonthTokenSeries(for modelSpend: ModelSpend) -> [Int] {
-        // Gregorian explicitly, matching `UsageStats.dayKey` and
-        // `monthKey`. `Calendar.current` follows the user's locale
-        // calendar, so on a Hebrew or Islamic calendar the day-of-month
-        // it reports belongs to a different month than the total and the
-        // cost printed above the chart — the series would silently cover
-        // the wrong window.
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = .current
-        let today = Date()
-        let day = calendar.component(.day, from: today)
-        // One bar per elapsed day of THIS month — the same window the
-        // numbers above the chart use. A rolling 14-day series (what this
-        // was) quietly described a different period than the total right
-        // next to it, so labelling the card would have made the card lie.
-        return (0..<day).map { offset in
-            guard let date = calendar.date(byAdding: .day, value: offset - day + 1, to: today) else {
-                return 0
-            }
-            let key = UsageStats.dayKey(for: date)
-            return (days[key] ?? [])
+    ///
+    /// Driven by `windowDayKeys`, the same list every figure above the
+    /// chart is filtered by — a series over a different period than the
+    /// total printed next to it is the bug this replaced.
+    func recentTokenSeries(for modelSpend: ModelSpend) -> [Int] {
+        window().keys.map { key in
+            (days[key] ?? [])
                 .filter { $0.provider == modelSpend.provider.rawValue && $0.model == modelSpend.model }
                 .reduce(0) { $0 + $1.totalTokens }
         }
     }
 
-    /// Approximate USD cost of all paid Daisy calls in the current month.
+    /// Approximate USD cost of all paid Daisy calls in the window.
     /// Local providers are excluded. If the user entered a custom cloud
     /// model whose tariff Daisy does not know, `hasUnpricedBilledUsage` is
     /// set so the UI can avoid presenting a misleading total.
-    func currentMonthCostEstimate() -> TokenCostEstimate {
-        costEstimate(matchingDayPrefix: Self.monthKey(for: Date()))
+    func recentCostEstimate() -> TokenCostEstimate {
+        costEstimate(in: window().set)
     }
 
-    private func spend(matchingDayPrefix prefix: String) -> [ProviderSpend] {
+    private func spend(in keys: Set<String>) -> [ProviderSpend] {
         // provider → (totals, model → calls) so models can be ordered
         // by how much they were actually used.
         var totals: [String: ProviderSpend] = [:]
         var modelCalls: [String: [String: Int]] = [:]
 
-        for (dayKey, buckets) in days where dayKey.hasPrefix(prefix) {
+        for (dayKey, buckets) in days where keys.contains(dayKey) {
             for bucket in buckets {
                 guard let kind = SummaryProviderKind(rawValue: bucket.provider) else { continue }
                 var running = totals[bucket.provider] ?? ProviderSpend(
@@ -713,10 +755,10 @@ final class TokenLedger {
             .sorted { $0.totalTokens > $1.totalTokens }
     }
 
-    private func modelSpend(matchingDayPrefix prefix: String) -> [ModelSpend] {
+    private func modelSpend(in keys: Set<String>) -> [ModelSpend] {
         var totals: [String: ModelSpend] = [:]
 
-        for (dayKey, buckets) in days where dayKey.hasPrefix(prefix) {
+        for (dayKey, buckets) in days where keys.contains(dayKey) {
             for bucket in buckets {
                 guard let provider = SummaryProviderKind(rawValue: bucket.provider) else { continue }
                 let key = "\(bucket.provider)|\(bucket.model)"
@@ -742,12 +784,12 @@ final class TokenLedger {
     }
 
     private func costEstimate(
-        matchingDayPrefix prefix: String,
+        in keys: Set<String>,
         provider targetProvider: SummaryProviderKind? = nil,
         model targetModel: String? = nil
     ) -> TokenCostEstimate {
         var total = TokenCostEstimate()
-        for (dayKey, buckets) in days where dayKey.hasPrefix(prefix) {
+        for (dayKey, buckets) in days where keys.contains(dayKey) {
             for bucket in buckets {
                 guard let provider = SummaryProviderKind(rawValue: bucket.provider) else { continue }
                 guard targetProvider == nil || provider == targetProvider,
@@ -761,7 +803,8 @@ final class TokenLedger {
                         cachedInputTokens: bucket.cachedInputTokens,
                         cacheWriteTokens: bucket.cacheWriteTokens,
                         webSearches: bucket.webSearches
-                    )
+                    ),
+                    on: dayKey
                 )
                 total.usd += one.usd
                 total.hasPricedUsage = total.hasPricedUsage || one.hasPricedUsage
@@ -786,15 +829,6 @@ final class TokenLedger {
         case .anthropic, .openai, .kimi: return true
         case .appleIntelligence, .ollama, .lmStudio, .mcp: return false
         }
-    }
-
-    /// `yyyy-MM` for the local month containing `date` — a prefix of the
-    /// day keys, so filtering is a `hasPrefix`.
-    nonisolated static func monthKey(for date: Date) -> String {
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = .current
-        let c = cal.dateComponents([.year, .month], from: date)
-        return String(format: "%04d-%02d", c.year ?? 0, c.month ?? 0)
     }
 }
 

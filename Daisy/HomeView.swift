@@ -20,7 +20,7 @@ struct HomeView: View {
     /// card updates the moment a summary comes back.
     @Bindable var tokens = TokenLedger.shared
     /// Which provider is selected right now; the tokens card leads with
-    /// its number when it has spend this month.
+    /// its number when it has spend in the window.
     @Bindable var summarizer = Summarizer.shared
     @Bindable var nav = AppNavigation.shared
     @Bindable var calendar = CalendarService.shared
@@ -442,7 +442,7 @@ struct HomeView: View {
             // Full-width under the number pair rather than squeezed in
             // beside them: the provider name + per-model line needs the
             // horizontal room, and a third ⅓ card would crush all three.
-            if tokens.hasSpendThisMonth { tokensCard }
+            if tokens.hasRecentSpend { tokensCard }
             recentSessionsSection
         }
     }
@@ -551,32 +551,22 @@ struct HomeView: View {
 
     // MARK: - Tokens spent per connected API
     //
-    // Window is the current CALENDAR MONTH, not all-time: providers bill
-    // monthly, so that's the only number comparable to their console, and
-    // a forever-growing cumulative total stops being actionable after the
-    // first week. The ledger keeps 90 days (TokenLedger.retentionDays) so
-    // a previous-month comparison can be added without re-collecting.
+    // Window is a ROLLING 28 DAYS (TokenLedger.windowDays), not the
+    // calendar month and not all-time. The month lost: on the 1st the
+    // card showed a few hundred tokens under a full-width bar and read
+    // as broken. What the month bought — a figure directly comparable to
+    // the provider's monthly console — is given up on purpose, which is
+    // why the label above the number names the window instead of a
+    // month. All-time was never in the running: a cumulative total stops
+    // being actionable after the first week.
     //
-    // MULTI-PROVIDER: the hero number is ONE provider — the selected one
-    // if it spent anything this month, else the biggest spender. Other
-    // providers with spend get a small row each. Tokens are deliberately
-    // never summed across providers: a Claude token and a GPT token cost
-    // different money, so a combined figure would be adding two
-    // currencies. The rows exist because two providers in one month is a
-    // real case — switching mid-month, and the pre-meeting brief's web
-    // research, which always bills the Anthropic key no matter which
-    // provider is selected for summaries.
-
-    /// Current month in its standalone (nominative) form.
-    private static func standaloneMonthName() -> String {
-        let calendar = Calendar.current
-        let index = calendar.component(.month, from: Date()) - 1
-        let symbols = calendar.standaloneMonthSymbols
-        guard symbols.indices.contains(index) else {
-            return Date.now.formatted(.dateTime.month(.wide))
-        }
-        return symbols[index]
-    }
+    // MULTI-PROVIDER: tokens are deliberately never summed across
+    // providers in the per-model rows — a Claude token and a GPT token
+    // cost different money, so a combined figure would be adding two
+    // currencies. The rows exist because two providers inside one window
+    // is a real case: switching provider partway, and the pre-meeting
+    // brief's web research, which always bills the Anthropic key no
+    // matter which provider is selected for summaries.
 
     /// Compact token count — "1.2M", "840K", localized.
     private func compactTokens(_ n: Int) -> String {
@@ -638,12 +628,12 @@ struct HomeView: View {
 
     @ViewBuilder
     private var tokensCard: some View {
-        let rows = tokens.currentMonthModelSeries()
+        let rows = tokens.recentModelSeries()
         if !rows.isEmpty {
-            let total = tokens.currentMonthTotalTokens()
-            let cost = tokens.currentMonthCostEstimate()
-            let searches = tokens.currentMonthWebSearches()
-            let cached = tokens.currentMonthCachedInputTokens()
+            let total = tokens.recentTotalTokens()
+            let cost = tokens.recentCostEstimate()
+            let searches = tokens.recentWebSearches()
+            let cached = tokens.recentCachedInputTokens()
             // Driven by the SMALLEST priced row: two decimals would round
             // a cheap model to $0.00 and make it look free, and a mix of
             // precisions down the column stops it adding up by eye.
@@ -656,14 +646,15 @@ struct HomeView: View {
                     Text("Tokens")
                         .daisyStatLabel()
                     Spacer()
-                    // Standalone symbol, not `.dateTime.month(.wide)`:
-                    // that one is the FORMAT context, which in Russian
-                    // gives the genitive "июля" ("of July") — correct
-                    // inside a date, a fragment as a bare label.
-                    Text(Self.standaloneMonthName())
+                    // The window, spelled out. It used to be the month
+                    // name, which on the 1st sat above a near-zero total
+                    // and read as a broken widget. Interpolated from the
+                    // ledger's own constant so the label cannot drift
+                    // from the period the numbers cover.
+                    Text("Last \(TokenLedger.windowDays) days")
                         .daisyStatLabel()
                 }
-                // One headline for the whole month, not one model's.
+                // One headline for the whole window, not one model's.
                 // The card used to lead with a single model chosen as
                 // "the active one", which it got wrong: the match was on
                 // PROVIDER, so with two Claude models it led with the
@@ -843,10 +834,10 @@ struct HomeView: View {
 /// agenda rows for the calendar side).
 private let homeRowMinHeight: CGFloat = 36
 
-/// A quiet month-to-date usage graph for one model. It deliberately has no axes:
-/// the card already gives the exact total, while the bars answer the more
-/// useful question of whether usage was steady or happened in one burst.
-/// Daily token spend for the current month, stacked by model.
+/// A quiet usage graph over the card's window. It deliberately has no
+/// axes: the card already gives the exact total, while the bars answer
+/// the more useful question of whether usage was steady or happened in
+/// one burst. One bar per day, stacked by model.
 ///
 /// Stacked rather than one bar per model side by side: the question the
 /// card answers is "how much did Daisy spend", and the split is the
@@ -863,7 +854,7 @@ private struct TokenUsageChart: View {
     let rows: [ModelSeriesRow]
 
     /// Fixed categorical order — a model keeps its colour when another
-    /// model appears or drops out of the month. Assigned by position in
+    /// model appears or drops out of the window. Assigned by position in
     /// `rows`, which is ordered by spend, so the biggest is always the
     /// first hue rather than a colour that shifts with rank.
     ///
@@ -910,7 +901,7 @@ private struct TokenUsageChart: View {
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Token usage day by day this month, by model"))
+        .accessibilityLabel(String(localized: "Token usage day by day over the last \(TokenLedger.windowDays) days, by model"))
     }
 
     @ViewBuilder
