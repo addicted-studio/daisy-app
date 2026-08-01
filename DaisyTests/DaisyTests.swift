@@ -35,6 +35,46 @@ struct DaisyTests {
         #expect(abs(estimate.usd - 22.07) < 0.000_001)
     }
 
+    @Test("Sonnet 5 is priced by the day it was spent, not by today")
+    func tokenCostEstimate_sonnet5IntroductoryPricingIsPerDay() {
+        // The card's window rolls across the month boundary, so days on
+        // either side of the 2026-09-01 change sit in the same total.
+        // Pricing the whole window at "today's rate" was correct only
+        // while the window was one calendar month.
+        let spend = TokenSpend(inputTokens: 1_000_000, outputTokens: 1_000_000)
+        let intro = TokenCostEstimator.estimate(
+            provider: .anthropic, model: "claude-sonnet-5", spend: spend, on: "2026-08-31"
+        )
+        let standard = TokenCostEstimator.estimate(
+            provider: .anthropic, model: "claude-sonnet-5", spend: spend, on: "2026-09-01"
+        )
+        #expect(abs(intro.usd - 12.0) < 0.000_001)      // $2 + $10
+        #expect(abs(standard.usd - 18.0) < 0.000_001)   // $3 + $15
+    }
+
+    // MARK: - The token card's window
+
+    @Test("The token window is 28 days ending today, oldest first")
+    func tokenLedger_windowDayKeysCoverTheWindow() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let end = calendar.date(from: DateComponents(year: 2026, month: 8, day: 1))!
+        let keys = TokenLedger.windowDayKeys(endingAt: end)
+
+        #expect(keys.count == TokenLedger.windowDays)
+        // Today is IN the window — a card that excluded it would show
+        // nothing for the summary that was just written.
+        #expect(keys.last == "2026-08-01")
+        // 28 days back from 1 August is 5 July, and the list runs
+        // forwards from it: the chart draws in this order.
+        #expect(keys.first == "2026-07-05")
+        #expect(keys == keys.sorted())
+        #expect(Set(keys).count == keys.count)
+        // The window has to fit inside what the ledger keeps, or the
+        // oldest bars would be silently empty.
+        #expect(TokenLedger.windowDays <= TokenLedger.retentionDays)
+    }
+
     @Test("Claude Opus 5 is priced at its 2026 list rates")
     func tokenCostEstimate_anthropicOpus5() {
         let estimate = TokenCostEstimator.estimate(

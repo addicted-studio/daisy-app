@@ -6602,6 +6602,58 @@
         }
       }
     },
+    "Last %lld days" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Last %lld day"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Last %lld days"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "за %lld дня"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "за %lld дней"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "за %lld день"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "за %lld дня"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Last heard" : {
       "localizations" : {
         "ru" : {
@@ -11537,6 +11589,58 @@
         }
       }
     },
+    "Token usage day by day over the last %lld days, by model" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Token usage day by day over the last %lld day, by model"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Token usage day by day over the last %lld days, by model"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Расход токенов по дням за последние %lld дня, по моделям"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Расход токенов по дням за последние %lld дней, по моделям"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Расход токенов по дням за последний %lld день, по моделям"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Расход токенов по дням за последние %lld дня, по моделям"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Token usage day by day this month" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -11544,16 +11648,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Расход токенов по дням в этом месяце"
-          }
-        }
-      }
-    },
-    "Token usage day by day this month, by model" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Расход токенов по дням в этом месяце, по моделям"
           }
         }
       }
