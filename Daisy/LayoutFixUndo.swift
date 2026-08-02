@@ -42,6 +42,17 @@ final class LayoutFixUndo {
         /// `nil` when `settle` didn't switch anything, matching the
         /// "nothing to put back" case.
         let restoreLayoutID: String?
+        /// `WordBuffer.generation` read right after `settle` discards
+        /// the buffer — i.e. the value AFTER the fix's own discard has
+        /// already bumped it, not a value cached before that call.
+        /// This is what lets undo work in apps that won't answer
+        /// Accessibility: the tap sees every keystroke on the machine,
+        /// so if this counter hasn't moved (beyond the fix key's own
+        /// chord — see `generationAllowsUndo`), nothing was TYPED
+        /// since. That is not quite "the caret can't have moved" —
+        /// see the caveat on `generationAllowsUndo` — but it is
+        /// everything a keystroke-based signal can prove.
+        let generation: UInt64
         let at: Date
 
         /// What's on screen right now: fix output + boundary. What
@@ -84,6 +95,47 @@ final class LayoutFixUndo {
     /// undo succeeds.
     func clear() {
         pending = nil
+    }
+
+    /// Whether the generation counter alone proves nothing was typed
+    /// since the fix — independent of Accessibility, which stays
+    /// silent in exactly the apps (Telegram, Slack, Electron, most web
+    /// editors) where this feature matters most.
+    ///
+    /// The tolerance is EXACTLY one bump, never more: pressing the fix
+    /// key itself reaches the tap as a chord — a keyDown with ⌃/⌥/⌘
+    /// set — and `LayoutAutoFix.handle` routes any chord through
+    /// `buffer.clear()`, which bumps the generation once. Holding the
+    /// modifiers down first doesn't count: they arrive as
+    /// `.flagsChanged`, a different event type, and the tap's mask
+    /// (keyDown + the three mouse-down types) never sees it. Our own
+    /// synthetic replacement/undo keystrokes are marked and skipped by
+    /// the tap entirely, so they never touch this counter either.
+    ///
+    /// Anything past recorded+1 is a real keystroke the person typed
+    /// on purpose, and undo must refuse it — which is why this is
+    /// `<= 1`, not some larger number "to be safe": a bigger tolerance
+    /// would let undo fire after text typed well after the fix.
+    ///
+    /// Pure — no AX, no running app — so it's checkable on its own.
+    ///
+    /// Known gap, accepted rather than papered over: this proves no
+    /// KEYSTROKE happened, not that the caret is still where the fix
+    /// left it. A focus or selection change with no keyDown at all —
+    /// a timer-driven UI update, JS moving focus in a web view, a
+    /// third-party AX/automation call, scroll-synced caret movement —
+    /// would pass this check untouched. Two things narrow it in
+    /// practice rather than closing it: the caller in
+    /// `LayoutFixService` only reaches this branch when AX stayed
+    /// SILENT (a definite AX mismatch vetoes outright, no fallback
+    /// here — see that call site), and it requires the coincidence to
+    /// land inside the same 5-second window in the same app. Closing
+    /// it fully would need an AX focus-change observer
+    /// (`AXObserverCreate` + `kAXFocusedUIElementChangedNotification`),
+    /// which is a materially bigger feature than "one keypress undoes
+    /// a fix" — noted here rather than built speculatively.
+    nonisolated static func generationAllowsUndo(recorded: UInt64, current: UInt64) -> Bool {
+        current == recorded || current == recorded &+ 1
     }
 }
 

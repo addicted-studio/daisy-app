@@ -546,7 +546,7 @@ final class LayoutAutoFix {
             return note("kept typing before the verdict was ready")
         }
         if let reason = contextRefusal() { return note(reason) }
-        let judgement = LayoutFix.judge(snapshot.word)
+        let judgement = LayoutFix.judge(snapshot.word, exceptions: .shared)
         guard let fix = judgement.fix else {
             noteJudgement(refusal: judgement.refusal)
             return
@@ -583,7 +583,7 @@ final class LayoutAutoFix {
         guard isRunning else { return }
         if let reason = contextRefusal() { return note(reason) }
         guard LayoutAutoFix.buffer.generation == finished.generation else { return }
-        let judgement = LayoutFix.judge(finished.word)
+        let judgement = LayoutFix.judge(finished.word, exceptions: .shared)
         guard let fix = judgement.fix else {
             noteJudgement(refusal: judgement.refusal)
             return
@@ -743,6 +743,11 @@ final class LayoutAutoFix {
                 replacementWord: undo.replacementWord,
                 bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
                 restoreLayoutID: restoreLayoutID,
+                // Read AFTER `buffer.discard()` above, deliberately —
+                // discard() itself bumps the generation, and a value
+                // captured before it would already read one stale the
+                // instant this record is made.
+                generation: LayoutAutoFix.buffer.generation,
                 at: Date()
             ))
         }
