@@ -868,3 +868,176 @@ struct HotkeyChoiceTests {
         #expect(HotkeyChoice.fromKeyCode(UInt16(kVK_F5), modifierFlags: []) != nil)
     }
 }
+
+// MARK: - LayoutFixExceptions (undo-taught word list)
+//
+// A word this list has learned must be refused fast and without
+// touching the dictionary — this is the hottest path `judge` has,
+// running on every automatically-typed word. Each instance gets its
+// own UserDefaults suite so tests never share state with each other
+// or with the real app's preferences.
+
+@Suite("LayoutFixExceptions (undo-taught word list)")
+@MainActor
+struct LayoutFixExceptionsTests {
+
+    private func freshDefaults() -> UserDefaults {
+        let suite = "test.layoutFixExceptions.\(UUID().uuidString)"
+        return UserDefaults(suiteName: suite)!
+    }
+
+    @Test("A word is remembered case-insensitively")
+    func add_isCaseInsensitive() {
+        let store = LayoutFixExceptions(defaults: freshDefaults())
+        store.add("Ghbdtn")
+        #expect(store.contains("ghbdtn"))
+        #expect(store.contains("GHBDTN"))
+        #expect(store.count == 1)
+    }
+
+    @Test("Adding the same word twice does not duplicate it")
+    func add_isIdempotent() {
+        let store = LayoutFixExceptions(defaults: freshDefaults())
+        store.add("ghbdtn")
+        store.add("Ghbdtn")
+        #expect(store.count == 1)
+    }
+
+    @Test("Overflow past the cap evicts the oldest words first")
+    func add_evictsOldestWordsOnOverflow() {
+        let store = LayoutFixExceptions(defaults: freshDefaults())
+        for i in 0..<(LayoutFixExceptions.cap + 5) {
+            store.add("word\(i)")
+        }
+        #expect(store.count == LayoutFixExceptions.cap)
+        #expect(!store.contains("word0"))
+        #expect(!store.contains("word4"))
+        #expect(store.contains("word5"))
+        #expect(store.contains("word\(LayoutFixExceptions.cap + 4)"))
+    }
+
+    @Test("A second instance on the same UserDefaults sees what the first stored")
+    func roundTrips_throughUserDefaults() {
+        let defaults = freshDefaults()
+        let first = LayoutFixExceptions(defaults: defaults)
+        first.add("привет")
+        let second = LayoutFixExceptions(defaults: defaults)
+        #expect(second.contains("привет"))
+        #expect(second.count == 1)
+    }
+
+    @Test("Clear empties the list and the empty state persists")
+    func clear_persistsEmptyState() {
+        let defaults = freshDefaults()
+        let first = LayoutFixExceptions(defaults: defaults)
+        first.add("ghbdtn")
+        first.clear()
+        let second = LayoutFixExceptions(defaults: defaults)
+        #expect(second.count == 0)
+    }
+}
+
+// MARK: - LayoutFix.judge × learned exceptions
+//
+// Proof of ORDER, not just outcome: "daisyundotestwordxyz" is neither a
+// real word nor something that would convert to one, so if the
+// exceptions gate weren't checked first, judge would fall through to
+// `.nothingRealOnTheOtherSide` or `.noDictionaryForTargetLayout` — not
+// `.learnedException`. Getting exactly that refusal is what shows the
+// gate runs before any dictionary lookup, without needing to mock
+// NSSpellChecker directly.
+
+@Suite("LayoutFix.judge refuses learned exceptions first")
+@MainActor
+struct LayoutFixJudgeExceptionsTests {
+
+    @Test("A word in the exceptions list is refused before any dictionary check")
+    func judge_refusesLearnedExceptionBeforeDictionaryLookup() {
+        let word = "daisyundotestwordxyz"
+        LayoutFixExceptions.shared.add(word)
+        defer { LayoutFixExceptions.shared.clear() }
+
+        let result = LayoutFix.judge(word)
+        #expect(result.fix == nil)
+        #expect(result.refusal == .learnedException)
+    }
+}
+
+// MARK: - LayoutFixUndo (fix-key reversal window)
+//
+// `Record` fields mirror what one undo needs to reverse a fix and
+// teach the exceptions list: the word to retype, the boundary that
+// ended it, what's on screen to delete, which app it has to still be
+// in, and the window past which a keypress is ordinary typing again,
+// not an undo.
+
+@Suite("LayoutFixUndo (fix-key reversal window)")
+@MainActor
+struct LayoutFixUndoTests {
+
+    private func makeRecord(
+        bundleID: String = "com.apple.Notes",
+        at: Date = Date()
+    ) -> LayoutFixUndo.Record {
+        LayoutFixUndo.Record(
+            originalWord: "ghbdtn",
+            boundary: " ",
+            replacementWord: "привет",
+            bundleID: bundleID,
+            restoreLayoutID: nil,
+            at: at
+        )
+    }
+
+    @Test("A fresh record for the same app is returned")
+    func fresh_returnsRecentSameAppRecord() {
+        let store = LayoutFixUndo.shared
+        store.record(makeRecord())
+        #expect(store.fresh(bundleID: "com.apple.Notes") != nil)
+    }
+
+    @Test("A record past the undo window is refused")
+    func fresh_refusesStaleRecord() {
+        let store = LayoutFixUndo.shared
+        store.record(makeRecord(at: Date().addingTimeInterval(-10)))
+        #expect(store.fresh(bundleID: "com.apple.Notes") == nil)
+    }
+
+    @Test("A record for a different app is refused")
+    func fresh_refusesDifferentApp() {
+        let store = LayoutFixUndo.shared
+        store.record(makeRecord(bundleID: "com.apple.Notes"))
+        #expect(store.fresh(bundleID: "com.apple.TextEdit") == nil)
+    }
+
+    @Test("clear() removes the pending record")
+    func clear_removesPendingRecord() {
+        let store = LayoutFixUndo.shared
+        store.record(makeRecord())
+        store.clear()
+        #expect(store.fresh(bundleID: "com.apple.Notes") == nil)
+    }
+
+    @Test("Undo deletes by grapheme count, not Unicode scalar count — combining marks included")
+    func replacementText_countsGraphemesNotScalars() {
+        // Base + COMBINING BREVE (U+0306): one grapheme, two Unicode
+        // scalars — the exact shape a layout conversion can produce,
+        // and the case `presses = replacementText.count` has to get
+        // right: one backspace per on-screen character, not per scalar.
+        let combiningChar = "и" + "\u{0306}"
+        #expect(combiningChar.count == 1)
+        #expect(combiningChar.unicodeScalars.count == 2)
+
+        let record = LayoutFixUndo.Record(
+            originalWord: "ftq",
+            boundary: " ",
+            replacementWord: combiningChar + "ес",
+            bundleID: "com.apple.Notes",
+            restoreLayoutID: nil,
+            at: Date()
+        )
+        #expect(record.replacementWord.count == 3)
+        #expect(record.replacementText.count == 4)   // + boundary
+        #expect(record.replacementText.unicodeScalars.count > record.replacementText.count)
+    }
+}

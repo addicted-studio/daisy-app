@@ -31,6 +31,7 @@ struct SettingsView: View {
     // to Daisy updates this view without manual refresh.
     @Bindable private var systemPermissions = SystemPermissions.shared
     @Bindable private var googleAccount = GoogleAccountStore.shared
+    @Bindable private var layoutFixExceptions = LayoutFixExceptions.shared
 
     @State private var summaryTestResult: TestResult = .idle
     // Notion destination config (token / parent / auto-send / Test
@@ -1224,6 +1225,23 @@ struct SettingsView: View {
                     Text("Switch the input source after a fix")
                 }
                 .help("Otherwise the fix lands on one word and the next one goes wrong the same way.")
+
+                // Undo (one press of the fix shortcut, right after a fix)
+                // teaches the exceptions list — this row is where that
+                // memory becomes visible and, if it's ever wrong, undoable
+                // itself.
+                HStack {
+                    Text("Words Daisy doesn't touch: \(layoutFixExceptions.count)")
+                        .font(.callout)
+                    Spacer()
+                    Button("Clear") {
+                        layoutFixExceptions.clear()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(layoutFixExceptions.count == 0)
+                }
+                .help("Undoing a fix (press the shortcut right after) adds the word here so Daisy leaves it alone from then on.")
             } header: {
                 Text("Keyboard layout")
             } footer: {

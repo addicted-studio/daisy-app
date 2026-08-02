@@ -104,6 +104,9 @@ enum LayoutFix {
         case noDictionaryForTargetLayout
         case alreadyARealWord
         case nothingRealOnTheOtherSide
+        /// Undone once already — see `LayoutFixUndo`/`LayoutFixExceptions`.
+        /// One bad call is now one lesson, not a standing annoyance.
+        case learnedException
 
         /// True when the reason is a property of the MACHINE rather than
         /// of the word. Those are the ones worth a log line: they mean
@@ -114,7 +117,7 @@ enum LayoutFix {
             case .noSecondLayout, .noCurrentLayout,
                  .noDictionaryForSourceLayout, .noDictionaryForTargetLayout:
                 return true
-            case .tooShort, .alreadyARealWord, .nothingRealOnTheOtherSide:
+            case .tooShort, .alreadyARealWord, .nothingRealOnTheOtherSide, .learnedException:
                 return false
             }
         }
@@ -126,6 +129,12 @@ enum LayoutFix {
     static func judge(_ word: String) -> (fix: Fix?, refusal: Refusal?) {
         guard word.count >= minAutomaticWordLength,
               word.contains(where: { $0.isLetter }) else { return (nil, .tooShort) }
+        // Cheapest possible gate, checked before anything cross-process
+        // (KeyboardLayouts lookups, the spell checker): this is the
+        // branch every automatically-typed word passes through, and a
+        // word undone once should stay left alone without paying for a
+        // dictionary round trip on every later repeat.
+        guard !LayoutFixExceptions.shared.contains(word) else { return (nil, .learnedException) }
         let layouts = KeyboardLayouts.shared.installed
         guard layouts.count > 1 else { return (nil, .noSecondLayout) }
         guard let source = KeyboardLayouts.shared.current else { return (nil, .noCurrentLayout) }

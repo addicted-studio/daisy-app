@@ -91,8 +91,13 @@ private nonisolated func daisyLayoutTapCallback(
     case .leftMouseDown, .rightMouseDown, .otherMouseDown:
         // The caret may have moved anywhere; the word in flight is no
         // longer the word in front of it, and it is no longer a candidate
-        // for the fix key either.
+        // for the fix key either. A pending undo is scoped to "same app,
+        // recent, text still matches" — nothing here ties it to the
+        // CARET the fix actually touched, so a click that lands on text
+        // which happens to read the same as the last fix's output must
+        // not be treated as that fix waiting to be undone.
         LayoutAutoFix.buffer.discard()
+        Task { @MainActor in LayoutFixUndo.shared.clear() }
     case .tapDisabledByTimeout, .tapDisabledByUserInput:
         // Everything typed while we were deaf is unaccounted for.
         LayoutAutoFix.buffer.discard()
@@ -256,7 +261,16 @@ final class LayoutAutoFix {
                 forName: NSWorkspace.didActivateApplicationNotification,
                 object: nil,
                 queue: .main
-            ) { _ in LayoutAutoFix.buffer.discard() }
+            ) { _ in
+                LayoutAutoFix.buffer.discard()
+                // Reactivating the SAME app (Cmd-Tab away and back, a
+                // different window) is still an activation — the caret
+                // could be anywhere in it, so a pending undo shouldn't
+                // survive this either. The closure itself isn't
+                // MainActor per its declared type (only `queue: .main`
+                // guarantees it RUNS there), hence the explicit hop.
+                Task { @MainActor in LayoutFixUndo.shared.clear() }
+            }
         }
         // macOS disables a tap it thinks is slow, and the disable
         // notification can be missed. Without this the feature would go
@@ -322,6 +336,11 @@ final class LayoutAutoFix {
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
         if caretMovingKeyCodes.contains(keyCode) {
             buffer.discard()
+            // Same reasoning as the mouse-down case: the caret just
+            // moved, so a pending undo — scoped only to "same app,
+            // recent, text matches" — is no longer known to be sitting
+            // where the fix actually landed.
+            Task { @MainActor in LayoutFixUndo.shared.clear() }
             return .pass
         }
         if keyCode == UInt16(kVK_Delete) {
@@ -374,7 +393,15 @@ final class LayoutAutoFix {
            applyFromTap(verdict, boundary: event, character: character, proxy: proxy) {
             buffer.discard()
             let target = verdict.targetLayoutID
-            Task { @MainActor in LayoutAutoFix.shared.settle(targetLayoutID: target, via: "before the boundary") }
+            let originalWord = verdict.originalWord
+            let replacementWord = verdict.replacement
+            Task { @MainActor in
+                LayoutAutoFix.shared.settle(
+                    targetLayoutID: target,
+                    via: "before the boundary",
+                    undo: (originalWord, character, replacementWord)
+                )
+            }
             return .swallow
         }
 
@@ -542,6 +569,7 @@ final class LayoutAutoFix {
             WordBuffer.Verdict(
                 generation: snapshot.generation,
                 presses: snapshot.presses,
+                originalWord: snapshot.word,
                 replacement: fix.text,
                 targetLayoutID: fix.target.id,
                 at: DispatchTime.now().uptimeNanoseconds
@@ -570,7 +598,11 @@ final class LayoutAutoFix {
         guard replace(presses: finished.presses + 1, with: fix.text + String(boundary)) else {
             return note("couldn't post the replacement")
         }
-        settle(targetLayoutID: fix.target.id, via: "after the fact")
+        settle(
+            targetLayoutID: fix.target.id,
+            via: "after the fact",
+            undo: (finished.word, boundary, fix.text)
+        )
     }
 
     /// The fix key's second source: the word just typed. The user asked,
@@ -679,23 +711,50 @@ final class LayoutAutoFix {
         return actual == expected
     }
 
-    fileprivate func settle(targetLayoutID: String, via path: String) {
+    /// `undo`, when non-nil, is what one keypress needs to reverse THIS
+    /// fix — supplied only by the two automatic paths (before-the-
+    /// boundary, after-the-fact). The fix key and mouse-selection paths
+    /// don't pass one: the user asked for that conversion, so "undo" is
+    /// just pressing the key again, which already flips it back.
+    fileprivate func settle(
+        targetLayoutID: String,
+        via path: String,
+        undo: (originalWord: String, boundary: Character, replacementWord: String)? = nil
+    ) {
         // Our own typing is marked and skipped by the tap, so the buffer
         // would otherwise still hold the pre-fix word — and the fix key
         // must not be able to "fix" it a second time.
         LayoutAutoFix.buffer.discard()
+        // Captured BEFORE the switch: this is the layout undo restores,
+        // and it only means anything if a switch is about to happen —
+        // nil otherwise, matching "nothing to put back".
+        var restoreLayoutID: String?
         if settings?.layoutFixSwitchesSource ?? false,
            let target = KeyboardLayouts.shared.installed.first(where: { $0.id == targetLayoutID }) {
+            restoreLayoutID = KeyboardLayouts.shared.current?.id
             KeyboardLayouts.shared.select(target)
         }
         UsageStats.shared.recordFixes(polished: 1)
         log.info("Layout fixed (\(path, privacy: .public)) → \(targetLayoutID, privacy: .public)")
+        if let undo {
+            LayoutFixUndo.shared.record(LayoutFixUndo.Record(
+                originalWord: undo.originalWord,
+                boundary: undo.boundary,
+                replacementWord: undo.replacementWord,
+                bundleID: NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "",
+                restoreLayoutID: restoreLayoutID,
+                at: Date()
+            ))
+        }
     }
 
     /// Delete `presses` key presses' worth of text and type `text`. Used
     /// by the two paths that run on the main actor; the tap has its own
-    /// copy that also puts the boundary back.
-    private func replace(presses: Int, with text: String) -> Bool {
+    /// copy that also puts the boundary back. Not `private`: LayoutFix-
+    /// Service's undo reuses it — deleting the fix's output and
+    /// retyping the original is the same operation as `consider`'s
+    /// replacement, just in the other direction.
+    func replace(presses: Int, with text: String) -> Bool {
         guard presses > 0, presses <= WordBuffer.maxPresses + 1 else { return false }
         guard let source = Self.eventSource else { return false }
         let units = Array(text.utf16)
@@ -846,6 +905,10 @@ nonisolated final class WordBuffer: @unchecked Sendable {
     struct Verdict: Sendable {
         let generation: UInt64
         let presses: Int
+        /// The word as typed, filled from the snapshot that produced
+        /// this verdict — `LayoutFixUndo` needs it to retype on undo,
+        /// and `replacement` alone can't be reversed without it.
+        let originalWord: String
         let replacement: String
         let targetLayoutID: String
         /// When it was decided, `DispatchTime` nanoseconds. The generation
