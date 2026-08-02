@@ -72,6 +72,36 @@ final class LayoutFixService {
         isRunning = true
         defer { isRunning = false }
 
+        // 0. Undo — checked before the selection/fix-key logic below.
+        // Only fires for a fix the AUTOMATIC watcher made: LayoutFixUndo
+        // is never populated from this same key's OWN work (the fix key
+        // and a mouse selection are things the user asked for, and
+        // pressing the key again already flips them back).
+        //
+        // The asymmetry with `confirmBeforeCaret` elsewhere in this
+        // feature is deliberate, and inverted on purpose: the fix
+        // itself treats a silent app as "go ahead" (nil → allowed),
+        // because refusing there breaks the feature everywhere outside
+        // AppKit. Undo treats a silent app as "decline" (nil →
+        // refused) — missing a fix costs a manual correction; missing
+        // an undo costs erasing whatever the person typed AFTER it.
+        if let record = LayoutFixUndo.shared.fresh(bundleID: frontmost) {
+            // Same editable-text gate every other settle site uses —
+            // undo backspaces text same as a fix does, and belongs
+            // nowhere the fixer itself wouldn't touch (mail lists,
+            // Finder, single-key-shortcut web apps).
+            if AXFocus.kind() == .editable,
+               let onScreen = AXFocus.textBeforeCaret(count: record.replacementText.utf16.count),
+               onScreen == record.replacementText {
+                performUndo(record)
+                return
+            }
+            // AX stayed silent, or the text has moved on — either way
+            // this key press is not an undo any more. Falls through to
+            // the ordinary fix-key behaviour below.
+            LayoutFixUndo.shared.clear()
+        }
+
         // 1. A selection, if there is one.
         let borrow = PasteboardProxy.shared.borrow()
         if let selection = await PasteboardProxy.shared.copySelection(borrow) {
@@ -112,5 +142,37 @@ final class LayoutFixService {
         }
         UsageStats.shared.recordFixes(polished: 1)
         log.info("Layout fix → \(fix.target.id, privacy: .public)")
+    }
+
+    /// Delete the fix's output and retype what the person actually
+    /// typed — one keypress to reverse an automatic correction they
+    /// didn't want, and a lesson `LayoutFixExceptions` remembers so it
+    /// doesn't happen again on the same word.
+    private func performUndo(_ record: LayoutFixUndo.Record) {
+        guard LayoutAutoFix.shared.replace(
+            presses: record.replacementText.count,
+            with: record.originalText
+        ) else {
+            LayoutFixUndo.shared.clear()
+            ToastCenter.shared.show(
+                String(localized: "Couldn't undo that — try fixing it by hand."),
+                style: .error
+            )
+            return
+        }
+        if let restoreLayoutID = record.restoreLayoutID,
+           let layout = KeyboardLayouts.shared.installed.first(where: { $0.id == restoreLayoutID }) {
+            KeyboardLayouts.shared.select(layout)
+        }
+        LayoutAutoFix.buffer.discard()
+        LayoutFixExceptions.shared.add(record.originalWord)
+        // Second press in a row is ordinary key work, not an undo of
+        // the undo.
+        LayoutFixUndo.shared.clear()
+        log.info("Layout fix undone")
+        ToastCenter.shared.show(
+            String(localized: "Undone — Daisy won't auto-fix that word again."),
+            style: .info
+        )
     }
 }
