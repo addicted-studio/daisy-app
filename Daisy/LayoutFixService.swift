@@ -86,19 +86,51 @@ final class LayoutFixService {
         // refused) — missing a fix costs a manual correction; missing
         // an undo costs erasing whatever the person typed AFTER it.
         if let record = LayoutFixUndo.shared.fresh(bundleID: frontmost) {
-            // Same editable-text gate every other settle site uses —
-            // undo backspaces text same as a fix does, and belongs
-            // nowhere the fixer itself wouldn't touch (mail lists,
-            // Finder, single-key-shortcut web apps).
-            if AXFocus.kind() == .editable,
-               let onScreen = AXFocus.textBeforeCaret(count: record.replacementText.utf16.count),
-               onScreen == record.replacementText {
-                performUndo(record)
-                return
+            // Same editable-text gate every other settle site uses,
+            // mandatory for BOTH ways of confirming below — it answers
+            // "can we send backspaces here at all", not "does the text
+            // match", so neither check may skip it.
+            if AXFocus.kind() == .editable {
+                // AX has THREE possible answers here, not two, and they
+                // are not interchangeable:
+                //
+                //  - Matches → confirmed, undo.
+                //  - A DIFFERENT string → confirmed WRONG. This is
+                //    positive proof the caret or the text moved (a
+                //    focus change with no keystroke: a timer-driven UI
+                //    update, JS moving focus in a web view, another
+                //    automation tool's own AX call), and it must veto
+                //    outright — falling back to the generation counter
+                //    here would let a definite "no" be overruled by a
+                //    heuristic that only proves "no keystroke", not
+                //    "the caret didn't move".
+                //  - No answer (nil) → AX can't help either way, which
+                //    is Telegram, Slack, Electron and most web editors,
+                //    exactly where this feature earns its keep. THIS is
+                //    the one case the generation counter is for: the
+                //    tap sees every keystroke on the machine regardless
+                //    of which app is in front, so it can stand in for
+                //    AX being silent — never for AX being wrong.
+                switch AXFocus.textBeforeCaret(count: record.replacementText.utf16.count) {
+                case record.replacementText:
+                    performUndo(record)
+                    return
+                case .some:
+                    break   // definite mismatch — no generation fallback
+                case nil:
+                    if LayoutFixUndo.generationAllowsUndo(
+                        recorded: record.generation,
+                        current: LayoutAutoFix.buffer.generation
+                    ) {
+                        performUndo(record)
+                        return
+                    }
+                }
             }
-            // AX stayed silent, or the text has moved on — either way
-            // this key press is not an undo any more. Falls through to
-            // the ordinary fix-key behaviour below.
+            // Not editable text, AX disagreed, or real typing happened
+            // since the fix — either way this key press is not an undo
+            // any more. Falls through to the ordinary fix-key behaviour
+            // below.
             LayoutFixUndo.shared.clear()
         }
 

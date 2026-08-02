@@ -126,7 +126,18 @@ enum LayoutFix {
     /// A finished word, judged strictly. A nil `fix` means "leave it
     /// alone", which is the answer most of the time and has to stay
     /// cheap; `refusal` says why, for the log.
-    static func judge(_ word: String) -> (fix: Fix?, refusal: Refusal?) {
+    /// `exceptions` is required, not defaulted to `.shared` — a
+    /// default value referencing a `@MainActor` singleton runs into
+    /// the same actor-isolation trap as a stored default would, and
+    /// the two real call sites (`prepareVerdict`, `consider`, both
+    /// already `@MainActor`) pass `.shared` explicitly anyway. The
+    /// parameter exists so a test can hand in a throwaway instance
+    /// instead of mutating the one real UserDefaults-backed list a
+    /// person's undos have taught.
+    static func judge(
+        _ word: String,
+        exceptions: LayoutFixExceptions
+    ) -> (fix: Fix?, refusal: Refusal?) {
         guard word.count >= minAutomaticWordLength,
               word.contains(where: { $0.isLetter }) else { return (nil, .tooShort) }
         // Cheapest possible gate, checked before anything cross-process
@@ -134,7 +145,7 @@ enum LayoutFix {
         // branch every automatically-typed word passes through, and a
         // word undone once should stay left alone without paying for a
         // dictionary round trip on every later repeat.
-        guard !LayoutFixExceptions.shared.contains(word) else { return (nil, .learnedException) }
+        guard !exceptions.contains(word) else { return (nil, .learnedException) }
         let layouts = KeyboardLayouts.shared.installed
         guard layouts.count > 1 else { return (nil, .noSecondLayout) }
         guard let source = KeyboardLayouts.shared.current else { return (nil, .noCurrentLayout) }

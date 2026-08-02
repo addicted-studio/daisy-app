@@ -953,13 +953,20 @@ struct LayoutFixJudgeExceptionsTests {
 
     @Test("A word in the exceptions list is refused before any dictionary check")
     func judge_refusesLearnedExceptionBeforeDictionaryLookup() {
+        // `judge` takes its exceptions store as a parameter for exactly
+        // this reason: a throwaway instance here means this test never
+        // touches `.shared` — which is the real, UserDefaults-backed
+        // list a person's undos have taught, and used to get wiped by
+        // this test's old `.shared.clear()` cleanup.
+        let before = LayoutFixExceptions.shared.words
         let word = "daisyundotestwordxyz"
-        LayoutFixExceptions.shared.add(word)
-        defer { LayoutFixExceptions.shared.clear() }
+        let isolated = LayoutFixExceptions(defaults: UserDefaults(suiteName: "test.judge.\(UUID().uuidString)")!)
+        isolated.add(word)
 
-        let result = LayoutFix.judge(word)
+        let result = LayoutFix.judge(word, exceptions: isolated)
         #expect(result.fix == nil)
         #expect(result.refusal == .learnedException)
+        #expect(LayoutFixExceptions.shared.words == before)
     }
 }
 
@@ -977,6 +984,7 @@ struct LayoutFixUndoTests {
 
     private func makeRecord(
         bundleID: String = "com.apple.Notes",
+        generation: UInt64 = 0,
         at: Date = Date()
     ) -> LayoutFixUndo.Record {
         LayoutFixUndo.Record(
@@ -985,6 +993,7 @@ struct LayoutFixUndoTests {
             replacementWord: "привет",
             bundleID: bundleID,
             restoreLayoutID: nil,
+            generation: generation,
             at: at
         )
     }
@@ -1034,10 +1043,39 @@ struct LayoutFixUndoTests {
             replacementWord: combiningChar + "ес",
             bundleID: "com.apple.Notes",
             restoreLayoutID: nil,
+            generation: 0,
             at: Date()
         )
         #expect(record.replacementWord.count == 3)
         #expect(record.replacementText.count == 4)   // + boundary
         #expect(record.replacementText.unicodeScalars.count > record.replacementText.count)
+    }
+
+    @Test("generationAllowsUndo tolerates the fix key's own chord (0 or +1), refuses more")
+    func generationAllowsUndo_toleratesUpToOneBump() {
+        #expect(LayoutFixUndo.generationAllowsUndo(recorded: 10, current: 10))
+        #expect(LayoutFixUndo.generationAllowsUndo(recorded: 10, current: 11))
+        #expect(!LayoutFixUndo.generationAllowsUndo(recorded: 10, current: 12))
+        #expect(!LayoutFixUndo.generationAllowsUndo(recorded: 10, current: 13))
+        // Boundary case: recorded 0, only 0 and 1 pass.
+        #expect(LayoutFixUndo.generationAllowsUndo(recorded: 0, current: 0))
+        #expect(LayoutFixUndo.generationAllowsUndo(recorded: 0, current: 1))
+        #expect(!LayoutFixUndo.generationAllowsUndo(recorded: 0, current: 2))
+    }
+
+    @Test("WordBuffer.discard() itself bumps generation — settle must read it AFTER calling discard()")
+    func bufferGeneration_bumpsOnDiscard() {
+        // Proof of the exact ordering bug the task warns about: a
+        // generation value cached BEFORE `discard()` is already one
+        // behind the value `settle` actually needs to record. This
+        // drives the real WordBuffer type `LayoutAutoFix.buffer` is,
+        // not a stand-in, so the behaviour it pins is the real one.
+        let buffer = WordBuffer()
+        _ = buffer.append("g")
+        _ = buffer.append("h")
+        let beforeDiscard = buffer.generation
+        buffer.discard()
+        let afterDiscard = buffer.generation
+        #expect(afterDiscard == beforeDiscard + 1)
     }
 }
