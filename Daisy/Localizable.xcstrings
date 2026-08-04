@@ -1606,6 +1606,16 @@
         }
       }
     },
+    "Accessibility access isn't granted yet, so Daisy can't rewrite what you type — nothing below will work until it is." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступ к универсальному доступу пока не выдан, поэтому Daisy не может переписывать набранное — ничего из того, что ниже, не заработает без него."
+          }
+        }
+      }
+    },
     "Acme\nClaude\nkubernetes => Kubernetes\nmy sql, MySQL" : {
       "localizations" : {
         "ru" : {
@@ -4375,6 +4385,16 @@
         }
       }
     },
+    "Daisy notices a word typed in the wrong keyboard layout and fixes it — before you send the message." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy замечает слово, набранное не в той раскладке, и чинит его — до того, как вы отправите сообщение."
+          }
+        }
+      }
+    },
     "Daisy POSTs the rendered template body to this URL (Slack-style incoming webhook works out of the box)." : {
       "localizations" : {
         "ru" : {
@@ -6572,6 +6592,16 @@
         }
       }
     },
+    "Kimi API key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-ключ Kimi"
+          }
+        }
+      }
+    },
     "Kind" : {
       "localizations" : {
         "ru" : {
@@ -7619,6 +7649,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Фоллоу-ап не был создан — модель посчитала эту встречу внутренней (внешняя сторона не определена)."
+          }
+        }
+      }
+    },
+    "No key yet? Continue — you can add it later in Settings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет ключа? Жмите «Далее» — его можно добавить позже в Настройках."
           }
         }
       }
@@ -9297,6 +9337,16 @@
         }
       }
     },
+    "Purpose" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зачем"
+          }
+        }
+      }
+    },
     "Quick one-off thought, mic only." : {
       "localizations" : {
         "ru" : {
@@ -10344,6 +10394,16 @@
         }
       }
     },
+    "Select the text you want fixed — without automatic fixing, Daisy doesn't see the word you just typed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выделите текст, который нужно починить, — без автоматики Daisy не видит слово, которое вы только что набрали."
+          }
+        }
+      }
+    },
     "Select the text you want fixed, then press the shortcut." : {
       "localizations" : {
         "ru" : {
@@ -10621,6 +10681,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Настройки"
+          }
+        }
+      }
+    },
+    "Setup" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Настройка"
           }
         }
       }
@@ -12060,6 +12130,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "URL вебхука"
+          }
+        }
+      }
+    },
+    "Welcome" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добро пожаловать"
           }
         }
       }

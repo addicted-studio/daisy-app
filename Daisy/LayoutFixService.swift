@@ -156,10 +156,16 @@ final class LayoutFixService {
         //    and counts the fix, so there is nothing to finish here.
         if LayoutAutoFix.shared.fixWordInFlight() != nil { return }
 
+        // Two different truths, not one. With the watcher running the
+        // key really can fix the word in flight — there just wasn't
+        // one. With the watcher OFF the key can only ever fix a
+        // selection, because the word-in-flight buffer lives inside the
+        // tap — so say WHY, instead of leaving the user to discover
+        // that half the key is dead.
         ToastCenter.shared.show(
             LayoutAutoFix.shared.isRunning
                 ? String(localized: "Nothing to fix — select the text, or type a word first.")
-                : String(localized: "Select the text you want fixed, then press the shortcut."),
+                : String(localized: "Select the text you want fixed — without automatic fixing, Daisy doesn't see the word you just typed."),
             style: .warning
         )
     }
