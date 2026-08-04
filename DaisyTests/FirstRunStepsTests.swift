@@ -20,18 +20,18 @@ struct FirstRunStepsTests {
     // MARK: - Exact orders (also proves folder/vocab are gone and the
     // rest of the order didn't move)
 
-    @Test("Full path with one layout: 8 steps, one permissions screen")
+    @Test("Full path with one layout: 7 steps, welcome+purpose merged")
     func fullPathSingleLayout() {
         #expect(FirstRunView.steps(for: .full, installedLayoutCount: 1) == [
-            .welcome, .purpose, .name, .permissions,
+            .purpose, .name, .permissions,
             .hotkeys, .calendar, .model, .done,
         ])
     }
 
-    @Test("Dictation-only path with one layout: 5 steps")
+    @Test("Dictation-only path with one layout: 4 steps")
     func dictationPathSingleLayout() {
         #expect(FirstRunView.steps(for: .dictationOnly, installedLayoutCount: 1) == [
-            .welcome, .purpose, .permissions, .hotkeys, .done,
+            .purpose, .permissions, .hotkeys, .done,
         ])
     }
 

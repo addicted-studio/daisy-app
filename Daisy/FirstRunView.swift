@@ -50,7 +50,6 @@ struct FirstRunView: View {
 
     /// Steps the user walks through, in order.
     enum Step: Int, CaseIterable {
-        case welcome
         case purpose
         case name
         /// One screen for the whole permission set — which rows it
@@ -69,7 +68,6 @@ struct FirstRunView: View {
         /// Short name shown in the step rail / used by both columns.
         var railTitle: String {
             switch self {
-            case .welcome:         String(localized: "Welcome")
             case .purpose:         String(localized: "Purpose")
             case .name:            String(localized: "Your name")
             case .permissions:     String(localized: "Permissions")
@@ -108,15 +106,15 @@ struct FirstRunView: View {
         let layoutFixer: [Step] = installedLayoutCount > 1 ? [.layout] : []
         switch path {
         case .full:
-            return [.welcome, .purpose, .name, .permissions,
+            return [.purpose, .name, .permissions,
                     .hotkeys] + layoutFixer + [.calendar, .model, .done]
         case .dictationOnly:
-            return [.welcome, .purpose, .permissions, .hotkeys]
+            return [.purpose, .permissions, .hotkeys]
                     + layoutFixer + [.done]
         }
     }
 
-    @State private var step: Step = .welcome
+    @State private var step: Step = .purpose
     /// Permission state lives in `SystemPermissions.shared` (@Observable,
     /// same façade Settings → Permissions reads), refreshed on step
     /// change + on app foreground-activation — the system can flip
@@ -195,7 +193,6 @@ struct FirstRunView: View {
                 content
                     .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                Divider()
                 footer
                     .frame(maxWidth: Self.contentMaxWidth)
                     .frame(maxWidth: .infinity)
@@ -214,7 +211,6 @@ struct FirstRunView: View {
             Divider()
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
             footer
         }
     }
@@ -228,10 +224,6 @@ struct FirstRunView: View {
         let steps = orderedSteps
         let current = steps.firstIndex(of: step) ?? 0
         return VStack(alignment: .leading, spacing: 2) {
-            Text("Setup")
-                .daisyStatLabel()
-                .padding(.leading, 10)
-                .padding(.bottom, 10)
             ForEach(Array(steps.enumerated()), id: \.element) { index, s in
                 railRow(
                     s,
@@ -323,7 +315,6 @@ struct FirstRunView: View {
     private var content: some View {
         Group {
             switch step {
-            case .welcome: welcomeStep
             case .purpose: purposeStep
             case .name: nameStep
             case .permissions: permissionsStep
@@ -338,32 +329,10 @@ struct FirstRunView: View {
         .padding(.vertical, 28)
     }
 
-    private var welcomeStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .center, spacing: 12) {
-                DaisyMark(size: 40, tint: .primary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Welcome to Daisy")
-                        .font(.title2.weight(.semibold))
-                    Text("Local meeting capture for Mac.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            Spacer().frame(height: 8)
-            Text("Daisy records the audio of your meetings, writes the transcript on your Mac, and lets you send the result wherever you want — Notion, Linear, Claude, your own webhook.")
-                .font(.callout)
-                .foregroundStyle(Color.daisyTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("A few quick questions and permissions, then you're set.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-    }
-
+    /// First screen: welcome + the setup-path choice merged into one.
+    /// A short pitch (what Daisy does, one sentence) instead of the old
+    /// full paragraph — the two option cards below carry the actual
+    /// meaning now, so the pitch just needs to orient, not sell.
     private var purposeStep: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
@@ -374,6 +343,10 @@ struct FirstRunView: View {
                     .font(.title2.weight(.semibold))
                 Spacer()
             }
+            Text("Daisy records meetings and dictates into any app — all on your Mac.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
             Text("We'll set up only what you need — you can enable the rest anytime.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -1024,66 +997,62 @@ struct FirstRunView: View {
                         step = steps[i - 1]
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .tint(Color.daisyTextPrimary)
+                .buttonStyle(DaisyStepButtonStyle(filled: false))
             }
             Spacer()
             // Step-specific footer right side:
-            //   • Welcome → primary "Get started" advances
-            //   • Permission steps → tertiary "Skip for now"
-            //   • Done → primary "Start using Daisy"
+            //   • Purpose → the two option cards advance on tap, no button
+            //   • Everything else → "Continue" (or "Start using Daisy" on
+            //     the last step) — inline row controls (permissions,
+            //     hotkeys, the layout toggle) do their own thing; nothing
+            //     here is ever forced.
             switch step {
-            case .welcome:
-                Button("Get started") { advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    // Ink-on-accent: the system's white label fails
-                    // WCAG on the amber fill (≈2:1 in dark).
-                    .foregroundStyle(Color.daisyTextOnAccent)
-                    .keyboardShortcut(.defaultAction)
             case .purpose:
-                // The two option cards advance on tap — no footer action.
                 EmptyView()
-            case .name:
+            case .name, .permissions, .hotkeys, .layout, .calendar, .model:
                 Button("Continue") { advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .foregroundStyle(Color.daisyTextOnAccent)
-                    .keyboardShortcut(.defaultAction)
-            case .permissions:
-                // Rows carry their own Allow / Open Settings… actions;
-                // Continue never blocks — the mic warning on the step
-                // says what's at stake, the footer doesn't nag.
-                Button("Continue") { advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .foregroundStyle(Color.daisyTextOnAccent)
-                    .keyboardShortcut(.defaultAction)
-            case .hotkeys:
-                Button("Continue") { advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .foregroundStyle(Color.daisyTextOnAccent)
-                    .keyboardShortcut(.defaultAction)
-            case .layout, .calendar, .model:
-                // Soft steps: their controls act inline; the footer just
-                // advances. Nothing is forced — Continue is always valid.
-                Button("Continue") { advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .buttonStyle(DaisyStepButtonStyle(filled: true))
                     .keyboardShortcut(.defaultAction)
             case .done:
                 Button("Start using Daisy") { finish() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .buttonStyle(DaisyStepButtonStyle(filled: true))
                     .keyboardShortcut(.defaultAction)
             }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 14)
+    }
+
+    /// Onboarding's Back/Continue actions, sharing RecordCapsule's
+    /// geometry (see `DaisyCapsuleMetrics`) so the "next" action carries
+    /// the same visual weight as the app's other primary action. No new
+    /// colors — `filled` picks between the existing accent capsule
+    /// (Continue) and the same shape with no fill (Back), both already
+    /// used elsewhere in the app.
+    private struct DaisyStepButtonStyle: ButtonStyle {
+        var filled: Bool
+
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .font(DaisyCapsuleMetrics.font)
+                .padding(.horizontal, DaisyCapsuleMetrics.horizontalPadding)
+                .padding(.vertical, DaisyCapsuleMetrics.verticalPadding)
+                // Ink-on-accent: the system's white label fails WCAG on
+                // the amber fill (≈2:1 in dark).
+                .foregroundStyle(filled ? Color.daisyTextOnAccent : Color.daisyTextPrimary)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(filled ? Color.daisyAccent : Color.clear)
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            filled ? Color.white.opacity(0.12) : Color.daisyDivider,
+                            lineWidth: 0.5
+                        )
+                )
+                .opacity(configuration.isPressed ? 0.85 : 1)
+        }
     }
 
     // MARK: - Optional CTAs (on Done step)
