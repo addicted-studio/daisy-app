@@ -20,10 +20,10 @@ struct FirstRunStepsTests {
     // MARK: - Exact orders (also proves folder/vocab are gone and the
     // rest of the order didn't move)
 
-    @Test("Full path with one layout: no folder, no vocab, no layout step")
+    @Test("Full path with one layout: no folder/vocab/language, no layout step")
     func fullPathSingleLayout() {
         #expect(FirstRunView.steps(for: .full, installedLayoutCount: 1) == [
-            .welcome, .language, .purpose, .name,
+            .welcome, .purpose, .name,
             .microphone, .screenRecording, .accessibility,
             .hotkeys, .calendar, .model, .done,
         ])
@@ -32,7 +32,7 @@ struct FirstRunStepsTests {
     @Test("Dictation-only path with one layout")
     func dictationPathSingleLayout() {
         #expect(FirstRunView.steps(for: .dictationOnly, installedLayoutCount: 1) == [
-            .welcome, .language, .purpose,
+            .welcome, .purpose,
             .microphone, .accessibility, .hotkeys, .done,
         ])
     }

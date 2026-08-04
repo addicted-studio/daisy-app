@@ -32,6 +32,13 @@ struct DaisyApp: App {
         // migrated values are read in this same launch.
         UserDefaultsMigration.runIfNeeded()
 
+        // Belarusian systems fall back to Russian, once, on a fresh
+        // install — must run before anything resolves a localized
+        // string, or the choice only lands on the NEXT launch. There
+        // is no language step in onboarding; Settings → Language is
+        // the only explicit switch.
+        AppSettings.applyBelarusianLanguageFallbackIfNeeded()
+
         let s = AppSettings()
         let sess = RecordingSession(settings: s)
         // Weak handle for the Quit-during-recording save path
