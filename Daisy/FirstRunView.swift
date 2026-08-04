@@ -2,20 +2,20 @@
 //  FirstRunView.swift
 //  Daisy
 //
-//  Multi-step welcome flow shown on first launch.
+//  Multi-step welcome flow shown on first launch. Fills the whole main
+//  window (no sidebar) — see MainView's first-run branch.
 //
-//  Step flow (6 steps):
-//      1. Welcome           — what Daisy does, one sentence
-//      2. Microphone        — required permission (no recording w/o)
-//      3. Screen Recording  — required for capturing the other side
-//                              of meetings via system audio loopback
-//      4. Accessibility     — required for the dictation hotkey's
-//                              ⌘V auto-paste into the active app
-//      5. Hotkeys           — assign global shortcuts for all three
-//                              recording modes (meeting / voice notes
-//                              / dictation) on a single screen
-//      6. You're set        — pointer to menu bar, optional CTAs
-//                              into Settings (Summary, Integrations)
+//  Layout: two columns when the window is wide enough — a step rail on
+//  the left (done / current / upcoming, done steps clickable) and the
+//  current step's content in a readable column on the right. Below
+//  ~760pt the rail doesn't fit and we fall back to a single column with
+//  progress dots on top.
+//
+//  Step order lives in `steps(for:installedLayoutCount:)` — a pure
+//  function so the order is unit-tested. Welcome, language, purpose,
+//  name, then the permission block (mic / screen / accessibility),
+//  hotkeys, the layout-fixer step (only with 2+ installed keyboard
+//  layouts), calendar, summaries, done.
 //
 //  Each permission step owns one decision and surfaces a single
 //  primary action. Permission prompts fire inline; when the system
@@ -37,12 +37,10 @@ import EventKit
 import FoundationModels
 
 struct FirstRunView: View {
-    @Environment(\.dismiss) private var dismiss
     @Bindable var settings: AppSettings
     @Bindable var nav = AppNavigation.shared
 
-    /// Steps the user walks through, in order. Raw values double as
-    /// progress-dot indices.
+    /// Steps the user walks through, in order.
     enum Step: Int, CaseIterable {
         case welcome
         case language
@@ -52,17 +50,32 @@ struct FirstRunView: View {
         case screenRecording
         case accessibility
         case hotkeys
-        // Soft, optional setup steps (Increment 2). Full track gets all
-        // four; dictation-only gets just `vocab`. Each is skippable via
-        // its "Continue" footer — no action is forced.
-        case folder
+        /// The wrong-layout fixer — asked only of people with 2+
+        /// installed keyboard layouts (see `steps(for:installedLayoutCount:)`).
+        case layout
+        // Soft, optional setup steps. Each is skippable via its
+        // "Continue" footer — no action is forced.
         case calendar
         case model
-        case vocab
         case done
 
-        var progressIndex: Int { rawValue }
-        static var total: Int { allCases.count }
+        /// Short name shown in the step rail / used by both columns.
+        var railTitle: String {
+            switch self {
+            case .welcome:         String(localized: "Welcome")
+            case .language:        String(localized: "Language")
+            case .purpose:         String(localized: "Purpose")
+            case .name:            String(localized: "Your name")
+            case .microphone:      String(localized: "Microphone")
+            case .screenRecording: String(localized: "Screen Recording")
+            case .accessibility:   String(localized: "Accessibility")
+            case .hotkeys:         String(localized: "Hotkeys")
+            case .layout:          String(localized: "Keyboard layout")
+            case .calendar:        String(localized: "Calendar")
+            case .model:           String(localized: "Summaries")
+            case .done:            String(localized: "You're set")
+            }
+        }
     }
 
     /// Which setup track the user picked on the `purpose` step. Tailors
@@ -76,19 +89,28 @@ struct FirstRunView: View {
     /// permission set (mic + screen + accessibility — full users dictate
     /// too) and all three hotkeys; dictation-only asks mic + accessibility
     /// and just the dictation hotkey. After the permission/hotkey block
-    /// come the optional "soft" steps: full gets folder + calendar +
-    /// summary model + vocabulary; dictation-only gets just vocabulary
-    /// (folder/calendar/model are meeting-oriented and don't apply).
+    /// come the optional "soft" steps: full gets calendar + summary
+    /// model; dictation-only skips them (both are meeting-oriented).
     private var orderedSteps: [Step] {
-        switch setupPath {
+        Self.steps(for: setupPath,
+                   installedLayoutCount: KeyboardLayouts.shared.installed.count)
+    }
+
+    /// Pure step-order builder, extracted so the order is unit-testable
+    /// (see FirstRunStepsTests). The layout-fixer step exists only for
+    /// people with 2+ installed keyboard layouts — with one layout there
+    /// is nothing to switch between and the question is noise.
+    static func steps(for path: SetupPath, installedLayoutCount: Int) -> [Step] {
+        let layoutFixer: [Step] = installedLayoutCount > 1 ? [.layout] : []
+        switch path {
         case .full:
             return [.welcome, .language, .purpose, .name,
                     .microphone, .screenRecording, .accessibility,
-                    .hotkeys, .folder, .calendar, .model, .vocab, .done]
+                    .hotkeys] + layoutFixer + [.calendar, .model, .done]
         case .dictationOnly:
             return [.welcome, .language, .purpose,
-                    .microphone, .accessibility, .hotkeys,
-                    .vocab, .done]
+                    .microphone, .accessibility, .hotkeys]
+                    + layoutFixer + [.done]
         }
     }
 
@@ -104,21 +126,14 @@ struct FirstRunView: View {
     @State private var screenGranted: Bool = false
     @State private var accessibilityGranted: Bool = false
 
-    // ─── Soft-step state (Increment 2) ────────────────────────────────
+    // ─── Soft-step state ──────────────────────────────────────────────
     /// Summary provider is @Observable but lives outside `settings`, so
     /// it needs its own @Bindable to drive the provider Picker.
     @Bindable private var summarizer = Summarizer.shared
-    /// SessionsFolder reads UserDefaults directly (not @Observable), so a
-    /// manual tick forces the displayed path to refresh after a pick /
-    /// reset — mirrors SettingsView.storageRow's `storageRefreshTick`.
-    @State private var folderTick: Int = 0
-    /// New-term entry fields for the vocab step + a running count of how
-    /// many terms were added during this onboarding session.
-    @State private var vocabHeard: String = ""
-    @State private var vocabCorrect: String = ""
-    @State private var vocabAddedCount: Int = 0
-    /// Optional writing-style prompt for the voice profile.
-    @State private var styleText: String = ""
+    /// One-shot guard for seeding Apple Intelligence as the SELECTED
+    /// provider on the model step. Seeded once so a user who picks a
+    /// cloud provider, goes back and returns isn't overridden.
+    @State private var modelStepSeeded: Bool = false
 
     /// Default UI language for the language step: Russian for Russia &
     /// Belarus (or a ru/be system language); English for Ukraine — we
@@ -139,18 +154,22 @@ struct FirstRunView: View {
         d.set(true, forKey: "AppleLanguagesOverridden")
     }
 
+    /// Below this window width the rail + readable column don't both
+    /// fit; fall back to a single column with progress dots on top.
+    private static let twoColumnThreshold: CGFloat = 760
+    private static let railWidth: CGFloat = 240
+    /// Cap on the content column so a wide monitor doesn't stretch
+    /// every line of copy across the whole window.
+    private static let contentMaxWidth: CGFloat = 560
+
     var body: some View {
-        VStack(spacing: 0) {
-            progressDots
-                .padding(.top, 24)
-                .padding(.bottom, 8)
-            Divider()
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            footer
+        GeometryReader { geo in
+            if geo.size.width >= Self.twoColumnThreshold {
+                twoColumnLayout
+            } else {
+                singleColumnLayout
+            }
         }
-        .frame(width: 520, height: 480)
         .background(Color.daisyBgPrimary)
         .onAppear {
             refreshPermissionStates()
@@ -173,11 +192,132 @@ struct FirstRunView: View {
         }
     }
 
-    // MARK: - Progress dots
+    // MARK: - Column layouts
+
+    /// Wide window: step rail on the left, the current step's content in
+    /// a readable centered column on the right, Back/Next pinned to the
+    /// bottom of the right column.
+    private var twoColumnLayout: some View {
+        HStack(spacing: 0) {
+            stepRail
+                .frame(width: Self.railWidth)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(Color.daisyBgSidebar)
+            Divider()
+                .overlay(Color.daisyDivider)
+            VStack(spacing: 0) {
+                content
+                    .frame(maxWidth: Self.contentMaxWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Divider()
+                footer
+                    .frame(maxWidth: Self.contentMaxWidth)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Narrow window (below `twoColumnThreshold`): the pre-rail layout —
+    /// progress dots on top, content, footer. The user can shrink the
+    /// window mid-onboarding, so this is a live fallback, not a relic.
+    private var singleColumnLayout: some View {
+        VStack(spacing: 0) {
+            progressDots
+                .padding(.top, 24)
+                .padding(.bottom, 8)
+            Divider()
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            footer
+        }
+    }
+
+    // MARK: - Step rail
+
+    /// Left rail listing every step of the current path top to bottom.
+    /// Three states — done (clickable, returns to that step), current,
+    /// upcoming (inert: no jumping ahead past a permission ask).
+    private var stepRail: some View {
+        let steps = orderedSteps
+        let current = steps.firstIndex(of: step) ?? 0
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("Setup")
+                .daisyStatLabel()
+                .padding(.leading, 10)
+                .padding(.bottom, 10)
+            ForEach(Array(steps.enumerated()), id: \.element) { index, s in
+                railRow(
+                    s,
+                    state: index < current ? .done
+                         : index == current ? .current : .upcoming
+                ) {
+                    step = s
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        // The window keeps `.fullSizeContentView` + a transparent
+        // titlebar (DaisyAppDelegate), so the rail extends under the
+        // traffic lights — leave them headroom.
+        .padding(.top, 52)
+        .padding(.bottom, 16)
+    }
+
+    private enum RailStepState { case done, current, upcoming }
+
+    private func railRow(
+        _ s: Step,
+        state: RailStepState,
+        activate: @escaping () -> Void
+    ) -> some View {
+        Button(action: activate) {
+            HStack(spacing: 8) {
+                Group {
+                    switch state {
+                    case .done:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.daisyAccent)
+                    case .current:
+                        Image(systemName: "circle.inset.filled")
+                            .foregroundStyle(Color.daisyAccent)
+                    case .upcoming:
+                        Image(systemName: "circle")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .font(.caption)
+                .frame(width: 16)
+                Text(s.railTitle)
+                    .font(.callout.weight(state == .current ? .semibold : .regular))
+                    .foregroundStyle(
+                        state == .upcoming ? AnyShapeStyle(.tertiary)
+                                           : AnyShapeStyle(Color.daisyTextPrimary)
+                    )
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                state == .current ? AnyShapeStyle(Color.daisySidebarSelection)
+                                  : AnyShapeStyle(.clear),
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        // Only already-visited steps are navigable; the current row and
+        // future rows don't react.
+        .disabled(state != .done)
+    }
+
+    // MARK: - Progress dots (single-column fallback)
     //
-    // Four small dots that fill as the user advances. Visual anchor
+    // Small dots that fill as the user advances. Visual anchor
     // ("am I almost done?") without taking real estate from the
-    // step content.
+    // step content. In the wide layout the rail replaces these.
 
     private var progressDots: some View {
         let steps = orderedSteps
@@ -205,10 +345,9 @@ struct FirstRunView: View {
             case .screenRecording: screenStep
             case .accessibility: accessibilityStep
             case .hotkeys: hotkeysStep
-            case .folder: folderStep
+            case .layout: layoutStep
             case .calendar: calendarStep
             case .model: modelStep
-            case .vocab: vocabStep
             case .done: doneStep
             }
         }
@@ -479,62 +618,85 @@ struct FirstRunView: View {
         )
     }
 
-    // MARK: - Soft steps (Increment 2)
+    // MARK: - Soft steps
 
-    /// Recordings folder — inline path + Choose / Reset. Reuses
-    /// `SessionsFolder`, which persists its bookmark straight to
-    /// UserDefaults (not @Observable), so `folderTick` on the card
-    /// forces the path + the Reset button's visibility to re-read after
-    /// a pick or reset — same trick as SettingsView.storageRow.
-    private var folderStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    /// The wrong-layout fixer — shown only when 2+ keyboard layouts are
+    /// installed. One phrase about what it does, the as-you-type toggle
+    /// and the fix key, in the same card-row shell as `hotkeyRow` so the
+    /// key-recording UX is learned once. The `.accessibility` step comes
+    /// earlier; if the grant was skipped, say so here instead of
+    /// offering a toggle that silently does nothing. Flipping the toggle
+    /// really starts the tap: MainView's `HotkeyStopWiring` observes
+    /// `settings.layoutFixAuto` from OUTSIDE the first-run branch, so
+    /// the re-wiring fires during onboarding too.
+    private var layoutStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Image(systemName: "folder")
+                Image(systemName: "keyboard.badge.ellipsis")
                     .font(.title2)
                     .foregroundStyle(Color.daisyAccent)
-                Text("Recordings folder")
+                Text("Keyboard layout")
                     .font(.title2.weight(.semibold))
                 Spacer()
             }
-            Text("Choose where Daisy saves your recordings, transcripts and summaries. Leave the default to keep everything inside Daisy's own folder.")
+            Text("Daisy notices a word typed in the wrong keyboard layout and fixes it — before you send the message.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 10) {
-                Text(SessionsFolder.userFolderDisplayPath()
-                     ?? SessionsFolder.defaultContainerLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                HStack(spacing: 8) {
-                    Button("Choose folder…") {
-                        if SessionsFolder.presentPicker() != nil {
-                            folderTick &+= 1
-                        }
+
+            if !accessibilityGranted {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyAccent)
+                    Text("Accessibility access isn't granted yet, so Daisy can't rewrite what you type — nothing below will work until it is.")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Allow Accessibility") {
+                        requestAccessibilityAccess()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(Color.daisyTextPrimary)
-                    if SessionsFolder.hasUserFolder {
-                        Button("Reset to default") {
-                            SessionsFolder.clearUserFolder()
-                            folderTick &+= 1
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(Color.daisyTextPrimary)
-                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    Color.daisyAccent.opacity(0.20),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+                )
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
-            .id(folderTick)
+
+            VStack(spacing: 10) {
+                HStack(alignment: .center, spacing: 12) {
+                    Text("Fix the layout as I type")
+                        .font(.callout.weight(.medium))
+                    Spacer()
+                    Toggle("", isOn: $settings.layoutFixAuto)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+                )
+                hotkeyRow(
+                    title: String(localized: "Fix the keyboard layout"),
+                    description: String(localized: "«ghbdtn» becomes «привет» — the selection, or the word you're typing"),
+                    color: .daisyAccent,
+                    binding: $settings.layoutFixHotkey
+                )
+            }
             Spacer()
         }
     }
@@ -648,6 +810,16 @@ struct FirstRunView: View {
                 default:
                     EmptyView()
                 }
+
+                // Continue works without a key — say so, so an empty
+                // field doesn't read as a wall. Whoever wants to look
+                // around first pastes the key later.
+                if summarizer.providerKind.requiresAPIKey {
+                    Text("No key yet? Continue — you can add it later in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -657,6 +829,16 @@ struct FirstRunView: View {
                     .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
             )
             Spacer()
+        }
+        // Apple Intelligence must be SELECTED when it can run, not
+        // merely listed first. One-shot: coming back to this step after
+        // picking a cloud provider doesn't override the choice.
+        .onAppear {
+            guard !modelStepSeeded else { return }
+            modelStepSeeded = true
+            if appleIntelligenceAvailable {
+                summarizer.providerKind = .appleIntelligence
+            }
         }
     }
 
@@ -674,102 +856,20 @@ struct FirstRunView: View {
     }
 
     /// Providers offered during onboarding — a deliberately small subset.
-    /// The current selection is always included so the menu Picker never
-    /// renders a blank tag if the persisted provider is one we don't list.
+    /// Order: Apple Intelligence (when it can run), Anthropic, OpenAI,
+    /// Kimi. The current selection is always included so the menu Picker
+    /// never renders a blank tag if the persisted provider is one we
+    /// don't list.
     private var onboardingProviders: [SummaryProviderKind] {
         var list: [SummaryProviderKind] = []
         if appleIntelligenceAvailable { list.append(.appleIntelligence) }
         list.append(.anthropic)
         list.append(.openai)
+        list.append(.kimi)
         if !list.contains(summarizer.providerKind) {
             list.append(summarizer.providerKind)
         }
         return list
-    }
-
-    /// Dictation vocabulary + optional writing-style prompt. Both are
-    /// inline and optional: a term goes straight into
-    /// `DictationDictionary`, the style prompt into `VoiceProfileStore`.
-    private var vocabStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "textformat.abc")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Dictation vocabulary")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
-            Text("Teach Daisy special terms it tends to mishear — a name, brand or bit of jargon — so dictation spells them your way.")
-                .font(.callout)
-                .foregroundStyle(Color.daisyTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    TextField(String(localized: "Heard as…"), text: $vocabHeard)
-                        .textFieldStyle(.roundedBorder)
-                    TextField(String(localized: "Should be…"), text: $vocabCorrect)
-                        .textFieldStyle(.roundedBorder)
-                    Button("Add") { addVocabTerm() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(Color.daisyTextPrimary)
-                        .disabled(
-                            vocabHeard.trimmingCharacters(in: .whitespaces).isEmpty
-                            || vocabCorrect.trimmingCharacters(in: .whitespaces).isEmpty
-                        )
-                }
-                if vocabAddedCount > 0 {
-                    Text("\(vocabAddedCount) term(s) added")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
-            Text("Optionally paste a short description of your writing style. Daisy can use it to polish dictated text in your voice.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 8) {
-                TextEditor(text: $styleText)
-                    .font(.callout)
-                    .frame(height: 58)
-                    .scrollContentBackground(.hidden)
-                    .padding(4)
-                    .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-                    )
-                Button("Save style") {
-                    VoiceProfileStore.shared.setCustomInstruction(styleText)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(Color.daisyTextPrimary)
-                .disabled(styleText.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            Spacer()
-        }
-    }
-
-    /// Append the entered term as a correction rule and reset the fields.
-    private func addVocabTerm() {
-        let heard = vocabHeard.trimmingCharacters(in: .whitespaces)
-        let correct = vocabCorrect.trimmingCharacters(in: .whitespaces)
-        guard !heard.isEmpty, !correct.isEmpty else { return }
-        DictationDictionary.shared.add(
-            DictationReplacement(kind: .correction, from: heard, to: correct)
-        )
-        vocabHeard = ""
-        vocabCorrect = ""
-        vocabAddedCount += 1
     }
 
     /// Short human label for the current Whisper load state. Nil when
@@ -911,7 +1011,7 @@ struct FirstRunView: View {
                     .tint(Color.daisyAccent)
                     .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
-            case .folder, .calendar, .model, .vocab:
+            case .layout, .calendar, .model:
                 // Soft steps: their controls act inline; the footer just
                 // advances. Nothing is forced — Continue is always valid.
                 Button("Continue") { advance() }
@@ -1037,6 +1137,9 @@ struct FirstRunView: View {
         }
     }
 
+    /// End of the flow. Setting `hasShownFirstRun` is the whole
+    /// contract: MainView branches on it, so the window swaps back to
+    /// the ordinary split shell the moment it flips.
     private func finish() {
         settings.hasShownFirstRun = true
         // Changing AppleLanguages does not refresh Bundle.main in the
@@ -1055,9 +1158,7 @@ struct FirstRunView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 NSApp.terminate(nil)
             }
-            return
         }
-        dismiss()
     }
 }
 

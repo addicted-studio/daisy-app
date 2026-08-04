@@ -188,12 +188,6 @@ struct MainView: View {
     @Bindable private var updater = SparkleUpdater.shared
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var sidebarSelection: MainSection? = .home
-    /// Mirrors `settings.hasShownFirstRun` for the sheet binding.
-    /// We can't bind `.sheet(isPresented:)` directly to the
-    /// settings boolean because we want "show when false" — easier
-    /// to derive a local flipped state and write through on
-    /// dismiss inside `FirstRunView`.
-    @State private var showFirstRun: Bool = false
     /// Shared Library selection state, hoisted out of the (now split)
     /// list + detail columns so both can read/write one selection. Owned
     /// here — ABOVE the shell-arity branch — so each tab's selection,
@@ -207,24 +201,35 @@ struct MainView: View {
         // The shell arity branches per section (see `splitShell`).
         // Window / toolbar chrome that must attach to the
         // NavigationSplitView itself lives in `MainWindowChrome`, applied
-        // inside each branch. The app-lifecycle modifiers below (first-run
-        // sheet, sidebar-selection sync, reactive service re-wiring) sit
-        // out HERE on the stable body so they survive the split subtree's
-        // remount when the user enters / leaves Library or Notes.
-        splitShell
-            .modifier(ToastOverlay())
-        // First-run sheet — fired once via .onAppear (not on every
-        // view re-render). After dismiss, `FirstRunView` flips
-        // `settings.hasShownFirstRun = true` so the sheet doesn't
-        // reappear on next launch.
-        .sheet(isPresented: $showFirstRun) {
-            FirstRunView(settings: settings)
-        }
-        .onAppear {
-            if !settings.hasShownFirstRun {
-                showFirstRun = true
+        // inside each branch. The app-lifecycle modifiers below
+        // (sidebar-selection sync, reactive service re-wiring) sit out
+        // HERE on the stable body so they survive both the split
+        // subtree's remount when the user enters / leaves Library or
+        // Notes AND the one-time onboarding → shell swap: state owned by
+        // MainView (`libraryModel`, `notesModel`, `sidebarSelection`)
+        // lives above the branch, and the wiring `.onChange` handlers
+        // stay registered while onboarding is on screen — which is what
+        // makes the layout-fixer toggle on the onboarding's layout step
+        // actually start the tap.
+        Group {
+            if settings.hasShownFirstRun {
+                splitShell
+            } else {
+                // First run owns the WHOLE window — no sidebar: showing
+                // navigation that can't be used yet is worse than showing
+                // none. `FirstRunView.finish()` flips `hasShownFirstRun`
+                // and this branch swaps to the ordinary shell in place.
+                // MainWindowChrome (toolbar pill, 860pt floor) stays off
+                // here on purpose: onboarding has no toolbar, suppresses
+                // the window title itself, and allows a narrower window
+                // (its single-column fallback kicks in below ~760pt).
+                FirstRunView(settings: settings)
+                    .navigationTitle("")
+                    .frame(minWidth: 560, minHeight: 520)
+                    .daisyWindowBackground(Color.daisyBgPrimary)
             }
         }
+        .modifier(ToastOverlay())
         // Keep the local sidebar selection mirrored with the shared
         // AppNavigation state so external surfaces (menu bar / widget)
         // can switch sections by mutating `AppNavigation.shared`.
