@@ -802,7 +802,7 @@ struct HomeView: View {
                 ContentUnavailableView(
                     "No recordings yet",
                     systemImage: "tray",
-                    description: Text("Click Record to make your first one.")
+                    description: Text(firstRecordingHint)
                 )
                 .frame(maxWidth: .infinity)
                 .frame(height: 160)
@@ -825,7 +825,22 @@ struct HomeView: View {
         .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
     }
 
-
+    /// Where recording actually starts, for the empty-state card. Used
+    /// to live as a line on the onboarding's final "You're set" screen
+    /// — moved here instead, since this is the moment someone actually
+    /// needs to know it, not a screen they clicked past on day one.
+    /// Names the sidebar capsule and the menu-bar icon unconditionally,
+    /// then the global hotkey ONLY if one is actually assigned — a
+    /// disabled hotkey (`keyCode == nil`) has no label worth showing,
+    /// and a dangling "or press" with nothing after it would read as
+    /// broken copy rather than simply omitting the clause.
+    private var firstRecordingHint: String {
+        let hotkey = settings.recordHotkey
+        guard hotkey.keyCode != nil else {
+            return String(localized: "Click Record in the sidebar, or start one from the menu bar (the daisy icon).")
+        }
+        return String(localized: "Click Record in the sidebar, from the menu bar (the daisy icon), or press \(hotkey.label).")
+    }
 }
 
 // MARK: - Recent session row

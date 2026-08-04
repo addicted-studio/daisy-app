@@ -16,7 +16,11 @@
 //  the setup-path pick), name, one permissions screen (mic / screen /
 //  accessibility as rows, the set depends on the setup path), hotkeys,
 //  the layout-fixer step (only with 2+ installed keyboard layouts),
-//  calendar, summaries, done.
+//  calendar, summaries. There is no separate final "you're set" screen
+//  — the last step's own primary button reads "Start using Daisy" and
+//  calls `finish()` (see `isLastStep`); the one useful line that used
+//  to live there (where recording actually starts) moved to Home's
+//  empty state, where it's needed exactly when it's needed.
 //
 //  Permission state comes from SystemPermissions.shared — the same
 //  tri-state façade Settings → Permissions uses — so each row can
@@ -48,7 +52,6 @@ import FoundationModels
 
 struct FirstRunView: View {
     @Bindable var settings: AppSettings
-    @Bindable var nav = AppNavigation.shared
 
     /// Steps the user walks through, in order.
     enum Step: Int, CaseIterable {
@@ -65,7 +68,6 @@ struct FirstRunView: View {
         // "Continue" footer — no action is forced.
         case calendar
         case model
-        case done
 
         /// Short name shown in the step rail / used by both columns.
         var railTitle: String {
@@ -77,7 +79,6 @@ struct FirstRunView: View {
             case .layout:          String(localized: "Keyboard layout")
             case .calendar:        String(localized: "Calendar")
             case .model:           String(localized: "Summaries")
-            case .done:            String(localized: "You're set")
             }
         }
     }
@@ -109,10 +110,10 @@ struct FirstRunView: View {
         switch path {
         case .full:
             return [.purpose, .name, .permissions,
-                    .hotkeys] + layoutFixer + [.calendar, .model, .done]
+                    .hotkeys] + layoutFixer + [.calendar, .model]
         case .dictationOnly:
             return [.purpose, .permissions, .hotkeys]
-                    + layoutFixer + [.done]
+                    + layoutFixer
         }
     }
 
@@ -334,7 +335,6 @@ struct FirstRunView: View {
             case .layout: layoutStep
             case .calendar: calendarStep
             case .model: modelStep
-            case .done: doneStep
             }
         }
         .padding(.horizontal, 32)
@@ -937,89 +937,23 @@ struct FirstRunView: View {
         return list
     }
 
-    /// Short human label for the current Whisper load state. Nil when
-    /// the model is ready (we hide the row entirely in that case so the
-    /// Done step doesn't show stale "100%" after the load completes).
-    private var whisperProgressLine: String? {
-        switch WhisperEngine.shared.state {
-        case .notLoaded:
-            return String(localized: "Setting up transcription model…")
-        case .downloading(let p):
-            return String(localized: "Downloading transcription model · \(Int(p * 100))%")
-        case .loading(let status):
-            return String(localized: "Loading transcription model · \(status)")
-        case .ready, .failed:
-            return nil
-        }
-    }
-
-    private var doneStep: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("You're set")
-                .font(.title2.weight(.semibold))
-            Text("Start a recording from the menu bar (the daisy icon at the top of your screen) or press your global shortcut.")
-                .font(.callout)
-                .foregroundStyle(Color.daisyTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            // Inline progress row — only visible if WhisperEngine is
-            // still downloading or loading the model. Prewarm kicked
-            // off from `RecordingSession.init()` runs while the user
-            // walks the onboarding; on a fresh install this row is
-            // visible for the full Done step. SwiftUI re-renders on
-            // every `WhisperEngine.shared.state` change because @Observable
-            // tracks the access from within the view body.
-            if let line = whisperProgressLine {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 4)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Optional setup")
-                    .font(.footnote.weight(.semibold))
-                    .textCase(.uppercase)
-                    .tracking(0.4)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
-                ctaRow(
-                    title: String(localized: "Pick an AI for summaries"),
-                    detail: String(localized: "Apple Intelligence runs offline on macOS 26; otherwise paste an Anthropic or OpenAI key."),
-                    action: {
-                        nav.openInSettings(.summary)
-                        finish()
-                    }
-                )
-                ctaRow(
-                    title: String(localized: "Wire a destination"),
-                    detail: String(localized: "Auto-send finished recordings to Notion right after Stop — plus Linear, Attio, webhooks, and custom MCP wrappers."),
-                    action: {
-                        // 1.0.7.16: Notion moved out of Settings onto the
-                        // top-level Connections page → Auto-routing tab,
-                        // alongside the other send-to destinations. Land the
-                        // user there so the Notion row and the MCP
-                        // integrations are in one place.
-                        nav.openInConnections(.autoRouting)
-                        finish()
-                    }
-                )
-            }
-            Spacer()
-        }
-    }
-
     // MARK: - Footer
+
+    /// Whether `step` is the last one in the CURRENT path — varies by
+    /// `setupPath` and whether the layout-fixer step is present, so this
+    /// has to be computed, not hardcoded per case. The last step's
+    /// primary button reads "Start using Daisy" and closes onboarding;
+    /// there's no separate "You're set" screen to land on first.
+    private var isLastStep: Bool {
+        orderedSteps.last == step
+    }
 
     private var footer: some View {
         HStack {
             // Back button — visible after step 0 so the user can
             // revisit a permission they tapped Skip on without
             // restarting the whole flow.
-            if step.rawValue > 0, step != .done {
+            if step.rawValue > 0 {
                 Button("Back") {
                     let steps = orderedSteps
                     if let i = steps.firstIndex(of: step), i > 0 {
@@ -1031,21 +965,21 @@ struct FirstRunView: View {
             Spacer()
             // Step-specific footer right side:
             //   • Purpose → the two option cards advance on tap, no button
-            //   • Everything else → "Continue" (or "Start using Daisy" on
-            //     the last step) — inline row controls (permissions,
+            //   • Everything else → "Continue", or "Start using Daisy" on
+            //     the path's last step — inline row controls (permissions,
             //     hotkeys, the layout toggle) do their own thing; nothing
-            //     here is ever forced.
+            //     here is ever forced. `advance()` already calls `finish()`
+            //     when there's no next step, so the action is the same
+            //     either way — only the label changes.
             switch step {
             case .purpose:
                 EmptyView()
             case .name, .permissions, .hotkeys, .layout, .calendar, .model:
-                Button("Continue") { advance() }
-                    .buttonStyle(DaisyStepButtonStyle(filled: true))
-                    .keyboardShortcut(.defaultAction)
-            case .done:
-                Button("Start using Daisy") { finish() }
-                    .buttonStyle(DaisyStepButtonStyle(filled: true))
-                    .keyboardShortcut(.defaultAction)
+                Button(isLastStep ? String(localized: "Start using Daisy") : String(localized: "Continue")) {
+                    advance()
+                }
+                .buttonStyle(DaisyStepButtonStyle(filled: true))
+                .keyboardShortcut(.defaultAction)
             }
         }
         .padding(.horizontal, 24)
@@ -1082,38 +1016,6 @@ struct FirstRunView: View {
                 )
                 .opacity(configuration.isPressed ? 0.85 : 1)
         }
-    }
-
-    // MARK: - Optional CTAs (on Done step)
-
-    @ViewBuilder
-    private func ctaRow(title: String, detail: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(Color.daisyTextPrimary)
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(.leading)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Permission refresh
