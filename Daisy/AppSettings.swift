@@ -718,6 +718,34 @@ final class AppSettings {
         didSet { defaults.set(hasShownFirstRun, forKey: Self.k_hasShownFirstRun) }
     }
 
+    /// One-shot interface-language fallback for Belarusian systems.
+    /// Called from DaisyApp.init, before the first localized string is
+    /// resolved, so it takes effect in the same launch. Daisy has no
+    /// `be` localization and macOS's fallback for a be-first preferred
+    /// list is English — Russian is almost certainly the lesser evil
+    /// there. This is the ONLY rule layered on top of the system
+    /// choice: everyone else gets whatever macOS picks from their
+    /// preferred languages. Region is deliberately not consulted —
+    /// region ≠ language, and a user in RU running an English system
+    /// wants English.
+    ///
+    /// Gated on the first-run flag (a rule for fresh installs, not a
+    /// standing correction) and on the absence of an explicit override
+    /// from Settings → Language, whose keys it shares — so once it has
+    /// run, or once the user has chosen anything themselves, it never
+    /// fires again.
+    static func applyBelarusianLanguageFallbackIfNeeded(
+        defaults: UserDefaults = .standard
+    ) {
+        guard !defaults.bool(forKey: k_hasShownFirstRun),
+              defaults.object(forKey: "AppleLanguagesOverridden") == nil,
+              let primary = Locale.preferredLanguages.first,
+              Locale(identifier: primary).language.languageCode?.identifier == "be"
+        else { return }
+        defaults.set(["ru"], forKey: "AppleLanguages")
+        defaults.set(true, forKey: "AppleLanguagesOverridden")
+    }
+
     /// Set the first time a user opens a meeting session whose
     /// `daisy_system_audio_status` is `empty` and reads the
     /// acoustic-loopback explainer banner in SessionDetailView. After

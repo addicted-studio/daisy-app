@@ -12,10 +12,15 @@
 //  progress dots on top.
 //
 //  Step order lives in `steps(for:installedLayoutCount:)` — a pure
-//  function so the order is unit-tested. Welcome, language, purpose,
-//  name, then the permission block (mic / screen / accessibility),
-//  hotkeys, the layout-fixer step (only with 2+ installed keyboard
-//  layouts), calendar, summaries, done.
+//  function so the order is unit-tested. Welcome, purpose, name, then
+//  the permission block (mic / screen / accessibility), hotkeys, the
+//  layout-fixer step (only with 2+ installed keyboard layouts),
+//  calendar, summaries, done.
+//
+//  There is no language step: macOS picks the interface language from
+//  the user's preferred-languages list (plus the one-shot `be` → `ru`
+//  fallback in AppSettings.applyBelarusianLanguageFallbackIfNeeded).
+//  Settings → Language is where an explicit override lives.
 //
 //  Each permission step owns one decision and surfaces a single
 //  primary action. Permission prompts fire inline; when the system
@@ -43,7 +48,6 @@ struct FirstRunView: View {
     /// Steps the user walks through, in order.
     enum Step: Int, CaseIterable {
         case welcome
-        case language
         case purpose
         case name
         case microphone
@@ -63,7 +67,6 @@ struct FirstRunView: View {
         var railTitle: String {
             switch self {
             case .welcome:         String(localized: "Welcome")
-            case .language:        String(localized: "Language")
             case .purpose:         String(localized: "Purpose")
             case .name:            String(localized: "Your name")
             case .microphone:      String(localized: "Microphone")
@@ -104,20 +107,17 @@ struct FirstRunView: View {
         let layoutFixer: [Step] = installedLayoutCount > 1 ? [.layout] : []
         switch path {
         case .full:
-            return [.welcome, .language, .purpose, .name,
+            return [.welcome, .purpose, .name,
                     .microphone, .screenRecording, .accessibility,
                     .hotkeys] + layoutFixer + [.calendar, .model, .done]
         case .dictationOnly:
-            return [.welcome, .language, .purpose,
+            return [.welcome, .purpose,
                     .microphone, .accessibility, .hotkeys]
                     + layoutFixer + [.done]
         }
     }
 
     @State private var step: Step = .welcome
-    /// Interface-language pick for the language step, seeded from the
-    /// region heuristic below.
-    @State private var uiLanguage: String = FirstRunView.recommendedLanguage()
     /// Permission states refreshed on .appear of each step + on app
     /// foreground-activation — system can flip them out-of-band (user
     /// toggles in Settings while onboarding is open), and the cached
@@ -134,25 +134,6 @@ struct FirstRunView: View {
     /// provider on the model step. Seeded once so a user who picks a
     /// cloud provider, goes back and returns isn't overridden.
     @State private var modelStepSeeded: Bool = false
-
-    /// Default UI language for the language step: Russian for Russia &
-    /// Belarus (or a ru/be system language); English for Ukraine — we
-    /// never default Russian there — and for everyone else.
-    static func recommendedLanguage() -> String {
-        let region = Locale.current.region?.identifier
-        let lang = Locale.current.language.languageCode?.identifier
-        if region == "UA" || lang == "uk" { return "en" }
-        if region == "RU" || region == "BY" || lang == "ru" || lang == "be" { return "ru" }
-        return "en"
-    }
-
-    /// Persist the interface-language override — same keys as Settings →
-    /// Language. Full effect on next launch (standard AppKit behaviour).
-    private func applyLanguage(_ code: String) {
-        let d = UserDefaults.standard
-        d.set([code], forKey: "AppleLanguages")
-        d.set(true, forKey: "AppleLanguagesOverridden")
-    }
 
     /// Below this window width the rail + readable column don't both
     /// fit; fall back to a single column with progress dots on top.
@@ -338,7 +319,6 @@ struct FirstRunView: View {
         Group {
             switch step {
             case .welcome: welcomeStep
-            case .language: languageStep
             case .purpose: purposeStep
             case .name: nameStep
             case .microphone: micStep
@@ -377,32 +357,6 @@ struct FirstRunView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-        }
-    }
-
-    private var languageStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "globe")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Language")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
-            Text("Choose the language for Daisy's interface. You can change it later in Settings.")
-                .font(.callout)
-                .foregroundStyle(Color.daisyTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Picker("", selection: $uiLanguage) {
-                Text("English").tag("en")
-                Text(verbatim: "Русский").tag("ru")
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 260, alignment: .leading)
-            .onChange(of: uiLanguage) { _, new in applyLanguage(new) }
             Spacer()
         }
     }
@@ -985,12 +939,6 @@ struct FirstRunView: View {
                     // WCAG on the amber fill (≈2:1 in dark).
                     .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
-            case .language:
-                Button("Continue") { applyLanguage(uiLanguage); advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Color.daisyAccent)
-                    .foregroundStyle(Color.daisyTextOnAccent)
-                    .keyboardShortcut(.defaultAction)
             case .purpose:
                 // The two option cards advance on tap — no footer action.
                 EmptyView()
@@ -1138,27 +1086,11 @@ struct FirstRunView: View {
     }
 
     /// End of the flow. Setting `hasShownFirstRun` is the whole
-    /// contract: MainView branches on it, so the window swaps back to
-    /// the ordinary split shell the moment it flips.
+    /// contract: MainView branches on it (the AppSettings `didSet`
+    /// persists it to UserDefaults), so the window swaps back to the
+    /// ordinary split shell the moment it flips.
     private func finish() {
         settings.hasShownFirstRun = true
-        // Changing AppleLanguages does not refresh Bundle.main in the
-        // running process. Relaunch when onboarding selected a different
-        // interface language, so the rest of the app does not stay English.
-        let activeLanguage = Bundle.main.preferredLocalizations.first?
-            .prefix(2)
-            .lowercased()
-        if activeLanguage != uiLanguage {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.createsNewApplicationInstance = true
-            NSWorkspace.shared.openApplication(
-                at: Bundle.main.bundleURL,
-                configuration: configuration,
-            ) { _, _ in }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                NSApp.terminate(nil)
-            }
-        }
     }
 }
 
