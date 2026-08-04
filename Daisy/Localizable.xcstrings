@@ -4487,6 +4487,16 @@
         }
       }
     },
+    "Daisy records meetings and dictates into any app — all on your Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy записывает встречи и диктует текст в любое приложение — всё на этом Mac."
+          }
+        }
+      }
+    },
     "Daisy records the audio of your meetings, writes the transcript on your Mac, and lets you send the result wherever you want — Notion, Linear, Claude, your own webhook." : {
       "localizations" : {
         "ru" : {

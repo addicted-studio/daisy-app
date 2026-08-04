@@ -18,6 +18,17 @@
 
 import SwiftUI
 
+/// Shared pill-button geometry — the record button and onboarding's
+/// Back/Continue actions both read as the app's "big action" idiom, so
+/// they share one source for padding/font instead of two hand-tuned
+/// copies drifting apart. Capsule shape gives the radius for free (a
+/// capsule is always fully round) — nothing to name for that part.
+enum DaisyCapsuleMetrics {
+    static let horizontalPadding: CGFloat = 12
+    static let verticalPadding: CGFloat = 14
+    static let font: Font = .callout.weight(.medium)
+}
+
 struct RecordCapsule: View {
     @Bindable var session: RecordingSession
     @Bindable var settings: AppSettings
@@ -35,7 +46,7 @@ struct RecordCapsule: View {
                 Image(systemName: icon)
                     .font(.callout.weight(.semibold))
                 Text(label)
-                    .font(.callout.weight(.medium))
+                    .font(DaisyCapsuleMetrics.font)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 if session.status == .recording || session.status == .paused {
@@ -68,7 +79,7 @@ struct RecordCapsule: View {
             // now reads as a self-contained pill rather than an
             // over-stretched one. Stop & save below got the same
             // bump for matched-pair rhythm.
-            .padding(.horizontal, 12)
+            .padding(.horizontal, DaisyCapsuleMetrics.horizontalPadding)
             // 2026-05-25 — bumped vertical padding 8 → 14 (+6 each
             // side = +12pt total height) per Egor's eyeball pass on
             // the sidebar. Previously the capsule felt tight against
@@ -76,7 +87,7 @@ struct RecordCapsule: View {
             // the Record button now reads as the unambiguous primary
             // action of the sidebar, matches the visual weight of
             // the brand mark + Daisy pill above.
-            .padding(.vertical, 14)
+            .padding(.vertical, DaisyCapsuleMetrics.verticalPadding)
             .frame(maxWidth: .infinity)
             .foregroundStyle(foreground)
             .background(
