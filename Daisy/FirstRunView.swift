@@ -12,10 +12,16 @@
 //  progress dots on top.
 //
 //  Step order lives in `steps(for:installedLayoutCount:)` — a pure
-//  function so the order is unit-tested. Welcome, purpose, name, then
-//  the permission block (mic / screen / accessibility), hotkeys, the
-//  layout-fixer step (only with 2+ installed keyboard layouts),
-//  calendar, summaries, done.
+//  function so the order is unit-tested. Welcome, purpose, name, one
+//  permissions screen (mic / screen / accessibility as rows, the set
+//  depends on the setup path), hotkeys, the layout-fixer step (only
+//  with 2+ installed keyboard layouts), calendar, summaries, done.
+//
+//  Permission state comes from SystemPermissions.shared — the same
+//  tri-state façade Settings → Permissions uses — so each row can
+//  honestly branch: not asked → Allow (fires the system prompt);
+//  granted → checkmark; denied → Open Settings… (macOS asks once, a
+//  second Allow would silently do nothing and read as a broken app).
 //
 //  There is no language step: macOS picks the interface language from
 //  the user's preferred-languages list (plus the one-shot `be` → `ru`
@@ -35,9 +41,6 @@
 
 import SwiftUI
 import AppKit
-import AVFoundation
-import CoreGraphics
-import ApplicationServices
 import EventKit
 import FoundationModels
 
@@ -50,9 +53,9 @@ struct FirstRunView: View {
         case welcome
         case purpose
         case name
-        case microphone
-        case screenRecording
-        case accessibility
+        /// One screen for the whole permission set — which rows it
+        /// shows depends on `SetupPath` (see `permissionsStep`).
+        case permissions
         case hotkeys
         /// The wrong-layout fixer — asked only of people with 2+
         /// installed keyboard layouts (see `steps(for:installedLayoutCount:)`).
@@ -69,9 +72,7 @@ struct FirstRunView: View {
             case .welcome:         String(localized: "Welcome")
             case .purpose:         String(localized: "Purpose")
             case .name:            String(localized: "Your name")
-            case .microphone:      String(localized: "Microphone")
-            case .screenRecording: String(localized: "Screen Recording")
-            case .accessibility:   String(localized: "Accessibility")
+            case .permissions:     String(localized: "Permissions")
             case .hotkeys:         String(localized: "Hotkeys")
             case .layout:          String(localized: "Keyboard layout")
             case .calendar:        String(localized: "Calendar")
@@ -107,24 +108,28 @@ struct FirstRunView: View {
         let layoutFixer: [Step] = installedLayoutCount > 1 ? [.layout] : []
         switch path {
         case .full:
-            return [.welcome, .purpose, .name,
-                    .microphone, .screenRecording, .accessibility,
+            return [.welcome, .purpose, .name, .permissions,
                     .hotkeys] + layoutFixer + [.calendar, .model, .done]
         case .dictationOnly:
-            return [.welcome, .purpose,
-                    .microphone, .accessibility, .hotkeys]
+            return [.welcome, .purpose, .permissions, .hotkeys]
                     + layoutFixer + [.done]
         }
     }
 
     @State private var step: Step = .welcome
-    /// Permission states refreshed on .appear of each step + on app
-    /// foreground-activation — system can flip them out-of-band (user
-    /// toggles in Settings while onboarding is open), and the cached
-    /// value would otherwise lie.
-    @State private var micGranted: Bool = false
-    @State private var screenGranted: Bool = false
-    @State private var accessibilityGranted: Bool = false
+    /// Permission state lives in `SystemPermissions.shared` (@Observable,
+    /// same façade Settings → Permissions reads), refreshed on step
+    /// change + on app foreground-activation — the system can flip
+    /// grants out-of-band (user toggles in System Settings while
+    /// onboarding is open), and a cached value would otherwise lie.
+    /// One refresh updates every row of the permissions step at once.
+    private var perms: SystemPermissions { SystemPermissions.shared }
+    /// Whether THIS onboarding session already fired the Accessibility
+    /// prompt. macOS asks once — after that `AXIsProcessTrustedWithOptions`
+    /// silently does nothing — and unlike mic there is no API that
+    /// distinguishes "never asked" from "denied". Local tracking is
+    /// enough here: on a fresh install nobody has been asked yet.
+    @State private var accessibilityAsked: Bool = false
 
     // ─── Soft-step state ──────────────────────────────────────────────
     /// Summary provider is @Observable but lives outside `settings`, so
@@ -321,9 +326,7 @@ struct FirstRunView: View {
             case .welcome: welcomeStep
             case .purpose: purposeStep
             case .name: nameStep
-            case .microphone: micStep
-            case .screenRecording: screenStep
-            case .accessibility: accessibilityStep
+            case .permissions: permissionsStep
             case .hotkeys: hotkeysStep
             case .layout: layoutStep
             case .calendar: calendarStep
@@ -444,54 +447,153 @@ struct FirstRunView: View {
         }
     }
 
-    private var micStep: some View {
-        StepView(
-            icon: "mic.fill",
-            title: String(localized: "Microphone"),
-            description: String(localized: "Daisy needs to hear your voice. Audio is recorded locally and transcribed on-device — nothing about it leaves your Mac."),
-            statusGranted: micGranted,
-            primaryActionLabel: micGranted ? String(localized: "Continue") : String(localized: "Allow microphone"),
-            onPrimary: {
-                if micGranted {
-                    advance()
-                } else {
-                    Task { await requestMicAccess() }
-                }
+    /// One screen for the whole permission set. Title, one sentence
+    /// about asking exactly this much, then a row per permission —
+    /// icon, name, one line of "why", and a control that matches the
+    /// REAL state: Allow fires the system prompt only while the system
+    /// would actually show one; once denied, the row offers Open
+    /// Settings… instead, because a second Allow silently does nothing
+    /// and reads as a broken app. Dictation-only setups skip the
+    /// Screen Recording row — nothing meeting-shaped is asked of them.
+    private var permissionsStep: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: "lock.shield")
+                    .font(.title2)
+                    .foregroundStyle(Color.daisyAccent)
+                Text("Permissions")
+                    .font(.title2.weight(.semibold))
+                Spacer()
             }
-        )
+            Text("Daisy asks for exactly what its features need — nothing more.")
+                .font(.callout)
+                .foregroundStyle(Color.daisyTextPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 10) {
+                permissionRow(
+                    icon: "mic.fill",
+                    title: String(localized: "Microphone"),
+                    why: String(localized: "Your voice — recorded and transcribed on this Mac."),
+                    status: perms.microphone,
+                    allow: { Task { await SystemPermissions.shared.requestMicrophone() } },
+                    openSettings: { SystemPermissions.shared.openMicrophoneSettings() }
+                )
+                if setupPath == .full {
+                    permissionRow(
+                        icon: "rectangle.dashed.badge.record",
+                        title: String(localized: "Screen Recording"),
+                        why: String(localized: "The other side of meetings, through system audio."),
+                        status: perms.screenRecording,
+                        // Falls back to opening System Settings itself
+                        // when the macOS 14+ prompt doesn't fire — see
+                        // SystemPermissions.requestScreenRecording.
+                        allow: { SystemPermissions.shared.requestScreenRecording() },
+                        openSettings: { SystemPermissions.shared.openScreenRecordingSettings() }
+                    )
+                }
+                permissionRow(
+                    icon: "keyboard",
+                    title: String(localized: "Accessibility"),
+                    why: String(localized: "Pastes dictated text into the app you're in."),
+                    status: accessibilityRowStatus,
+                    allow: {
+                        accessibilityAsked = true
+                        SystemPermissions.shared.requestAccessibility()
+                    },
+                    openSettings: { SystemPermissions.shared.openAccessibilitySettings() }
+                )
+            }
+
+            // The microphone is the one permission Daisy cannot work
+            // without. Continue stays enabled — nothing is forced —
+            // but the consequence is said out loud, not implied.
+            if perms.microphone != .granted {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyAccent)
+                    Text("Without the microphone Daisy can't record anything — the rest can wait.")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyTextPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(
+                    Color.daisyAccent.opacity(0.20),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
+                )
+            }
+            Spacer()
+        }
     }
 
-    private var screenStep: some View {
-        StepView(
-            icon: "rectangle.dashed.badge.record",
-            title: String(localized: "Screen Recording"),
-            description: String(localized: "Lets Daisy hear the other side of meetings (Zoom, Meet, Teams) through the system audio loopback. Daisy never reads pixels or saves screenshots without your permission."),
-            statusGranted: screenGranted,
-            primaryActionLabel: screenGranted ? String(localized: "Continue") : String(localized: "Allow Screen Recording"),
-            onPrimary: {
-                if screenGranted {
-                    advance()
-                } else {
-                    requestScreenAccess()
-                }
-            }
-        )
+    /// Accessibility's row status. `AXIsProcessTrusted` is a Bool, so
+    /// SystemPermissions can never report `.denied` for it — the local
+    /// `accessibilityAsked` flag supplies the third state: once this
+    /// session has fired the one-shot prompt and the grant still isn't
+    /// there, the only honest control is Open Settings….
+    private var accessibilityRowStatus: SystemPermissions.Status {
+        if perms.accessibility == .granted { return .granted }
+        return accessibilityAsked ? .denied : .notDetermined
     }
 
-    private var accessibilityStep: some View {
-        StepView(
-            icon: "keyboard",
-            title: String(localized: "Accessibility"),
-            description: String(localized: "Required for the dictation hotkey — Daisy pastes the transcribed text into the active app via ⌘V. Without this, dictation falls back to copy-only (you have to paste yourself)."),
-            statusGranted: accessibilityGranted,
-            primaryActionLabel: accessibilityGranted ? String(localized: "Continue") : String(localized: "Allow Accessibility"),
-            onPrimary: {
-                if accessibilityGranted {
-                    advance()
-                } else {
-                    requestAccessibilityAccess()
-                }
+    /// Single permission row: icon + name + one-line why on the left,
+    /// the state-matched control on the right. Same card shell as
+    /// `hotkeyRow` so the whole flow reads as one family.
+    private func permissionRow(
+        icon: String,
+        title: String,
+        why: String,
+        status: SystemPermissions.Status,
+        allow: @escaping () -> Void,
+        openSettings: @escaping () -> Void
+    ) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: icon)
+                .font(.callout)
+                .foregroundStyle(status == .granted ? Color.daisySuccess : Color.daisyAccent)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.callout.weight(.medium))
+                Text(why)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer()
+            switch status {
+            case .granted:
+                Label("Granted", systemImage: "checkmark.circle.fill")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.daisySuccess)
+            case .notDetermined:
+                Button("Allow") { allow() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(Color.daisyAccent)
+                    .foregroundStyle(Color.daisyTextOnAccent)
+            case .denied, .restricted, .insufficient:
+                Button("Open Settings…") { openSettings() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(Color.daisyTextPrimary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
         )
     }
 
@@ -598,7 +700,7 @@ struct FirstRunView: View {
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if !accessibilityGranted {
+            if perms.accessibility != .granted {
                 HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.caption)
@@ -609,7 +711,8 @@ struct FirstRunView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 0)
                     Button("Allow Accessibility") {
-                        requestAccessibilityAccess()
+                        accessibilityAsked = true
+                        SystemPermissions.shared.requestAccessibility()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -948,11 +1051,15 @@ struct FirstRunView: View {
                     .tint(Color.daisyAccent)
                     .foregroundStyle(Color.daisyTextOnAccent)
                     .keyboardShortcut(.defaultAction)
-            case .microphone, .screenRecording, .accessibility:
-                Button("Skip for now") { advance() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .tint(Color.daisyTextPrimary)
+            case .permissions:
+                // Rows carry their own Allow / Open Settings… actions;
+                // Continue never blocks — the mic warning on the step
+                // says what's at stake, the footer doesn't nag.
+                Button("Continue") { advance() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.daisyAccent)
+                    .foregroundStyle(Color.daisyTextOnAccent)
+                    .keyboardShortcut(.defaultAction)
             case .hotkeys:
                 Button("Continue") { advance() }
                     .buttonStyle(.borderedProminent)
@@ -1011,67 +1118,14 @@ struct FirstRunView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Permission requests
+    // MARK: - Permission refresh
 
-    /// Modern API for mic — `AVCaptureDevice.requestAccess(for:)` is
-    /// async-friendly and triggers the system prompt only when the
-    /// status is undetermined. Already-granted returns true without
-    /// re-prompting; denied returns false without prompting again.
-    private func requestMicAccess() async {
-        let granted = await AVCaptureDevice.requestAccess(for: .audio)
-        micGranted = granted
-        if granted {
-            advance()
-        }
-    }
-
-    /// Screen Recording uses the lower-level CoreGraphics API.
-    ///
-    /// `CGRequestScreenCaptureAccess` is documented to show the
-    /// system dialog. In practice on macOS 14+ it is **unreliable**:
-    /// returns `false` without showing any prompt for most users.
-    /// Without a fallback, the onboarding button is a dead end —
-    /// click, nothing happens, click again, same.
-    ///
-    /// Two-pronged fix matching `SystemPermissions.requestScreenRecording()`:
-    ///   1. Call CGRequestScreenCaptureAccess — if the prompt does
-    ///      fire and the user grants, we advance immediately.
-    ///   2. If the call returned false (either prompt didn't fire,
-    ///      or user denied), open System Settings → Privacy → Screen
-    ///      Recording directly so the user has a path forward. The
-    ///      focus observer on the parent view refreshes status when
-    ///      they come back, and the "Granted" badge appears without
-    ///      needing another click.
-    private func requestScreenAccess() {
-        let granted = CGRequestScreenCaptureAccess()
-        screenGranted = granted
-        if granted {
-            advance()
-        } else {
-            // Open System Settings as fallback — the user grants
-            // there, then we auto-detect on return-to-foreground.
-            ScreenRecordingPermission.openSystemSettings()
-        }
-    }
-
-    /// Accessibility permission is requested via the canonical
-    /// `AXIsProcessTrustedWithOptions(prompt: true)` API. macOS shows
-    /// a system sheet pointing the user at System Settings → Privacy
-    /// → Accessibility; there's no auto-grant from here. The focus
-    /// observer on the parent view re-checks on return and the
-    /// "Granted" badge appears without needing another click.
-    private func requestAccessibilityAccess() {
-        let promptKey = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let options = [promptKey: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        // No advance — flip happens out-of-band when the user returns
-        // from System Settings, caught by the focus observer.
-    }
-
+    /// All request paths live in `SystemPermissions` (shared with
+    /// Settings → Permissions); this is just the re-poll, wired to
+    /// step changes + app foreground-activation by the observers on
+    /// `body`. One call updates every permission row at once.
     private func refreshPermissionStates() {
-        micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        screenGranted = CGPreflightScreenCaptureAccess()
-        accessibilityGranted = AXIsProcessTrusted()
+        SystemPermissions.shared.refresh()
     }
 
     // MARK: - Flow
@@ -1091,56 +1145,6 @@ struct FirstRunView: View {
     /// ordinary split shell the moment it flips.
     private func finish() {
         settings.hasShownFirstRun = true
-    }
-}
-
-// MARK: - Permission step layout
-//
-// Shared between mic + screen-recording steps. Centralises the
-// icon + title + body + grant button + status badge layout so the
-// two steps stay visually identical and we only describe the
-// "what / why" string per step.
-
-private struct StepView: View {
-    let icon: String
-    let title: String
-    /// The explanatory paragraph under the title. Named `description`
-    /// rather than `body` because the latter collides with
-    /// `View.body`'s required property name and Swift flags it as
-    /// invalid redeclaration.
-    let description: String
-    let statusGranted: Bool
-    let primaryActionLabel: String
-    let onPrimary: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text(title)
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                if statusGranted {
-                    Label("Granted", systemImage: "checkmark.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.daisySuccess)
-                }
-            }
-            Text(description)
-                .font(.callout)
-                .foregroundStyle(Color.daisyTextPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button(primaryActionLabel, action: onPrimary)
-                .buttonStyle(.borderedProminent)
-                .tint(Color.daisyAccent)
-                .foregroundStyle(Color.daisyTextOnAccent)
-                .controlSize(.regular)
-                .keyboardShortcut(.defaultAction)
-        }
     }
 }
 

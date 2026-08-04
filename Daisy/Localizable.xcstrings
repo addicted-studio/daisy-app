@@ -1972,6 +1972,16 @@
         }
       }
     },
+    "Allow" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Разрешить"
+          }
+        }
+      }
+    },
     "Allow Accessibility" : {
       "localizations" : {
         "ru" : {
@@ -4099,6 +4109,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy"
+          }
+        }
+      }
+    },
+    "Daisy asks for exactly what its features need — nothing more." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy просит ровно то, что нужно её функциям, — и ничего больше."
           }
         }
       }
@@ -8877,6 +8897,16 @@
         }
       }
     },
+    "Pastes dictated text into the app you're in." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставляет надиктованное в приложение, где вы сейчас."
+          }
+        }
+      }
+    },
     "Pause" : {
       "localizations" : {
         "ru" : {
@@ -11539,6 +11569,16 @@
         }
       }
     },
+    "The other side of meetings, through system audio." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Другая сторона встречи — через системный звук."
+          }
+        }
+      }
+    },
     "The other side went silent and may not be recording anymore. Check your output device." : {
       "localizations" : {
         "ru" : {
@@ -12268,6 +12308,16 @@
         }
       }
     },
+    "Without the microphone Daisy can't record anything — the rest can wait." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без микрофона Daisy не сможет ничего записать — остальное может подождать."
+          }
+        }
+      }
+    },
     "Words / min" : {
       "localizations" : {
         "ru" : {
@@ -12285,6 +12335,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Записывает запись в конфигурацию Claude. После этого перезапустите Claude Desktop, чтобы загрузить инструменты Daisy."
+          }
+        }
+      }
+    },
+    "Your voice — recorded and transcribed on this Mac." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ваш голос — записывается и расшифровывается на этом Mac."
           }
         }
       }
