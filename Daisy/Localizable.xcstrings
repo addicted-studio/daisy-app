@@ -3387,6 +3387,16 @@
         }
       }
     },
+    "Connect one or both — Daisy merges events from both and removes duplicates." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Можно подключить один источник или оба — Daisy объединит события и уберёт дубликаты."
+          }
+        }
+      }
+    },
     "Connect your calendar so Daisy can start recording automatically when a meeting begins. You can change this anytime in Settings." : {
       "localizations" : {
         "ru" : {
@@ -7544,6 +7554,26 @@
         }
       }
     },
+    "Needed for any recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужен для любой записи."
+          }
+        }
+      }
+    },
+    "Needed for system audio — the other side of a meeting." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нужен для системного звука — другой стороны встречи."
+          }
+        }
+      }
+    },
     "Needs a quick repair before Claude Desktop can connect." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -8319,6 +8349,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "На экране в %@"
+          }
+        }
+      }
+    },
+    "On, but Accessibility access is needed to actually run it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено, но нужен доступ к универсальному доступу, чтобы это реально заработало."
+          }
+        }
+      }
+    },
+    "On, but not running yet — try the toggle again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено, но пока не запущено — попробуйте переключить ещё раз."
           }
         }
       }
