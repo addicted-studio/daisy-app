@@ -12,36 +12,38 @@
 //  progress dots on top.
 //
 //  Step order lives in `steps(for:installedLayoutCount:)` — a pure
-//  function so the order is unit-tested. Welcome, purpose, name, one
-//  permissions screen (mic / screen / accessibility as rows, the set
-//  depends on the setup path), hotkeys, the layout-fixer step (only
-//  with 2+ installed keyboard layouts), calendar, summaries, done.
+//  function so the order is unit-tested. Purpose (doubles as welcome +
+//  the setup-path pick), name, one permissions screen (mic / screen /
+//  accessibility as rows, the set depends on the setup path), hotkeys,
+//  the layout-fixer step (only with 2+ installed keyboard layouts),
+//  calendar, summaries, done.
 //
 //  Permission state comes from SystemPermissions.shared — the same
 //  tri-state façade Settings → Permissions uses — so each row can
 //  honestly branch: not asked → Allow (fires the system prompt);
 //  granted → checkmark; denied → Open Settings… (macOS asks once, a
-//  second Allow would silently do nothing and read as a broken app).
+//  second Allow would silently do nothing and read as a broken app;
+//  when the system prompt itself is unreliable — a known macOS 14+
+//  bug for Screen Recording, see ScreenRecordingPermission.swift —
+//  Allow falls back to opening System Settings directly). The layout
+//  step's auto-fix toggle gets the same honesty treatment from a
+//  different signal, LayoutAutoFix.shared.isRunning: the setting can
+//  be on while the tap never actually started.
 //
 //  There is no language step: macOS picks the interface language from
 //  the user's preferred-languages list (plus the one-shot `be` → `ru`
 //  fallback in AppSettings.applyBelarusianLanguageFallbackIfNeeded).
 //  Settings → Language is where an explicit override lives.
 //
-//  Each permission step owns one decision and surfaces a single
-//  primary action. Permission prompts fire inline; when the system
-//  doesn't actually show the dialog (a known macOS 14+ bug for
-//  Screen Recording — see ScreenRecordingPermission.swift), we fall
-//  back to opening System Settings directly so the user is never
-//  stuck on a dead button.
-//
-//  Permissions can be skipped (footer "Skip for now"); they re-prompt
-//  at first use via the preflight path in each feature.
+//  Calendar offers Apple (EventKit, via SystemPermissions.calendar)
+//  and Google (OAuth, via GoogleOAuthClient / GoogleAccountStore — the
+//  same flow Settings → Permissions uses) side by side. Either, both,
+//  or neither is fine — Daisy merges and dedupes events from whichever
+//  sources are connected.
 //
 
 import SwiftUI
 import AppKit
-import EventKit
 import FoundationModels
 
 struct FirstRunView: View {
@@ -128,6 +130,16 @@ struct FirstRunView: View {
     /// distinguishes "never asked" from "denied". Local tracking is
     /// enough here: on a fresh install nobody has been asked yet.
     @State private var accessibilityAsked: Bool = false
+    /// Google account state for the calendar step — same observable
+    /// store Settings → Permissions reads, so a connection made in
+    /// either place shows up in both.
+    @Bindable private var googleAccount = GoogleAccountStore.shared
+    /// True while the OAuth loopback flow is in flight, so the row can
+    /// show a spinner and Connect can't be double-tapped into two
+    /// browser windows.
+    @State private var googleConnecting: Bool = false
+    /// Most recent OAuth error, surfaced inline on the Google row.
+    @State private var googleConnectError: String?
 
     // ─── Soft-step state ──────────────────────────────────────────────
     /// Summary provider is @Observable but lives outside `settings`, so
@@ -335,14 +347,8 @@ struct FirstRunView: View {
     /// meaning now, so the pitch just needs to orient, not sell.
     private var purposeStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("What do you need Daisy for?")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("What do you need Daisy for?")
+                .font(.title2.weight(.semibold))
             Text("Daisy records meetings and dictates into any app — all on your Mac.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
@@ -401,14 +407,8 @@ struct FirstRunView: View {
 
     private var nameStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "person.circle")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("What should we call you?")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("What should we call you?")
+                .font(.title2.weight(.semibold))
             Text("Used to greet you and to label your voice in transcripts. Optional — leave it blank to skip.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -430,24 +430,23 @@ struct FirstRunView: View {
     /// Screen Recording row — nothing meeting-shaped is asked of them.
     private var permissionsStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "lock.shield")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Permissions")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("Permissions")
+                .font(.title2.weight(.semibold))
             Text("Daisy asks for exactly what its features need — nothing more.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 10) {
+                // Microphone is the one permission Daisy cannot work
+                // without; the other two rows are optional. That
+                // distinction used to live in a separate warning banner
+                // — now it's just the honest "why" on each row, no
+                // color or icon doing the talking instead of the words.
                 permissionRow(
                     icon: "mic.fill",
                     title: String(localized: "Microphone"),
-                    why: String(localized: "Your voice — recorded and transcribed on this Mac."),
+                    why: String(localized: "Needed for any recording."),
                     status: perms.microphone,
                     allow: { Task { await SystemPermissions.shared.requestMicrophone() } },
                     openSettings: { SystemPermissions.shared.openMicrophoneSettings() }
@@ -456,7 +455,7 @@ struct FirstRunView: View {
                     permissionRow(
                         icon: "rectangle.dashed.badge.record",
                         title: String(localized: "Screen Recording"),
-                        why: String(localized: "The other side of meetings, through system audio."),
+                        why: String(localized: "Needed for system audio — the other side of a meeting."),
                         status: perms.screenRecording,
                         // Falls back to opening System Settings itself
                         // when the macOS 14+ prompt doesn't fire — see
@@ -475,32 +474,6 @@ struct FirstRunView: View {
                         SystemPermissions.shared.requestAccessibility()
                     },
                     openSettings: { SystemPermissions.shared.openAccessibilitySettings() }
-                )
-            }
-
-            // The microphone is the one permission Daisy cannot work
-            // without. Continue stays enabled — nothing is forced —
-            // but the consequence is said out loud, not implied.
-            if perms.microphone != .granted {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.daisyAccent)
-                    Text("Without the microphone Daisy can't record anything — the rest can wait.")
-                        .font(.caption)
-                        .foregroundStyle(Color.daisyTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    Color.daisyAccent.opacity(0.20),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
                 )
             }
             Spacer()
@@ -572,14 +545,8 @@ struct FirstRunView: View {
 
     private var hotkeysStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "keyboard.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Hotkeys")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("Hotkeys")
+                .font(.title2.weight(.semibold))
             Text(setupPath == .full
                  ? String(localized: "Pick a global shortcut for each recording mode. You can change them later in Settings → Recording → Shortcuts.")
                  : String(localized: "Pick a global shortcut for dictation. You can change it later in Settings → Recording → Shortcuts."))
@@ -652,66 +619,44 @@ struct FirstRunView: View {
     /// The wrong-layout fixer — shown only when 2+ keyboard layouts are
     /// installed. One phrase about what it does, the as-you-type toggle
     /// and the fix key, in the same card-row shell as `hotkeyRow` so the
-    /// key-recording UX is learned once. The `.accessibility` step comes
-    /// earlier; if the grant was skipped, say so here instead of
-    /// offering a toggle that silently does nothing. Flipping the toggle
-    /// really starts the tap: MainView's `HotkeyStopWiring` observes
+    /// key-recording UX is learned once. No separate "Allow Accessibility"
+    /// button — the toggle fires that prompt itself via `LayoutAutoFix.start`
+    /// when access is missing; `layoutFixCaption` below is what keeps the
+    /// row honest if the user declines it. Flipping the toggle really
+    /// starts the tap: MainView's `HotkeyStopWiring` observes
     /// `settings.layoutFixAuto` from OUTSIDE the first-run branch, so
     /// the re-wiring fires during onboarding too.
     private var layoutStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                Image(systemName: "keyboard.badge.ellipsis")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Keyboard layout")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("Keyboard layout")
+                .font(.title2.weight(.semibold))
             Text("Daisy notices a word typed in the wrong keyboard layout and fixes it — before you send the message.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if perms.accessibility != .granted {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(Color.daisyAccent)
-                    Text("Accessibility access isn't granted yet, so Daisy can't rewrite what you type — nothing below will work until it is.")
-                        .font(.caption)
-                        .foregroundStyle(Color.daisyTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button("Allow Accessibility") {
-                        accessibilityAsked = true
-                        SystemPermissions.shared.requestAccessibility()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(Color.daisyTextPrimary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    Color.daisyAccent.opacity(0.20),
-                    in: RoundedRectangle(cornerRadius: 8)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.daisyAccent.opacity(0.20), lineWidth: 0.5)
-                )
-            }
-
             VStack(spacing: 10) {
-                HStack(alignment: .center, spacing: 12) {
-                    Text("Fix the layout as I type")
-                        .font(.callout.weight(.medium))
-                    Spacer()
-                    Toggle("", isOn: $settings.layoutFixAuto)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 12) {
+                        Text("Fix the layout as I type")
+                            .font(.callout.weight(.medium))
+                        Spacer()
+                        // The toggle itself fires the system Accessibility
+                        // prompt when access is missing (LayoutAutoFix.start),
+                        // so there's no separate "Allow Accessibility" button
+                        // here — just the caption below telling the truth
+                        // about whether it's actually running.
+                        Toggle("", isOn: $settings.layoutFixAuto)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                    if let caption = layoutFixCaption {
+                        Text(caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -731,32 +676,57 @@ struct FirstRunView: View {
         }
     }
 
-    /// Calendar — connect via EventKit, then pick an auto-record policy.
-    /// Reading `CalendarService.shared.authorizationStatus` (an
-    /// @Observable property) inside the body means the "Connected" state
-    /// flips live when the grant lands, without an extra observer here.
+    /// The toggle's stated intent (`settings.layoutFixAuto`) and what's
+    /// actually running are two different things — flipping it on when
+    /// Accessibility isn't granted leaves it looking enabled while the
+    /// tap never started (exactly the `auto=true running=false` state a
+    /// prior bug report traced a full day to). `LayoutAutoFix.shared.isRunning`
+    /// is the real signal; reading `perms.accessibility` alongside it is
+    /// what keeps this caption live on the same step-change / focus-
+    /// activation refresh the rest of onboarding already relies on.
+    private var layoutFixCaption: String? {
+        guard settings.layoutFixAuto, !LayoutAutoFix.shared.isRunning else { return nil }
+        return perms.accessibility != .granted
+            ? String(localized: "On, but Accessibility access is needed to actually run it.")
+            : String(localized: "On, but not running yet — try the toggle again.")
+    }
+
+    /// Calendar — Apple and Google are both offered, side by side, not a
+    /// single either/or choice: Daisy already merges events from
+    /// whichever sources are connected and dedupes them, so there's no
+    /// reason to make the user pick one. Apple reuses `permissionRow` +
+    /// `SystemPermissions.calendar` exactly as the earlier permissions
+    /// step does; Google reuses Settings → Permissions' own OAuth flow
+    /// (`GoogleOAuthClient.connect()` / `GoogleAccountStore`) restyled
+    /// into this step's row shell, not a second implementation of it.
     private var calendarStep: some View {
-        let connected = CalendarService.shared.authorizationStatus == .fullAccess
+        let appleConnected = perms.calendar == .granted
+        let anyConnected = appleConnected || googleAccount.isConnected
         return VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "calendar")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Calendar")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                if connected {
-                    Label("Connected", systemImage: "checkmark.circle.fill")
-                        .labelStyle(.titleAndIcon)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(Color.daisySuccess)
-                }
-            }
+            Text("Calendar")
+                .font(.title2.weight(.semibold))
             Text("Connect your calendar so Daisy can start recording automatically when a meeting begins. You can change this anytime in Settings.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
-            if connected {
+            Text("Connect one or both — Daisy merges events from both and removes duplicates.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 10) {
+                permissionRow(
+                    icon: "calendar",
+                    title: String(localized: "Calendar (Apple)"),
+                    why: String(localized: "Auto-starts recording at meeting times"),
+                    status: perms.calendar,
+                    allow: { Task { await SystemPermissions.shared.requestCalendar() } },
+                    openSettings: { SystemPermissions.shared.openCalendarSettings() }
+                )
+                googleCalendarRow
+            }
+
+            if anyConnected {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Auto-record")
                         .font(.callout.weight(.medium))
@@ -776,16 +746,87 @@ struct FirstRunView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
                 )
-            } else {
-                Button("Connect calendar") {
-                    Task { await CalendarService.shared.requestAccess() }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.daisyAccent)
-                .foregroundStyle(Color.daisyTextOnAccent)
-                .controlSize(.regular)
             }
             Spacer()
+        }
+    }
+
+    /// Google Calendar row — same shell as `permissionRow` so it reads
+    /// as "another calendar source," but the action is OAuth (Connect /
+    /// in-flight spinner) rather than a system permission prompt.
+    /// `GoogleOAuthClient.connect()` awaits its own local loopback
+    /// callback before returning, so `googleAccount.isConnected` flips
+    /// the moment the browser round-trip finishes — no extra focus
+    /// observer needed here the way Accessibility needs one.
+    @ViewBuilder
+    private var googleCalendarRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: googleAccount.isConnected ? "checkmark.seal.fill" : "calendar.badge.plus")
+                .font(.callout)
+                .foregroundStyle(googleAccount.isConnected ? Color.daisySuccess : Color.daisyAccent)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Calendar (Google)")
+                    .font(.callout.weight(.medium))
+                if googleAccount.isConnected, let email = googleAccount.email {
+                    Text("Connected as \(email)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let err = googleConnectError {
+                    Text(err)
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyError)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("Read-only access to your calendar events")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            if googleAccount.isConnected {
+                Label("Connected", systemImage: "checkmark.circle.fill")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.daisySuccess)
+            } else {
+                Button {
+                    Task { await connectGoogleCalendar() }
+                } label: {
+                    if googleConnecting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Connect")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(Color.daisyAccent)
+                .foregroundStyle(Color.daisyTextOnAccent)
+                .disabled(googleConnecting)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.daisyBgSidebar, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
+        )
+    }
+
+    /// Run the same PKCE-loopback OAuth flow Settings → Permissions
+    /// uses, persisting the result via `GoogleAccountStore`.
+    private func connectGoogleCalendar() async {
+        googleConnecting = true
+        googleConnectError = nil
+        defer { googleConnecting = false }
+        do {
+            let result = try await GoogleOAuthClient.connect()
+            googleAccount.save(connect: result)
+        } catch {
+            googleConnectError = error.localizedDescription
         }
     }
 
@@ -795,14 +836,8 @@ struct FirstRunView: View {
     /// later in Settings.
     private var modelStep: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "wand.and.stars")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisyAccent)
-                Text("Summaries")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("Summaries")
+                .font(.title2.weight(.semibold))
             Text("Choose the AI that writes your meeting summaries. You can change it or add other providers later in Settings.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
@@ -920,14 +955,8 @@ struct FirstRunView: View {
 
     private var doneStep: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.daisySuccess)
-                Text("You're set")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-            }
+            Text("You're set")
+                .font(.title2.weight(.semibold))
             Text("Start a recording from the menu bar (the daisy icon at the top of your screen) or press your global shortcut.")
                 .font(.callout)
                 .foregroundStyle(Color.daisyTextPrimary)
