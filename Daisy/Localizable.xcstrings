@@ -3122,6 +3122,26 @@
         }
       }
     },
+    "Click Record in the sidebar, from the menu bar (the daisy icon), or press %@." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите Record в боковой панели, начните запись из строки меню (значок ромашки) или нажмите %@."
+          }
+        }
+      }
+    },
+    "Click Record in the sidebar, or start one from the menu bar (the daisy icon)." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите Record в боковой панели или начните запись из строки меню (значок ромашки)."
+          }
+        }
+      }
+    },
     "Click Record to begin." : {
       "localizations" : {
         "ru" : {
