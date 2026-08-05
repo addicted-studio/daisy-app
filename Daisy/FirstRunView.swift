@@ -150,6 +150,11 @@ struct FirstRunView: View {
     /// provider on the model step. Seeded once so a user who picks a
     /// cloud provider, goes back and returns isn't overridden.
     @State private var modelStepSeeded: Bool = false
+    /// Re-render tick for the layout-fix card. `LayoutAutoFix.shared.isRunning`
+    /// is not @Observable, so `layoutFixCaption` can't notice the tap
+    /// starting on its own; bumping this after the toggle flips forces
+    /// the card to re-read the real running state.
+    @State private var layoutFixRecheck = 0
 
     /// Below this window width the rail + readable column don't both
     /// fit; fall back to a single column with progress dots on top.
@@ -665,6 +670,17 @@ struct FirstRunView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .strokeBorder(Color.daisyDivider, lineWidth: 0.5)
                 )
+                // `isRunning` isn't observable and this render races the
+                // wiring's own onChange (MainView starts/stops the tap a
+                // beat after the toggle flips) — so wait for it, then tick
+                // to make the caption re-read the real state.
+                .id(layoutFixRecheck)
+                .onChange(of: settings.layoutFixAuto) { _, _ in
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(400))
+                        layoutFixRecheck &+= 1
+                    }
+                }
                 hotkeyRow(
                     title: String(localized: "Fix the keyboard layout"),
                     description: String(localized: "«ghbdtn» becomes «привет» — the selection, or the word you're typing"),
@@ -688,7 +704,7 @@ struct FirstRunView: View {
         guard settings.layoutFixAuto, !LayoutAutoFix.shared.isRunning else { return nil }
         return perms.accessibility != .granted
             ? String(localized: "On, but Accessibility access is needed to actually run it.")
-            : String(localized: "On, but not running yet — try the toggle again.")
+            : String(localized: "On, but not running yet.")
     }
 
     /// Calendar — Apple and Google are both offered, side by side, not a
@@ -825,6 +841,9 @@ struct FirstRunView: View {
         do {
             let result = try await GoogleOAuthClient.connect()
             googleAccount.save(connect: result)
+        } catch GoogleOAuthClient.OAuthError.missingCode(.some("access_denied")) {
+            // User cancelled on Google's consent screen — not a failure.
+            return
         } catch {
             googleConnectError = error.localizedDescription
         }
@@ -1043,7 +1062,35 @@ struct FirstRunView: View {
     /// contract: MainView branches on it (the AppSettings `didSet`
     /// persists it to UserDefaults), so the window swaps back to the
     /// ordinary split shell the moment it flips.
+    ///
+    /// Before flipping, the window is grown to the shell's own floor
+    /// (`MainWindowShellFloor`) if the user shrank it during onboarding
+    /// — onboarding allows 560pt for its single-column fallback, the
+    /// shell demands 860. Without this, AppKit enforces the shell's
+    /// minimum in a single frame the moment the branch swaps: a 300pt
+    /// snap. An animated setFrame first means the swap lands in a
+    /// window that already fits. Growing leftward/downward is clamped
+    /// to the visible screen so the larger frame never ends up
+    /// half off-screen.
     private func finish() {
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            var frame = window.frame
+            if frame.width < MainWindowShellFloor.width
+                || frame.height < MainWindowShellFloor.height {
+                // NSWindow grows down-right from the top-left corner if
+                // origin is kept; keep the TOP edge fixed (macOS windows
+                // are y-up), extend rightward and downward.
+                let newWidth = max(frame.width, MainWindowShellFloor.width)
+                let newHeight = max(frame.height, MainWindowShellFloor.height)
+                frame.origin.y -= (newHeight - frame.height)
+                frame.size = NSSize(width: newWidth, height: newHeight)
+                if let screen = window.screen?.visibleFrame {
+                    frame.origin.x = max(min(frame.origin.x, screen.maxX - frame.width), screen.minX)
+                    frame.origin.y = max(min(frame.origin.y, screen.maxY - frame.height), screen.minY)
+                }
+                window.setFrame(frame, display: true, animate: true)
+            }
+        }
         settings.hasShownFirstRun = true
     }
 }

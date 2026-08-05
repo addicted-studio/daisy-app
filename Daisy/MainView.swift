@@ -530,7 +530,19 @@ struct MainView: View {
 /// so it's declared once but applied DIRECTLY to each `NavigationSplitView`:
 /// a `.toolbar` must attach to the split view itself to populate the
 /// window toolbar, so this can't move above the shell-arity branch.
+/// The shell's window floor. A named, internal constant (not inlined in
+/// MainWindowChrome, which is private) because onboarding reads it too:
+/// FirstRunView allows a narrower window (560pt, for its single-column
+/// fallback) and pre-grows the window to THIS floor before handing over
+/// to the shell — one source, so the two can't drift apart and
+/// reintroduce the 300pt snap on finishing first run.
+enum MainWindowShellFloor {
+    static let width: CGFloat = 860
+    static let height: CGFloat = 560
+}
+
 private struct MainWindowChrome: ViewModifier {
+
     func body(content: Content) -> some View {
         content
             // Brand pill goes into `.navigation` placement — the leading
@@ -569,7 +581,7 @@ private struct MainWindowChrome: ViewModifier {
             // was leaving white strips around toolbar items; the window's
             // own cream `backgroundColor` (DaisyAppDelegate) shows through.
             .daisyWindowToolbarHidden()
-            .frame(minWidth: 860, minHeight: 560)
+            .frame(minWidth: MainWindowShellFloor.width, minHeight: MainWindowShellFloor.height)
             // Warm ivory window background — matches mydaisy.io and defeats
             // macOS's default cool-gray windowBackgroundColor. Sidebar's
             // frosted material still composes on top of this warm base.
