@@ -8383,12 +8383,12 @@
         }
       }
     },
-    "On, but not running yet — try the toggle again." : {
+    "On, but not running yet." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Включено, но пока не запущено — попробуйте переключить ещё раз."
+            "value" : "Включено, но пока не запустилось."
           }
         }
       }
