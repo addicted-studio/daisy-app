@@ -159,6 +159,41 @@ final class Transcriber {
     private func invalidateSegmentsCache() {
         segmentsVersion &+= 1
     }
+
+    /// Overwrite segment TEXT in place, by id — the write-back half of
+    /// the post-stop transcript polish (`TranscriptPolisher`).
+    ///
+    /// Text and nothing else: ids, timings, `speakerId`, `source`, and
+    /// `isFinal` are all left exactly as the final Whisper pass and the
+    /// diarizer left them, and no segment is added or removed. That's
+    /// what keeps the polish incapable of damaging speaker attribution
+    /// or the transcript's structure no matter what the model returns —
+    /// the corrections can only land inside a line's text.
+    ///
+    /// Ids not present in this transcriber's segments are ignored, so
+    /// the caller can hand the same patch to both mic and system
+    /// transcribers without splitting it first. Returns how many
+    /// segments actually changed.
+    @discardableResult
+    func applyPolishedText(_ byID: [UUID: String]) -> Int {
+        guard !byID.isEmpty else { return 0 }
+        var changed = 0
+        for index in committedSegments.indices {
+            if let text = byID[committedSegments[index].id], text != committedSegments[index].text {
+                committedSegments[index].text = text
+                changed += 1
+            }
+        }
+        for index in pendingSegments.indices {
+            if let text = byID[pendingSegments[index].id], text != pendingSegments[index].text {
+                pendingSegments[index].text = text
+                changed += 1
+            }
+        }
+        if changed > 0 { invalidateSegmentsCache() }
+        return changed
+    }
+
     private(set) var isRunning = false
 
     /// Bumped by every `start()`. `runFinalPass` snapshots it and only

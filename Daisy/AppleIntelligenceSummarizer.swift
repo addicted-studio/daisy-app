@@ -179,6 +179,8 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
         switch task {
         case .dictationPolish(let instruction):
             return try await polishDictation(text: trimmed, instruction: instruction)
+        case .transcriptPolish(let context):
+            return try await polishTranscript(payload: trimmed, context: context)
         case .morningBrief:
             return try await morningBriefLede(dossier: trimmed)
         case .preMeetingBrief:
@@ -357,6 +359,36 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
         )
         let rewritten = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
         return MeetingSummary(summary: "", sections: [], actionItems: [], clientFollowUp: rewritten)
+    }
+
+    /// Transcript second pass via FREEFORM text — same reasoning as
+    /// `polishDictation`: the guided @Generable schema's field
+    /// descriptions are meeting-summary-specific and would steer the
+    /// model into summarizing the very transcript it is supposed to
+    /// leave alone. Mirrors
+    /// `SummaryPrompt.transcriptPolishSystemInstructions` minus the JSON
+    /// envelope, and reuses the fenced `transcriptPolishUserPrompt` so
+    /// the injection boundary is identical to the cloud path.
+    ///
+    /// No output validation here on purpose — `TranscriptPolisher`
+    /// checks line count, per-line length, and the token-diff budget for
+    /// every provider alike, so a small local model that ignores the
+    /// contract is discarded exactly like a cloud one that does.
+    private func polishTranscript(
+        payload: String,
+        context: TranscriptPolisher.PromptContext
+    ) async throws -> MeetingSummary {
+        let session = LanguageModelSession(
+            instructions: SummaryPrompt.transcriptPolishSystemInstructions(
+                context: context,
+                jsonEnvelope: false
+            )
+        )
+        let response = try await session.respond(
+            to: SummaryPrompt.transcriptPolishUserPrompt(payload: payload)
+        )
+        let corrected = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MeetingSummary(summary: "", sections: [], actionItems: [], clientFollowUp: corrected)
     }
 
     /// Morning-brief lede: the entire output is one short narrative

@@ -151,6 +151,9 @@ extension RecordingSession {
         async let sysFinal: Void = systemTranscriber.runFinalPass(archiveURLs: systemArchiveURLs)
         _ = await (micFinal, sysFinal)
         signposter.endInterval("final_pass", finalPassState)
+        // Kept as seconds for Stage 2b, which budgets itself as a share
+        // of what the heavy stage cost.
+        let finalPassSeconds = Date().timeIntervalSince(t_final)
         log.info("post-stop final_pass: \(ms(t_final), privacy: .public)ms")
 
         if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
@@ -170,6 +173,34 @@ extension RecordingSession {
         applySpeakerProfileMatches()
         signposter.endInterval("speaker_match", matchState)
         log.info("post-stop speaker_match: \(ms(t_match), privacy: .public)ms")
+
+        // ── Stage 2b: Transcript second pass ─────────────────────────
+        //
+        // Text-layer counterpart to Stage 1's ASR pass: hand the
+        // final-quality utterances to the user's own summary provider
+        // with the invite's attendee names and their vocabulary, and
+        // take back corrected proper nouns, brands, terms, and
+        // punctuation. Nothing else — `TranscriptPolisher` validates
+        // every chunk and drops the ones that wandered.
+        //
+        // Sits HERE, between diarization and the re-render, so the
+        // corrections reach everything downstream in one shot:
+        // transcript.md (Stage 3), the OCR-augmented summary (Stage 4),
+        // and whatever auto-send ships (Stage 5). Running it later would
+        // mean re-rendering and re-summarizing over the top.
+        await runTranscriptPolish(
+            directory: directory,
+            title: title,
+            localeHint: localeHint,
+            signposter: signposter,
+            willSummarize: willSummarize,
+            finalPassSeconds: finalPassSeconds
+        )
+
+        if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
+            await bailRotated(stage: "after transcript_polish")
+            return
+        }
 
         // ── Stage 3: Re-render transcript.md with final-quality data ─
         //
@@ -379,6 +410,161 @@ extension RecordingSession {
         if generation == summaryTaskGeneration {
             summaryTask = nil
         }
+    }
+
+    // MARK: - Transcript second pass
+
+    /// How many vocabulary terms the polish prompt carries. Enough to
+    /// cover the jargon that actually shows up in one meeting, bounded
+    /// so a user with a large dictionary doesn't pay for all of it on
+    /// every chunk — and, on a cloud provider, doesn't ship all of it.
+    static let polishVocabularyLimit = 60
+
+    /// Marks `transcript.raw.md` for anyone who finds it in the session
+    /// folder without knowing why there are two transcripts.
+    static let rawTranscriptHeader = """
+        <!-- Daisy: transcript exactly as transcribed, before the second pass \
+        corrected names and terms. transcript.md is the corrected one. -->
+
+        """
+
+    /// Stage 2b body, lifted out of `finalizePostStop` because the gate
+    /// is the interesting part and deserves to be readable.
+    ///
+    /// **The gate.** The pass runs only when the user hasn't turned it
+    /// off AND the transcript is already destined for this provider:
+    /// either the provider never leaves the Mac
+    /// (`providerIsEffectivelyLocal` — note that this, not
+    /// `providerKind.isLocal`, is the honest check; Ollama and LM Studio
+    /// can be pointed at a remote host), or the session is queued for
+    /// summarization by a cloud provider the user picked and consented
+    /// to. On a cloud provider with summaries OFF the pass is skipped,
+    /// because it would otherwise be the first thing to send this
+    /// transcript off-device. That's what lets the setting default to ON
+    /// without inventing a new consent surface.
+    ///
+    /// Two honest caveats on the cloud path, both disclosed in the
+    /// Settings caption:
+    ///
+    ///   • The pass sends the attendee names and vocabulary terms
+    ///     alongside the transcript. The ordinary summary prompt carries
+    ///     neither, so on a cloud provider those two are genuinely new
+    ///     data — that is the feature (a model that hasn't been told the
+    ///     invite said "Priya Raman" cannot repair "Прия Раман"), and it
+    ///     is why the vocabulary is capped rather than sent whole.
+    ///   • "Queued for summarization" is not quite "will reach the
+    ///     provider": `Summarizer.summarize` short-circuits a transcript
+    ///     with essentially no speech without calling out at all. The
+    ///     silence check below is the same one, run on the same text, so
+    ///     the two decisions agree.
+    ///
+    /// Best-effort throughout: every failure — provider down, deadline
+    /// blown, model ignoring the contract — ends with the un-polished
+    /// transcript and a line in os_log. Nothing here is worth a toast
+    /// on a user who already shut the laptop.
+    private func runTranscriptPolish(
+        directory: URL,
+        title: String,
+        localeHint: String?,
+        signposter: OSSignposter,
+        willSummarize: Bool,
+        finalPassSeconds: Double
+    ) async {
+        guard settings.transcriptSecondPass else { return }
+        guard summarizer.providerIsEffectivelyLocal || willSummarize else {
+            log.info("Transcript polish skipped — cloud provider and no summary for this session, so the transcript stays on this Mac")
+            return
+        }
+
+        let snapshot = segments
+        // Not worth a provider round-trip: a handful of words has no
+        // proper nouns to get wrong, and the same threshold keeps short
+        // voice notes out of the pass entirely. `isEffectivelySilent` is
+        // the summarizer's own check — running it here keeps the gate's
+        // premise ("the summary is sending this anyway") true rather
+        // than merely likely.
+        let bodyLength = snapshot.reduce(0) { $0 + $1.text.count }
+        guard snapshot.count >= 2, bodyLength >= 200,
+              !Summarizer.isEffectivelySilent(fullTranscriptText) else { return }
+
+        // Context package. Attendee names are the highest-value signal
+        // and the reason this feature exists; the vocabulary is the
+        // user's own jargon, capped so a power user with hundreds of
+        // rules doesn't ship their whole dictionary on every chunk; the
+        // app name is a weak hint read from the detector's last sighting
+        // (best-effort — a stale value only mislabels which conferencing
+        // app's small talk to leave alone, which changes no correction).
+        let context = TranscriptPolisher.PromptContext(
+            attendees: boundMeeting?.attendees ?? [],
+            vocabulary: Array(DictationDictionary.shared.biasTerms().prefix(Self.polishVocabularyLimit)),
+            meetingApp: MeetingDetector.shared.lastDetected.map(MeetingDetector.displayName(for:))
+        )
+
+        // Snapshot the PRE-polish markdown now, while the segments are
+        // still raw. Written to disk further down only if the pass
+        // actually changed something — no point littering every session
+        // folder with an identical copy. No frontmatter: a byte-identical
+        // header would double-count this session in an Obsidian vault
+        // whose queries walk the sessions folder.
+        let rawMarkdown = Self.rawTranscriptHeader
+            + MarkdownExporter.renderMarkdown(session: self, includeFrontmatter: false)
+
+        let polishState = signposter.beginInterval("transcript_polish", id: signposter.makeSignpostID())
+        let t_polish = Date()
+        let outcome = await TranscriptPolisher.polish(
+            segments: snapshot,
+            context: context,
+            localeHint: localeHint,
+            // Spend at most a fifth of what the final Whisper pass cost.
+            // The stated bar for this feature is that finalization must
+            // not grow more than ~20%, and the final pass is what
+            // finalization mostly IS — so the budget scales with the
+            // meeting instead of being a guess that's too tight for a
+            // long one and too loose for a short one.
+            deadlineSeconds: finalPassSeconds * 0.2,
+            summarize: { payload, task in
+                // Same hop as `polishWithDeadline` — `runProbe` is the
+                // isolated path that doesn't touch the summarizer's
+                // shared `lastSummary` / `isSummarizing` state, which
+                // matters here because Stage 4's real summary is about
+                // to use it.
+                try await Summarizer.shared.runProbe(
+                    transcript: payload,
+                    title: title,
+                    localeHint: localeHint,
+                    task: task
+                )
+            }
+        )
+        signposter.endInterval("transcript_polish", polishState)
+        log.info("post-stop transcript_polish: \(Int(Date().timeIntervalSince(t_polish) * 1000), privacy: .public)ms, \(outcome.chunksApplied, privacy: .public)/\(outcome.chunksTotal, privacy: .public) chunks")
+
+        guard !outcome.replacements.isEmpty else { return }
+
+        // The session may have rotated while we were inside the
+        // provider — writing polished text into a NEW recording's
+        // transcribers would corrupt it. Same guard the other stages use.
+        guard !Task.isCancelled, sessionDirectory?.lastPathComponent == directory.lastPathComponent else {
+            log.info("Transcript polish landed after the session rotated — discarding")
+            return
+        }
+
+        // Keep the raw transcript on disk. The polish is a layer, not an
+        // edit: if a correction is ever wrong, the record of what the
+        // recognizer actually heard is still right here.
+        let rawURL = directory.appendingPathComponent("transcript.raw.md")
+        do {
+            try rawMarkdown.write(to: rawURL, atomically: true, encoding: .utf8)
+        } catch {
+            // Can't preserve the original → don't overwrite it. The
+            // un-polished transcript is worth more than the polish.
+            log.error("Couldn't write transcript.raw.md, skipping polish to keep the raw transcript: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+
+        let changed = micTranscriber.applyPolishedText(outcome.replacements)
+            + systemTranscriber.applyPolishedText(outcome.replacements)
+        log.info("Transcript polish applied to \(changed, privacy: .public) segment(s)\(outcome.timedOut ? " (deadline cut the pass short)" : "", privacy: .public)")
     }
 
     // MARK: - Voice fingerprint matching
