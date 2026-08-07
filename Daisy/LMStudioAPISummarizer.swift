@@ -183,11 +183,14 @@ nonisolated struct LMStudioAPISummarizer: SummaryProvider {
                 promptChars: systemPrompt.count + userPrompt.count
             )
             // Meetings only. The same `summarize` also serves the
-            // pre-meeting brief, the voice profile and dictation polish,
-            // whose inputs are dossiers and corpora — "this transcript"
-            // and "meetings this long" would both be lies there, and a
+            // pre-meeting brief, the voice profile, dictation polish and
+            // the transcript second pass, whose inputs are dossiers,
+            // corpora and small transcript chunks — "this transcript"
+            // and "meetings this long" would be lies there, and a
             // confidently wrong diagnosis is worse than the generic
-            // parse error.
+            // parse error. (The second pass in particular chunks to
+            // ~2.5k characters precisely so it can't overflow, and
+            // swallows its own errors on the way out.)
             if case .meeting = task, LocalContextGuard.truncationSuspected(
                 estimatedTokens: estimated,
                 reportedPromptTokens: reported,

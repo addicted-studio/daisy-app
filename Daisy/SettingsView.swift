@@ -1956,6 +1956,20 @@ struct SettingsView: View {
                         .foregroundStyle(Color.daisyWarning)
                 }
 
+                // Transcript-quality pass, listed before the summary
+                // knobs because it runs before them and everything below
+                // reads its output. The caption states the privacy gate
+                // outright — "one extra request" is the cost users will
+                // ask about, and "only when it was going there anyway"
+                // is the answer to the question the word "cloud" raises.
+                Toggle(isOn: $settings.transcriptSecondPass) {
+                    Text("Second pass over the transcript")
+                    Text("After a meeting, Daisy re-reads the transcript and fixes names, brands, and terms that transcription got wrong — using the calendar invite and your vocabulary. Wording is never changed, and the original is kept alongside it. One extra request per meeting; on a cloud provider it runs only when that meeting is being summarized there anyway.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 // The follow-up is the one part of a summary that leaves
                 // the building with the user's name on it, so it is the
                 // one part worth spending a second pass on. Needs a Voice

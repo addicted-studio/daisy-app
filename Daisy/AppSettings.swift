@@ -180,6 +180,29 @@ final class AppSettings {
         didSet { defaults.set(preMeetingBriefResearchOnline, forKey: Self.k_preMeetingBriefResearchOnline) }
     }
 
+    /// Second LLM pass over the finished transcript: fix names, brands,
+    /// and terms that speech recognition got wrong, leaving the wording
+    /// alone (`TranscriptPolisher`). Default ON — but the runtime gate
+    /// in `RecordingSession.runTranscriptPolish` is the one that
+    /// matters, and it is stricter than this flag: the pass only runs
+    /// when the transcript was ALREADY going to the configured provider
+    /// (local provider, or a cloud provider the user already opted into
+    /// summarizing with). A cloud provider plus summaries off means the
+    /// pass is skipped rather than becoming the first thing to send the
+    /// transcript off the Mac.
+    ///
+    /// Not *no* new egress, though — say it plainly: on the cloud path
+    /// the prompt also carries the invite's attendee names and up to
+    /// `polishVocabularyLimit` of the user's vocabulary terms, neither
+    /// of which the ordinary summary prompt sends. That's the feature
+    /// working (the names ARE the context that fixes the names), it's
+    /// spelled out in the Settings caption, and it's why the vocabulary
+    /// is capped. Users who'd rather not spend the extra request, or
+    /// not send that context, turn it off here.
+    var transcriptSecondPass: Bool {
+        didSet { defaults.set(transcriptSecondPass, forKey: Self.k_transcriptSecondPass) }
+    }
+
     /// Language the summary itself is written in. Decoupled from
     /// the transcript locale because users often record meetings in
     /// one language but want the summary in another (e.g. record RU,
@@ -1103,6 +1126,10 @@ final class AppSettings {
         self.preMeetingBriefEnabled = defaults.object(forKey: Self.k_preMeetingBriefEnabled) as? Bool ?? false
         // Default OFF — opt-in network use.
         self.preMeetingBriefResearchOnline = defaults.bool(forKey: Self.k_preMeetingBriefResearchOnline)
+        // Transcript second pass: default ON. The runtime gate keeps it
+        // to providers the transcript already goes to. See the property
+        // doc for what it adds to the prompt on the cloud path.
+        self.transcriptSecondPass = defaults.object(forKey: Self.k_transcriptSecondPass) as? Bool ?? true
         // Morning brief: card ON (content-gated), notification OFF, 09:00.
         self.morningBriefEnabled = defaults.object(forKey: Self.k_morningBriefEnabled) as? Bool ?? true
         self.morningBriefNotifyEnabled = defaults.bool(forKey: Self.k_morningBriefNotifyEnabled)
@@ -1456,6 +1483,7 @@ final class AppSettings {
     private static let k_morningBriefNotifyEnabled = "daisy.morningBriefNotifyEnabled"
     private static let k_morningBriefNotifyMinutes = "daisy.morningBriefNotifyMinutes"
     private static let k_preMeetingBriefResearchOnline = "daisy.preMeetingBriefResearchOnline"
+    private static let k_transcriptSecondPass = "daisy.transcriptSecondPass"
     private static let k_showSessionAfterStop = "daisy.showSessionAfterStop"
     /// `nonisolated` because `currentSummaryLanguage` (above) reads
     /// this key from a nonisolated context (SessionDetailView's
