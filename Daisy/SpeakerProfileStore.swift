@@ -151,6 +151,32 @@ final class SpeakerProfileStore {
         return profilesByRecent.first { $0.emails.contains(needle) }
     }
 
+    /// Normalize a display name for comparison: case-folded, trimmed,
+    /// inner whitespace collapsed. Deliberately conservative — no
+    /// initial-matching, no nickname table, no diacritic folding. A
+    /// wrong speaker name is worse than "Remote B", so anything short
+    /// of "the same name written the same way" isn't a match.
+    nonisolated static func normalizeName(_ raw: String) -> String? {
+        let collapsed = raw
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+            .lowercased()
+        return collapsed.isEmpty ? nil : collapsed
+    }
+
+    /// Find the profile with a given display name. The name-side
+    /// companion to `findByEmail`, for the common case where a calendar
+    /// invite carries a person's name but not an address Daisy has ever
+    /// seen (Google invites frequently give a display name only, and a
+    /// profile only gains an email once the user maps a speaker to an
+    /// attendee that HAS one). Exact normalized match, first hit wins by
+    /// recency — same contract as `findByEmail`.
+    func findByName(_ rawName: String) -> SpeakerProfile? {
+        ensureLoaded()
+        guard let needle = Self.normalizeName(rawName) else { return nil }
+        return profilesByRecent.first { Self.normalizeName($0.name) == needle }
+    }
+
     /// Add one email to a profile (idempotent, normalized). Called when
     /// the user maps a speaker to a calendar attendee whose email is
     /// known — we attach that email so the SAME person auto-matches by

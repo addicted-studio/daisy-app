@@ -181,6 +181,8 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
             return try await polishDictation(text: trimmed, instruction: instruction)
         case .transcriptPolish(let context):
             return try await polishTranscript(payload: trimmed, context: context)
+        case .speakerNames(let context):
+            return try await proposeSpeakerNames(transcript: trimmed, context: context)
         case .morningBrief:
             return try await morningBriefLede(dossier: trimmed)
         case .preMeetingBrief:
@@ -389,6 +391,29 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
         )
         let corrected = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
         return MeetingSummary(summary: "", sections: [], actionItems: [], clientFollowUp: corrected)
+    }
+
+    /// Speaker-name proposals via FREEFORM text — a handful of
+    /// `A = Name` lines, which the guided meeting schema has no shape
+    /// for. Same rules as the cloud path (`jsonEnvelope: false` swaps
+    /// only the wrapper), and the same downstream allow-list: whatever
+    /// this returns, `SpeakerNameSuggester` keeps only names that are
+    /// on the invite.
+    private func proposeSpeakerNames(
+        transcript: String,
+        context: SpeakerNameSuggester.PromptContext
+    ) async throws -> MeetingSummary {
+        let session = LanguageModelSession(
+            instructions: SummaryPrompt.speakerNamesSystemInstructions(
+                context: context,
+                jsonEnvelope: false
+            )
+        )
+        let response = try await session.respond(
+            to: SummaryPrompt.speakerNamesUserPrompt(transcript: transcript)
+        )
+        let lines = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MeetingSummary(summary: "", sections: [], actionItems: [], clientFollowUp: lines)
     }
 
     /// Morning-brief lede: the entire output is one short narrative

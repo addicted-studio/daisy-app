@@ -197,8 +197,17 @@ final class AppSettings {
     /// of which the ordinary summary prompt sends. That's the feature
     /// working (the names ARE the context that fixes the names), it's
     /// spelled out in the Settings caption, and it's why the vocabulary
-    /// is capped. Users who'd rather not spend the extra request, or
-    /// not send that context, turn it off here.
+    /// is capped.
+    ///
+    /// One flag, two passes: this also gates
+    /// `runSpeakerNameSuggestions`, which spends a SECOND request
+    /// proposing which attendee each speaker is. They're one setting
+    /// because they're one bargain from the user's side — "let a model
+    /// read the finished transcript with my calendar as context" — and
+    /// splitting them would be a settings screen describing an
+    /// implementation detail. The caption states both. Users who'd
+    /// rather not spend the requests, or not send that context, turn it
+    /// off here.
     var transcriptSecondPass: Bool {
         didSet { defaults.set(transcriptSecondPass, forKey: Self.k_transcriptSecondPass) }
     }
@@ -557,8 +566,9 @@ final class AppSettings {
     /// count (minus you) as a hard `numClusters` hint instead of auto-
     /// detect. Can sharpen diarization when the invite is accurate, but a
     /// wrong count (no-shows, uninvited joiners, one person on two devices)
-    /// can make it worse — hence opt-in, pending on-device A/B. No UI
-    /// toggle yet; flip via defaults for testing.
+    /// can make it worse — hence opt-in, pending on-device A/B. Surfaced
+    /// in Settings → Recording → Speakers so that A/B can run on real
+    /// meetings; stays default OFF until it wins one.
     var diarizeUseAttendeeCountHint: Bool {
         didSet { defaults.set(diarizeUseAttendeeCountHint, forKey: Self.k_diarizeUseAttendeeCountHint) }
     }
