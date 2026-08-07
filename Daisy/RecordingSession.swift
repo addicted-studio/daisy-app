@@ -390,6 +390,44 @@ final class RecordingSession {
     }
     @ObservationIgnored
     private var _displayCache: [TranscriptSegment] = []
+    /// `segments` with acoustic echo removed — what every LLM consumer
+    /// reads (via `fullTranscriptText`), the live catch-up slices, and
+    /// the voice-corpus harvest keeps.
+    ///
+    /// Cached behind the same `(mic, system) segmentsVersion` composite
+    /// key as `segments`, because the pass is not free: a sort plus a
+    /// windowed Levenshtein scan per mic segment. One stop reads this
+    /// five times over (WPM gate, usage stats, locale hint, the summary,
+    /// the polish silence check) and would otherwise redo the whole
+    /// thing each time.
+    ///
+    /// Meetings only. Dictation and voice notes have no system stream
+    /// for the microphone to echo, so there is nothing to remove and the
+    /// pass would only cost time.
+    var dedupedSegments: [TranscriptSegment] {
+        let all = segments
+        guard currentMode == .meeting, settings.suppressAcousticEcho else { return all }
+        let micV = micTranscriber.segmentsVersion
+        let sysV = systemTranscriber.segmentsVersion
+        if _dedupCacheMicVersion == micV && _dedupCacheSysVersion == sysV {
+            return _dedupCache
+        }
+        // `filteredQuietly`, not `filter`: `lastFilterWasSystemic` is the
+        // render's to set, and `stop()` reads it in the gap between the
+        // render and the headphones toast.
+        let filtered = AcousticEchoDedup.filteredQuietly(all)
+        _dedupCache = filtered
+        _dedupCacheMicVersion = micV
+        _dedupCacheSysVersion = sysV
+        return filtered
+    }
+    @ObservationIgnored
+    private var _dedupCache: [TranscriptSegment] = []
+    @ObservationIgnored
+    private var _dedupCacheMicVersion: Int = -1
+    @ObservationIgnored
+    private var _dedupCacheSysVersion: Int = -1
+
     @ObservationIgnored
     private var _displayCacheMicVersion: Int = -1
     @ObservationIgnored
@@ -1815,8 +1853,17 @@ final class RecordingSession {
         var anyChannelCaptured = false
         if case .captured = micStatus { anyChannelCaptured = true }
         if case .captured = sysStatus { anyChannelCaptured = true }
+        // RAW segments, not `fullTranscriptText`: this asks "did the
+        // microphone hear anything at all", and echo dedup can halve the
+        // word count on a speakers-on meeting. Counting deduped words
+        // here would push a perfectly-transcribed meeting under the
+        // threshold and suppress its summary with a red "capture failed"
+        // toast.
+        let rawWords = segments
+            .map { $0.text }
+            .joined(separator: " ")
         let transcriptWPM = durSec > 0
-            ? Double(UsageStats.wordCount(fullTranscriptText)) / (Double(durSec) / 60.0)
+            ? Double(UsageStats.wordCount(rawWords)) / (Double(durSec) / 60.0)
             : 0
         // Real meetings run ~100-150 wpm; <20 over the whole recording
         // means almost nothing was heard.
@@ -1960,10 +2007,7 @@ final class RecordingSession {
         // `backfillFromMeetings` collects; a voice note is left out in
         // both paths rather than counted in one of them.
         if currentMode == .meeting, VoiceProfileStore.shared.includesMeetings {
-            let deduped = settings.suppressAcousticEcho
-                ? AcousticEchoDedup.filter(segments)
-                : segments
-            let ownSpeech = deduped
+            let ownSpeech = dedupedSegments
                 .filter { $0.source == .microphone }
                 .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
@@ -2248,8 +2292,21 @@ final class RecordingSession {
 
     // MARK: - Computed
 
+    /// The transcript as the LLM sees it. Everything downstream of this
+    /// — the summary, the follow-up draft, the catch-up, the word count
+    /// — reads it, so the echo pass has to happen HERE and not only in
+    /// `MarkdownExporter`.
+    ///
+    /// Before this, the two disagreed: transcript.md on disk was
+    /// deduped and the summary was not. On speakers that meant the
+    /// model read every remote line twice, the second copy labelled
+    /// with the user's own name — so the notes had the user agreeing
+    /// with themselves, and the follow-up draft attributed the other
+    /// party's commitments to them (2026-08 audit). Meetings only:
+    /// dictation and voice notes have no system stream for the mic to
+    /// echo.
     var fullTranscriptText: String {
-        let nonEmpty = segments
+        let nonEmpty = dedupedSegments
             .filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         switch currentMode {
         case .meeting:
