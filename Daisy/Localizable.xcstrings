@@ -10258,12 +10258,12 @@
         }
       }
     },
-    "Restores product names dictated in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Works on every engine; your own Vocabulary rules always win." : {
+    "Restores product names spoken in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Applies to dictation and to recorded meetings, on every engine; your own Vocabulary rules always win." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Восстанавливает латинское написание продуктов, надиктованных другим алфавитом: «фигма» → Figma, «гитхаб» → GitHub. Работает на всех движках; ваши правила словаря всегда в приоритете."
+            "value" : "Восстанавливает латинское написание продуктов, произнесённых другим алфавитом: «фигма» → Figma, «гитхаб» → GitHub. Работает и в диктовке, и в записанных встречах, на любом движке; ваши собственные правила словаря всегда важнее."
           }
         }
       }

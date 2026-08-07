@@ -154,8 +154,29 @@ extension RecordingSession {
            attendees.count >= 2 {
             systemTranscriber.speakerCountHint = max(1, attendees.count)
         }
-        async let micFinal: Void = micTranscriber.runFinalPass(archiveURLs: micArchiveURLs)
-        async let sysFinal: Void = systemTranscriber.runFinalPass(archiveURLs: systemArchiveURLs)
+        // Vocabulary bias for the MEETING final pass (D-4). Until now
+        // only dictation biased the decoder, so a user's custom terms
+        // were correct in what they dictated and wrong in what they
+        // recorded. The live `.lite` passes stay unbiased — they run
+        // every few seconds and the final pass overwrites them anyway,
+        // so paying prompt tokens there buys nothing.
+        //
+        // Empty for a user with no vocabulary, which makes this a
+        // byte-for-byte no-op on their recordings.
+        //
+        // Meetings only, matching Stage 1b below. `finalizePostStop`
+        // also runs for voice notes, and giving those the decoder bias
+        // while withholding the text-replacement layer would hand them
+        // every risk of the bias path and none of its benefit.
+        let biasTerms = currentMode == .meeting
+            ? DictationDictionary.shared.biasTerms()
+            : []
+        async let micFinal: Void = micTranscriber.runFinalPass(
+            archiveURLs: micArchiveURLs, biasTerms: biasTerms
+        )
+        async let sysFinal: Void = systemTranscriber.runFinalPass(
+            archiveURLs: systemArchiveURLs, biasTerms: biasTerms
+        )
         _ = await (micFinal, sysFinal)
         signposter.endInterval("final_pass", finalPassState)
         // Kept as seconds for Stage 2b, which budgets itself as a share
@@ -166,6 +187,39 @@ extension RecordingSession {
         if Task.isCancelled || sessionDirectory?.lastPathComponent != sessionID {
             await bailRotated(stage: "after final_pass")
             return
+        }
+
+        // ── Stage 1b: Vocabulary + brand corrections ─────────────────
+        //
+        // Deterministic text replacement over the just-finalized
+        // segments: the user's own rules, then the built-in
+        // transliterated-brand table — the same two layers, in the same
+        // order, that dictation has always applied before pasting.
+        // Runs before speaker-profile matching, the polish and the
+        // re-render, so every downstream consumer sees the corrected
+        // words and the LLM is left with only what the rules couldn't
+        // fix. (Diarization itself already happened inside Stage 1 —
+        // `runFinalTranscribe` merges speaker spans before returning.
+        // It can't be disturbed from here regardless: matching reads
+        // voice embeddings, and this writes only segment text.)
+        //
+        // This is also the only vocabulary route that works for
+        // Parakeet, which has no decoder-prompt support to bias.
+        if currentMode == .meeting {
+            let vocabState = signposter.beginInterval("meeting_vocabulary", id: signposter.makeSignpostID())
+            let t_vocab = Date()
+            let result = MeetingVocabulary.corrections(
+                for: segments,
+                rules: DictationDictionary.shared.replacements,
+                applyBrandTable: settings.fixBrandNamesInDictation
+            )
+            if !result.isEmpty {
+                micTranscriber.applyCorrectedText(result.replacements)
+                systemTranscriber.applyCorrectedText(result.replacements)
+                UsageStats.shared.recordFixes(dictionary: result.dictionaryFixes + result.brandFixes)
+            }
+            signposter.endInterval("meeting_vocabulary", vocabState)
+            log.info("post-stop meeting_vocabulary: \(ms(t_vocab), privacy: .public)ms")
         }
 
         // ── Stage 2: Speaker profile matching ────────────────────────
@@ -610,8 +664,8 @@ extension RecordingSession {
             return
         }
 
-        let changed = micTranscriber.applyPolishedText(outcome.replacements)
-            + systemTranscriber.applyPolishedText(outcome.replacements)
+        let changed = micTranscriber.applyCorrectedText(outcome.replacements)
+            + systemTranscriber.applyCorrectedText(outcome.replacements)
         log.info("Transcript polish applied to \(changed, privacy: .public) segment(s)\(outcome.timedOut ? " (deadline cut the pass short)" : "", privacy: .public)")
     }
 

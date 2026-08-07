@@ -1156,7 +1156,7 @@ struct SettingsView: View {
                 Toggle(isOn: $settings.fixBrandNamesInDictation) {
                     Text("Fix product names")
                 }
-                .help("Restores product names dictated in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Works on every engine; your own Vocabulary rules always win.")
+                .help("Restores product names spoken in another script to their Latin spelling — «фигма» becomes Figma, «гитхаб» becomes GitHub. Applies to dictation and to recorded meetings, on every engine; your own Vocabulary rules always win.")
 
                 // Streaming live preview for dictation (Nemotron 3.5,
                 // on-device). The badge doubles as the model-download

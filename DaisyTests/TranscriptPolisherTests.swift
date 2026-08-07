@@ -270,7 +270,7 @@ struct TranscriptPolisherTests {
     @Test("Two lines swapping text is caught by the per-line budget")
     func validate_rejectsSwappedLines() {
         // Cheap chunk-wide (two lines out of many) but catastrophic:
-        // `applyPolishedText` patches text by segment id and leaves
+        // `applyCorrectedText` patches text by segment id and leaves
         // speakerId alone, so a swap leaves one speaker saying another's
         // words under their own timestamp.
         let a = "мы обсудили бюджет на следующий квартал и решили его увеличить"

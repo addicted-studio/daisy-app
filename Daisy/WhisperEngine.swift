@@ -696,11 +696,38 @@ final class WhisperEngine {
         // in. Best-effort: if the tokenizer isn't ready we just skip
         // biasing rather than failing the pass.
         var biasPromptTokens: [Int]? = nil
+        // Word-tokens of each term that ACTUALLY reached the decoder —
+        // the echo filter's reference. Built term-by-term alongside the
+        // prompt so the two can never disagree about what was sent.
+        var biasSentTerms: [[String]] = []
         if !biasTerms.isEmpty, let tokenizer = box.kit.tokenizer {
-            let promptText = " " + biasTerms.joined(separator: " ")
-            let tokens = tokenizer.encode(text: promptText)
-                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            // Cap the prompt. Whisper's decoder prompt window is ~224
+            // tokens; a user who bulk-imported several hundred
+            // vocabulary rules would otherwise overflow it, and what
+            // overflows isn't dropped politely — it displaces the audio
+            // context the decoder actually needs.
+            //
+            // Accumulate whole terms until the token budget is spent,
+            // rather than encoding everything and truncating the token
+            // array. Truncating mid-term would leave a half-word in the
+            // prompt, and — the reason it matters here — would make the
+            // echo filter's term list a superset of what was really
+            // sent, so terms the decoder never saw could still delete
+            // speech from the transcript.
+            var tokens: [Int] = []
+            for term in biasTerms.prefix(Self.maxBiasTerms) {
+                let encoded = tokenizer.encode(text: " " + term)
+                    .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+                guard !encoded.isEmpty else { continue }
+                if tokens.count + encoded.count > Self.maxBiasPromptTokens { break }
+                tokens += encoded
+                let words = Self.biasWordTokens(term)
+                if !words.isEmpty { biasSentTerms.append(words) }
+            }
             if !tokens.isEmpty { biasPromptTokens = tokens }
+            if biasSentTerms.count < biasTerms.count {
+                log.info("Vocabulary bias sent \(biasSentTerms.count, privacy: .public) of \(biasTerms.count, privacy: .public) terms (prompt budget)")
+            }
         }
 
         // Per-pass timing instrumentation (privacy-safe: durations and
@@ -801,7 +828,14 @@ final class WhisperEngine {
 
         // Decode + post-filter as ONE reusable pass so the dictation
         // rescue below can re-run it with adjusted options.
-        func runDecodePass(_ options: DecodingOptions) async throws -> (kept: [WhisperSegment], rawCount: Int) {
+        // `echoTerms` is a PARAMETER, not a capture: the rescue pass
+        // below sends no prompt, so it must not run the prompt-echo
+        // filter. Closing over the term list instead would have the
+        // rescue re-delete the very text it exists to recover.
+        func runDecodePass(
+            _ options: DecodingOptions,
+            echoTerms: [[String]]
+        ) async throws -> (kept: [WhisperSegment], rawCount: Int) {
         var allRaw: [(spanOffsetSec: Double, segs: [TranscriptionSegment])] = []
         let decodeStart = Date()
         for span in speechSpans {
@@ -841,7 +875,7 @@ final class WhisperEngine {
         // counts + one logprob number, never transcript text.
         var previousText: String?
         var kept: [WhisperSegment] = []
-        var dEmpty = 0, dHalluc = 0, dLogprob = 0, dShort = 0, dDup = 0
+        var dEmpty = 0, dHalluc = 0, dLogprob = 0, dShort = 0, dDup = 0, dBiasEcho = 0
         var worstLogprob = 0.0
         for (offsetSec, segs) in allRaw {
             for seg in segs {
@@ -850,6 +884,20 @@ final class WhisperEngine {
 
                 // (1) Known YouTube-training artefacts (full phrases).
                 if Self.isKnownHallucination(text) { dHalluc += 1; continue }
+
+                // (1b) Prompt echo. Whisper's documented failure mode
+                // with `initial_prompt`: on a low-information span it
+                // reads the prompt back out as if it were speech, so the
+                // user's own vocabulary list appears in the transcript
+                // as something someone said. Harmless-looking in
+                // dictation (one bad paste) and much worse in a meeting,
+                // where it lands mid-conversation attributed to a
+                // speaker. Drop any segment whose text is contained in
+                // the bias prompt.
+                if Self.looksLikeBiasEcho(text, terms: echoTerms) {
+                    dBiasEcho += 1
+                    continue
+                }
 
                 worstLogprob = min(worstLogprob, Double(seg.avgLogprob))
 
@@ -883,13 +931,13 @@ final class WhisperEngine {
                 ))
             }
         }
-        if (dEmpty + dHalluc + dLogprob + dShort + dDup) > 0 {
-            log.info("Whisper post-filter [\(String(describing: profile), privacy: .public)]: kept \(kept.count, privacy: .public)/\(rawSegmentCount, privacy: .public) — dropped empty=\(dEmpty, privacy: .public) halluc=\(dHalluc, privacy: .public) logprob=\(dLogprob, privacy: .public) short=\(dShort, privacy: .public) dup=\(dDup, privacy: .public), worstLogprob=\(String(format: "%.2f", worstLogprob), privacy: .public)")
+        if (dEmpty + dHalluc + dLogprob + dShort + dDup + dBiasEcho) > 0 {
+            log.info("Whisper post-filter [\(String(describing: profile), privacy: .public)]: kept \(kept.count, privacy: .public)/\(rawSegmentCount, privacy: .public) — dropped empty=\(dEmpty, privacy: .public) halluc=\(dHalluc, privacy: .public) logprob=\(dLogprob, privacy: .public) short=\(dShort, privacy: .public) dup=\(dDup, privacy: .public) biasEcho=\(dBiasEcho, privacy: .public), worstLogprob=\(String(format: "%.2f", worstLogprob), privacy: .public)")
         }
         return (kept, rawSegmentCount)
         }  // runDecodePass
 
-        let first = try await runDecodePass(options)
+        let first = try await runDecodePass(options, echoTerms: biasSentTerms)
 
         // Dictation rescue pass (field bug 2026-07-25, Egor's log
         // report): with vocabulary-bias promptTokens active, WhisperKit
@@ -903,8 +951,30 @@ final class WhisperEngine {
         // hearing real speech, retry ONCE without the bias prompt and
         // with the upstream-default no-speech threshold. Meetings and
         // voice notes (.full/.lite) keep single-pass behaviour.
-        if profile == .dictationFinal, first.kept.isEmpty {
-            log.warning("Dictation pass empty (raw=\(first.rawCount, privacy: .public), bias=\(biasPromptTokens != nil, privacy: .public)) — rescue pass without bias prompt")
+        //
+        // Generalized for meetings (D-4): the same trap is now reachable
+        // there, because the meeting final pass carries the bias too.
+        // It can't fire on the live `.lite` passes — those never carry
+        // bias — so the every-few-seconds path keeps its single-decode
+        // cost.
+        //
+        // `rawCount > 0` is what bounds the cost, and it is the bug's
+        // actual signature: the decoder DID emit segments and the
+        // post-filter dropped every one. A pass that decoded nothing at
+        // all heard nothing, and re-decoding it would just spend the
+        // time again. That matters most for a meeting, where this pass
+        // covers the whole archive: the 20-minute session this file
+        // cites at ~237 s would otherwise pay ~474 s while HOLDING the
+        // engine slot, blocking the other stream's final pass behind it.
+        //
+        // (VAD-empty buffers already returned before any decode — but
+        // only when Silero is loaded. `runVADPrepass` falls back to a
+        // whole-buffer span while the model is still downloading, and
+        // `rawCount > 0` is what covers that case.)
+        let biasWasActive = biasPromptTokens != nil
+        if first.kept.isEmpty, first.rawCount > 0,
+           profile == .dictationFinal || biasWasActive {
+            log.warning("Pass empty [\(String(describing: profile), privacy: .public)] (raw=\(first.rawCount, privacy: .public), bias=\(biasWasActive, privacy: .public)) — rescue pass without bias prompt")
             let rescueOptions = DecodingOptions(
                 task: .transcribe,
                 language: language,
@@ -917,14 +987,103 @@ final class WhisperEngine {
                 promptTokens: nil,
                 compressionRatioThreshold: 2.4,
                 logProbThreshold: -1.0,
-                noSpeechThreshold: 0.6,
+                // Relax the no-speech gate for DICTATION only. There an
+                // empty result is total failure — nothing gets pasted —
+                // so it's worth risking a noisy line. A meeting can
+                // afford to shed one, and `.full` keeps the strict gate
+                // precisely because the input that triggers a rescue is
+                // near-silence, which is where the loose setting
+                // hallucinates.
+                noSpeechThreshold: profile == .dictationFinal ? 0.6 : 0.4,
                 concurrentWorkerCount: profile.concurrentWorkerCount,
                 chunkingStrategy: .vad
             )
-            let rescue = try await runDecodePass(rescueOptions)
+            // No prompt was sent, so nothing can be a prompt echo.
+            let rescue = try await runDecodePass(rescueOptions, echoTerms: [])
             return rescue.kept
         }
         return first.kept
+    }
+
+    // MARK: - Vocabulary bias
+
+    /// Ceiling on how many vocabulary terms reach the decoder prompt.
+    /// The audit's number. Terms arrive in the user's rule-list order,
+    /// so for a hand-curated list the cap keeps the ones they added
+    /// first; for a bulk import that order is the file's, so it keeps an
+    /// arbitrary 50 rather than a chosen 50.
+    nonisolated static let maxBiasTerms = 50
+
+    /// Hard ceiling in tokens. Whisper's decoder prompt window is ~224
+    /// tokens and everything past it displaces real audio context, so
+    /// this leaves clear headroom rather than filling it.
+    nonisolated static let maxBiasPromptTokens = 160
+
+    /// How many WHOLE vocabulary terms a segment must reproduce,
+    /// back-to-back and in list order, before we call it a prompt echo
+    /// rather than speech.
+    ///
+    /// This is the number that decides whether the filter is safe. The
+    /// obvious test — "the segment appears inside the prompt text" —
+    /// deletes real speech, because a single vocabulary entry trivially
+    /// appears inside the prompt: a user with a colleague's name in
+    /// their vocabulary would lose the line "Мария Иванова." from a
+    /// meeting transcript, silently and permanently. Two terms isn't
+    /// enough either — "Claude Code, Kubernetes" is an ordinary
+    /// standup sentence. Three consecutive terms, in the same order the
+    /// user's list has them, with nothing else in the segment, is the
+    /// decoder reading its prompt back.
+    ///
+    /// A vocabulary shorter than this simply can't trip the filter,
+    /// which is the right failure direction.
+    nonisolated static let minBiasEchoTerms = 3
+
+    /// Lowercased letter/digit word tokens — the unit both the term
+    /// list and the candidate segment are compared in, so punctuation
+    /// and casing can't hide an echo or fake one.
+    nonisolated static func biasWordTokens(_ text: String) -> [String] {
+        text.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+    }
+
+    /// True when `text` is the decoder reading the bias prompt back out
+    /// — Whisper's documented `initial_prompt` failure on a
+    /// low-information span. In dictation that costs one bad paste; in
+    /// a meeting it lands mid-conversation attributed to a speaker.
+    ///
+    /// `terms` holds the word tokens of each term that actually reached
+    /// the decoder, in prompt order. A segment counts as an echo only
+    /// when its ENTIRE token sequence is exactly `minBiasEchoTerms` or
+    /// more consecutive terms from that list, concatenated in order —
+    /// no extra words before, after, or in between. Anything a person
+    /// would plausibly say fails at least one of those.
+    nonisolated static func looksLikeBiasEcho(_ text: String, terms: [[String]]) -> Bool {
+        guard terms.count >= minBiasEchoTerms else { return false }
+        let tokens = biasWordTokens(text)
+        guard !tokens.isEmpty else { return false }
+
+        for start in terms.indices {
+            var cursor = 0
+            var matchedTerms = 0
+            var index = start
+            while index < terms.count {
+                let term = terms[index]
+                let end = cursor + term.count
+                guard end <= tokens.count,
+                      Array(tokens[cursor..<end]) == term else { break }
+                cursor = end
+                matchedTerms += 1
+                index += 1
+                // The run has to account for the WHOLE segment — a
+                // sentence that merely opens with three terms is still
+                // a sentence.
+                if cursor == tokens.count {
+                    return matchedTerms >= minBiasEchoTerms
+                }
+            }
+        }
+        return false
     }
 
     // MARK: - VAD pre-pass

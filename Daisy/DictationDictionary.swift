@@ -258,6 +258,20 @@ final class DictationDictionary {
     /// doesn't count — rewriting "Claude" to "Claude" fixed nothing).
     /// Feeds the "fixes made by Daisy" stat.
     func applyCounting(to text: String) -> (text: String, fixes: Int) {
+        Self.applyCounting(to: text, rules: replacements)
+    }
+
+    /// The rule engine itself, over an explicit rule list.
+    ///
+    /// `nonisolated static` so callers that hold rules as plain data can
+    /// use it without the singleton — `MeetingVocabulary` applies the
+    /// same rules to a finished meeting transcript, and it must produce
+    /// byte-identical output to the dictation path or the two surfaces
+    /// disagree about the same sentence.
+    nonisolated static func applyCounting(
+        to text: String,
+        rules replacements: [DictationReplacement]
+    ) -> (text: String, fixes: Int) {
         guard !text.isEmpty, !replacements.isEmpty else { return (text, 0) }
 
         // Normalise each entry to an effective (needle → replacement) pair:
