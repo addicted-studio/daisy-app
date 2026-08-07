@@ -73,6 +73,12 @@ struct ContentView: View {
     /// `PopoverWindowAccessor`, so the close button can dismiss it.
     @State private var popoverWindow: NSWindow?
 
+    /// Ephemeral by construction: the catch-up recap lives in view
+    /// state and nowhere else, so closing the popover forgets it and
+    /// the session folder never learns it happened.
+    @State private var catchUpResult: CatchUp.Outcome?
+    @State private var catchUpRunning = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -787,6 +793,106 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Catch-up ("what did I miss?")
+    //
+    // Lives in the transcript header rather than the footer: it is a
+    // question about the transcript, and the footer's buttons are all
+    // about the finished artifact. Only while recording — after Stop
+    // the real summary answers the same question better.
+
+    @ViewBuilder
+    private var catchUpButton: some View {
+        // Meetings only. A voice note has one speaker and no thread to
+        // have missed, and the prompt's "someone stepped away from a
+        // meeting" framing would produce nonsense over a solo dictation.
+        if session.currentMode == .meeting,
+           session.status == .recording || session.status == .paused {
+            Button {
+                // Guard in the ACTION, not the task body: two clicks
+                // landing before SwiftUI re-renders the disabled state
+                // would otherwise both enqueue, and the first to finish
+                // would clear the spinner while the second was still in
+                // flight.
+                guard !catchUpRunning else { return }
+                catchUpRunning = true
+                Task { await runCatchUp() }
+            } label: {
+                if catchUpRunning {
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.7)
+                } else {
+                    Label("What did I miss?", systemImage: "arrow.counterclockwise")
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(catchUpRunning || !hasSegments)
+            .help("Recap the last few minutes — shown here only, never saved to the recording")
+        }
+    }
+
+    @ViewBuilder
+    private var catchUpCard: some View {
+        if let outcome = catchUpResult {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "arrow.counterclockwise")
+                    .foregroundStyle(Color.daisyAccent)
+                    .font(.caption)
+                VStack(alignment: .leading, spacing: 4) {
+                    switch outcome {
+                    case .recap(let text):
+                        Text(text)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    case .tooQuiet:
+                        Text("Not much was said in the last few minutes.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .unavailable:
+                        Text("Couldn’t reach the summary provider just now.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    case .wouldLeaveThisMac(let provider):
+                        Text("A recap would send this meeting to \(provider), and it isn’t being summarized there. Turn on the summary for this meeting, or pick a local provider.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 4)
+                Button {
+                    catchUpResult = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss recap")
+            }
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.daisyBgSidebar)
+            )
+            // The card outlives the button (which hides on Stop), and
+            // this view's @State survives the MenuBarExtra popover
+            // closing — so without this, meeting A's recap sits above
+            // meeting B's live transcript.
+            .onChange(of: session.status) { _, _ in catchUpResult = nil }
+            .onChange(of: session.sessionDirectory) { _, _ in catchUpResult = nil }
+        }
+    }
+
+    /// `catchUpRunning` is set by the button action before this starts —
+    /// see the guard there.
+    private func runCatchUp() async {
+        defer { catchUpRunning = false }
+        catchUpResult = await session.catchUpRecap()
+    }
+
     // MARK: - Transcript
 
     /// Live popover renders only the most recent N lines. The full
@@ -811,12 +917,15 @@ struct ContentView: View {
                 Text("Transcript")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
+                catchUpButton
                 if !display.isEmpty {
                     Text(String(localized: "\(display.count) lines"))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
             }
+
+            catchUpCard
 
             if windowed.isEmpty {
                 emptyState

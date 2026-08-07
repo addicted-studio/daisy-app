@@ -127,9 +127,31 @@ enum AcousticEchoDedup {
     /// the rest of this enum (project compiles main-actor-by-default).
     private(set) static var lastFilterWasSystemic = false
 
+    /// The canonical entry point: filters AND records whether this
+    /// session looked systemic, for the headphones nudge that
+    /// `RecordingSession.stop()` shows once right after the render.
     static func filter(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
-        lastFilterWasSystemic = false
-        guard !segments.isEmpty else { return segments }
+        let result = apply(segments)
+        lastFilterWasSystemic = result.systemic
+        return result.kept
+    }
+
+    /// Same filtering, without touching `lastFilterWasSystemic`.
+    ///
+    /// Every consumer that isn't "this is THE transcript" uses this —
+    /// the summary text, the live catch-up, the voice-corpus harvest.
+    /// They all need deduped segments, but none of them is the event
+    /// the headphones nudge is reporting on, and a stray write between
+    /// `renderMarkdown` setting the flag and `stop()` reading it would
+    /// silently turn that nudge on or off.
+    static func filteredQuietly(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
+        apply(segments).kept
+    }
+
+    private static func apply(
+        _ segments: [TranscriptSegment]
+    ) -> (kept: [TranscriptSegment], systemic: Bool) {
+        guard !segments.isEmpty else { return (segments, false) }
 
         // Index system segments by start time for O(log n) window
         // lookups. We pre-normalize the system text once per
@@ -182,11 +204,10 @@ enum AcousticEchoDedup {
             || strongCount >= systemicAbsoluteStrongCount
 
         if systemicEcho {
-            lastFilterWasSystemic = true
             let kept = zip(segments, verdict)
                 .compactMap { $1 && $0.source == .microphone ? nil : $0 }
             log.info("Acoustic echo dedup: SYSTEMIC mode — dropped \(segments.count - kept.count) of \(micWithText) mic segments (strong matches: \(strongCount), fraction \(String(format: "%.2f", strongFraction)))")
-            return kept
+            return (kept, true)
         }
 
         // Pass 2 (healthy session): collapse the verdict array into
@@ -254,7 +275,7 @@ enum AcousticEchoDedup {
         if kept.count != segments.count {
             log.info("Acoustic echo dedup: run mode — dropped \(segments.count - kept.count) mic segments (strong matches: \(strongCount), fraction \(String(format: "%.2f", strongFraction)))")
         }
-        return kept
+        return (kept, false)
     }
 
     // MARK: - Internals

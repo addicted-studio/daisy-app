@@ -183,6 +183,8 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
             return try await polishTranscript(payload: trimmed, context: context)
         case .speakerNames(let context):
             return try await proposeSpeakerNames(transcript: trimmed, context: context)
+        case .catchUp:
+            return try await catchUpRecap(recent: trimmed, localeHint: localeHint)
         case .morningBrief:
             return try await morningBriefLede(dossier: trimmed)
         case .preMeetingBrief:
@@ -414,6 +416,25 @@ final class AppleIntelligenceSummarizer: SummaryProvider {
         )
         let lines = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
         return MeetingSummary(summary: "", sections: [], actionItems: [], clientFollowUp: lines)
+    }
+
+    /// Catch-up recap via FREEFORM text — a few sentences, which the
+    /// guided meeting schema has no shape for and would pad into a full
+    /// outline. The local model is the point here: this is the one
+    /// feature the user runs mid-call, so a 2-second on-device answer
+    /// beats a better one that arrives after the moment has passed.
+    private func catchUpRecap(recent: String, localeHint: String?) async throws -> MeetingSummary {
+        let session = LanguageModelSession(
+            instructions: SummaryPrompt.catchUpSystemInstructions(
+                localeHint: localeHint,
+                jsonEnvelope: false
+            )
+        )
+        let response = try await session.respond(
+            to: SummaryPrompt.catchUpUserPrompt(recent: recent)
+        )
+        let recap = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MeetingSummary(summary: recap, sections: [], actionItems: [], clientFollowUp: "")
     }
 
     /// Morning-brief lede: the entire output is one short narrative
