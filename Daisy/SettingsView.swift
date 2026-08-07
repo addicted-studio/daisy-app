@@ -1335,6 +1335,21 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                // Previously defaults-only, with the doc comment saying
+                // "flip via defaults for testing". It's surfaced now so
+                // the A/B can happen on real meetings; still default OFF
+                // and still honestly described as a gamble, because the
+                // attendee count is a hard constraint on the diarizer
+                // and the invite is a noisy proxy for who actually
+                // showed up.
+                Toggle(isOn: $settings.diarizeUseAttendeeCountHint) {
+                    Text("Use the invite’s headcount")
+                    Text("For calendar meetings, tells the speaker-splitter exactly how many people to expect. Sharpens it when the invite is accurate — and makes it worse when it isn’t (no-shows, someone who wasn’t invited, one person on two devices). Experimental.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } header: {
                 Text("Speakers")
             }
@@ -1964,7 +1979,7 @@ struct SettingsView: View {
                 // is the answer to the question the word "cloud" raises.
                 Toggle(isOn: $settings.transcriptSecondPass) {
                     Text("Second pass over the transcript")
-                    Text("After a meeting, Daisy re-reads the transcript and fixes names, brands, and terms that transcription got wrong — using the calendar invite and your vocabulary. Wording is never changed, and the original is kept alongside it. One extra request per meeting; on a cloud provider it runs only when that meeting is being summarized there anyway.")
+                    Text("After a meeting, Daisy re-reads the transcript and fixes names, brands, and terms that transcription got wrong — using the calendar invite and your vocabulary. Wording is never changed, and the original is kept alongside it. Daisy also proposes who each speaker is, for you to confirm. Costs a couple of extra requests per meeting, and sends the invite’s attendee names along with the transcript; on a cloud provider it runs only when that meeting is being summarized there anyway.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

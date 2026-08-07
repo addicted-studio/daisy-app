@@ -534,7 +534,11 @@ nonisolated enum TranscriptPolisher {
     /// throws or the deadline wins. Same shape as
     /// `RecordingSession.polishWithDeadline`, minus that one's
     /// dictation-specific length gate — validation here is per chunk.
-    private static func withDeadline(
+    ///
+    /// Shared by the post-stop LLM passes: `SpeakerNameSuggester` races
+    /// its single request the same way, and a second copy of this would
+    /// be a second place for the cancellation semantics to drift.
+    static func withDeadline(
         seconds: Double,
         operation: @escaping @Sendable () async throws -> String
     ) async -> String? {

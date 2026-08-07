@@ -1433,7 +1433,11 @@ nonisolated private func parseYAMLArray(_ raw: String) -> [String] {
 }
 
 /// Parse a YAML-style inline dict — `{A: "Alex", B: "Maria"}`.
-nonisolated private func parseYAMLDict(_ raw: String) -> [String: String] {
+/// Internal rather than file-private: the post-stop pipeline reads the
+/// `daisy_speaker_map:` line back out of `transcript.md` to see renames
+/// the user made while it was still running, and a second copy of this
+/// parser would be a second place for the encoding to drift.
+nonisolated func parseYAMLDict(_ raw: String) -> [String: String] {
     var trimmed = raw.trimmingCharacters(in: .whitespaces)
     if trimmed.hasPrefix("{"), trimmed.hasSuffix("}") {
         trimmed = String(trimmed.dropFirst().dropLast())

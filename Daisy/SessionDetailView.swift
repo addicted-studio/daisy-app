@@ -1382,13 +1382,16 @@ struct SessionDetailView: View {
         pruneSuggestion(for: speakerID)
     }
 
-    // MARK: - Suggest-mode suggestions
+    // MARK: - Speaker suggestions
 
-    /// Parsed `speaker_suggestions.json` for this session (Suggest
-    /// mode only). Re-read whenever `suggestionRefreshTick` changes.
-    /// Empty/absent for Automatic + Off sessions. Filtered to labels
-    /// the user hasn't already named, so a confirmed row's chip
-    /// disappears even before the sidecar prune lands.
+    /// Parsed `speaker_suggestions.json` for this session. Re-read
+    /// whenever `suggestionRefreshTick` changes. Present in Suggest mode
+    /// (where every match is a suggestion) and in Automatic mode when
+    /// Daisy has a WEAK candidate it won't auto-apply — a name matched
+    /// off the invite, or one inferred from how someone was addressed.
+    /// Absent in Off mode. Filtered to labels the user hasn't already
+    /// named, so a confirmed row's chip disappears even before the
+    /// sidecar prune lands.
     private var speakerSuggestions: [String: String] {
         _ = suggestionRefreshTick  // re-evaluate on tick
         guard let file = loadSpeakerSuggestions() else { return [:] }
@@ -2312,8 +2315,18 @@ private struct SpeakerNameRow: View {
     private var suggestionSourceLabel: String? {
         switch suggestionSource {
         case "voice":       return String(localized: "· heard")
+        // "email" and "invite" are the two ways the calendar pass
+        // resolves an attendee to a known profile; the distinction is
+        // internal bookkeeping, and "calendar" is the honest word for
+        // both from where the user sits.
         case "email":       return String(localized: "· calendar")
+        case "invite":      return String(localized: "· calendar")
         case "voice+email": return String(localized: "· heard + calendar")
+        // Inferred from how the person was addressed in the
+        // conversation. Weaker evidence than a voice fingerprint, and
+        // the caption says so — this is the one the user should read
+        // before confirming.
+        case "mentioned":   return String(localized: "· named in the call")
         default:            return nil
         }
     }

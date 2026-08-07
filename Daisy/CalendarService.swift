@@ -613,12 +613,19 @@ private extension DaisyMeeting {
     /// effort — EventKit gives us `mailto:foo@bar.com` URLs for
     /// invited people; anything that doesn't fit that shape is
     /// skipped. Used to detect the dominant external domain for
-    /// auto-suggested client tagging (see RecordingSession).
+    /// auto-suggested client tagging (see RecordingSession), and to
+    /// resolve invitees to saved speaker profiles.
+    ///
+    /// Excludes the user, for the same reasons as `projectAttendees` —
+    /// and additionally because the user's own address is by definition
+    /// never the "dominant external domain", so including it only added
+    /// noise to the client-tag inference.
     nonisolated static func projectAttendeeEmails(_ raw: [EKParticipant]?) -> [String] {
         guard let raw else { return [] }
         var seen = Set<String>()
         var out: [String] = []
         for p in raw {
+            if p.isCurrentUser { continue }
             guard let url = p.url as URL? else { continue }
             let s = url.absoluteString
             let email: String
@@ -643,11 +650,25 @@ private extension DaisyMeeting {
     /// portion) when `.name` is nil — common for Google Calendar
     /// events synced via CalDAV where iOS gets only email addresses.
     /// Deduplicates and trims.
+    ///
+    /// **Excludes the user themselves** (`isCurrentUser`), which is what
+    /// the Google path has always done and what its comment already
+    /// claimed this one did. Every consumer wants the OTHER people:
+    /// the pre-meeting brief is about who you're meeting, the speaker
+    /// rename picker offers names for REMOTE voices, the diarizer hint
+    /// counts remote speakers, and — the reason this was found —
+    /// `SpeakerNameSuggester` uses this list as the allow-list of names
+    /// a diarized remote speaker may be given. With the user in it, a
+    /// transcript line like "спасибо, Егор" (the other party thanking
+    /// the person recording) was enough for the model to propose the
+    /// USER as the name for a remote speaker, and one Confirm would
+    /// then attribute the other party's words to them.
     nonisolated static func projectAttendees(_ raw: [EKParticipant]?) -> [String] {
         guard let raw else { return [] }
         var seen = Set<String>()
         var out: [String] = []
         for p in raw {
+            if p.isCurrentUser { continue }
             let name = p.name?.trimmingCharacters(in: .whitespaces)
             let display: String
             if let name, !name.isEmpty {

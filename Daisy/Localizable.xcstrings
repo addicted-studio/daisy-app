@@ -97,6 +97,16 @@
         }
       }
     },
+    "· named in the call" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "· названо в разговоре"
+          }
+        }
+      }
+    },
     "“%@” is an Ollama cloud model: your local Ollama daemon proxies the request to ollama.com, so the transcript LEAVES your Mac (Ollama bills the usage). For fully on-device summaries pick a model without a `:cloud`/`-cloud` tag." : {
       "localizations" : {
         "ru" : {
@@ -1872,12 +1882,12 @@
         }
       }
     },
-    "After a meeting, Daisy re-reads the transcript and fixes names, brands, and terms that transcription got wrong — using the calendar invite and your vocabulary. Wording is never changed, and the original is kept alongside it. One extra request per meeting; on a cloud provider it runs only when that meeting is being summarized there anyway." : {
+    "After a meeting, Daisy re-reads the transcript and fixes names, brands, and terms that transcription got wrong — using the calendar invite and your vocabulary. Wording is never changed, and the original is kept alongside it. Daisy also proposes who each speaker is, for you to confirm. Costs a couple of extra requests per meeting, and sends the invite’s attendee names along with the transcript; on a cloud provider it runs only when that meeting is being summarized there anyway." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "После встречи Daisy перечитывает транскрипт и исправляет имена, бренды и термины, которые распознавание передало неверно, — опираясь на приглашение в календаре и ваш словарь. Формулировки не меняются, исходный транскрипт сохраняется рядом. Один дополнительный запрос на встречу; на облачном провайдере проход выполняется только тогда, когда эта встреча и так суммируется там же."
+            "value" : "После встречи Daisy перечитывает транскрипт и исправляет имена, бренды и термины, которые распознавание передало неверно, — опираясь на приглашение в календаре и ваш словарь. Формулировки не меняются, исходный транскрипт сохраняется рядом. Ещё Daisy предлагает, кто есть кто из спикеров, — вам остаётся подтвердить. Стоит пары дополнительных запросов на встречу и отправляет имена участников из инвайта вместе с транскриптом; на облачном провайдере проход выполняется только тогда, когда эта встреча и так суммируется там же."
           }
         }
       }
@@ -4295,6 +4305,58 @@
         }
       }
     },
+    "Daisy has a name for %lld speakers · review in History" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Daisy has a name for %lld speaker · review in History"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Daisy has a name for %lld speakers · review in History"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Daisy предлагает имена для %lld спикеров · проверить в Истории"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Daisy предлагает имена для %lld спикеров · проверить в Истории"
+                }
+              },
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Daisy предлагает имя для %lld спикера · проверить в Истории"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "Daisy предлагает имена для %lld спикеров · проверить в Истории"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Daisy has heard enough of your dictation to learn your tone, phrasing, and quirks — so it can polish future dictations to sound like you." : {
       "localizations" : {
         "ru" : {
@@ -5755,6 +5817,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Фоллоу-ап составлен"
+          }
+        }
+      }
+    },
+    "For calendar meetings, tells the speaker-splitter exactly how many people to expect. Sharpens it when the invite is accurate — and makes it worse when it isn’t (no-shows, someone who wasn’t invited, one person on two devices). Experimental." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для встреч из календаря сообщает разделителю голосов, сколько людей ожидать. Помогает, когда инвайт точен, — и мешает, когда нет (кто-то не пришёл, кто-то пришёл без приглашения, один человек с двух устройств). Экспериментально."
           }
         }
       }
@@ -12139,6 +12211,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Использовать шаблон для"
+          }
+        }
+      }
+    },
+    "Use the invite’s headcount" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Учитывать число участников из инвайта"
           }
         }
       }

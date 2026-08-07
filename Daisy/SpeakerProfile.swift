@@ -132,14 +132,28 @@ nonisolated struct SpeakerCentroidsFile: Codable, Sendable {
     let centroids: [String: [Float]]
 }
 
-/// Sidecar written ONLY in `Suggest` speaker-match mode. Holds the
-/// speaker labels Daisy recognized (by voice fingerprint and/or
-/// calendar-attendee email) but did NOT auto-apply — the user
-/// confirms them in the session's Name-the-speakers card before the
-/// names enter the transcript. In `Automatic` mode the matches go
-/// straight into the transcript's `daisy_speaker_map` and no
-/// suggestions sidecar is written; in `Off` mode there are no matches
-/// to suggest.
+/// Holds the speaker labels Daisy has a name for but did NOT
+/// auto-apply — the user confirms them in the session's
+/// Name-the-speakers card before the names enter the transcript.
+///
+/// Written in both `Suggest` and `Automatic` mode, for different
+/// reasons:
+///
+///   • In `Suggest`, EVERY match lands here, including the strong ones
+///     (voice fingerprint, calendar-attendee email) — that's what the
+///     mode means. In `Automatic` those same strong matches go straight
+///     into the transcript's `daisy_speaker_map` instead.
+///   • The two WEAK signals are suggestion-only in every mode and so
+///     land here even under `Automatic`: a name matched off the invite
+///     by display name (`invite`) and a name inferred from how someone
+///     is addressed in the conversation (`mentioned`,
+///     `SpeakerNameSuggester`). Neither is an identity key, and a wrong
+///     speaker name is worse than "Remote B" — it's a quotation
+///     attributed to someone who didn't say it, in a document the user
+///     may forward.
+///
+/// In `Off` mode nothing is written: the user turned cross-meeting
+/// recognition off, and every source above is a form of it.
 ///
 /// File layout: `<session-dir>/speaker_suggestions.json`. Deleted by
 /// the detail view once every suggestion has been confirmed or
@@ -147,8 +161,9 @@ nonisolated struct SpeakerCentroidsFile: Codable, Sendable {
 ///
 /// `byLabel` maps transcript speaker label ("A", "B", …) → the
 /// suggested display name. `source` is a parallel map label → why we
-/// matched ("voice" / "email" / "voice+email"), surfaced as a subtle
-/// caption so the user knows how confident the match is.
+/// matched ("voice" / "email" / "voice+email" / "invite" /
+/// "mentioned"), surfaced as a subtle caption so the user knows how
+/// confident the match is.
 ///
 /// `nonisolated` for the same reason as `SpeakerCentroidsFile` — pure
 /// data container decoded off the main actor.
