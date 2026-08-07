@@ -675,7 +675,8 @@ extension RecordingSession {
             .sorted()
         guard !labels.isEmpty else { return }
 
-        let transcript = SpeakerNameSuggester.sampleTranscript(snapshot)
+        let turns = SpeakerNameSuggester.turns(snapshot)
+        let transcript = SpeakerNameSuggester.sampleTranscript(turns: turns)
         guard !transcript.isEmpty else { return }
 
         let namesState = signposter.beginInterval("speaker_names", id: signposter.makeSignpostID())
@@ -683,6 +684,10 @@ extension RecordingSession {
         let proposed = await SpeakerNameSuggester.suggest(
             transcript: transcript,
             context: .init(attendees: attendees, labels: labels),
+            // Evidence is re-derived from the FULL turn list, not the
+            // sampled prompt — a name that only shows up in the elided
+            // middle still counts.
+            turns: turns,
             summarize: { payload, task in
                 try await Summarizer.shared.runProbe(
                     transcript: payload,
@@ -914,11 +919,14 @@ extension RecordingSession {
             // ("alex@othercorp.com" → "alex"), which collides with an
             // unrelated "Alex" the user named months ago. So a name
             // match is a HINT, and it goes where hints go — the
-            // suggestions sidecar, behind a Confirm — never into
-            // `matched`, which auto-applies in Automatic mode. It also
-            // gets no `recordMatch`: a guess must not reorder the
-            // recency ranking that the lookups themselves use to break
-            // ties.
+            // suggestions sidecar, behind a Confirm. It also gets no
+            // `recordMatch`: a guess must not reorder the recency
+            // ranking that the lookups themselves use to break ties.
+            //
+            // (The 1:1 branch below is the one exception to "a name
+            // never auto-applies", and it earns it differently — not by
+            // trusting the name, but because one invitee and one voice
+            // leaves nothing to choose between.)
             if let names = boundMeeting?.attendees, !names.isEmpty {
                 var candidates: [SpeakerProfile] = []
                 var seenIDs = Set<UUID>()
@@ -935,6 +943,42 @@ extension RecordingSession {
                     nameHints[unmatchedLabels[0]] = candidates[0].name
                     log.info("Invite-name hint for \(unmatchedLabels[0], privacy: .public) — offering as a suggestion, not applying")
                 }
+            }
+
+            // ── 2c. The 1:1 ───────────────────────────────────────────
+            // Exactly one other person on the invite and exactly one
+            // remote voice. This is the one case where "which voice is
+            // whom" isn't a question: dual-channel capture already puts
+            // the user on the mic stream, so the single system-side
+            // cluster can only be the single invitee. No fingerprint and
+            // no email needed — the arithmetic is the evidence.
+            //
+            // Everywhere else, assigning a name means choosing among
+            // several people who could plausibly be that voice, which is
+            // a guess, which is why every other path here only suggests.
+            // This is deliberately the ONLY exception.
+            //
+            // Suggest mode still routes it through the sidecar — the
+            // user asked to confirm everything, and "everything"
+            // includes the easy one.
+            //
+            // What this does NOT survive, and QA should look for: an
+            // invitee who sent a substitute, a colleague who joined
+            // uninvited and got merged into one cluster, or far-end
+            // audio that is a bot rather than a person. In all three the
+            // arithmetic still says "one and one" and the wrong name is
+            // applied. There's no local signal that distinguishes them.
+            let stillUnmatched = centroids.keys.filter { matched[$0] == nil }
+            let inviteNames = (boundMeeting?.attendees ?? [])
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            if stillUnmatched.count == 1, inviteNames.count == 1,
+               let solo = inviteNames.first,
+               !Self.looksLikeEmailLocalPart(solo, emails: boundMeeting?.attendeeEmails ?? []) {
+                let label = stillUnmatched[0]
+                matched[label] = solo
+                source[label] = "invite"
+                log.info("1:1 meeting — assigning the single invitee to \(label, privacy: .public)")
             }
 
             // Recency bump for voice-only matches (invite matches already
@@ -991,6 +1035,25 @@ extension RecordingSession {
             try data.write(to: url, options: [.atomic])
         } catch {
             log.error("Failed to write speakers.json: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// True when an "attendee name" is really an address with the domain
+    /// cut off — what both calendar projections fall back to when the
+    /// invite carries no display name ("a.kuznetsov@acme.com" →
+    /// "a.kuznetsov", "eng-team@…" → "eng-team").
+    ///
+    /// Matters only for the 1:1 auto-assign, which is the one path that
+    /// writes an invite string into the transcript unconfirmed. Putting
+    /// "a.kuznetsov" there as a person's name is worse than leaving
+    /// "Remote A" — it looks like a bug to the user and reads like one
+    /// in a document they forward. Every other consumer of these strings
+    /// either suggests rather than applies, or shows them in a picker
+    /// where the user can see what they're choosing.
+    nonisolated static func looksLikeEmailLocalPart(_ name: String, emails: [String]) -> Bool {
+        let needle = name.lowercased()
+        return emails.contains {
+            $0.lowercased().split(separator: "@").first.map(String.init) == needle
         }
     }
 

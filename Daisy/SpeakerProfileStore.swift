@@ -151,30 +151,32 @@ final class SpeakerProfileStore {
         return profilesByRecent.first { $0.emails.contains(needle) }
     }
 
-    /// Normalize a display name for comparison: case-folded, trimmed,
-    /// inner whitespace collapsed. Deliberately conservative — no
-    /// initial-matching, no nickname table, no diacritic folding. A
-    /// wrong speaker name is worse than "Remote B", so anything short
-    /// of "the same name written the same way" isn't a match.
-    nonisolated static func normalizeName(_ raw: String) -> String? {
-        let collapsed = raw
-            .split(whereSeparator: { $0.isWhitespace })
-            .joined(separator: " ")
-            .lowercased()
-        return collapsed.isEmpty ? nil : collapsed
-    }
-
-    /// Find the profile with a given display name. The name-side
+    /// Find the profile matching a display name. The name-side
     /// companion to `findByEmail`, for the common case where a calendar
     /// invite carries a person's name but not an address Daisy has ever
     /// seen (Google invites frequently give a display name only, and a
     /// profile only gains an email once the user maps a speaker to an
-    /// attendee that HAS one). Exact normalized match, first hit wins by
-    /// recency — same contract as `findByEmail`.
+    /// attendee that HAS one).
+    ///
+    /// Matching goes through `SpeakerNameMatching`, so "Priya" resolves
+    /// to a stored "Priya Raman" and "PriyaRaman" to "Priya Raman" —
+    /// but two stored profiles that both match means neither does. That
+    /// ambiguity check is why this resolves against the WHOLE name list
+    /// rather than returning the first hit by recency: unlike an email,
+    /// a display name is not an identity key, and picking the
+    /// most-recent of two people called Alex would be inventing a fact.
+    ///
+    /// Note this is looser than the exact match it replaced — an invite
+    /// whose display name fell back to "alex" now finds a stored "Alex
+    /// Petrov". That's deliberate and it's why the only caller routes
+    /// the result into suggestions rather than applying it.
     func findByName(_ rawName: String) -> SpeakerProfile? {
         ensureLoaded()
-        guard let needle = Self.normalizeName(rawName) else { return nil }
-        return profilesByRecent.first { Self.normalizeName($0.name) == needle }
+        let byRecent = profilesByRecent
+        guard let canonical = SpeakerNameMatching.resolve(rawName, in: byRecent.map(\.name)) else {
+            return nil
+        }
+        return byRecent.first { $0.name == canonical }
     }
 
     /// Add one email to a profile (idempotent, normalized). Called when
