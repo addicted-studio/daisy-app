@@ -331,15 +331,187 @@ struct SpeakerNameSuggesterTests {
         #expect(map.isEmpty)
     }
 
+    // MARK: - Merge rules
+
+    @Test("The fuller written form wins; a short form never absorbs a long one")
+    func matching_isOneWay() {
+        // "Priya" resolves UP to "Priya Raman"…
+        #expect(SpeakerNameMatching.resolve("Priya", in: ["Priya Raman"]) == "Priya Raman")
+        // …but a roster holding only the stub can't absorb the full name.
+        #expect(SpeakerNameMatching.resolve("Priya Raman", in: ["Priya"]) == nil)
+    }
+
+    @Test("Spaceless forms match only when the parts are too long to be initials")
+    func matching_spacelessNeedsLongParts() {
+        #expect(SpeakerNameMatching.resolve("PriyaRaman", in: ["Priya Raman"]) == "Priya Raman")
+        #expect(SpeakerNameMatching.resolve("priya raman", in: ["PriyaRaman"]) == "PriyaRaman")
+        // "AJ" ↔ "A J" is initials, not a spelling variant.
+        #expect(SpeakerNameMatching.resolve("AJ", in: ["A J"]) == nil)
+        #expect(SpeakerNameMatching.resolve("Jo Li", in: ["JoLi"]) == nil)
+    }
+
+    @Test("Any ambiguity resolves to no match, never to a best guess")
+    func matching_refusesAmbiguity() {
+        #expect(SpeakerNameMatching.resolve("Priya", in: ["Priya Raman", "Priya Nair"]) == nil)
+        #expect(SpeakerNameMatching.resolve("alex", in: ["Alex Chen", "Alex Rivera"]) == nil)
+        // Roster entries that are the same name written two ways are a
+        // duplicate, not an ambiguity.
+        #expect(SpeakerNameMatching.resolve("Alex", in: ["alex", "ALEX  "]) == "alex")
+    }
+
+    @Test("A tier that finds two answers stops the search — it doesn't hand down to a weaker one")
+    func matching_ambiguityDoesNotFallThrough() {
+        // The spaceless tier matches both "Priya Raman" and "Pri Yaraman"
+        // here. Letting that ambiguity fall through to the given-name
+        // tier would answer with a THIRD person, confidently.
+        #expect(SpeakerNameMatching.resolve(
+            "PriyaRaman",
+            in: ["Priya Raman", "Pri Yaraman", "Priyaraman Kumar"]
+        ) == nil)
+    }
+
+    @Test("A one-letter given name is not enough to resolve a full name")
+    func matching_rejectsInitialAsGivenName() {
+        #expect(SpeakerNameMatching.resolve("A", in: ["A Kuznetsov"]) == nil)
+        #expect(SpeakerNameMatching.resolve("Ann", in: ["Ann Kuznetsova"]) == "Ann Kuznetsova")
+    }
+
+    @Test("Case and spacing differences are not differences")
+    func matching_normalizes() {
+        #expect(SpeakerNameMatching.resolve("  МАРИНА   соколова ", in: ["Марина Соколова"]) == "Марина Соколова")
+        #expect(SpeakerNameMatching.sameName("Priya Raman", "priya  raman"))
+        #expect(!SpeakerNameMatching.sameName("Priya Raman", "Alex Chen"))
+    }
+
+    // MARK: - "Never guess" evidence
+
+    private func turn(_ label: String?, _ text: String) -> SpeakerNameSuggester.Turn {
+        .init(label: label, text: text)
+    }
+
+    @Test("A self-introduction is enough on its own")
+    func evidence_acceptsSelfIntroduction() {
+        // Nobody introduces themselves as someone else.
+        let turns = [
+            turn(nil, "привет, начнём"),
+            turn("A", "привет, это Прия, я по проекту"),
+        ]
+        #expect(SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Прия", turns: turns))
+        #expect(SpeakerNameSuggester.hasNamingEvidence(
+            label: "A", name: "Priya Raman",
+            turns: [turn("A", "hi, this is Priya, I'm covering the design side")]
+        ))
+    }
+
+    @Test("Saying a name in your own turn is not introducing yourself as them")
+    func evidence_rejectsSelfMentionOfSomeoneElse() {
+        // Without an introduction cue this certifies whoever said it AS
+        // Priya, for the crime of mentioning her.
+        let turns = [
+            turn(nil, "how did the deck go?"),
+            turn("A", "I'll check with Priya and get back to you"),
+        ]
+        #expect(!SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Priya Raman", turns: turns))
+    }
+
+    @Test("Being addressed twice next to your own turn is enough")
+    func evidence_acceptsRepeatedAddress() {
+        let turns = [
+            turn(nil, "спасибо, Прия"),
+            turn("A", "не за что"),
+            turn(nil, "и ещё, Прия, посмотри макеты"),
+            turn("A", "хорошо"),
+        ]
+        #expect(SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Прия", turns: turns))
+    }
+
+    @Test("Being addressed once is a coincidence, not evidence")
+    func evidence_rejectsSingleAddress() {
+        let turns = [
+            turn(nil, "спасибо, Прия"),
+            turn("A", "не за что"),
+        ]
+        #expect(!SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Прия", turns: turns))
+    }
+
+    @Test("A name merely discussed is not evidence about who is speaking")
+    func evidence_rejectsThirdPartyMentions() {
+        // The single most common way to get this wrong: people talk
+        // about absent colleagues constantly. Every mention here sits
+        // DIRECTLY beside A's turns and still must not count, because
+        // none of them is addressing anyone.
+        let turns = [
+            turn("C", "did you send Priya the deck?"),
+            turn("A", "not yet"),
+            turn("C", "Priya needs it today"),
+            turn("A", "ok"),
+            turn("C", "I'll ask Priya."),
+            turn("A", "sure"),
+        ]
+        #expect(!SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Priya Raman", turns: turns))
+    }
+
+    @Test("Vocative position is what separates addressing someone from discussing them")
+    func evidence_vocativeDetection() {
+        #expect(SpeakerNameSuggester.isVocative("прия", in: "спасибо, Прия"))
+        #expect(SpeakerNameSuggester.isVocative("прия", in: "Прия, посмотри макеты"))
+        #expect(SpeakerNameSuggester.isVocative("прия", in: "и ещё, Прия, глянь сроки"))
+        #expect(!SpeakerNameSuggester.isVocative("priya", in: "did you send Priya the deck?"))
+        #expect(!SpeakerNameSuggester.isVocative("priya", in: "Priya needs it today"))
+        #expect(!SpeakerNameSuggester.isVocative("priya", in: "I'll ask Priya."))
+    }
+
+    @Test("Mentions match whole tokens, not substrings")
+    func evidence_matchesWholeTokens() {
+        #expect(SpeakerNameSuggester.mentions("alex", in: "thanks, Alex!"))
+        #expect(!SpeakerNameSuggester.mentions("alex", in: "Alexander will send it"))
+        #expect(SpeakerNameSuggester.mentions("priya raman", in: "cc Priya Raman please"))
+        #expect(!SpeakerNameSuggester.mentions("прия", in: "Прияткин звонил"))
+    }
+
+    @Test("Names with apostrophes and hyphens are matchable")
+    func evidence_matchesPunctuatedNames() {
+        // Splitting the needle on spaces alone left the apostrophe in it
+        // and stripped it from the text, so every O'Brien, Anne-Marie
+        // and Jean-Luc silently failed to match anything.
+        #expect(SpeakerNameSuggester.mentions("o'brien", in: "thanks, O'Brien"))
+        #expect(SpeakerNameSuggester.mentions("anne-marie", in: "Anne-Marie, can you check?"))
+        #expect(SpeakerNameSuggester.mentions("jean-luc picard", in: "cc Jean-Luc Picard"))
+        #expect(SpeakerNameSuggester.isVocative("o'brien", in: "thanks, O'Brien"))
+    }
+
+    @Test("A full name and its given name both count as the same person being named")
+    func evidence_acceptsGivenNameForm() {
+        let turns = [
+            turn(nil, "Priya, can you take that?"),
+            turn("A", "sure"),
+            turn(nil, "thanks, Priya"),
+            turn("A", "no problem"),
+        ]
+        #expect(SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Priya Raman", turns: turns))
+        // A two-letter given name isn't used as a form on its own — too
+        // easy to collide with an ordinary word.
+        #expect(SpeakerNameSuggester.nameForms("Jo Li") == ["jo li"])
+    }
+
+    @Test("Being addressed once is still not enough, even in vocative position")
+    func evidence_stillRequiresTwoAddresses() {
+        let turns = [
+            turn(nil, "Priya, can you take that?"),
+            turn("A", "sure"),
+        ]
+        #expect(!SpeakerNameSuggester.hasNamingEvidence(label: "A", name: "Priya Raman", turns: turns))
+    }
+
     // MARK: - Profile name matching
 
     @Test("Profile names normalize across case and spacing")
     func profileNames_normalize() {
-        #expect(SpeakerProfileStore.normalizeName("  Priya   Raman ") == "priya raman")
-        #expect(SpeakerProfileStore.normalizeName("PRIYA RAMAN") == "priya raman")
-        #expect(SpeakerProfileStore.normalizeName("   ") == nil)
+        #expect(SpeakerNameMatching.normalize("  Priya   Raman ") == "priya raman")
+        #expect(SpeakerNameMatching.normalize("PRIYA RAMAN") == "priya raman")
+        #expect(SpeakerNameMatching.normalize("   ") == nil)
         // Deliberately NOT equal — no diacritic folding, no nicknames.
         // A wrong speaker name is worse than "Remote B".
-        #expect(SpeakerProfileStore.normalizeName("Renée") != SpeakerProfileStore.normalizeName("Renee"))
+        #expect(SpeakerNameMatching.normalize("Renée") != SpeakerNameMatching.normalize("Renee"))
     }
 }
