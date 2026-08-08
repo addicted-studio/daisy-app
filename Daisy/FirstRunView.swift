@@ -13,9 +13,10 @@
 //
 //  Step order lives in `steps(for:installedLayoutCount:)` — a pure
 //  function so the order is unit-tested. Purpose (doubles as welcome +
-//  the setup-path pick), name, one permissions screen (mic / screen /
-//  accessibility as rows, the set depends on the setup path), hotkeys,
-//  the layout-fixer step (only with 2+ installed keyboard layouts),
+//  the setup-path pick), name, one permissions screen (mic /
+//  accessibility / screen as rows — the set depends on the setup path,
+//  and Screen Recording is deliberately last, see `permissionsStep`),
+//  hotkeys, the layout-fixer step (only with 2+ installed keyboard layouts),
 //  calendar, summaries. There is no separate final "you're set" screen
 //  — the last step's own primary button reads "Start using Daisy" and
 //  calls `finish()` (see `isLastStep`); the one useful line that used
@@ -39,6 +40,15 @@
 //  fallback in AppSettings.applyBelarusianLanguageFallbackIfNeeded).
 //  Settings → Language is where an explicit override lives.
 //
+//  Onboarding survives a relaunch: granting Screen Recording ends with
+//  macOS offering "Quit & Reopen", which kills the process before
+//  `hasShownFirstRun` flips. `Resume` snapshots step / setup path /
+//  accessibility-asked / model-step-seeded to UserDefaults on every
+//  change and the init restores them, so the user comes back to the
+//  step they left rather than to the welcome screen. Reconciling a
+//  saved step with the steps a launch actually shows is `resumeStep`,
+//  pure and unit-tested alongside the step order.
+//
 //  Calendar offers Apple (EventKit, via SystemPermissions.calendar)
 //  and Google (OAuth, via GoogleOAuthClient / GoogleAccountStore — the
 //  same flow Settings → Permissions uses) side by side. Either, both,
@@ -53,8 +63,112 @@ import FoundationModels
 struct FirstRunView: View {
     @Bindable var settings: AppSettings
 
+    /// Onboarding progress that has to survive the process dying
+    /// mid-flow. Granting Screen Recording makes macOS offer
+    /// "Quit & Reopen" — the user takes it, Daisy restarts with
+    /// `hasShownFirstRun` still false, and MainView rebuilds this view
+    /// from scratch. Without a resume snapshot that lands them back on
+    /// step 1 having already answered everything.
+    ///
+    /// Written on every change rather than from some exit hook: the
+    /// quit is the system's, not ours, and can land at any moment.
+    /// UserDefaults directly (not AppSettings) because none of this is
+    /// a user-facing setting — it's scratch state with a lifetime of
+    /// exactly one onboarding, cleared by `finish()`.
+    private enum Resume {
+        private static let stepKey = "daisy.firstRun.resumeStep"
+        private static let pathKey = "daisy.firstRun.resumePath"
+        private static let axAskedKey = "daisy.firstRun.accessibilityAsked"
+        private static let modelSeededKey = "daisy.firstRun.modelStepSeeded"
+
+        static func save(
+            step: Step,
+            path: SetupPath,
+            accessibilityAsked: Bool,
+            modelStepSeeded: Bool
+        ) {
+            let defaults = UserDefaults.standard
+            defaults.set(step.rawValue, forKey: stepKey)
+            defaults.set(path.rawValue, forKey: pathKey)
+            defaults.set(accessibilityAsked, forKey: axAskedKey)
+            defaults.set(modelStepSeeded, forKey: modelSeededKey)
+        }
+
+        static func clear() {
+            let defaults = UserDefaults.standard
+            for key in [stepKey, pathKey, axAskedKey, modelSeededKey] {
+                defaults.removeObject(forKey: key)
+            }
+        }
+
+        static var path: SetupPath {
+            SetupPath(rawValue: UserDefaults.standard.string(forKey: pathKey) ?? "")
+                ?? .full
+        }
+
+        static var accessibilityAsked: Bool {
+            UserDefaults.standard.bool(forKey: axAskedKey)
+        }
+
+        static var modelStepSeeded: Bool {
+            UserDefaults.standard.bool(forKey: modelSeededKey)
+        }
+
+        /// Saved step resolved against the step list actually in play.
+        /// The reconciling itself lives in `FirstRunView.resumeStep` so
+        /// it can be unit-tested without a UserDefaults round-trip.
+        static func step(in steps: [Step]) -> Step {
+            FirstRunView.resumeStep(
+                savedRaw: UserDefaults.standard.string(forKey: stepKey),
+                in: steps
+            )
+        }
+    }
+
+    /// Where a resumed onboarding should land, given the raw value
+    /// `Resume` stored and the steps this launch actually shows.
+    ///
+    /// The saved value can name a step the current path never shows (the
+    /// user re-picked the track) or one that has since disappeared (the
+    /// layout step, if a keyboard layout was uninstalled between
+    /// launches), and an old build may have left an `Int` raw value
+    /// behind. Rather than restart the whole flow — the exact thing the
+    /// snapshot exists to prevent — fall back to the nearest EARLIER
+    /// step that does exist, so at worst the user re-answers one screen.
+    /// `Step.allCases` is declaration order, which is flow order, so
+    /// "earlier" is a prefix search. Pure and non-private so
+    /// FirstRunStepsTests can pin the behaviour, exactly like
+    /// `steps(for:installedLayoutCount:)`.
+    static func resumeStep(savedRaw: String?, in steps: [Step]) -> Step {
+        guard let savedRaw, let saved = Step(rawValue: savedRaw) else { return .purpose }
+        if steps.contains(saved) { return saved }
+        let all = Step.allCases
+        guard let savedIndex = all.firstIndex(of: saved) else { return .purpose }
+        return all[..<savedIndex].last(where: steps.contains) ?? .purpose
+    }
+
+    init(settings: AppSettings) {
+        _settings = Bindable(settings)
+        let path = Resume.path
+        let steps = Self.steps(
+            for: path,
+            installedLayoutCount: KeyboardLayouts.shared.installed.count
+        )
+        _setupPath = State(initialValue: path)
+        _step = State(initialValue: Resume.step(in: steps))
+        _accessibilityAsked = State(initialValue: Resume.accessibilityAsked)
+        _modelStepSeeded = State(initialValue: Resume.modelStepSeeded)
+    }
+
     /// Steps the user walks through, in order.
-    enum Step: Int, CaseIterable {
+    ///
+    /// Raw values are spelled out rather than left positional: `Resume`
+    /// persists one across launches, and an update that inserts or
+    /// reorders a case would otherwise silently resume an abandoned
+    /// onboarding onto a DIFFERENT step — still a valid member of the
+    /// list, so nothing could detect it. Names also make the stored
+    /// value legible in `defaults read`.
+    enum Step: String, CaseIterable {
         case purpose
         case name
         /// One screen for the whole permission set — which rows it
@@ -87,11 +201,12 @@ struct FirstRunView: View {
     /// what onboarding asks — the full track sets up meetings, dictation-
     /// only skips to the dictation essentials. NOT an app mode: the app
     /// stays whole; the user can enable the rest later (lazily).
-    enum SetupPath { case full, dictationOnly }
-    @State private var setupPath: SetupPath = .full
+    /// Raw-valued so `Resume` can persist the pick across a relaunch.
+    enum SetupPath: String { case full, dictationOnly }
+    @State private var setupPath: SetupPath
 
     /// Steps shown, branched by `setupPath`. Full asks the recording
-    /// permission set (mic + screen + accessibility — full users dictate
+    /// permission set (mic + accessibility + screen — full users dictate
     /// too) and all three hotkeys; dictation-only asks mic + accessibility
     /// and just the dictation hotkey. After the permission/hotkey block
     /// come the optional "soft" steps: full gets calendar + summary
@@ -117,7 +232,7 @@ struct FirstRunView: View {
         }
     }
 
-    @State private var step: Step = .purpose
+    @State private var step: Step
     /// Permission state lives in `SystemPermissions.shared` (@Observable,
     /// same façade Settings → Permissions reads), refreshed on step
     /// change + on app foreground-activation — the system can flip
@@ -130,7 +245,10 @@ struct FirstRunView: View {
     /// silently does nothing — and unlike mic there is no API that
     /// distinguishes "never asked" from "denied". Local tracking is
     /// enough here: on a fresh install nobody has been asked yet.
-    @State private var accessibilityAsked: Bool = false
+    /// Persisted by `Resume` for the same reason the step is: a relaunch
+    /// mid-onboarding would otherwise re-offer Allow for a prompt macOS
+    /// will never show a second time.
+    @State private var accessibilityAsked: Bool
     /// Google account state for the calendar step — same observable
     /// store Settings → Permissions reads, so a connection made in
     /// either place shows up in both.
@@ -149,7 +267,10 @@ struct FirstRunView: View {
     /// One-shot guard for seeding Apple Intelligence as the SELECTED
     /// provider on the model step. Seeded once so a user who picks a
     /// cloud provider, goes back and returns isn't overridden.
-    @State private var modelStepSeeded: Bool = false
+    /// Persisted by `Resume`: the provider pick writes straight through
+    /// to UserDefaults, so a per-process flag would let a relaunch onto
+    /// the model step re-seed over a choice the user already made.
+    @State private var modelStepSeeded: Bool
     /// Re-render tick for the layout-fix card. `LayoutAutoFix.shared.isRunning`
     /// is not @Observable, so `layoutFixCaption` can't notice the tap
     /// starting on its own; bumping this after the toggle flips forces
@@ -178,7 +299,15 @@ struct FirstRunView: View {
         }
         .onChange(of: step) { _, _ in
             refreshPermissionStates()
+            persistResume()
         }
+        // These move without the step moving — the purpose step rewrites
+        // the path in place, the Accessibility row fires its one-shot
+        // prompt without advancing, and the model step seeds itself on
+        // appear.
+        .onChange(of: setupPath) { _, _ in persistResume() }
+        .onChange(of: accessibilityAsked) { _, _ in persistResume() }
+        .onChange(of: modelStepSeeded) { _, _ in persistResume() }
         // Permissions can flip out-of-band while onboarding is open —
         // the user opens System Settings, grants Screen Recording,
         // returns to Daisy. Without a focus observer the onboarding
@@ -456,6 +585,26 @@ struct FirstRunView: View {
                     allow: { Task { await SystemPermissions.shared.requestMicrophone() } },
                     openSettings: { SystemPermissions.shared.openMicrophoneSettings() }
                 )
+                permissionRow(
+                    icon: "keyboard",
+                    title: String(localized: "Accessibility"),
+                    why: String(localized: "Pastes dictated text into the app you're in."),
+                    status: accessibilityRowStatus,
+                    allow: {
+                        accessibilityAsked = true
+                        SystemPermissions.shared.requestAccessibility()
+                    },
+                    openSettings: { SystemPermissions.shared.openAccessibilitySettings() }
+                )
+                // Screen Recording sits LAST on purpose: it is the only
+                // row whose grant macOS won't apply to a running process,
+                // so it ends with the system offering "Quit & Reopen".
+                // Anything below it would be asked either side of a
+                // relaunch. Mic and Accessibility take effect in place,
+                // so by the time this one fires the rest of the screen
+                // is already answered. (`Resume` still puts the user
+                // back on this step afterwards — the ordering removes
+                // the interruption, it doesn't replace the safety net.)
                 if setupPath == .full {
                     permissionRow(
                         icon: "rectangle.dashed.badge.record",
@@ -469,17 +618,6 @@ struct FirstRunView: View {
                         openSettings: { SystemPermissions.shared.openScreenRecordingSettings() }
                     )
                 }
-                permissionRow(
-                    icon: "keyboard",
-                    title: String(localized: "Accessibility"),
-                    why: String(localized: "Pastes dictated text into the app you're in."),
-                    status: accessibilityRowStatus,
-                    allow: {
-                        accessibilityAsked = true
-                        SystemPermissions.shared.requestAccessibility()
-                    },
-                    openSettings: { SystemPermissions.shared.openAccessibilitySettings() }
-                )
             }
             Spacer()
         }
@@ -488,7 +626,7 @@ struct FirstRunView: View {
     /// Accessibility's row status. `AXIsProcessTrusted` is a Bool, so
     /// SystemPermissions can never report `.denied` for it — the local
     /// `accessibilityAsked` flag supplies the third state: once this
-    /// session has fired the one-shot prompt and the grant still isn't
+    /// onboarding has fired the one-shot prompt and the grant still isn't
     /// there, the only honest control is Open Settings….
     private var accessibilityRowStatus: SystemPermissions.Status {
         if perms.accessibility == .granted { return .granted }
@@ -969,10 +1107,13 @@ struct FirstRunView: View {
 
     private var footer: some View {
         HStack {
-            // Back button — visible after step 0 so the user can
-            // revisit a permission they tapped Skip on without
-            // restarting the whole flow.
-            if step.rawValue > 0 {
+            // Back button — visible anywhere but the first step of the
+            // CURRENT path, so the user can revisit a permission they
+            // tapped Skip on without restarting the whole flow. Position
+            // in `orderedSteps`, not `Step`'s own order: the path skips
+            // cases, so a raw-value comparison would offer Back on a
+            // screen with nothing behind it.
+            if let index = orderedSteps.firstIndex(of: step), index > 0 {
                 Button("Back") {
                     let steps = orderedSteps
                     if let i = steps.firstIndex(of: step), i > 0 {
@@ -1051,7 +1192,24 @@ struct FirstRunView: View {
 
     private func advance() {
         let steps = orderedSteps
-        if let i = steps.firstIndex(of: step), i + 1 < steps.count {
+        guard let i = steps.firstIndex(of: step) else {
+            // The current step vanished from the list mid-flow: the only
+            // optional step is `.layout`, and `orderedSteps` recomputes
+            // live from the installed keyboard layouts, so removing one
+            // in System Settings while standing on that step drops it.
+            // Falling through to `finish()` would end onboarding early
+            // and skip everything after it — walk forward to the next
+            // step that does exist instead, and only finish if there
+            // genuinely isn't one.
+            if let position = Step.allCases.firstIndex(of: step),
+               let next = Step.allCases[(position + 1)...].first(where: steps.contains) {
+                step = next
+            } else {
+                finish()
+            }
+            return
+        }
+        if i + 1 < steps.count {
             step = steps[i + 1]
         } else {
             finish()
@@ -1091,7 +1249,21 @@ struct FirstRunView: View {
                 window.setFrame(frame, display: true, animate: true)
             }
         }
+        // Snapshot has served its purpose — a completed onboarding must
+        // not leave a step behind for a future "show onboarding again"
+        // to resume into.
+        Resume.clear()
         settings.hasShownFirstRun = true
+    }
+
+    /// Snapshot the current position so a relaunch resumes here.
+    private func persistResume() {
+        Resume.save(
+            step: step,
+            path: setupPath,
+            accessibilityAsked: accessibilityAsked,
+            modelStepSeeded: modelStepSeeded
+        )
     }
 }
 

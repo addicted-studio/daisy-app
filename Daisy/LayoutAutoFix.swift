@@ -696,8 +696,34 @@ final class LayoutAutoFix {
     /// The one check that keeps backspaces out of mail lists, Finder and
     /// single-key-shortcut web apps — where letters are commands and a
     /// Delete is not an edit but a deletion.
+    ///
+    /// A `.noElement` here is also how we find out an app has no
+    /// accessibility tree at all — the Electron default. Ask for one on
+    /// the way past: it can't help this keystroke (Chromium builds the
+    /// tree asynchronously) but it unblocks the next word, and the ask
+    /// happens once per app. Standing down is still the answer for this
+    /// one.
+    ///
+    /// Only `.noElement` earns the ask. A mail list, Finder or a
+    /// password field all answer "not editable" from an app that
+    /// demonstrably HAS a tree, and the ask is a once-per-app budget
+    /// with a 200 ms ceiling — not something to spend on an app that
+    /// already answered us.
     private func focusIsEditableText() -> Bool {
-        AXFocus.kind() == .editable
+        let kind = AXFocus.kind()
+        if kind == .editable { return true }
+        guard kind == .noElement,
+              let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let result = AXFocus.requestAccessibilityTree(forProcessID: pid)
+        else { return false }
+        // No identifier, for the same reason `contextRefusal` omits it:
+        // the report is about to be emailed to us. That this line
+        // appears at all is the diagnostic — the app had no tree — and
+        // the error code says whether it took the request.
+        log.info(
+            "Asked the frontmost app to build its accessibility tree — AXError \(result.rawValue, privacy: .public)"
+        )
+        return false
     }
 
     /// Does the text in front of the caret actually end with what we
