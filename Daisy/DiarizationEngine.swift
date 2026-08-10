@@ -231,6 +231,50 @@ final class DiarizationEngine {
         #endif
     }
 
+    /// Create a block-wise diarization pass for ONE final pass
+    /// (2026-08-10, streaming-final increment 2). Returns `nil` when
+    /// FluidAudio isn't linked or the models failed to load — the
+    /// caller proceeds without speaker labels, same contract as
+    /// `diarizeFull` returning empty output.
+    ///
+    /// Each pass gets a FRESH `DiarizerManager`: FluidAudio's
+    /// `SpeakerManager` persists its speaker database across
+    /// `performCompleteDiarization` calls on the same instance, which
+    /// is exactly what makes block-wise calls speaker-consistent —
+    /// and exactly why the app-lifetime shared `manager` must NOT be
+    /// used here (it would bleed speaker state ACROSS sessions and
+    /// races when mic + system passes run concurrently off-main).
+    /// The fresh manager also mirrors the existing hinted-count path,
+    /// which already spins up a throwaway manager per session.
+    ///
+    /// `numSpeakers` — plumbed into `numClusters` exactly like the
+    /// legacy hinted path (nil / ≤0 ⇒ -1 auto). NOTE (0.15.4 source
+    /// check): the online `DiarizerManager` pipeline never actually
+    /// reads `numClusters` — only the separate Offline pipeline does —
+    /// so the hint is inert here, as it silently was in the legacy
+    /// path. Kept for config parity; revisit if we adopt the Offline
+    /// pipeline or FluidAudio wires it up.
+    func makeBlockPass(numSpeakers: Int? = nil) async -> DiarizationBlockPass? {
+        #if canImport(FluidAudio)
+        if manager == nil { await ensureLoaded() }
+        guard isAvailable, let models else { return nil }
+        let config = DiarizerConfig(
+            clusteringThreshold: 0.7,
+            minSpeechDuration: 1.0,
+            minSilenceGap: 0.5,
+            numClusters: (numSpeakers.map { $0 > 0 ? $0 : -1 }) ?? -1
+        )
+        let m = DiarizerManager(config: config)
+        m.initialize(models: models)
+        if let n = numSpeakers, n > 0 {
+            log.info("Block diarization with attendee-count hint: numClusters=\(n, privacy: .public)")
+        }
+        return DiarizationBlockPass(manager: m)
+        #else
+        return nil
+        #endif
+    }
+
     /// Extract a single 256-d L2-normalized embedding from an audio
     /// buffer. Used as an escape hatch — currently `diarizeFull`
     /// covers the full session path, but if a future feature needs
@@ -297,7 +341,7 @@ final class DiarizationEngine {
     /// appearance order. Single source of truth — spans + centroids
     /// both reference the same map so their labels stay in sync.
     #if canImport(FluidAudio)
-    private static func buildLabelMap(_ raw: [TimedSpeakerSegment]) -> [String: String] {
+    fileprivate static func buildLabelMap(_ raw: [TimedSpeakerSegment]) -> [String: String] {
         let sorted = raw.sorted { $0.startTimeSeconds < $1.startTimeSeconds }
         var map: [String: String] = [:]
         var next = 0
@@ -316,7 +360,7 @@ final class DiarizationEngine {
     /// `embedding` field, then L2-normalizing the result so cosine
     /// similarity stays valid. Used when FluidAudio's
     /// `speakerDatabase` isn't populated (some pipeline configs).
-    private static func computeCentroids(
+    fileprivate static func computeCentroids(
         from segments: [TimedSpeakerSegment],
         labelMap: [String: String]
     ) -> [String: [Float]] {
@@ -421,3 +465,103 @@ enum FluidAudioNetworkGuard {
     }
 }
 #endif
+
+// MARK: - Block-wise diarization pass
+
+/// Accumulates diarization over the ~15-minute blocks of ONE streaming
+/// final pass (see `ArchiveBlockReader`), yielding the same
+/// `DiarizationOutput` shape as `diarizeFull` at the end.
+///
+/// How speaker consistency works across blocks: the wrapped
+/// `DiarizerManager` internally slices audio into ~10 s chunks and
+/// assigns speakers via its persistent `SpeakerManager` (embedding
+/// match against the speakers seen so far, new speaker on miss). Our
+/// block boundary is just one more chunk boundary to it — no custom
+/// centroid merging needed. `atTime:` makes returned timestamps
+/// session-absolute, so `finish()` output needs no offsetting.
+///
+/// Known seam effect: a speaker turn spanning a block boundary comes
+/// back as two spans (same speaker ID), and a sliver shorter than
+/// `minSpeechDuration` (1 s) right at the seam can drop. Both are
+/// invisible after `mergeBySpeaker`'s per-segment max-IoU vote.
+///
+/// Concurrency: `@unchecked Sendable` on the ArchiveBlockReader
+/// pattern — `process()` is invoked from one detached task per block,
+/// awaited before the next, so all state access is serial; the class
+/// only needs to cross `Task.detached` boundaries. `process()` is
+/// synchronous and CoreML-heavy: NEVER call it on the main actor.
+/// (The legacy `diarizeFull` runs the same inference ON MainActor —
+/// a long-standing main-thread stall this path deliberately avoids.)
+nonisolated final class DiarizationBlockPass: @unchecked Sendable {
+    #if canImport(FluidAudio)
+    private let manager: DiarizerManager
+    private var rawSegments: [TimedSpeakerSegment] = []
+    private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Diarizer")
+
+    fileprivate init(manager: DiarizerManager) {
+        self.manager = manager
+    }
+    #endif
+
+    /// Diarize one block. Heavy + synchronous — call from a detached
+    /// task. Errors drop this block's spans and keep going (parity
+    /// with `diarizeFull`'s catch-and-return-empty), and blocks under
+    /// 3 s are skipped (parity with its minimum-length guard).
+    func process(samples: [Float], atSec: Double) {
+        #if canImport(FluidAudio)
+        guard samples.count > 16_000 * 3 else { return }
+        do {
+            let result = try manager.performCompleteDiarization(samples, atTime: atSec)
+            rawSegments.append(contentsOf: result.segments)
+        } catch {
+            log.error("Block diarize failed at \(Int(atSec), privacy: .public)s: \(error.localizedDescription, privacy: .public)")
+        }
+        #endif
+    }
+
+    /// Fold everything into spans + centroids, relabelled A/B/C in
+    /// first-appearance order — byte-compatible with `diarizeFull`'s
+    /// output contract. Cheap (no inference). `@MainActor` because the
+    /// label-map/centroid statics and the output structs are
+    /// main-actor-isolated under the target's default isolation — and
+    /// the only call site (streaming commit) is on MainActor anyway;
+    /// call it after the last `process()` has been awaited.
+    @MainActor
+    func finish() -> DiarizationOutput {
+        #if canImport(FluidAudio)
+        let labelMap = DiarizationEngine.buildLabelMap(rawSegments)
+        let spans: [DiarizedSpan] = rawSegments
+            .sorted { $0.startTimeSeconds < $1.startTimeSeconds }
+            .compactMap { seg in
+                guard let label = labelMap[seg.speakerId] else { return nil }
+                return DiarizedSpan(
+                    speakerId: label,
+                    startSec: Double(seg.startTimeSeconds),
+                    endSec: Double(seg.endTimeSeconds)
+                )
+            }
+
+        // Centroids: per-segment averaging across ALL blocks — the
+        // exact production path of `diarizeFull` (its `speakerDatabase`
+        // shortcut only populates in FluidAudio's debugMode) and the
+        // only one guaranteed L2-normalized, which
+        // `SpeakerProfileStore`'s cosine-as-dot-product assumes. The
+        // SpeakerManager's running embeddings are the fallback for the
+        // degenerate case of segments arriving without embeddings.
+        var centroids = DiarizationEngine.computeCentroids(
+            from: rawSegments,
+            labelMap: labelMap
+        )
+        if centroids.isEmpty {
+            for (rawID, speaker) in manager.speakerManager.getAllSpeakers() {
+                if let label = labelMap[rawID] {
+                    centroids[label] = speaker.currentEmbedding
+                }
+            }
+        }
+        return DiarizationOutput(spans: spans, centroids: centroids)
+        #else
+        return DiarizationOutput(spans: [], centroids: [:])
+        #endif
+    }
+}
