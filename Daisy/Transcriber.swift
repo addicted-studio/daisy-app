@@ -1079,6 +1079,35 @@ final class Transcriber {
             return
         }
 
+        // Block-wise streaming path (2026-08-10). Gated on diarization
+        // being OFF: the diarizer (`diarizeFull`) still wants the whole
+        // sample array, so streaming Whisper alone would win nothing
+        // there — those streams keep the shared-array legacy path below
+        // untouched (zero risk to speaker attribution). Where it applies
+        // (dictation-style finals, voice notes, the mic stream unless
+        // the user opted into mic diarization) it caps peak memory at
+        // O(block) instead of O(session) (~230 MB/hour/stream), releases
+        // the engine slot between blocks so the OTHER stream's final
+        // pass and a new session's live windows can interleave, and
+        // makes cancellation land at block boundaries instead of after
+        // an archive-length inference. `.archiveUnusable` falls through
+        // to the legacy source-selection below, which will take the
+        // in-memory buffer fallback.
+        var streamingDeclinedArchive = false
+        if !archiveURLs.isEmpty && !diarizationEnabled {
+            switch await runStreamingFinalPass(
+                archiveURLs: archiveURLs,
+                profile: profile,
+                biasTerms: biasTerms,
+                started: started
+            ) {
+            case .done, .cancelled, .failed:
+                return
+            case .archiveUnusable:
+                streamingDeclinedArchive = true
+            }
+        }
+
         // Source selection — the heart of the long-recording fix.
         //
         // Prefer the COMPLETE on-disk `.caf` archive over the in-memory
@@ -1093,7 +1122,10 @@ final class Transcriber {
         // MainActor. Falls back to the buffer when there's no archive
         // (transcript-only / "don't record audio" sessions) or a decode
         // failure (corrupt file) — those keep the legacy behaviour.
-        let archiveSamples: [Float]? = archiveURLs.isEmpty
+        // (If the streaming path already found the archive unusable,
+        // don't decode it a second time just to learn the same thing —
+        // go straight to the buffer fallback.)
+        let archiveSamples: [Float]? = (archiveURLs.isEmpty || streamingDeclinedArchive)
             ? nil
             : await Task.detached(priority: .userInitiated) {
                 AudioArchiveDecoder.decodeToMono16k(urls: archiveURLs)
@@ -1269,6 +1301,130 @@ final class Transcriber {
             log.error("Final transcribe failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
         }
+    }
+
+    // MARK: - Streaming final pass
+
+    private enum StreamingFinalOutcome {
+        /// Committed (possibly zero segments from a silent archive) —
+        /// nothing left for the caller to do.
+        case done
+        /// Session rotated / user restarted mid-pass — keep the
+        /// live-accumulated segments, surface no error (same contract
+        /// as the legacy CancellationError branch).
+        case cancelled
+        /// Inference failed — `lastError` is set, live segments kept.
+        case failed
+        /// Archive missing/tiny (< 1 s) — caller falls back to the
+        /// legacy path, which will use the in-memory buffer.
+        case archiveUnusable
+    }
+
+    /// Block-wise final pass over the on-disk archive: ~15-minute
+    /// blocks cut at the quietest seam (see `ArchiveBlockReader`),
+    /// each run through the full `WhisperEngine.transcribe` pipeline —
+    /// Silero pre-pass, bias, post-filter, rescue all apply per block
+    /// unchanged. Segments accumulate with block offsets and commit
+    /// ONCE at the end, exactly like the legacy `fullReplace == true`
+    /// branch: an archive always covers the session from 0:00, so the
+    /// result is authoritative for the whole transcript. Diarization
+    /// is structurally off on this path (the gate in
+    /// `runFinalTranscribe` guarantees it), hence no span merging and
+    /// empty centroids.
+    private func runStreamingFinalPass(
+        archiveURLs: [URL],
+        profile: WhisperEngine.DecodeProfile,
+        biasTerms: [String],
+        started: Date
+    ) async -> StreamingFinalOutcome {
+        let reader = ArchiveBlockReader(urls: archiveURLs)
+        guard let firstBlock = await Task.detached(priority: .userInitiated, operation: { reader.nextBlock() }).value else {
+            return .archiveUnusable
+        }
+        // Usability gate, mirroring the legacy `decoded.count >
+        // targetSampleRate` check: the reader only returns a block
+        // shorter than its 15-min target at EOF, so a ≤1 s first block
+        // means the whole archive is ≤1 s.
+        if firstBlock.samples.count <= Int(Self.targetSampleRate) {
+            return .archiveUnusable
+        }
+
+        let lang = languageHint
+        var fresh: [TranscriptSegment] = []
+        var blockCount = 0
+        var coveredSec = 0.0
+        var block: (samples: [Float], startSec: Double)? = firstBlock
+
+        while let current = block {
+            // Cancellation lands HERE, between blocks — the wins over
+            // the legacy path: at most one block of Neural Engine time
+            // is wasted on a doomed pass, not the whole archive, and
+            // the engine slot frees for the new session's live windows.
+            if Task.isCancelled {
+                log.info("Final pass (streaming): cancelled at block boundary after \(blockCount, privacy: .public) block(s) — keeping live segments")
+                return .cancelled
+            }
+            blockCount += 1
+            do {
+                let result = try await WhisperEngine.shared.transcribe(
+                    samples: current.samples,
+                    language: lang,
+                    profile: profile,
+                    biasTerms: biasTerms
+                )
+                for ws in result {
+                    let trimmed = ws.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { continue }
+                    let absStart = current.startSec + ws.start
+                    let absEnd = current.startSec + ws.end
+                    fresh.append(TranscriptSegment(
+                        id: UUID(),
+                        startedAt: started.addingTimeInterval(absStart),
+                        text: trimmed,
+                        isFinal: true,
+                        source: source,
+                        speakerId: nil,
+                        endSec: absEnd,
+                        startSec: absStart
+                    ))
+                }
+                coveredSec = current.startSec + Double(current.samples.count) / Self.targetSampleRate
+                log.info("Final pass (streaming): block \(blockCount, privacy: .public) [\(Int(current.startSec), privacy: .public)s–\(Int(coveredSec), privacy: .public)s] → \(result.count, privacy: .public) segments (\(fresh.count, privacy: .public) total)")
+            } catch is CancellationError {
+                log.info("Final pass (streaming): cancelled mid-block — keeping live segments, no error surfaced")
+                return .cancelled
+            } catch {
+                log.error("Final pass (streaming): block \(blockCount, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                lastError = error.localizedDescription
+                return .failed
+            }
+            // Re-check BEFORE decoding the next block: a cancel that
+            // arrived during this block's inference shouldn't pay for
+            // another ~15 min of file IO + resampling first.
+            if Task.isCancelled {
+                log.info("Final pass (streaming): cancelled after block \(blockCount, privacy: .public) — keeping live segments")
+                return .cancelled
+            }
+            block = await Task.detached(priority: .userInitiated, operation: { reader.nextBlock() }).value
+        }
+
+        if Task.isCancelled {
+            log.info("Final pass (streaming): cancelled before commit — keeping live segments")
+            return .cancelled
+        }
+
+        // Commit — the legacy `fullReplace` branch verbatim: the
+        // archive covers the whole session, this output replaces
+        // everything the live pass accumulated.
+        committedSegments.removeAll()
+        pendingSegments.removeAll()
+        bucketIDs.removeAll()
+        committedSegments = fresh.sorted { $0.startSec < $1.startSec }
+        committedThroughSec = committedSegments.map(\.endSec).max() ?? 0
+        invalidateSegmentsCache()
+        speakerCentroids = [:]
+        log.info("Final pass (streaming): committed \(fresh.count, privacy: .public) segments from \(blockCount, privacy: .public) block(s), ≈\(Int(coveredSec), privacy: .public)s of archive")
+        return .done
     }
 
     // MARK: - Locale
