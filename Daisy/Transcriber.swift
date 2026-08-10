@@ -1079,22 +1079,21 @@ final class Transcriber {
             return
         }
 
-        // Block-wise streaming path (2026-08-10). Gated on diarization
-        // being OFF: the diarizer (`diarizeFull`) still wants the whole
-        // sample array, so streaming Whisper alone would win nothing
-        // there — those streams keep the shared-array legacy path below
-        // untouched (zero risk to speaker attribution). Where it applies
-        // (dictation-style finals, voice notes, the mic stream unless
-        // the user opted into mic diarization) it caps peak memory at
-        // O(block) instead of O(session) (~230 MB/hour/stream), releases
-        // the engine slot between blocks so the OTHER stream's final
-        // pass and a new session's live windows can interleave, and
-        // makes cancellation land at block boundaries instead of after
-        // an archive-length inference. `.archiveUnusable` falls through
-        // to the legacy source-selection below, which will take the
-        // in-memory buffer fallback.
+        // Block-wise streaming path (2026-08-10, increment 2 same day).
+        // Caps peak memory at O(block) instead of O(session)
+        // (~230 MB/hour/stream), releases the engine slot between
+        // blocks so the OTHER stream's final pass and a new session's
+        // live windows can interleave, and makes cancellation land at
+        // block boundaries instead of after an archive-length
+        // inference. Diarization streams the same blocks through a
+        // per-pass `DiarizationBlockPass` (FluidAudio's SpeakerManager
+        // keeps IDs consistent across blocks), run OFF-main — unlike
+        // the legacy `diarizeFull`, which stalls the MainActor for the
+        // whole synchronous inference. The legacy path below survives
+        // for buffer-fallback sessions (transcript-only, or
+        // `.archiveUnusable` falling through to it).
         var streamingDeclinedArchive = false
-        if !archiveURLs.isEmpty && !diarizationEnabled {
+        if !archiveURLs.isEmpty {
             switch await runStreamingFinalPass(
                 archiveURLs: archiveURLs,
                 profile: profile,
@@ -1327,10 +1326,16 @@ final class Transcriber {
     /// unchanged. Segments accumulate with block offsets and commit
     /// ONCE at the end, exactly like the legacy `fullReplace == true`
     /// branch: an archive always covers the session from 0:00, so the
-    /// result is authoritative for the whole transcript. Diarization
-    /// is structurally off on this path (the gate in
-    /// `runFinalTranscribe` guarantees it), hence no span merging and
-    /// empty centroids.
+    /// result is authoritative for the whole transcript.
+    ///
+    /// Diarization (when enabled for this stream) rides the same
+    /// blocks: each block goes to `DiarizationBlockPass.process` on a
+    /// detached task OVERLAPPING that block's Whisper decode — the
+    /// same Whisper/diarizer parallelism the legacy path had, but
+    /// off-main and O(block). `atTime:` gives session-absolute span
+    /// timestamps, so the merge at commit needs no offsetting. A nil
+    /// block pass (FluidAudio unavailable) degrades to no speaker
+    /// labels, the same contract as `diarizeFull` returning empty.
     private func runStreamingFinalPass(
         archiveURLs: [URL],
         profile: WhisperEngine.DecodeProfile,
@@ -1350,6 +1355,12 @@ final class Transcriber {
         }
 
         let lang = languageHint
+        let blockPass: DiarizationBlockPass? = diarizationEnabled
+            ? await DiarizationEngine.shared.makeBlockPass(numSpeakers: speakerCountHint)
+            : nil
+        if diarizationEnabled && blockPass == nil {
+            log.warning("Final pass (streaming): diarizer unavailable — proceeding without speaker labels")
+        }
         var fresh: [TranscriptSegment] = []
         var blockCount = 0
         var coveredSec = 0.0
@@ -1366,12 +1377,28 @@ final class Transcriber {
             }
             blockCount += 1
             do {
+                // Whisper + diarizer overlap per block, mirroring the
+                // legacy `async let` pairing: Whisper hogs the ANE
+                // encoder, the diarizer is ~15-25% of its runtime, so
+                // the overlap is essentially free. The detached hop
+                // keeps the synchronous CoreML inference off the
+                // MainActor. `blockPass` access stays serial: this
+                // `async let` is awaited before the loop advances.
+                async let diarized: Void = { [blockPass] in
+                    guard let blockPass else { return }
+                    let samples = current.samples
+                    let startSec = current.startSec
+                    await Task.detached(priority: .userInitiated) {
+                        blockPass.process(samples: samples, atSec: startSec)
+                    }.value
+                }()
                 let result = try await WhisperEngine.shared.transcribe(
                     samples: current.samples,
                     language: lang,
                     profile: profile,
                     biasTerms: biasTerms
                 )
+                await diarized
                 for ws in result {
                     let trimmed = ws.text.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !trimmed.isEmpty else { continue }
@@ -1413,17 +1440,29 @@ final class Transcriber {
             return .cancelled
         }
 
+        // Fold diarization: spans are already session-absolute
+        // (`atTime:`), `fresh` is already offset per block — no
+        // translation step, unlike the legacy path's `offsetSpans`.
+        // `finish()` is label-mapping only, cheap enough for MainActor.
+        let diarization = blockPass?.finish() ?? DiarizationOutput(spans: [], centroids: [:])
+        let merged = DiarizationEngine.mergeBySpeaker(
+            segments: fresh,
+            diarization: diarization.spans
+        )
+
         // Commit — the legacy `fullReplace` branch verbatim: the
         // archive covers the whole session, this output replaces
         // everything the live pass accumulated.
         committedSegments.removeAll()
         pendingSegments.removeAll()
         bucketIDs.removeAll()
-        committedSegments = fresh.sorted { $0.startSec < $1.startSec }
+        committedSegments = merged.sorted { $0.startSec < $1.startSec }
         committedThroughSec = committedSegments.map(\.endSec).max() ?? 0
         invalidateSegmentsCache()
-        speakerCentroids = [:]
-        log.info("Final pass (streaming): committed \(fresh.count, privacy: .public) segments from \(blockCount, privacy: .public) block(s), ≈\(Int(coveredSec), privacy: .public)s of archive")
+        // Centroids feed RecordingSession.stop()'s speakers.json
+        // sidecar + SpeakerProfileStore matching, same as legacy.
+        speakerCentroids = diarization.centroids
+        log.info("Final pass (streaming): committed \(merged.count, privacy: .public) segments from \(blockCount, privacy: .public) block(s), ≈\(Int(coveredSec), privacy: .public)s of archive, \(diarization.spans.count, privacy: .public) speaker spans (\(diarization.centroids.count, privacy: .public) centroids)")
         return .done
     }
 
