@@ -205,6 +205,213 @@ enum AudioArchiveDecoder {
     }
 }
 
+// MARK: - Block-wise archive streaming (final pass, 2026-08-10)
+
+/// Streams a `.caf` archive (one or more part files) as ~15-minute
+/// 16 kHz mono Float32 blocks instead of one session-sized array.
+///
+/// Why: `decodeToMono16k` materialises the WHOLE session — ~230 MB/hour
+/// per stream, and a 3-hour meeting runs two final passes concurrently.
+/// Block-wise reading caps the transient at O(block) and, as a side
+/// effect, lets `runFinalTranscribe` release the shared Whisper engine
+/// slot between blocks (the other stream's final pass — or a NEW
+/// session's live windows — interleave instead of queueing for minutes)
+/// and honour cancellation at block boundaries (the archive-length
+/// inference itself never was cancellation-aware).
+///
+/// Boundary rule — never cut mid-word: after the target block length,
+/// keep reading up to `cutSearchSeconds` more and cut at the CENTER of
+/// the quietest `minQuietSeconds` run in that window (lowest summed
+/// energy over 100 ms sub-windows). No threshold to tune: on normal
+/// speech this lands in an inter-utterance pause; on pathological
+/// continuous sound the quietest run is just the least-bad hard cut.
+/// The remainder past the cut is carried as the head of the next block,
+/// across `.partN.caf` boundaries too. The proper Silero VAD pre-pass
+/// still runs downstream in `WhisperEngine.transcribe` on every block —
+/// this scan only picks seams, it never classifies speech.
+///
+/// Concurrency: `@unchecked Sendable` on the same grounds as
+/// `CAFDecodeFeed` below — the reader is driven strictly serially (one
+/// `nextBlock()` at a time from one detached task, awaited before the
+/// next), it just has to cross the `Task.detached` boundary. `Transcriber`
+/// stays `@MainActor`; all decode work happens off-main inside those
+/// detached hops.
+nonisolated final class ArchiveBlockReader: @unchecked Sendable {
+    static let sampleRate = 16_000
+
+    private let urls: [URL]
+    private let targetSamples: Int
+    private let searchSamples: Int
+    private let quietRunSamples: Int
+    private let outFormat: AVAudioFormat?
+
+    private var fileIndex = 0
+    private var puller: CAFPartPuller?
+    private var carry: [Float] = []
+    private var yieldedSamples = 0
+    private var exhausted = false
+
+    init(urls: [URL],
+         blockSeconds: Double = 900,
+         cutSearchSeconds: Double = 60,
+         minQuietSeconds: Double = 0.4)
+    {
+        self.urls = urls
+        self.targetSamples = Int(blockSeconds * Double(Self.sampleRate))
+        self.searchSamples = Int(cutSearchSeconds * Double(Self.sampleRate))
+        self.quietRunSamples = Int(minQuietSeconds * Double(Self.sampleRate))
+        self.outFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(Self.sampleRate),
+            channels: 1,
+            interleaved: false
+        )
+    }
+
+    /// Next block of decoded audio, or `nil` when the archive is fully
+    /// consumed. `startSec` is the block's offset from the start of the
+    /// archive (== session-absolute time for a from-0:00 archive).
+    /// Blocks are contiguous and non-overlapping: concatenating them
+    /// reproduces `decodeToMono16k` exactly.
+    func nextBlock() -> (samples: [Float], startSec: Double)? {
+        guard let outFormat else { return nil }
+        var buf = carry
+        carry = []
+
+        let fillLimit = targetSamples + searchSamples
+        while !exhausted && buf.count < fillLimit {
+            if puller == nil {
+                if fileIndex >= urls.count { exhausted = true; break }
+                let url = urls[fileIndex]
+                fileIndex += 1
+                // Missing / unreadable / zero-frame parts are skipped,
+                // matching `decodeToMono16k`.
+                guard FileManager.default.fileExists(atPath: url.path),
+                      let next = CAFPartPuller(url: url, out: outFormat) else { continue }
+                puller = next
+            }
+            if let chunk = puller?.nextChunk() {
+                buf.append(contentsOf: chunk)
+            } else {
+                puller = nil  // part exhausted (or errored mid-file) — advance
+            }
+        }
+
+        guard !buf.isEmpty else { return nil }
+        let startSec = Double(yieldedSamples) / Double(Self.sampleRate)
+
+        // EOF: everything that's left is the last block (≤ target+search,
+        // ~16 min) — no seam to pick.
+        let cut: Int = exhausted ? buf.count : quietestCut(in: buf)
+        let block = Array(buf[0..<cut])
+        if cut < buf.count {
+            carry = Array(buf[cut...])
+        }
+        yieldedSamples += cut
+        return (block, startSec)
+    }
+
+    /// Index of the seam: center of the quietest `quietRunSamples` run
+    /// inside `[targetSamples, buf.count)`, scanned in 100 ms sub-windows
+    /// by summed energy (Σx²). The search region is bounded by
+    /// `fillLimit`, ≤ 60 s ≈ 960k floats — a plain loop is fine.
+    private func quietestCut(in buf: [Float]) -> Int {
+        let windowSamples = Self.sampleRate / 10  // 100 ms
+        let runWindows = max(1, quietRunSamples / windowSamples)
+        let searchStart = targetSamples
+        // Clamp to the stated 60 s bound: the fill loop appends whole
+        // ~10 s chunks and can overshoot `fillLimit` by one chunk.
+        let searchEnd = min(buf.count, targetSamples + searchSamples)
+        let windowCount = (searchEnd - searchStart) / windowSamples
+        guard windowCount > runWindows else { return min(searchEnd, targetSamples) }
+
+        var energies: [Float] = []
+        energies.reserveCapacity(windowCount)
+        buf.withUnsafeBufferPointer { p in
+            for w in 0..<windowCount {
+                let base = searchStart + w * windowSamples
+                var sum: Float = 0
+                for i in base..<(base + windowSamples) {
+                    let x = p[i]
+                    sum += x * x
+                }
+                energies.append(sum)
+            }
+        }
+
+        var runSum: Float = 0
+        for w in 0..<runWindows { runSum += energies[w] }
+        var bestSum = runSum
+        var bestStart = 0
+        for w in runWindows..<windowCount {
+            runSum += energies[w] - energies[w - runWindows]
+            if runSum < bestSum {
+                bestSum = runSum
+                bestStart = w - runWindows + 1
+            }
+        }
+        // Cut at the run's center — deepest into the quiet stretch.
+        return searchStart + (bestStart + runWindows / 2) * windowSamples
+    }
+}
+
+/// One `.caf` part decoded incrementally: each `nextChunk()` performs a
+/// single `AVAudioConverter` pull (~10 s of native-rate input) and
+/// returns its 16 kHz mono output. Same converter loop as
+/// `AudioArchiveDecoder.decodeFile`, minus the accumulation. A convert
+/// error mid-file ends the part (partial decode kept), matching
+/// `decodeFile`'s behaviour.
+nonisolated private final class CAFPartPuller {
+    private let converter: AVAudioConverter
+    private let feed: CAFDecodeFeed
+    private let outFormat: AVAudioFormat
+    private let outCap: AVAudioFrameCount
+    private var done = false
+
+    init?(url: URL, out: AVAudioFormat) {
+        guard let file = try? AVAudioFile(forReading: url) else { return nil }
+        let inFormat = file.processingFormat
+        guard file.length > 0, inFormat.sampleRate > 0,
+              let conv = AVAudioConverter(from: inFormat, to: out) else { return nil }
+        let inBlock = AVAudioFrameCount(max(inFormat.sampleRate, 16_000) * 10)
+        guard let inBuf = AVAudioPCMBuffer(pcmFormat: inFormat, frameCapacity: inBlock) else { return nil }
+        self.converter = conv
+        self.outFormat = out
+        self.feed = CAFDecodeFeed(file: file, inBuf: inBuf, blockFrames: inBlock)
+        let ratio = out.sampleRate / inFormat.sampleRate
+        self.outCap = AVAudioFrameCount(Double(inBlock) * ratio + 1024)
+    }
+
+    /// `nil` == part fully consumed. May legitimately return an empty
+    /// chunk mid-file (resampler priming) — callers just keep pulling.
+    func nextChunk() -> [Float]? {
+        if done { return nil }
+        guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: outCap) else {
+            done = true
+            return nil
+        }
+        let feed = self.feed
+        var convError: NSError?
+        let status = converter.convert(to: outBuf, error: &convError) { _, inStatus in
+            if let buf = feed.readNext() {
+                inStatus.pointee = .haveData
+                return buf
+            }
+            inStatus.pointee = .endOfStream
+            return nil
+        }
+        var chunk: [Float] = []
+        if let ch = outBuf.floatChannelData?[0], outBuf.frameLength > 0 {
+            chunk = Array(UnsafeBufferPointer(start: ch, count: Int(outBuf.frameLength)))
+        }
+        if status == .error || status == .endOfStream {
+            done = true
+            if chunk.isEmpty { return nil }
+        }
+        return chunk
+    }
+}
+
 /// Mutable per-file decode state handed to `AVAudioConverter`'s
 /// `@Sendable` input block. AVFoundation invokes the block synchronously
 /// on the calling thread within a single `convert(...)` — there is no
