@@ -131,6 +131,26 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     private var outputRestartInFlight: Bool = false
     private var lastOutputRestartAt: Date?
 
+    /// Auto-restarts spent on `didStopWithError` recovery during THIS
+    /// capture. Bounded by `maxAutoRestarts` so a stream that macOS
+    /// keeps killing (revoked permission, disconnected display) ends in
+    /// one honest message instead of a restart storm. Deliberately NOT
+    /// refunded when a rebuilt stream starts delivering: a flapping
+    /// source (delivers a buffer, dies, repeats) would then restart
+    /// forever. A recording is bounded, and 3 recoveries inside one is
+    /// already the generous reading.
+    private var autoRestartCount: Int = 0
+    private static let maxAutoRestarts = 3
+
+    /// Bumped by every capture-lifetime edge (start / pause / stop).
+    /// `rebuildStream` snapshots it before its awaits and drops the
+    /// freshly built stream if the generation moved meanwhile —
+    /// otherwise a rebuild racing Stop resumes AFTER teardown, assigns
+    /// `self.stream`, and leaks a live capture that nobody holds: the
+    /// screen-recording indicator stays lit and its buffers land in the
+    /// NEXT recording's continuation and `.caf`.
+    private var captureGeneration: Int = 0
+
     /// Rate-limit gate for SCStream → MainActor UI updates. The
     /// audio output queue can fire ~50 callbacks/sec at 48 kHz
     /// with typical CMSampleBuffer sizes; we only need ~10 Hz to
@@ -252,6 +272,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             peakLevelDB = -160
             lastSampleAt = nil
             hasReceivedAudio = false
+            autoRestartCount = 0
             silenceWarningFired = false
             lastAudibleSampleAt = nil
             receivedAudibleAudio = false
@@ -267,6 +288,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         }
         state = .starting
         lastError = nil
+        captureGeneration &+= 1
 
         let newStream: SCStream
         do {
@@ -690,35 +712,15 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
 
         log.info("Default output device changed mid-capture — restarting SCStream")
 
-        // Tear down current stream cleanly. Failures here don't
-        // block the restart attempt — we'll just have a dangling
-        // stream the kernel cleans up.
-        if let s = stream {
-            do { try await s.stopCapture() }
-            catch { log.error("Stop for route change failed: \(error.localizedDescription, privacy: .public)") }
-        }
-        stream = nil
-
-        do {
-            let newStream = try await buildAndStartSystemAudioStream()
-            self.stream = newStream
-            // Reset the silence-warning latches — fresh stream gets a
-            // fresh timeout to deliver audio (and audible audio).
-            silenceWarningFired = false
-            silentContentWarningFired = false
-            captureStartedAt = Date()
-            lastSampleAt = nil
-            lastAudibleSampleAt = nil
-            receivedAudibleAudio = false
+        if await rebuildStream(reason: "output-device-change") {
             ToastCenter.shared.show(
                 String(localized: "Output device changed — system audio capture continues."),
                 style: .info
             )
-        } catch {
-            log.error("Restart for output device change failed: \(error.localizedDescription, privacy: .public)")
+        } else {
             // Don't kill the rest of the recording session — mic
-            // capture is in a separate AudioRecorder instance and
-            // is unaffected by SCStream failure. Just surface to the
+            // capture is in a separate recorder instance and is
+            // unaffected by SCStream failure. Just surface to the
             // user so they can stop & restart if they need the
             // remote side captured.
             state = .stopped
@@ -727,6 +729,134 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
                 style: .warning
             )
         }
+    }
+
+    /// Tear down whatever stream we hold and start a fresh one against
+    /// the CURRENT default output, resetting the liveness latches so
+    /// the new stream gets a clean timeout window. Returns whether the
+    /// rebuild succeeded; the caller owns state + user messaging.
+    ///
+    /// Extracted from the route-change handler (2026-08-10) so the
+    /// delegate's `didStopWithError` can reuse the exact same recovery
+    /// instead of only recording the corpse.
+    private func rebuildStream(reason: String) async -> Bool {
+        let generation = captureGeneration
+        // Tear down current stream cleanly. Failures here don't block
+        // the rebuild — we'll just have a dangling stream the kernel
+        // cleans up. (On the didStopWithError path the stream is
+        // already dead; stopCapture then throws and that's fine.)
+        if let s = stream {
+            do { try await s.stopCapture() }
+            catch { log.info("Stop before rebuild (\(reason, privacy: .public)) failed — stream likely already dead: \(error.localizedDescription, privacy: .public)") }
+        }
+        stream = nil
+
+        do {
+            let newStream = try await buildAndStartSystemAudioStream()
+            // Did Stop/Pause land while we were building? Then this
+            // stream must not be adopted — kill it here or it captures
+            // forever, unreferenced.
+            guard generation == captureGeneration else {
+                log.info("SCStream rebuild (\(reason, privacy: .public)) finished after capture ended — discarding")
+                try? await newStream.stopCapture()
+                return false
+            }
+            self.stream = newStream
+            silenceWarningFired = false
+            silentContentWarningFired = false
+            captureStartedAt = Date()
+            lastSampleAt = nil
+            lastAudibleSampleAt = nil
+            // `receivedAudibleAudio` is NOT reset (it used to be, on the
+            // route-change path): it's a session-lifetime truth — the
+            // post-stop archive audit reads it to decide `.captured` vs
+            // `.empty`. Clearing it mid-session meant a rebuild late in
+            // a meeting could report a full, good `.caf` as empty if the
+            // far side happened not to speak again before Stop. Once the
+            // remote side has been heard, that fact stands for the
+            // session; the fresh-start reset still zeroes it.
+            log.info("SCStream rebuilt (\(reason, privacy: .public))")
+            return true
+        } catch {
+            log.error("SCStream rebuild (\(reason, privacy: .public)) failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
+
+    /// Recover from a stream macOS killed under us (`didStopWithError`).
+    ///
+    /// Field class of bug (see the silent-SCStream-death entry in the
+    /// 2026-08 audit): the delegate used to just record `.stopped`, so
+    /// the far side of a meeting stopped being recorded silently and
+    /// the user found out when reading the transcript. Handy hit the
+    /// same shape on the mic side and fixed it by restarting the
+    /// capture worker (cjpais/Handy#1838) — same medicine here, using
+    /// the route-change rebuild we already had.
+    ///
+    /// Bounded on purpose: `maxAutoRestarts` attempts per capture, with
+    /// the same 2 s cooldown the route-change path uses, so a
+    /// systematically failing stream (permission revoked mid-session,
+    /// display disconnected) degrades to one honest toast instead of a
+    /// restart storm. The budget is spent-once-per-capture — see
+    /// `autoRestartCount`.
+    private func handleStreamDeath(dead: ObjectIdentifier, error: Error) async {
+        guard state == .capturing else { return }
+        guard !outputRestartInFlight else { return }
+        // Only the CURRENT stream's death is news (see the delegate).
+        guard let live = stream, ObjectIdentifier(live) == dead else {
+            log.info("Ignoring didStopWithError from a superseded stream: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        // Same 2 s cooldown the route-change path uses. A route change
+        // both changes the default output AND kills the stream, so
+        // without this one user action could spend the whole restart
+        // budget in a burst and then claim capture had failed.
+        if let last = lastOutputRestartAt,
+           Date().timeIntervalSince(last) < 2.0 {
+            log.info("Stream death within the restart cooldown — deferring to the in-flight recovery")
+            return
+        }
+
+        guard autoRestartCount < Self.maxAutoRestarts else {
+            log.error("SCStream died again after \(Self.maxAutoRestarts, privacy: .public) restarts — giving up: \(error.localizedDescription, privacy: .public)")
+            lastError = error.localizedDescription
+            state = .stopped
+            CaptureProblemNotification.post(
+                title: String(localized: "Daisy stopped hearing the other side"),
+                body: String(localized: "System audio capture stopped and couldn’t be restarted. Your microphone is still being recorded.")
+            )
+            ToastCenter.shared.show(
+                String(localized: "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side."),
+                style: .warning
+            )
+            return
+        }
+
+        outputRestartInFlight = true
+        autoRestartCount += 1
+        let attempt = autoRestartCount
+        defer {
+            outputRestartInFlight = false
+            lastOutputRestartAt = Date()
+        }
+        log.error("SCStream stopped with error — auto-restart \(attempt, privacy: .public)/\(Self.maxAutoRestarts, privacy: .public): \(error.localizedDescription, privacy: .public)")
+
+        if await rebuildStream(reason: "stream-death-\(attempt)") {
+            // Quiet on success: the user didn't do anything and the
+            // recording is intact. The log carries the detail; a toast
+            // here would just teach them to distrust a working capture.
+            return
+        }
+        lastError = error.localizedDescription
+        state = .stopped
+        CaptureProblemNotification.post(
+            title: String(localized: "Daisy stopped hearing the other side"),
+            body: String(localized: "System audio capture stopped and couldn’t be restarted. Your microphone is still being recorded.")
+        )
+        ToastCenter.shared.show(
+            String(localized: "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side."),
+            style: .warning
+        )
     }
 
     /// Begin polling for the silent-capture condition. Polls every
@@ -813,6 +943,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     }
 
     func stop() async {
+        captureGeneration &+= 1   // strand any rebuild in flight
         stopSilenceMonitor()
         removeOutputDeviceListener()
         captureStartedAt = nil
@@ -865,6 +996,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// route it to the same continuation.
     func pause() async {
         guard state == .capturing, let s = stream else { return }
+        captureGeneration &+= 1   // strand any rebuild in flight
         stopSilenceMonitor()
         removeOutputDeviceListener()
         peakLevelDB = -160
@@ -968,6 +1100,22 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
                 return
             }
         }
+        // Format guard (2026-08-10). `AVAudioFile.write(from:)` raises
+        // an ObjC `NSInvalidArgumentException` — uncatchable from Swift,
+        // i.e. an instant crash — when the buffer's format differs from
+        // the file's. The writer is opened once and outlives SCStream
+        // rebuilds (route change, death recovery), and while
+        // `SCStreamConfiguration` pins the rate/layout, a rebuild is
+        // exactly where a divergence could appear. The mic path already
+        // handles this by rolling a `.partN.caf`; here the archive is a
+        // single file, so we stop archiving rather than risk the crash —
+        // what's on disk stays valid and the audit reports honestly.
+        if let writer = archiveWriter, writer.processingFormat != pcm.format {
+            log.error("System audio format changed mid-capture (\(writer.processingFormat, privacy: .public) → \(pcm.format, privacy: .public)) — closing the archive rather than writing a mismatched buffer")
+            archiveWriter = nil
+            archiveURL = nil
+            return
+        }
         do {
             try archiveWriter?.write(from: pcm)
             // 2026-05-25 — counter for the silent-write-death detector.
@@ -1035,9 +1183,15 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     // MARK: - SCStreamDelegate
 
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
+        // Identify WHICH stream died. `stopCapture()` gives no
+        // synchronous guarantee that no further delegate callbacks
+        // arrive, so a stream we tore down during a rebuild can report
+        // its death afterwards — and acting on that would tear down the
+        // healthy replacement and spend recovery budget on a corpse.
+        // `ObjectIdentifier` is Sendable; `SCStream` is not.
+        let dead = ObjectIdentifier(stream)
         Task { @MainActor [weak self] in
-            self?.lastError = error.localizedDescription
-            self?.state = .stopped
+            await self?.handleStreamDeath(dead: dead, error: error)
         }
     }
 
