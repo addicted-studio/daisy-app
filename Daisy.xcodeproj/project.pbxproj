@@ -160,7 +160,7 @@
 			mainGroup = B9F5F1132FB74D9F00E26A7A;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */,
+				B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "argmax-oss-swift" */,
 				B9BBC7312FB863E90016C22C /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				B9895A7C2FBC19FC0028BF24 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
@@ -509,12 +509,12 @@
 				version = 0.15.4;
 			};
 		};
-		B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+		B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "argmax-oss-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			repositoryURL = "https://github.com/argmaxinc/argmax-oss-swift";
 			requirement = {
-				kind = revision;
-				revision = 984ab42f6d6824f17630109537829af26ca47fd6;
+				kind = exactVersion;
+				version = 1.1.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
@@ -532,7 +532,7 @@
 		};
 		B9F5F19A2FB75DA300E26A7A /* WhisperKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			package = B9F5F1992FB75DA300E26A7A /* XCRemoteSwiftPackageReference "argmax-oss-swift" */;
 			productName = WhisperKit;
 		};
 /* End XCSwiftPackageProductDependency section */

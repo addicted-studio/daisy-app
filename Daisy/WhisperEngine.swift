@@ -971,6 +971,20 @@ final class WhisperEngine {
         // only when Silero is loaded. `runVADPrepass` falls back to a
         // whole-buffer span while the model is still downloading, and
         // `rawCount > 0` is what covers that case.)
+        //
+        // UPSTREAM FIX (argmax-oss-swift v1.1.0, PR #514, 2026-07-30):
+        // the root cause — an EOT sampled during forced prompt prefill
+        // ended the segment before any content token — is fixed in the
+        // decode loop itself, so bias-passes should no longer come back
+        // falsely empty. The same PR re-anchors the
+        // `firstTokenLogProbThreshold` check off the prefill throwaway
+        // token, killing the spurious temperature fallbacks every
+        // bias-pass silently paid. KEEP this rescue anyway: it still
+        // covers the VAD-fallback window above (Silero not yet loaded →
+        // whole-buffer span) and any future upstream regression. With
+        // the fix it should almost never fire, so its cost rounds to
+        // zero — it was always gated on `kept.isEmpty && rawCount > 0`,
+        // never a per-pass double decode.
         let biasWasActive = biasPromptTokens != nil
         if first.kept.isEmpty, first.rawCount > 0,
            profile == .dictationFinal || biasWasActive {
