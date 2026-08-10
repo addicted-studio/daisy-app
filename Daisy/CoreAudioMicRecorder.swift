@@ -287,6 +287,12 @@ final class CoreAudioMicRecorder {
     private var recoveryWatchdog: Timer?
     @ObservationIgnored
     private var recoveryGeneration: Int = 0
+    /// Mid-session watchdog rebuilds spent this session (see
+    /// `checkRecoveryProgress`). Not refunded on recovery — bounding a
+    /// flapping device matters more than surviving a third stall.
+    @ObservationIgnored
+    private var midSessionRebuilds: Int = 0
+    private static let maxMidSessionRebuilds = 2
     @ObservationIgnored
     private var silenceMonitor: Timer?
 
@@ -379,6 +385,7 @@ final class CoreAudioMicRecorder {
         writeErrors.reset()
         framesWritten.reset()
         bufferTimestamp.reset()
+        midSessionRebuilds = 0
         micLiveness.reset(to: Date())
         archiveGate.set(true)
         levelSpectrum.reset()
@@ -1251,20 +1258,61 @@ final class CoreAudioMicRecorder {
         guard state == .recording else { return }
         if let c = bufferTimestamp.snapshot(), c > armedAt { return }  // healthy
 
-        if escalateToReconfigure {
-            log.error("Recovery watchdog fired at start — no buffers post-arm. Rebuilding before pausing.")
-            let deviceID = resolveInputDeviceID(uid: activePreferredDeviceUID)
+        // A stalled unit gets ONE rebuild before we give up — at start
+        // (`escalateToReconfigure`) and, since 2026-08-10, mid-session
+        // too. Mid-session stalls are the same failure Handy fixed by
+        // restarting a dead capture worker (cjpais/Handy#1838): the
+        // device is fine, the unit's render callback just stopped being
+        // called (sleep/wake, USB hub hiccup, CoreAudio restarting
+        // under us). Falling straight to paused made that a silent
+        // half-recording the user discovered afterwards; a rebuild
+        // usually just works, and when it doesn't the second watchdog
+        // pauses exactly as before. `midSessionRebuilds` bounds it so a
+        // genuinely dead device can't spin. The budget is deliberately
+        // NOT refunded when audio resumes: a flapping device (delivers
+        // briefly, stalls, repeats) would otherwise rebuild forever.
+        // A recording is bounded; 2 recoveries inside one is generous.
+        // …and only for a unit that HAD been delivering: if not a single
+        // buffer ever arrived, retrying twice more just triples the time
+        // the UI lies about recording (~20 s instead of ~10 s) before we
+        // admit the mic is dead. That case is what the start-time
+        // escalation already covers.
+        let everDelivered = bufferTimestamp.snapshot() != nil
+        let canRebuildMidSession = everDelivered && midSessionRebuilds < Self.maxMidSessionRebuilds
+        if escalateToReconfigure || canRebuildMidSession {
+            if escalateToReconfigure {
+                log.error("Recovery watchdog fired at start — no buffers post-arm. Rebuilding before pausing.")
+            } else {
+                midSessionRebuilds += 1
+                log.error("Recovery watchdog fired mid-session — no buffers post-arm. Rebuild \(self.midSessionRebuilds, privacy: .public)/\(Self.maxMidSessionRebuilds, privacy: .public) before pausing.")
+            }
+            // Device choice: mid-session we re-bind to the device we
+            // were ALREADY on rather than re-resolving the default.
+            // `resolveInputDeviceID` deliberately prefers the built-in
+            // when unpinned, so a stall that happens to coincide with
+            // AirPods connecting would silently move the recording off
+            // the user's USB mic — the same Bluetooth-hijack the route-
+            // change handler guards against. A start-time rebuild has no
+            // prior binding, so it resolves as before.
+            var deviceID: AudioDeviceID = 0
+            if !escalateToReconfigure,
+               let keepUID = lastBoundInputUID,
+               let keepID = AudioInputDevices.deviceID(forUID: keepUID) {
+                deviceID = keepID
+            } else {
+                deviceID = resolveInputDeviceID(uid: activePreferredDeviceUID)
+            }
             if deviceID != 0 {
                 do {
-                    try rebuildUnit(on: deviceID, reason: "watchdog-start")
-                    armRecoveryWatchdog()  // non-escalating; a 2nd failure falls to paused
+                    try rebuildUnit(on: deviceID, reason: escalateToReconfigure ? "watchdog-start" : "watchdog-midsession")
+                    armRecoveryWatchdog()  // non-escalating; failure past the budget falls to paused
                     return
                 } catch {
-                    log.error("Start-time rebuild failed: \(error.localizedDescription, privacy: .public)")
+                    log.error("Watchdog rebuild failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         } else {
-            log.error("Recovery watchdog fired — no audio buffers post-arm. Falling to paused.")
+            log.error("Recovery watchdog fired — no audio buffers post-arm (everDelivered=\(everDelivered, privacy: .public), rebuilds=\(self.midSessionRebuilds, privacy: .public)). Falling to paused.")
         }
         fallToPaused()
         ToastCenter.shared.show(
