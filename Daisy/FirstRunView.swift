@@ -840,6 +840,16 @@ struct FirstRunView: View {
     /// activation refresh the rest of onboarding already relies on.
     private var layoutFixCaption: String? {
         guard settings.layoutFixAuto, !LayoutAutoFix.shared.isRunning else { return nil }
+        // A rival switcher outranks the permission hint: with Caramba or
+        // Punto running, Accessibility can be granted and this would
+        // still say "not running yet" — true, useless, and the exact
+        // shape of caption that cost a day of triage once already.
+        if let rival = LayoutAutoFix.shared.conflictingSwitcherName {
+            return String(
+                format: String(localized: "Off while %@ is running — two layout fixers would garble the same word."),
+                rival
+            )
+        }
         return perms.accessibility != .granted
             ? String(localized: "On, but Accessibility access is needed to actually run it.")
             : String(localized: "On, but not running yet.")

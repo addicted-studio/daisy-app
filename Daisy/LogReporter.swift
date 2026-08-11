@@ -294,7 +294,7 @@ enum LogReporter {
         Mic device: \(AudioInputDevices.describe(AudioInputDevices.systemDefaultInputID()))
         Bundle:     \(Bundle.main.bundleURL.path)
         Auto-stop:  fromCalendar=\(settings.autoStopFromCalendar) graceSec=\(settings.autoStopGraceSec) promptMode=\(settings.autoStopPromptMode) notifyOnStop=\(settings.notifyOnAutoStop)
-        Layout fix: auto=\(settings.layoutFixAuto) hotkey=\(settings.layoutFixHotkey.label) switchSource=\(settings.layoutFixSwitchesSource) running=\(LayoutAutoFix.shared.isRunning) \(LayoutFix.diagnostics())
+        Layout fix: auto=\(settings.layoutFixAuto) hotkey=\(settings.layoutFixHotkey.label) switchSource=\(settings.layoutFixSwitchesSource) running=\(LayoutAutoFix.shared.isRunning) suspendedFor=\(LayoutAutoFix.shared.conflictingSwitcherName ?? "—") \(LayoutFix.diagnostics())
         Versions:   \(VersionInfo.versionTrailLine())
         Updates:    \(updaterLine())
         ─────────────────────────────────────────────────

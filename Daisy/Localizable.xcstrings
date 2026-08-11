@@ -292,6 +292,16 @@
         }
       }
     },
+    "%@ already fixes layouts, so Daisy won’t — two of them would garble the same word. Quit it and Daisy takes over." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ уже исправляет раскладку, поэтому Daisy не будет — вдвоём они исковеркают одно и то же слово. Закройте её, и Daisy возьмётся сама."
+          }
+        }
+      }
+    },
     "%@ copied" : {
       "localizations" : {
         "ru" : {
@@ -348,6 +358,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "«%@» запущен, пока Daisy уже ведёт запись — сначала остановите текущую запись, если хотите начать новую."
+          }
+        }
+      }
+    },
+    "%@ started, so Daisy stopped fixing layouts — two of them would garble the same word." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ запущена, поэтому Daisy перестала исправлять раскладку — вдвоём они исковеркают одно и то же слово."
           }
         }
       }
@@ -8542,6 +8562,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выключено — текст останется в транскрипте и в поиске, но не попадёт в саммари. Полезно, когда на экране не то, о чём разговор."
+          }
+        }
+      }
+    },
+    "Off while %@ is running — two layout fixers would garble the same word." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выключено, пока запущена %@ — два исправителя раскладки исковеркают одно слово."
           }
         }
       }

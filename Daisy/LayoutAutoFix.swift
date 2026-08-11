@@ -118,6 +118,21 @@ final class LayoutAutoFix {
     private var runLoopSource: CFRunLoopSource?
     private var activationObserver: (any NSObjectProtocol)?
     private var watchdog: Timer?
+    /// Observers for a rival layout switcher starting or quitting. Live
+    /// for as long as the SETTING is on — including while suspended,
+    /// which is the whole point: nothing else would notice the rival
+    /// quitting. See `LayoutFixConflicts`.
+    private var rivalLaunchObserver: (any NSObjectProtocol)?
+    private var rivalQuitObserver: (any NSObjectProtocol)?
+    /// On, but stood down because a rival switcher is running. Distinct
+    /// from off: the user's setting is untouched and we resume by
+    /// ourselves.
+    private(set) var suspendedForConflict = false
+
+    /// The rival we stood down for, for the log report and the
+    /// onboarding caption — `auto=true running=false` with no reason is
+    /// the exact line a bug report once cost a day to.
+    private(set) var conflictingSwitcherName: String?
     private let host = TapHost()
     /// Read for `layoutFixSwitchesSource` only. A missing reference means
     /// "don't switch", the quieter of the two behaviours.
@@ -176,6 +191,27 @@ final class LayoutAutoFix {
             log.info("Layout auto-fix not started: only one usable keyboard layout is enabled")
             return
         }
+
+        // Another layout switcher is running (Caramba, Punto). Two of
+        // them on one keyboard converts a word twice — see
+        // LayoutFixConflicts. Theirs wins: they chose it. We stay
+        // suspended, not off, so quitting it brings this back without a
+        // trip to Settings.
+        if let rival = LayoutFixConflicts.runningSwitcherName() {
+            suspendedForConflict = true
+            conflictingSwitcherName = rival
+            log.info("Layout auto-fix suspended: \(rival, privacy: .public) is running")
+            ToastCenter.shared.show(
+                String(
+                    format: String(localized: "%@ already fixes layouts, so Daisy won’t — two of them would garble the same word. Quit it and Daisy takes over."),
+                    rival
+                ),
+                style: .info
+            )
+            return
+        }
+        suspendedForConflict = false
+        conflictingSwitcherName = nil
 
         // Turned off and on again: the tap and its thread are built once
         // per process and only enabled and disabled after that. Unwinding a
@@ -243,6 +279,10 @@ final class LayoutAutoFix {
         // keystroke that needs an answer.
         LayoutFix.warmUp()
         log.info("Layout auto-fix started (active tap, own thread)")
+        // Not a refusal — a breadcrumb for "it does nothing in app X"
+        // reports. After the start, so it never sits on the launch path
+        // ahead of the first frame.
+        LayoutFixConflicts.logOtherKeyboardTaps()
     }
 
     func stop() {
@@ -293,14 +333,102 @@ final class LayoutAutoFix {
 
     func apply(settings: AppSettings) {
         if settings.layoutFixAuto {
+            beginRivalWatch()
             start(settings: settings)
         } else {
+            endRivalWatch()
+            suspendedForConflict = false
+            conflictingSwitcherName = nil
             stop()
         }
     }
 
+    // MARK: - Rival layout switchers
+
+    /// Watch for a rival switcher launching or quitting. Tied to the
+    /// SETTING, not to `isRunning`: while suspended the tap is down and
+    /// no other timer or observer is alive to notice the rival leaving.
+    private func beginRivalWatch() {
+        guard rivalLaunchObserver == nil, rivalQuitObserver == nil else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        // Only Sendable values cross the hop — the house pattern (see
+        // MeetingDetector): the closure runs on the main QUEUE but isn't
+        // main-actor-isolated, and `NSRunningApplication` isn't Sendable.
+        rivalLaunchObserver = center.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  LayoutFixConflicts.isSwitcher(app) else { return }
+            let name = app.localizedName ?? app.bundleIdentifier ?? "Another layout switcher"
+            Task { @MainActor in LayoutAutoFix.shared.rivalDidLaunch(named: name) }
+        }
+        rivalQuitObserver = center.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in LayoutAutoFix.shared.resumeIfRivalsGone() }
+        }
+    }
+
+    private func endRivalWatch() {
+        let center = NSWorkspace.shared.notificationCenter
+        if let rivalLaunchObserver { center.removeObserver(rivalLaunchObserver) }
+        if let rivalQuitObserver { center.removeObserver(rivalQuitObserver) }
+        rivalLaunchObserver = nil
+        rivalQuitObserver = nil
+    }
+
+    /// A rival started while we were running: stand down mid-session,
+    /// before the first double-converted word rather than after it.
+    private func rivalDidLaunch(named name: String) {
+        guard isRunning else { return }
+        stop()
+        suspendedForConflict = true
+        conflictingSwitcherName = name
+        log.info("Layout auto-fix stood down: \(name, privacy: .public) started")
+        ToastCenter.shared.show(
+            String(
+                format: String(localized: "%@ started, so Daisy stopped fixing layouts — two of them would garble the same word."),
+                name
+            ),
+            style: .info
+        )
+    }
+
+    /// Something quit. Resume if we stood down for a rival, the setting
+    /// is still on, and no rival is left.
+    ///
+    /// Deliberately NOT keyed on which app terminated: a terminated
+    /// `NSRunningApplication` no longer answers reliably (its pid is -1),
+    /// so an identity test here could strand us suspended for the rest of
+    /// the session. `runningSwitcherName()` is the real question anyway,
+    /// and it is cheap. The still-suspended case logs — a gate that
+    /// closes silently is how this feature earned its first bug report.
+    private func resumeIfRivalsGone() {
+        guard suspendedForConflict, let settings, settings.layoutFixAuto else { return }
+        if let remaining = LayoutFixConflicts.runningSwitcherName() {
+            log.info("An app quit but \(remaining, privacy: .public) is still running — layout auto-fix stays suspended")
+            return
+        }
+        suspendedForConflict = false
+        conflictingSwitcherName = nil
+        log.info("Rival layout switcher quit — resuming layout auto-fix")
+        start(settings: settings)
+    }
+
     fileprivate func reenable() {
-        guard let tap else { return }
+        // `isRunning` / `suspendedForConflict` are NOT redundant with the
+        // caller's checks: the tap thread posts this hop when macOS
+        // disables the tap, and a disable already in flight when we stand
+        // down for a rival switcher lands after `stop()`. Re-enabling
+        // then would leave a live tap with `isRunning == false` and
+        // nothing to ever disable it again — Daisy and the rival both
+        // converting the same word, which is the whole thing this
+        // suspension exists to prevent.
+        guard isRunning, !suspendedForConflict, let tap else { return }
         CGEvent.tapEnable(tap: tap, enable: true)
         log.warning("Layout auto-fix tap was disabled by the system — re-enabled")
     }
