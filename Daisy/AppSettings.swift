@@ -386,6 +386,15 @@ final class AppSettings {
         }
     }
 
+    /// Turn every screenshot into a note, with a few seconds afterwards
+    /// during which dictation goes into that note instead of pasting.
+    /// OFF by default: it watches a folder we were never watching, which
+    /// raises a system prompt, and it files things the user didn't
+    /// explicitly ask to file. See `ScreenshotNoteCapture`.
+    var screenshotNotesEnabled: Bool {
+        didSet { defaults.set(screenshotNotesEnabled, forKey: Self.k_screenshotNotesEnabled) }
+    }
+
     /// Global hotkey for "mark this moment" — the user's own judgement
     /// about which minute of a recording mattered, stated live. Only
     /// does anything while recording. `.none` (default) disables.
@@ -1230,6 +1239,7 @@ final class AppSettings {
         } else {
             self.layoutFixHotkey = .none
         }
+        self.screenshotNotesEnabled = defaults.bool(forKey: Self.k_screenshotNotesEnabled)
         // Mark-a-moment — opt-in like every other hotkey. No preset is
         // safe to claim by default on a machine we don't own.
         if let data = defaults.data(forKey: Self.k_markMomentHotkey),
@@ -1539,6 +1549,7 @@ final class AppSettings {
     nonisolated private static let k_followUpsInMyVoice = "daisy.followUpsInMyVoice"
     private static let k_layoutFixHotkey = "daisy.layoutFixHotkey"
     private static let k_markMomentHotkey = "daisy.markMomentHotkey"
+    private static let k_screenshotNotesEnabled = "daisy.screenshotNotesEnabled"
     private static let k_layoutFixAuto = "daisy.layoutFixAuto"
     private static let k_layoutFixSwitchesSource = "daisy.layoutFixSwitchesSource"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"

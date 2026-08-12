@@ -148,6 +148,35 @@ extension RecordingSession {
             seconds: Double(max(0, durSec)),
             kind: .dictation
         )
+        // A screenshot taken moments ago is waiting for context: this
+        // dictation belongs in that note, not in whatever window happens
+        // to be in front (see `ScreenshotNoteCapture`). The claim is made
+        // at key-DOWN, so a long answer isn't cut off by the window
+        // expiring while the person is still talking. A failed write
+        // falls through to the clipboard — nobody's words vanish because
+        // a file couldn't be saved.
+        if let pending = pendingScreenshotNote {
+            pendingScreenshotNote = nil
+            // Same corrections and bookkeeping a pasted dictation gets —
+            // vocabulary, brand names, history, voice-profile corpus.
+            // Routing around `handle` must not mean routing around those:
+            // a note is not a second-class destination, and this dictation
+            // still counts toward the profile unlock.
+            let prepared = DictationPaste.shared.prepare(transcriptText)
+            if ScreenshotNoteCapture.shared.attach(context: prepared, to: pending) {
+                ScreenshotNoteCapture.shared.announceAttached()
+                if let dir = sessionDirectory {
+                    try? FileManager.default.removeItem(at: dir)
+                }
+                releaseSessionsFolderTicket()
+                reset()
+                return
+            }
+            // Reached when the note write failed OR the transcript was
+            // empty after trimming — say which, or this line sends
+            // someone hunting a filesystem bug that isn't there.
+            log.info("Screenshot note not written (empty=\(transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, privacy: .public)) — falling through to the paste path")
+        }
         DictationPaste.shared.handle(transcript: transcriptText)
         if let dir = sessionDirectory {
             try? FileManager.default.removeItem(at: dir)

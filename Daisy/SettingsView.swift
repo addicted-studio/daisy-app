@@ -936,6 +936,16 @@ struct SettingsView: View {
                     }
                 }
 
+                // Independent of the capture toggle above: that one is
+                // about meetings, this one is about the screenshots the
+                // user takes themselves, at any time.
+                Toggle(isOn: $settings.screenshotNotesEnabled) {
+                    Text("Turn my screenshots into notes")
+                    Text("Every screenshot you take becomes a note with the image in it. Right after, hold your dictation key to say what it was about — that goes into the same note instead of being pasted. Daisy copies the picture and never touches your original.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 // Calendar-only. Merged on/off + grace: -1 → off, 0 → stop
                 // at the scheduled end, 300 → 5 min after (the grace also
                 // doubles as the rejoin window).

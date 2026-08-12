@@ -119,6 +119,12 @@ enum ServiceWiring {
         LayoutAutoFix.shared.apply(settings: settings)
     }
 
+    /// Start or stop the screenshot→note watcher from settings.
+    /// Idempotent — the watcher no-ops on a redundant start.
+    static func applyScreenshotNotes(settings: AppSettings) {
+        ScreenshotNoteCapture.shared.apply(settings: settings)
+    }
+
     /// Enable or disable foreground-app meeting auto-detection
     /// (NSWorkspace-based — fires when Zoom / Teams / Meet etc. is
     /// launched). `enabled` is the derived `settings.autoStartOnMeeting`
@@ -243,5 +249,6 @@ enum ServiceWiring {
         applyMCPServer(settings: settings)
         applyEndOfDaySummaries(settings: settings, session: session)
         applyLayoutAutoFix(settings: settings)
+        applyScreenshotNotes(settings: settings)
     }
 }

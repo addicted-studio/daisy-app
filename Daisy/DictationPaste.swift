@@ -77,41 +77,21 @@ final class DictationPaste {
     /// `transcript` is trimmed by the caller — pass empty string
     /// to skip clipboard work entirely (still shows a "nothing
     /// transcribed" toast).
-    func handle(transcript: String) {
-        guard !transcript.isEmpty else {
-            // Say WHY when we know why (2026-07-26). "Nothing was
-            // transcribed" after a full-volume dictation reads like the
-            // app is broken; if the mic delivered digital silence the
-            // user needs to go to System Settings, not retry.
-            if RecordingSession.current?.recorder.sawDigitalSilence == true {
-                ToastCenter.shared.showAction(
-                    String(localized: "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone."),
-                    actionLabel: String(localized: "Open Microphone settings"),
-                    style: .warning,
-                    duration: .seconds(30)
-                ) {
-                    SystemPermissions.shared.openMicrophoneSettings()
-                }
-            } else {
-                ToastCenter.shared.show(
-                    String(localized: "Dictation stopped — nothing was transcribed."),
-                    style: .warning
-                )
-            }
-            return
-        }
-
-        // Apply the user's custom-vocabulary replacements ("claude" →
-        // "Claude", "daisy app" → "Daisy", …) BEFORE anything touches the
-        // pasteboard, so the corrected text is what gets written, copied,
-        // and pasted. `DictationDictionary` is `@MainActor` and we're
-        // already on the MainActor here (this method is MainActor-isolated
-        // and the sole caller — `RecordingSession`, itself `@MainActor` —
-        // invokes it synchronously), so this is a plain same-actor call:
-        // no await, no snapshot, no actor hop needed. `apply` returns the
-        // input unchanged when the table is empty, so this is a no-op for
-        // users who never set up a dictionary.
-        var (transcript, dictionaryFixes) = DictationDictionary.shared.applyCounting(to: transcript)
+    /// Corrections + bookkeeping that every dictation gets, whatever it
+    /// lands in: the user's vocabulary, the built-in brand layer, the
+    /// fixes counter, the 24-hour history and the voice-profile corpus.
+    ///
+    /// Extracted from `handle` (2026-08-12) because dictation now has a
+    /// second destination — a screenshot note (see
+    /// `ScreenshotNoteCapture`). Routing around `handle` used to mean
+    /// routing around ALL of this: the note would have stored raw text
+    /// with brand names still transliterated, and the dictation wouldn't
+    /// have counted toward the voice-profile unlock.
+    @discardableResult
+    func prepare(_ input: String) -> String {
+        var transcript = input
+        var dictionaryFixes: Int
+        (transcript, dictionaryFixes) = DictationDictionary.shared.applyCounting(to: transcript)
         // Built-in brand layer AFTER the user's rules (Egor 2026-07-25):
         // restore transliterated product names to Latin («фигма» →
         // Figma) on every engine — Parakeet can't be biased, so this is
@@ -147,6 +127,44 @@ final class DictationPaste {
         // Placed before the AX/clipboard fork so every successful
         // dictation counts regardless of how it lands in the field.
         VoiceProfileStore.shared.appendDictation(transcript)
+        return transcript
+    }
+
+    func handle(transcript: String) {
+        guard !transcript.isEmpty else {
+            // Say WHY when we know why (2026-07-26). "Nothing was
+            // transcribed" after a full-volume dictation reads like the
+            // app is broken; if the mic delivered digital silence the
+            // user needs to go to System Settings, not retry.
+            if RecordingSession.current?.recorder.sawDigitalSilence == true {
+                ToastCenter.shared.showAction(
+                    String(localized: "Nothing was recorded — macOS sent Daisy an empty microphone signal. Check Privacy & Security → Microphone."),
+                    actionLabel: String(localized: "Open Microphone settings"),
+                    style: .warning,
+                    duration: .seconds(30)
+                ) {
+                    SystemPermissions.shared.openMicrophoneSettings()
+                }
+            } else {
+                ToastCenter.shared.show(
+                    String(localized: "Dictation stopped — nothing was transcribed."),
+                    style: .warning
+                )
+            }
+            return
+        }
+
+        // Apply the user's custom-vocabulary replacements ("claude" →
+        // "Claude", "daisy app" → "Daisy", …) BEFORE anything touches the
+        // pasteboard, so the corrected text is what gets written, copied,
+        // and pasted. `DictationDictionary` is `@MainActor` and we're
+        // already on the MainActor here (this method is MainActor-isolated
+        // and the sole caller — `RecordingSession`, itself `@MainActor` —
+        // invokes it synchronously), so this is a plain same-actor call:
+        // no await, no snapshot, no actor hop needed. `apply` returns the
+        // input unchanged when the table is empty, so this is a no-op for
+        // users who never set up a dictionary.
+        let transcript = prepare(transcript)
 
         // 0. Best path: insert DIRECTLY into the focused text field via
         //    the Accessibility API — the pasteboard is never touched, so
