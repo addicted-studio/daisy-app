@@ -151,6 +151,12 @@ extension RecordingSession {
         switch status {
         case .idle, .finished, .failed:
             pendingMode = .dictation
+            // Claim a screenshot waiting for context NOW, at key-down:
+            // the window is about intent ("I pressed this because of that
+            // screenshot"), and claiming at release would let a long
+            // answer time out mid-sentence. Claiming also closes the
+            // window, so the next dictation pastes normally.
+            pendingScreenshotNote = ScreenshotNoteCapture.shared.claimPending()
             // Warm the selected fast dictation engine during the hold so
             // release→paste isn't blocked on a cold load.
             switch settings.dictationEngine {

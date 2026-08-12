@@ -951,6 +951,9 @@ private struct HotkeyStopWiring: ViewModifier {
             .onChange(of: settings.layoutFixAuto) { _, _ in
                 ServiceWiring.applyLayoutAutoFix(settings: settings)
             }
+            .onChange(of: settings.screenshotNotesEnabled) { _, _ in
+                ServiceWiring.applyScreenshotNotes(settings: settings)
+            }
             // Dictation registration is deferred until first-run
             // completes (Input Monitoring prompt timing — see
             // ServiceWiring); re-apply the moment onboarding closes so

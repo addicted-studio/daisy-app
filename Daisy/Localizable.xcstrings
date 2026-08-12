@@ -4268,6 +4268,16 @@
         }
       }
     },
+    "Daisy can’t see your screenshots folder. Grant access in System Settings → Privacy & Security → Files and Folders." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не видит папку со скриншотами. Дайте доступ в Системных настройках → Конфиденциальность и безопасность → Файлы и папки."
+          }
+        }
+      }
+    },
     "Daisy can’t hear you" : {
       "localizations" : {
         "ru" : {
@@ -5696,12 +5706,32 @@
         }
       }
     },
+    "Every screenshot you take becomes a note with the image in it. Right after, hold your dictation key to say what it was about — that goes into the same note instead of being pasted. Daisy copies the picture and never touches your original." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждый ваш скриншот становится заметкой с картинкой. Сразу после — удерживайте клавишу диктовки и скажите, о чём он: текст уйдёт в ту же заметку, а не вставится в активное окно. Daisy копирует картинку и не трогает ваш оригинал."
+          }
+        }
+      }
+    },
     "Exact name of the tool to call. Check your server's `tools/list` output." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Точное имя вызываемого инструмента. Проверьте вывод `tools/list` вашего сервера."
+          }
+        }
+      }
+    },
+    "Turn my screenshots into notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Превращать мои скриншоты в заметки"
           }
         }
       }
@@ -8626,6 +8656,16 @@
         }
       }
     },
+    "Added to the screenshot note" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавлено в заметку со скриншотом"
+          }
+        }
+      }
+    },
     "Ollama" : {
       "localizations" : {
         "ru" : {
@@ -10789,6 +10829,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скриншоты (%lld)"
+          }
+        }
+      }
+    },
+    "Screenshot saved to Notes — hold %@ to add context" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скриншот сохранён в заметки — удерживайте %@, чтобы добавить контекст"
+          }
+        }
+      }
+    },
+    "Screenshot saved to Notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скриншот сохранён в заметки"
           }
         }
       }

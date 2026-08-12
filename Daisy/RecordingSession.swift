@@ -316,6 +316,11 @@ final class RecordingSession {
     /// monitor after the rest of the stored state is up.
     private(set) var silenceMonitor: SilenceMonitor!
 
+    /// The screenshot note this dictation was started for, claimed at
+    /// key-down and consumed at release (see `ScreenshotNoteCapture`).
+    /// `nil` for an ordinary dictation, which pastes as always.
+    var pendingScreenshotNote: ScreenshotNoteCapture.Pending?
+
     /// Moments the user marked during THIS session, in time order. Kept
     /// in memory so the widget and detail view can react live; the file
     /// (`markers.json`) is written on every mark and is the truth after
