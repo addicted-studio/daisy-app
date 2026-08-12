@@ -7992,6 +7992,16 @@
         }
       }
     },
+    "No recent dictation to paste." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет недавней диктовки для вставки."
+          }
+        }
+      }
+    },
     "No audio to delete" : {
       "localizations" : {
         "ru" : {
@@ -9318,6 +9328,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вставляет надиктованное в приложение, где вы сейчас."
+          }
+        }
+      }
+    },
+    "Paste my last dictation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставить последнюю диктовку"
+          }
+        }
+      }
+    },
+    "Re-inserts your most recent dictation at the cursor — for when it landed in the wrong window or nowhere at all" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заново вставляет последнюю диктовку под курсор — если она попала не в то окно или никуда вовсе"
           }
         }
       }

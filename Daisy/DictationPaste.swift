@@ -154,18 +154,42 @@ final class DictationPaste {
             return
         }
 
-        // Apply the user's custom-vocabulary replacements ("claude" →
-        // "Claude", "daisy app" → "Daisy", …) BEFORE anything touches the
-        // pasteboard, so the corrected text is what gets written, copied,
-        // and pasted. `DictationDictionary` is `@MainActor` and we're
-        // already on the MainActor here (this method is MainActor-isolated
-        // and the sole caller — `RecordingSession`, itself `@MainActor` —
-        // invokes it synchronously), so this is a plain same-actor call:
-        // no await, no snapshot, no actor hop needed. `apply` returns the
-        // input unchanged when the table is empty, so this is a no-op for
-        // users who never set up a dictionary.
-        let transcript = prepare(transcript)
+        // `prepare` applies the user's vocabulary + brand corrections and
+        // does the once-per-dictation bookkeeping (fixes counter, 24h
+        // history, voice-profile corpus); `deliver` puts the result where
+        // the caret is. Both are MainActor-isolated same-actor calls.
+        deliver(prepare(transcript))
+    }
 
+    /// Re-paste the most recent dictation at the current caret — Wispr's
+    /// "paste last transcript". The words a dictation put nowhere (no
+    /// field focused, ⌘V landed in the void) are still in
+    /// `DictationHistory`; this hands the newest one back to the same
+    /// delivery path, at wherever the caret is NOW.
+    ///
+    /// Skips `prepare`: the history already holds post-correction text
+    /// that was counted, logged and fed to the voice profile once. Re-
+    /// pasting is not a new dictation — running it through `prepare`
+    /// again would double-count fixes and re-grow the profile corpus
+    /// from the same words.
+    func repasteLast() {
+        guard let last = DictationHistory.shared.entries.first,
+              !last.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            ToastCenter.shared.show(
+                String(localized: "No recent dictation to paste."),
+                style: .info
+            )
+            return
+        }
+        deliver(last.text)
+    }
+
+    /// Put `transcript` where the caret is: straight into the focused
+    /// field via Accessibility when we can, else onto the clipboard with
+    /// an auto-paste and a timed restore of the user's prior clipboard.
+    /// Assumes the text is already corrected — callers that start from a
+    /// raw dictation run `prepare` first.
+    private func deliver(_ transcript: String) {
         // 0. Best path: insert DIRECTLY into the focused text field via
         //    the Accessibility API — the pasteboard is never touched, so
         //    whatever the user had copied (logs, a link…) survives
@@ -180,15 +204,25 @@ final class DictationPaste {
             return
         }
 
-        // Cancel any in-flight restore from a previous dictation —
-        // back-to-back dictations shouldn't restore the previous-
-        // previous clipboard on top of the current transcript.
+        // 1. Snapshot the user's real prior clipboard, BEFORE we write.
+        //
+        //    Back-to-back clipboard-route deliveries (a dictation that
+        //    landed nowhere, then a re-paste; or two re-pastes) need care:
+        //    the pasteboard right now may still hold OUR previous
+        //    transcript, with a restore pending. Snapshotting it blindly
+        //    would capture that transcript as "the user's clipboard" and
+        //    lose their genuine pre-dictation contents forever. So if a
+        //    restore is pending AND nothing has touched the pasteboard
+        //    since our last write (changeCount unchanged), carry the
+        //    ORIGINAL snapshot forward instead of re-capturing.
+        let snapshot: [[String: Data]]
+        if let pending = pendingSnapshot,
+           NSPasteboard.general.changeCount == pending.changeCountAfterOurWrite {
+            snapshot = pending.items
+        } else {
+            snapshot = captureClipboard()
+        }
         cancelPendingRestore()
-
-        // 1. Snapshot existing pasteboard so we can put it back.
-        //    Done BEFORE we write anything so we capture the user's
-        //    actual prior state.
-        let snapshot = captureClipboard()
 
         // 2. Write the transcript.
         NSPasteboard.general.clearContents()

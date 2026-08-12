@@ -395,6 +395,18 @@ final class AppSettings {
         didSet { defaults.set(screenshotNotesEnabled, forKey: Self.k_screenshotNotesEnabled) }
     }
 
+    /// Global hotkey for "paste my last dictation" — re-inserts the most
+    /// recent dictation at the caret (Wispr's "paste last transcript").
+    /// Recovers a dictation that landed nowhere because no field was
+    /// focused. `.none` (default) disables.
+    var repasteLastHotkey: HotkeyChoice {
+        didSet {
+            if let data = try? JSONEncoder().encode(repasteLastHotkey) {
+                defaults.set(data, forKey: Self.k_repasteLastHotkey)
+            }
+        }
+    }
+
     /// Global hotkey for "mark this moment" — the user's own judgement
     /// about which minute of a recording mattered, stated live. Only
     /// does anything while recording. `.none` (default) disables.
@@ -1240,6 +1252,13 @@ final class AppSettings {
             self.layoutFixHotkey = .none
         }
         self.screenshotNotesEnabled = defaults.bool(forKey: Self.k_screenshotNotesEnabled)
+        // Re-paste last dictation — opt-in like every other hotkey.
+        if let data = defaults.data(forKey: Self.k_repasteLastHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
+            self.repasteLastHotkey = decoded
+        } else {
+            self.repasteLastHotkey = .none
+        }
         // Mark-a-moment — opt-in like every other hotkey. No preset is
         // safe to claim by default on a machine we don't own.
         if let data = defaults.data(forKey: Self.k_markMomentHotkey),
@@ -1549,6 +1568,7 @@ final class AppSettings {
     nonisolated private static let k_followUpsInMyVoice = "daisy.followUpsInMyVoice"
     private static let k_layoutFixHotkey = "daisy.layoutFixHotkey"
     private static let k_markMomentHotkey = "daisy.markMomentHotkey"
+    private static let k_repasteLastHotkey = "daisy.repasteLastHotkey"
     private static let k_screenshotNotesEnabled = "daisy.screenshotNotesEnabled"
     private static let k_layoutFixAuto = "daisy.layoutFixAuto"
     private static let k_layoutFixSwitchesSource = "daisy.layoutFixSwitchesSource"

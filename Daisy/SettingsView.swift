@@ -877,6 +877,11 @@ struct SettingsView: View {
                     caption: "While recording, flag the minute you’re in — it lands in the transcript and leads the summary",
                     binding: $settings.markMomentHotkey
                 )
+                shortcutRow(
+                    title: "Paste my last dictation",
+                    caption: "Re-inserts your most recent dictation at the cursor — for when it landed in the wrong window or nowhere at all",
+                    binding: $settings.repasteLastHotkey
+                )
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Shortcuts")
