@@ -246,7 +246,7 @@ final class ScreenshotCapture {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false, onScreenWindowsOnly: false
             )
-            guard let display = pickDisplay(from: content) else { return }
+            guard let display = pickDisplay(from: content) else { return nil }
 
             // Exclude our own popover from the shot.
             let ourApps = content.applications.filter {

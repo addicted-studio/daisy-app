@@ -47,7 +47,10 @@ enum LayoutFixConflicts {
     /// Punto Switcher; the one people actually run on macOS today.
     /// `ru.yandex.puntoswitcher` — Punto Switcher for Mac. Yandex
     /// stopped shipping it, but an installed copy still types.
-    private static let switcherBundleIDs: Set<String> = [
+    /// `nonisolated`: read from the launch observer's `@Sendable`
+    /// closure, which runs on the main queue but isn't main-actor-
+    /// isolated. It's immutable data — safe from anywhere.
+    nonisolated private static let switcherBundleIDs: Set<String> = [
         "tech.caramba.switcher",
         "ru.yandex.puntoswitcher",
     ]
@@ -62,11 +65,12 @@ enum LayoutFixConflicts {
         return nil
     }
 
-    /// True when `app` is one of the rivals — for the launch/terminate
-    /// observers, which get the app and shouldn't rescan the world.
-    static func isSwitcher(_ app: NSRunningApplication) -> Bool {
-        guard let id = app.bundleIdentifier else { return false }
-        return switcherBundleIDs.contains(id)
+    /// True when this bundle id is one of the rivals. `nonisolated` so
+    /// the launch observer can filter inside its `@Sendable` closure,
+    /// passing only the Sendable `String` across the actor hop rather
+    /// than the non-Sendable `NSRunningApplication`.
+    nonisolated static func isSwitcher(bundleID: String) -> Bool {
+        switcherBundleIDs.contains(bundleID)
     }
 
     /// Log every OTHER process holding an active keyboard tap. Purely
