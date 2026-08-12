@@ -386,6 +386,19 @@ final class AppSettings {
         }
     }
 
+    /// Global hotkey for "mark this moment" — the user's own judgement
+    /// about which minute of a recording mattered, stated live. Only
+    /// does anything while recording. `.none` (default) disables.
+    /// See `MomentMarkers` for why the marker, not the frame, is the
+    /// feature.
+    var markMomentHotkey: HotkeyChoice {
+        didSet {
+            if let data = try? JSONEncoder().encode(markMomentHotkey) {
+                defaults.set(data, forKey: Self.k_markMomentHotkey)
+            }
+        }
+    }
+
     /// Fix the layout automatically, word by word, without a keypress.
     /// OFF by default and deliberately hard to turn on by accident: it
     /// needs Accessibility access, and it rewrites text nobody asked it to
@@ -1217,6 +1230,14 @@ final class AppSettings {
         } else {
             self.layoutFixHotkey = .none
         }
+        // Mark-a-moment — opt-in like every other hotkey. No preset is
+        // safe to claim by default on a machine we don't own.
+        if let data = defaults.data(forKey: Self.k_markMomentHotkey),
+           let decoded = try? JSONDecoder().decode(HotkeyChoice.self, from: data) {
+            self.markMomentHotkey = decoded
+        } else {
+            self.markMomentHotkey = .none
+        }
         self.layoutFixAuto = defaults.bool(forKey: Self.k_layoutFixAuto)
         self.layoutFixSwitchesSource = defaults.object(forKey: Self.k_layoutFixSwitchesSource) as? Bool ?? true
         // Default OFF — auto-starting a recording the moment Zoom
@@ -1517,6 +1538,7 @@ final class AppSettings {
     private static let k_rewriteSelectionHotkey = "daisy.rewriteSelectionHotkey"
     nonisolated private static let k_followUpsInMyVoice = "daisy.followUpsInMyVoice"
     private static let k_layoutFixHotkey = "daisy.layoutFixHotkey"
+    private static let k_markMomentHotkey = "daisy.markMomentHotkey"
     private static let k_layoutFixAuto = "daisy.layoutFixAuto"
     private static let k_layoutFixSwitchesSource = "daisy.layoutFixSwitchesSource"
     private static let k_autoStartOnMeeting = "daisy.autoStartOnMeeting"

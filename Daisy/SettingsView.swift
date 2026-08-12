@@ -872,6 +872,11 @@ struct SettingsView: View {
                     caption: "«ghbdtn» becomes «привет» — the selection, or the word you're typing",
                     binding: $settings.layoutFixHotkey
                 )
+                shortcutRow(
+                    title: "Mark this moment",
+                    caption: "While recording, flag the minute you’re in — it lands in the transcript and leads the summary",
+                    binding: $settings.markMomentHotkey
+                )
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Shortcuts")

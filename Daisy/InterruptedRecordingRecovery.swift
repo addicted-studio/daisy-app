@@ -91,7 +91,11 @@ final class InterruptedRecordingRecovery {
             startDate: startDate,
             durationSec: durationSec,
             mic: mic?.text,
-            system: system?.text
+            system: system?.text,
+            markers: MomentMarkerStore.markdownSection(
+                for: folder,
+                heading: String(localized: "Marked moments")
+            )
         )
 
         do {
@@ -171,7 +175,8 @@ final class InterruptedRecordingRecovery {
         startDate: Date,
         durationSec: Double,
         mic: String?,
-        system: String?
+        system: String?,
+        markers: String = ""
     ) -> String {
         let iso = ISO8601DateFormatter()
         let df = DateFormatter()
@@ -198,6 +203,12 @@ final class InterruptedRecordingRecovery {
         lines.append("")
         lines.append("> " + String(localized: "Recovered after an interrupted session (crash or power loss). Basic transcript — no speaker labels or summary. The audio is in this folder if you want to re-process it."))
         lines.append("")
+        // The markers survived the crash in `markers.json`; nothing else
+        // here could reconstruct them, and they are the only part of
+        // this recording that carries the user's own judgement.
+        if !markers.isEmpty {
+            lines.append(markers)
+        }
 
         let micText = mic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let sysText = system?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

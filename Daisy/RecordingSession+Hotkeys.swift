@@ -13,6 +13,77 @@ import Foundation
 import os
 
 extension RecordingSession {
+
+    // MARK: - Mark a moment
+
+    /// "This bit matters." Records the current media time, grabs a frame
+    /// if one can be had, and writes `markers.json` immediately — see
+    /// `MomentMarkers` for why the timestamp is the feature and the
+    /// picture is optional.
+    ///
+    /// Only meaningful while recording. Pressed at any other time it
+    /// says so rather than doing nothing: a global hotkey that is silent
+    /// when idle is indistinguishable from one that is broken, and this
+    /// one will be pressed hopefully, mid-conversation, by someone who
+    /// cannot check whether recording is on.
+    func markMomentByHotkey() async {
+        guard status == .recording || status == .paused else {
+            ToastCenter.shared.show(
+                String(localized: "Nothing to mark — Daisy isn’t recording."),
+                style: .info
+            )
+            return
+        }
+        guard let dir = sessionDirectory else {
+            log.error("Mark moment: no session directory")
+            return
+        }
+
+        // Stamp the time BEFORE the capture: SCScreenshotManager can
+        // take a few hundred milliseconds, and the moment the user meant
+        // is the one they pressed at, not the one we got round to. (The
+        // frame's own `index.json` entry is stamped after, so the same
+        // picture can read a fraction of a second later in the
+        // screenshot gallery than in the marker list. The marker's is
+        // the honest one.)
+        let offset = max(0, elapsed)
+        // A frame only when the user asked for screen capture at all,
+        // and only while actually recording — pause is "stop looking at
+        // my screen", and it stopped the periodic capture for the same
+        // reason. Marking still works in both cases; the timestamp was
+        // always the point.
+        var frame: String?
+        if settings.screenshotsEnabled, status == .recording {
+            frame = await screenshots.captureForMarker(
+                elapsed: { [weak self] in self?.elapsed ?? 0 },
+                into: dir.appendingPathComponent("screenshots", isDirectory: true)
+            )
+        }
+
+        var markers = MomentMarkerStore.load(from: dir)
+        markers.append(MomentMarker(offsetSec: offset, screenshot: frame, createdAt: Date()))
+        MomentMarkerStore.write(markers, to: dir)
+        momentMarkers = markers
+
+        // Confirm, with the timecode. Deliberately NOT one of the
+        // recording sounds — `playStart` mid-meeting reads as "recording
+        // just started", which is the one thing it must not say. And
+        // deliberately not silent: this is an action the user asked for,
+        // aimed at a moment they can no longer see, and the only proof
+        // it landed is this line. (The toast budget this spends is the
+        // user's own to spend — they pressed a key.)
+        let marker = markers.last
+        ToastCenter.shared.show(
+            String(
+                format: String(localized: "Marked at %@"),
+                marker?.timecode ?? "0:00"
+            ),
+            style: .info,
+            duration: .seconds(1.4)
+        )
+        log.info("Moment marked at \(Int(offset), privacy: .public)s (frame: \(frame != nil, privacy: .public), \(markers.count, privacy: .public) total)")
+    }
+
     // MARK: - Hotkey / mode entry points
 
     /// Convenience for global hotkey / widget tap: start if idle/
