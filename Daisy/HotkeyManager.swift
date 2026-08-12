@@ -244,6 +244,7 @@ nonisolated enum HotkeySlot: UInt32, CaseIterable, Sendable {
     case dictation = 3   // mode = .dictation
     case rewrite   = 4   // rewrite selection in the user's voice
     case fixLayout = 5   // re-type text in the keyboard layout it belonged to
+    case markMoment = 6  // "this bit matters" during a recording
 }
 
 /// How the slot's hotkey reacts to a key press:

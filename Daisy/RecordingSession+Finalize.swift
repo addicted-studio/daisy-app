@@ -402,6 +402,21 @@ extension RecordingSession {
             if !screenSharedText.isEmpty, settings.screenTextInSummary {
                 transcriptText += "\n\n[Content shared on screen during the meeting — text extracted from slides/documents shown, not spoken:]\n\(screenSharedText)"
             }
+            // Moments the user marked live (see `MomentMarkers`). This is
+            // the only importance signal in the whole pipeline that was
+            // STATED rather than inferred: everything else the summarizer
+            // weighs, it deduced from the words. Handing it the
+            // timecodes costs one line and tells it where the person who
+            // was actually in the room would have pointed.
+            //
+            // Timecodes only — no instruction to obey them. The
+            // summarizer's own structure prompt stays in charge; a
+            // "these are the most important parts" directive would let
+            // four taps rewrite the shape of a sixty-minute meeting.
+            if !momentMarkers.isEmpty {
+                let stamps = momentMarkers.map(\.timecode).joined(separator: ", ")
+                transcriptText += "\n\n[The participant flagged these timecodes as worth remembering while the meeting was happening: \(stamps)]"
+            }
             let summarizeState = signposter.beginInterval("summarize", id: signposter.makeSignpostID())
             let t_summarize = Date()
             summary = await summarizer.summarize(

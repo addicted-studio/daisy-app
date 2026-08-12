@@ -253,6 +253,28 @@ enum MarkdownExporter {
             }
         }
 
+        // Moments the user marked while recording. Above the transcript
+        // and below the summary on purpose: this is the one section
+        // nobody inferred — the person who was in the room said these
+        // minutes mattered. Timecodes match the transcript's, so the
+        // list reads as an index into it.
+        let markers = session.momentMarkers
+        if !markers.isEmpty {
+            lines.append("## Marked moments")
+            lines.append("")
+            let shotsDir = session.sessionDirectory?
+                .appendingPathComponent("screenshots", isDirectory: true)
+            for marker in markers {
+                if let frame = marker.screenshot,
+                   let url = shotsDir?.appendingPathComponent(frame) {
+                    lines.append("- **[\(marker.timecode)]** — ![\(marker.timecode)](\(url.path))")
+                } else {
+                    lines.append("- **[\(marker.timecode)]**")
+                }
+            }
+            lines.append("")
+        }
+
         lines.append("## Transcript")
         lines.append("")
 

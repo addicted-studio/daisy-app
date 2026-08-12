@@ -7385,6 +7385,46 @@
         }
       }
     },
+    "Mark this moment" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отметить момент"
+          }
+        }
+      }
+    },
+    "While recording, flag the minute you’re in — it lands in the transcript and leads the summary" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Во время записи отметьте минуту, на которой вы находитесь — она попадёт в транскрипт и возглавит саммари"
+          }
+        }
+      }
+    },
+    "Marked moments" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмеченные моменты"
+          }
+        }
+      }
+    },
+    "Marked at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмечено на %@"
+          }
+        }
+      }
+    },
     "Meeting" : {
       "localizations" : {
         "ru" : {
@@ -8349,6 +8389,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не запущен"
+          }
+        }
+      }
+    },
+    "Nothing to mark — Daisy isn’t recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нечего отмечать — Daisy не записывает."
           }
         }
       }

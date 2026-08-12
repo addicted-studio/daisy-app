@@ -316,6 +316,17 @@ final class RecordingSession {
     /// monitor after the rest of the stored state is up.
     private(set) var silenceMonitor: SilenceMonitor!
 
+    /// Moments the user marked during THIS session, in time order. Kept
+    /// in memory so the widget and detail view can react live; the file
+    /// (`markers.json`) is written on every mark and is the truth after
+    /// a relaunch. See `MomentMarkers`.
+    ///
+    /// Not `private(set)` only because the one writer —
+    /// `markMomentByHotkey` — lives in `RecordingSession+Hotkeys.swift`,
+    /// and Swift's setter access is file-scoped. Nothing else should
+    /// write it.
+    var momentMarkers: [MomentMarker] = []
+
     // Re-exported recorder state.
     var elapsed: TimeInterval { recorder.elapsed }
     var levelDB: Float { recorder.levelDB }
@@ -1258,6 +1269,10 @@ final class RecordingSession {
             dir = nil
         }
         sessionDirectory = dir
+        // Fresh session, fresh markers. Resume keeps them (this runs on
+        // start only) — a mark made before a pause still points at the
+        // same media time afterwards.
+        momentMarkers = []
 
         // Tell SessionStore which folder is live so its husk-cleanup never
         // deletes this in-progress recording: until Stop writes transcript.md,
@@ -2177,6 +2192,7 @@ final class RecordingSession {
         cancelAutoStop()
         removeThermalDowngrade()
         sessionDirectory = nil
+        momentMarkers = []
         micArchiveURL = nil
         systemArchiveURL = nil
         startedAt = nil
@@ -2261,6 +2277,7 @@ final class RecordingSession {
         releaseSessionsFolderTicket()
         summarizer.clear()
         sessionDirectory = nil
+        momentMarkers = []
         micArchiveURL = nil
         systemArchiveURL = nil
         startedAt = nil

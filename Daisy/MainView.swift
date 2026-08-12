@@ -943,6 +943,9 @@ private struct HotkeyStopWiring: ViewModifier {
             .onChange(of: settings.layoutFixHotkey) { _, _ in
                 ServiceWiring.applyAllHotkeys(settings: settings, session: session)
             }
+            .onChange(of: settings.markMomentHotkey) { _, _ in
+                ServiceWiring.applyAllHotkeys(settings: settings, session: session)
+            }
             // The as-you-type watcher is a keyboard tap, not a hotkey —
             // it starts and stops on its own toggle.
             .onChange(of: settings.layoutFixAuto) { _, _ in

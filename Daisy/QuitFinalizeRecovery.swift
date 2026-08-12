@@ -144,7 +144,14 @@ final class QuitFinalizeRecovery {
         let original = (try? String(contentsOf: transcriptURL, encoding: .utf8)) ?? ""
         let updated = Self.replaceBody(
             in: original,
-            with: Self.renderBody(mic: mic?.text, system: system?.text)
+            with: Self.renderBody(
+                mic: mic?.text,
+                system: system?.text,
+                markers: MomentMarkerStore.markdownSection(
+                    for: folder,
+                    heading: String(localized: "Marked moments")
+                )
+            )
         )
         do {
             try await Task.detached(priority: .utility) {
@@ -266,10 +273,16 @@ final class QuitFinalizeRecovery {
     /// sections. No speaker labels — the live diarization state died
     /// with the process; a labeled version would need the offline
     /// diarizer, which is future work.
-    nonisolated private static func renderBody(mic: String?, system: String?) -> String {
+    nonisolated private static func renderBody(mic: String?, system: String?, markers: String = "") -> String {
         var lines: [String] = []
         lines.append("> " + String(localized: "Re-processed from the full audio archive after the app quit mid-recording. Complete transcript — no speaker labels."))
         lines.append("")
+        // Re-rendering the body would otherwise drop the moments the
+        // user marked before the quit — the one part of this file that
+        // wasn't recoverable from the audio.
+        if !markers.isEmpty {
+            lines.append(markers)
+        }
         let micText = mic?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let sysText = system?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !micText.isEmpty {

@@ -98,6 +98,18 @@ enum ServiceWiring {
                 Task { await LayoutFixService.shared.trigger(settings: settings) }
             }
         )
+        // Mark-this-moment — one tap during a recording. `.toggle`
+        // (single fire on press) rather than `.hold`: a marker is an
+        // instant, and Carbon's toggle path needs no permission, which
+        // matters for a key someone will press mid-meeting expecting
+        // nothing to happen but a marker.
+        HotkeyManager.shared.register(
+            slot: .markMoment,
+            choice: settings.markMomentHotkey,
+            action: .toggle { [weak session] in
+                Task { await session?.markMomentByHotkey() }
+            }
+        )
     }
 
     /// Start or stop the as-you-type layout watcher from settings.

@@ -128,6 +128,59 @@ final class ScreenshotCapture {
         timer?.invalidate()
         timer = nil
         isRunning = false
+        // Forget the folder too. `captureForMarker` bootstraps itself
+        // from `outputDir == nil`, and a directory left over from the
+        // last session would send the next session's marker frame into
+        // the previous session's folder — with `markers.json` in the new
+        // one pointing at a file that isn't there.
+        outputDir = nil
+        elapsedProvider = nil
+    }
+
+    /// Capture ONE frame right now, outside the periodic schedule, and
+    /// return its filename — for a moment marker (see `MomentMarkers`).
+    ///
+    /// Works whether or not the periodic timer is running: when it
+    /// isn't, `directory` and `elapsed` bootstrap the same state `start`
+    /// would have set, minus the timer — which covers the window between
+    /// a session starting and its first tick, and a resumed session.
+    /// `nil` means no frame, which the marker survives.
+    ///
+    /// The CALLER decides whether a frame may be taken at all. This does
+    /// not consult `screenshotsEnabled`: with capture switched off, one
+    /// keypress must not photograph someone's screen (or raise the
+    /// Screen Recording prompt) for a feature they never turned on.
+    func captureForMarker(
+        elapsed: @escaping @MainActor () -> TimeInterval,
+        into directory: URL
+    ) async -> String? {
+        if outputDir != directory {
+            outputDir = directory
+            elapsedProvider = elapsed
+            do {
+                try FileManager.default.createDirectory(
+                    at: directory, withIntermediateDirectories: true
+                )
+            } catch {
+                lastError = error.localizedDescription
+                return nil
+            }
+            // Same resume-safe numbering as `start`: this folder may
+            // already hold frames from before periodic capture was
+            // switched off mid-session.
+            let existing = ScreenshotFile.ordered((try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil
+            )) ?? [])
+            screenshotURLs = existing
+            index = existing.compactMap(ScreenshotFile.number(of:)).max() ?? 0
+            offsets = ScreenshotIndex.load(from: directory)
+        }
+        // The filename comes back from the capture itself, not from
+        // `screenshotURLs.last`: the periodic timer can land a frame
+        // during our await, and pointing a marker at someone else's
+        // frame — up to a full interval away from the marked instant —
+        // is worse than a marker with no picture.
+        return await captureOne()
     }
 
     /// Display to capture this tick. Prefers the display hosting the
@@ -182,8 +235,13 @@ final class ScreenshotCapture {
         return fallback
     }
 
-    private func captureOne() async {
-        guard let dir = outputDir else { return }
+    /// Returns the filename written, or `nil` when nothing was — the
+    /// marker path needs to know whether ITS capture produced a frame,
+    /// and `index` alone can't answer that: the periodic timer (or a
+    /// second hotkey press) can complete during our await and move it.
+    @discardableResult
+    private func captureOne() async -> String? {
+        guard let dir = outputDir else { return nil }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 false, onScreenWindowsOnly: false
@@ -215,7 +273,7 @@ final class ScreenshotCapture {
 
             guard let encoded = ScreenshotFile.encode(cgImage) else {
                 lastError = "Could not encode screenshot."
-                return
+                return nil
             }
 
             let filename = ScreenshotFile.name(number: index + 1)
@@ -235,9 +293,11 @@ final class ScreenshotCapture {
 
             screenshotURLs.append(url)
             index += 1
+            return filename
         } catch {
             log.error("Screenshot failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
+            return nil
         }
     }
 }
