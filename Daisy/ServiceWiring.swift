@@ -110,6 +110,17 @@ enum ServiceWiring {
                 Task { await session?.markMomentByHotkey() }
             }
         )
+        // Re-paste last dictation — one tap re-inserts the most recent
+        // dictation at the caret. Session-independent (it reads
+        // DictationHistory, not the live session), so no `session`
+        // capture.
+        HotkeyManager.shared.register(
+            slot: .repasteLast,
+            choice: settings.repasteLastHotkey,
+            action: .toggle {
+                Task { @MainActor in DictationPaste.shared.repasteLast() }
+            }
+        )
     }
 
     /// Start or stop the as-you-type layout watcher from settings.
