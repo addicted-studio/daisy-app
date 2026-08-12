@@ -42,7 +42,7 @@ cd daisy-app
 open Daisy.xcodeproj
 ```
 
-The Swift Package Manager dependencies (Sparkle, WhisperKit/ArgmaxCore, FluidAudio) resolve on first project load. Hit Run; the app launches.
+The Swift Package Manager dependencies (Sparkle, WhisperKit via [`argmax-oss-swift`](https://github.com/argmaxinc/argmax-oss-swift), FluidAudio) resolve on first project load. Hit Run; the app launches.
 
 ## Project layout
 
@@ -108,7 +108,7 @@ Release notes for each version go in `scripts/release-notes/<shortVersion>.md` a
 ## Credits
 
 - [Sparkle](https://sparkle-project.org) — in-app auto-updates
-- [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax — Apple Silicon Whisper inference
+- [WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) by Argmax — Apple Silicon Whisper inference (part of the Argmax OSS SDK)
 - [FluidAudio](https://github.com/FluidInference/FluidAudio) — Parakeet ASR + speaker diarization
 - [FoundationModels](https://developer.apple.com/documentation/foundationmodels) — on-device summarization via Apple Intelligence (macOS 26+)
 
