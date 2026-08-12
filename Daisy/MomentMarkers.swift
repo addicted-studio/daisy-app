@@ -49,7 +49,9 @@ struct MomentMarker: Codable, Sendable, Hashable, Identifiable {
     var id: Date { createdAt }
 
     /// `mm:ss` / `h:mm:ss`, same shape as `ScreenshotIndex.timecode`.
-    var timecode: String {
+    /// `nonisolated`: pure arithmetic on a value, read from the
+    /// nonisolated `markdownSection` and the recovery renderers.
+    nonisolated var timecode: String {
         let total = Int(offsetSec.rounded())
         let hours = total / 3_600
         let minutes = (total % 3_600) / 60

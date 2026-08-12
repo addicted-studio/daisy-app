@@ -360,8 +360,9 @@ final class LayoutAutoFix {
             queue: .main
         ) { note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
-                  LayoutFixConflicts.isSwitcher(app) else { return }
-            let name = app.localizedName ?? app.bundleIdentifier ?? "Another layout switcher"
+                  let bundleID = app.bundleIdentifier,
+                  LayoutFixConflicts.isSwitcher(bundleID: bundleID) else { return }
+            let name = app.localizedName ?? bundleID
             Task { @MainActor in LayoutAutoFix.shared.rivalDidLaunch(named: name) }
         }
         rivalQuitObserver = center.addObserver(
