@@ -41,7 +41,6 @@
 
 import AppKit
 import Foundation
-import UserNotifications
 import os
 
 @Observable
@@ -354,19 +353,18 @@ final class ScreenshotNoteCapture {
 
     /// Say it where it can actually be seen.
     ///
-    /// A toast lives in the main window's overlay (`ToastOverlay`, mounted
-    /// once in `MainView`), and a screenshot is BY DEFINITION taken from
-    /// another app with Daisy in the background — so the toast would be
-    /// invisible in the one case this feature exists for, and the next
-    /// dictation would silently go somewhere new with no explanation.
-    /// That mistake is already documented twice in this codebase; this is
-    /// the third place it would have happened.
+    /// A toast lives in the main window's overlay, and a screenshot is BY
+    /// DEFINITION taken from another app with Daisy in the background — so
+    /// a toast would be invisible in the one case this feature exists for.
+    /// The widget bubble floats over every app; `WidgetBubbleCenter` shows
+    /// it there when the widget is up, and falls back to a notification
+    /// when it isn't. No action button — the affordance is "hold your
+    /// dictation key", which is a gesture, not a tap.
     private func announce(_ message: String) {
-        if NSApp.isActive {
-            ToastCenter.shared.show(message, style: .info, duration: .seconds(6))
-        } else {
-            ScreenshotNoteNotification.post(body: message)
-        }
+        WidgetBubbleCenter.shared.present(
+            WidgetBubbleContent(text: message),
+            notificationTitle: String(localized: "Screenshot saved to Notes")
+        )
     }
 
     private func clearPending() {
@@ -464,35 +462,5 @@ final class ScreenshotNoteCapture {
     /// screenshot is seconds old by the time we see it.
     nonisolated private static func isRecent(_ url: URL) -> Bool {
         Date().timeIntervalSince(creation(url)) < 20
-    }
-}
-
-
-// MARK: - Notification
-
-/// Its own request id, deliberately not `CaptureProblemNotification`'s:
-/// that one is a single slot for "capture is broken", and a screenshot
-/// prompt replacing a live "Daisy can't hear you" banner would trade a
-/// failure the user must see for a convenience they can ignore.
-@MainActor
-enum ScreenshotNoteNotification {
-    static let requestID = "app.essazanov.Daisy.screenshotNote"
-
-    static func post(body: String) {
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized
-                    || settings.authorizationStatus == .provisional else { return }
-            Task { @MainActor in addRequest(body: body) }
-        }
-    }
-
-    private static func addRequest(body: String) {
-        let content = UNMutableNotificationContent()
-        content.title = String(localized: "Screenshot saved to Notes")
-        content.body = body
-        let request = UNNotificationRequest(
-            identifier: requestID, content: content, trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
