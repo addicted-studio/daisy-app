@@ -372,7 +372,10 @@ extension FloatingPanelController: WidgetBubbleHosting {
         bubbleDismissTimer = Timer.scheduledTimer(
             withTimeInterval: Self.bubbleAutoDismiss, repeats: false
         ) { [weak self] _ in
-            Task { @MainActor in self?.hideBubble() }
+            // The inner `[weak self]` re-capture is REQUIRED under Swift 6:
+            // referencing the outer closure's captured `self` from inside
+            // the concurrent `Task` is an error otherwise.
+            Task { @MainActor [weak self] in self?.hideBubble() }
         }
     }
 
