@@ -360,16 +360,58 @@ final class DictationPaste {
             &settable
         ) == .success, settable.boolValue else { return .refused }
 
+        // Read the field's value BEFORE the write so we can tell whether
+        // the write actually took. On macOS 27 Claude (Electron) and
+        // Facebook (web) began exposing a settable `AXSelectedText`, so
+        // this path is now REACHED for them — but the write is a no-op:
+        // `AXUIElementSetAttributeValue` returns `.success` and the DOM
+        // input never changes. Trusting that success dropped the text on
+        // the floor AND left the clipboard untouched, so ⌘V couldn't even
+        // recover it. (Field report, 1.0.7.55, 2026-08-13.)
+        let before = Self.axStringValue(of: element)
+
         let result = AXUIElementSetAttributeValue(
             element,
             kAXSelectedTextAttribute as CFString,
             text as CFString
         )
-        if result == .success {
-            log.info("Dictation inserted via AX — clipboard untouched")
+        guard result == .success else { return .refused }
+
+        // Verify by value change, and LOG which branch we took — the
+        // next field report must be able to say, unambiguously, whether
+        // this engaged in Claude / Facebook or slipped through:
+        //   • readable + changed   → verified insert, trust it.
+        //   • readable + unchanged → the web/Electron no-op → refuse, so
+        //                            the caller falls back to clipboard.
+        //   • unreadable           → can't disprove success; keep the old
+        //                            trust rather than regress native
+        //                            fields that expose no AXValue. If a
+        //                            report shows THIS branch for a field
+        //                            that lost text, the next lever is to
+        //                            force clipboard for web/Electron.
+        let after = Self.axStringValue(of: element)
+        if let before, let after {
+            if after == before, !text.isEmpty {
+                log.warning("AX write reported success but the field is unchanged — clipboard + ⌘V fallback (web/Electron no-op)")
+                return .refused
+            }
+            log.info("Dictation inserted via AX (verified by value change) — clipboard untouched")
             return .inserted
         }
-        return .refused
+        log.info("Dictation inserted via AX (unverified — field exposes no readable value) — clipboard untouched")
+        return .inserted
+    }
+
+    /// Best-effort read of an element's text value, for the write-took-
+    /// effect check. `nil` when the element doesn't expose a string
+    /// `AXValue` (which the caller treats as "can't verify", not
+    /// "failed").
+    private static func axStringValue(of element: AXUIElement) -> String? {
+        var ref: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            element, kAXValueAttribute as CFString, &ref
+        ) == .success else { return nil }
+        return ref as? String
     }
 
     // MARK: - Auto-paste
