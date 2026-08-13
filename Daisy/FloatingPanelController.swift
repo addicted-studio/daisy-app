@@ -18,6 +18,15 @@ final class FloatingPanelController {
     private let settings: AppSettings
     private var panel: NSPanel?
     private var hasPositionedOnce = false
+    /// The callout anchored to the widget (see `WidgetBubble`). A second
+    /// borderless panel, sized to its content, tracked to the widget's
+    /// frame on show. Nil when nothing is being prompted.
+    private var bubblePanel: NSPanel?
+    private var bubbleDismissTimer: Timer?
+    /// How long a bubble stays up on its own. Matches the screenshot-note
+    /// pending window — the prompt shouldn't outlive the chance to act on
+    /// it.
+    private static let bubbleAutoDismiss: TimeInterval = 12
     /// When set, the panel stays hidden until this date — regardless of
     /// session status. Set by the right-click "Hide for…" menu. Backed by
     /// AppSettings so the suspension is persisted and survives an app
@@ -31,6 +40,7 @@ final class FloatingPanelController {
     init(session: RecordingSession, settings: AppSettings) {
         self.session = session
         self.settings = settings
+        WidgetBubbleCenter.shared.host = self
         startObserving()
         startObservingSettings()
         // Silence-prompt UI used to live here as a custom NSPanel
@@ -76,6 +86,9 @@ final class FloatingPanelController {
     }
 
     func hide() {
+        // A callout anchored to a widget that's leaving has nothing to
+        // point at — take it with the widget.
+        hideBubble()
         panel?.orderOut(nil)
     }
 
@@ -293,5 +306,105 @@ final class FloatingPanelController {
         let y = min(max(frame.minY, rawY), maxY)
 
         panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+}
+
+// MARK: - Widget bubble
+
+extension FloatingPanelController: WidgetBubbleHosting {
+
+    /// The widget is on screen when the master switch is on, it isn't
+    /// inside a "Hide for…" suspension, and the panel actually exists and
+    /// is ordered in. This is the gate `WidgetBubbleCenter` reads to
+    /// decide bubble-vs-notification.
+    var isWidgetVisible: Bool {
+        guard settings.floatingWidgetEnabled else { return false }
+        if let until = suspendedUntil, until > Date() { return false }
+        return panel?.isVisible == true
+    }
+
+    func showBubble(_ content: WidgetBubbleContent) {
+        guard let widget = panel, let screen = widget.screen ?? bestScreen() else { return }
+        // Fresh panel each time — the content (and its captured action)
+        // changes per prompt, and a 12 s-lived panel isn't worth pooling.
+        hideBubble()
+
+        let view = WidgetBubbleView(
+            content: content,
+            onAction: { [weak self] in
+                content.action?()
+                self?.hideBubble()
+            },
+            onDismiss: { [weak self] in self?.hideBubble() }
+        )
+        let hosting = NSHostingController(rootView: view)
+        hosting.view.wantsLayer = true
+        hosting.view.layer?.backgroundColor = CGColor.clear
+        // Size to the SwiftUI content. Pin the width to the view's cap
+        // FIRST, then read fittingSize: an unconstrained NSHostingView
+        // reports a single-line width and would clip a message that wraps
+        // to two lines. Laying out at the real width gives the true
+        // wrapped height.
+        hosting.view.setFrameSize(NSSize(width: 300, height: 1))
+        hosting.view.layoutSubtreeIfNeeded()
+        let fitting = hosting.view.fittingSize
+
+        let bubble = NSPanel(
+            contentRect: NSRect(origin: .zero, size: fitting),
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        bubble.isOpaque = false
+        bubble.backgroundColor = .clear
+        bubble.hasShadow = false
+        bubble.level = .floating
+        bubble.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        bubble.isReleasedWhenClosed = false
+        bubble.hidesOnDeactivate = false
+        bubble.ignoresMouseEvents = false
+        bubble.contentViewController = hosting
+
+        positionBubble(bubble, over: widget.frame, on: screen)
+        bubble.orderFrontRegardless()
+        bubblePanel = bubble
+
+        bubbleDismissTimer = Timer.scheduledTimer(
+            withTimeInterval: Self.bubbleAutoDismiss, repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in self?.hideBubble() }
+        }
+    }
+
+    func hideBubble() {
+        bubbleDismissTimer?.invalidate()
+        bubbleDismissTimer = nil
+        bubblePanel?.orderOut(nil)
+        bubblePanel = nil
+    }
+
+    /// Place the bubble above the widget with right edges aligned, then
+    /// clamp the whole rect into the screen's visible frame. If there's
+    /// no room above (widget near the top), flip below. No tail, no
+    /// side-awareness — the clamp is the entire positioning logic, on
+    /// purpose (see the file header of `WidgetBubble`).
+    private func positionBubble(_ bubble: NSPanel, over widgetFrame: NSRect, on screen: NSScreen) {
+        let visible = screen.visibleFrame
+        let size = bubble.frame.size
+        let gap: CGFloat = 8
+
+        // Right edges aligned.
+        var x = widgetFrame.maxX - size.width
+        // Prefer above; flip below only if above overflows the top.
+        var y = widgetFrame.maxY + gap
+        if y + size.height > visible.maxY {
+            y = widgetFrame.minY - gap - size.height
+        }
+
+        // Clamp into the visible frame on both axes.
+        x = min(max(visible.minX + 4, x), visible.maxX - size.width - 4)
+        y = min(max(visible.minY + 4, y), visible.maxY - size.height - 4)
+
+        bubble.setFrameOrigin(NSPoint(x: x, y: y))
     }
 }

@@ -158,8 +158,14 @@ final class DictationPaste {
         // does the once-per-dictation bookkeeping (fixes counter, 24h
         // history, voice-profile corpus); `deliver` puts the result where
         // the caret is. Both are MainActor-isolated same-actor calls.
-        deliver(prepare(transcript))
+        deliver(prepare(transcript), context: .freshDictation)
     }
+
+    /// Where a `deliver` call came from — only a FRESH dictation shows
+    /// the "landed nowhere" bubble. A re-paste that lands nowhere needs
+    /// no prompt: the user explicitly asked to paste and can just ask
+    /// again.
+    private enum DeliveryContext { case freshDictation, repaste }
 
     /// Re-paste the most recent dictation at the current caret — Wispr's
     /// "paste last transcript". The words a dictation put nowhere (no
@@ -181,7 +187,7 @@ final class DictationPaste {
             )
             return
         }
-        deliver(last.text)
+        deliver(last.text, context: .repaste)
     }
 
     /// Put `transcript` where the caret is: straight into the focused
@@ -189,14 +195,15 @@ final class DictationPaste {
     /// an auto-paste and a timed restore of the user's prior clipboard.
     /// Assumes the text is already corrected — callers that start from a
     /// raw dictation run `prepare` first.
-    private func deliver(_ transcript: String) {
+    private func deliver(_ transcript: String, context: DeliveryContext) {
         // 0. Best path: insert DIRECTLY into the focused text field via
         //    the Accessibility API — the pasteboard is never touched, so
         //    whatever the user had copied (logs, a link…) survives
         //    untouched. Works in most native apps; web views / Electron
         //    and secure fields often refuse, in which case we fall through
         //    to the clipboard route below.
-        if attemptAXInsert(transcript) {
+        let axOutcome = attemptAXInsert(transcript)
+        if axOutcome == .inserted {
             ToastCenter.shared.show(
                 String(localized: "Dictation inserted — clipboard untouched."),
                 style: .success
@@ -261,16 +268,76 @@ final class DictationPaste {
                 self?.restoreClipboardIfUnchanged()
             }
         }
+
+        // Dictated into the void: no field had focus, so the ⌘V landed
+        // nowhere and the clipboard is about to revert. Surface a bubble
+        // from the widget (Wispr's "copy last transcript") offering to
+        // keep the text — only for a fresh dictation, and only when we're
+        // sure there was no target.
+        //
+        // `.refused` means a field exists but won't take an AX write; ⌘V
+        // almost certainly reached it, so no prompt there. And
+        // `.noFocusedField` LIES in Chromium/Electron apps — they don't
+        // build an AX focus tree without AXManualAccessibility, so Claude
+        // / Slack / Notion always look focus-less even though ⌘V lands
+        // fine (see the Electron-AX class of bug). So additionally
+        // require that nothing app-like is in front: only the desktop
+        // (Finder), Daisy itself, or no frontmost app is a true "nowhere".
+        if context == .freshDictation, axOutcome == .noFocusedField,
+           Self.frontmostIsVoid() {
+            let text = transcript
+            WidgetBubbleCenter.shared.present(
+                WidgetBubbleContent(
+                    text: String(localized: "Dictation had nowhere to land. Keep it?"),
+                    actionTitle: String(localized: "Copy"),
+                    action: { [weak self] in
+                        // Re-write it fresh (the restore may already have
+                        // fired) and cancel any pending revert so it stays.
+                        self?.cancelPendingRestore()
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text, forType: .string)
+                        ToastCenter.shared.show(
+                            String(localized: "Copied — ⌘V to paste."),
+                            style: .success
+                        )
+                    }
+                ),
+                notificationTitle: String(localized: "Dictation saved"),
+                // No Copy button on a banner — point at the durable
+                // recovery instead of asking a question it can't answer.
+                notificationBody: String(localized: "It's in your dictation history — use “Paste my last dictation” to place it.")
+            )
+        }
+    }
+
+    /// Outcome of the direct-insert attempt. The three cases drive
+    /// different follow-ups: `.inserted` is done; `.refused` means there
+    /// IS a focused field but it won't take a programmatic write (web
+    /// views, Electron, secure fields), so clipboard + ⌘V will still land
+    /// there; `.noFocusedField` means nothing had keyboard focus, so ⌘V
+    /// lands nowhere — the "dictated into the void" case the widget
+    /// bubble exists to catch.
+    private enum AXInsertOutcome { case inserted, refused, noFocusedField }
+
+    /// True when nothing that could have received a paste is in front:
+    /// the desktop (Finder), Daisy itself, or no frontmost app. Used to
+    /// keep the "landed nowhere" bubble from firing in Electron apps,
+    /// whose missing AX focus tree reads as `.noFocusedField` even though
+    /// the ⌘V pasted fine.
+    private static func frontmostIsVoid() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication,
+              let id = front.bundleIdentifier else { return true }
+        return id == "com.apple.finder" || id == Bundle.main.bundleIdentifier
     }
 
     /// Insert `text` at the caret of the system-wide focused UI element
     /// (replacing any selection) via the Accessibility API — no
-    /// pasteboard involvement at all. Returns false when Accessibility
-    /// isn't granted, no element has keyboard focus, or the element
-    /// doesn't accept programmatic text insertion (many web views,
-    /// secure fields) — callers then fall back to clipboard + ⌘V.
-    private func attemptAXInsert(_ text: String) -> Bool {
-        guard AXIsProcessTrusted() else { return false }
+    /// pasteboard involvement at all.
+    private func attemptAXInsert(_ text: String) -> AXInsertOutcome {
+        // Permission missing → we can't tell whether a field is focused,
+        // so don't claim "nowhere"; take the clipboard path and let
+        // `attemptAutoPaste` prompt for Accessibility as it always has.
+        guard AXIsProcessTrusted() else { return .refused }
 
         let systemWide = AXUIElementCreateSystemWide()
         var focusedRef: CFTypeRef?
@@ -278,7 +345,7 @@ final class DictationPaste {
             systemWide,
             kAXFocusedUIElementAttribute as CFString,
             &focusedRef
-        ) == .success, let focusedRef else { return false }
+        ) == .success, let focusedRef else { return .noFocusedField }
         // AXUIElement is a CoreFoundation type — an unconditional
         // downcast from CFTypeRef is the sanctioned bridge.
         let element = focusedRef as! AXUIElement
@@ -291,7 +358,7 @@ final class DictationPaste {
             element,
             kAXSelectedTextAttribute as CFString,
             &settable
-        ) == .success, settable.boolValue else { return false }
+        ) == .success, settable.boolValue else { return .refused }
 
         let result = AXUIElementSetAttributeValue(
             element,
@@ -300,9 +367,9 @@ final class DictationPaste {
         )
         if result == .success {
             log.info("Dictation inserted via AX — clipboard untouched")
-            return true
+            return .inserted
         }
-        return false
+        return .refused
     }
 
     // MARK: - Auto-paste

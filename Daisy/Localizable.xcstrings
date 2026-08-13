@@ -5231,12 +5231,42 @@
         }
       }
     },
+    "Copied — ⌘V to paste." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано — ⌘V, чтобы вставить."
+          }
+        }
+      }
+    },
+    "Dictation had nowhere to land. Keep it?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диктовке некуда было лечь. Сохранить?"
+          }
+        }
+      }
+    },
     "Dictation copied — press ⌘V to paste. Clipboard reverts in %llds." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Диктовка скопирована — нажмите ⌘V, чтобы вставить. Буфер обмена вернётся к прежнему через %lld с."
+          }
+        }
+      }
+    },
+    "It's in your dictation history — use “Paste my last dictation” to place it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она в истории диктовок — используйте «Вставить последнюю диктовку», чтобы разместить её."
           }
         }
       }
@@ -5261,6 +5291,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Диктовка вставлена — прежнее содержимое буфера обмена будет сразу восстановлено."
+          }
+        }
+      }
+    },
+    "Dictation saved" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Диктовка сохранена"
           }
         }
       }
