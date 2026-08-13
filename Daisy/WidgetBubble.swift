@@ -82,21 +82,26 @@ final class WidgetBubbleCenter {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized
                     || settings.authorizationStatus == .provisional else { return }
-            Task { @MainActor in
-                let content = UNMutableNotificationContent()
-                content.title = title
-                content.body = body
-                // Unique per post: these are distinct transient prompts
-                // (a screenshot save, a dictation that landed nowhere) and
-                // one must not replace another still sitting unread.
-                let request = UNNotificationRequest(
-                    identifier: "app.essazanov.Daisy.widgetBubble." + UUID().uuidString,
-                    content: content,
-                    trigger: nil
-                )
-                UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
-            }
+            Task { @MainActor in Self.addRequest(title: title, body: body) }
         }
+    }
+
+    /// Synchronous so the fire-and-forget `add` doesn't sit in an async
+    /// context (which draws a "use the async alternative" warning) —
+    /// matches the other notification posters.
+    private static func addRequest(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        // Unique per post: these are distinct transient prompts (a
+        // screenshot save, a dictation that landed nowhere) and one must
+        // not replace another still sitting unread.
+        let request = UNNotificationRequest(
+            identifier: "app.essazanov.Daisy.widgetBubble." + UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 }
 
