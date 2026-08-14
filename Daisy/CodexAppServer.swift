@@ -99,6 +99,14 @@ nonisolated struct CodexAppServerNotification: Equatable, Sendable {
 /// A reconnecting App Server connection. The actor owns the Process and all
 /// request continuations; callbacks only feed bytes back into the actor.
 actor CodexAppServerConnection {
+    /// Daisy intentionally uses the App Server's experimental empty
+    /// environment/tool/root fields to keep account-backed summaries
+    /// non-interactive. The server rejects those fields unless the client
+    /// opts in during initialization.
+    nonisolated static let protocolCapabilities: CodexJSON = .object([
+        "experimentalApi": .bool(true)
+    ])
+
     private struct PendingRequest {
         let continuation: CheckedContinuation<CodexJSON, Error>
         let timeoutTask: Task<Void, Never>
@@ -270,7 +278,7 @@ actor CodexAppServerConnection {
                         "title": .string("Daisy"),
                         "version": .string(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development")
                     ]),
-                    "capabilities": .object(["experimentalApi": .bool(false)])
+                    "capabilities": Self.protocolCapabilities
                 ]),
                 timeout: 10
             )
