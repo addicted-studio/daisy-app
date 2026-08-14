@@ -17,7 +17,7 @@
 //  so it can spawn one; `MCPSummarizer` stayed HTTP-only for that
 //  reason. No extra entitlement is needed to exec a separate binary.)
 //
-//  FOUR THINGS THIS FILE IS CAREFUL ABOUT.
+//  FIVE THINGS THIS FILE IS CAREFUL ABOUT.
 //
 //  1. BILLING IS NOT GUARANTEED TO BE FREE, and Daisy must never imply
 //     it is. Both CLIs have open reports of headless runs billing as
@@ -28,14 +28,23 @@
 //     price.
 //
 //  2. THESE ARE AGENTS, NOT MODELS. Left alone, `claude -p` can read
-//     files and run commands. Every invocation disables tools and runs
-//     in an empty temporary directory. Note the containment is NOT
-//     total: HOME is inherited (it must be — that's where the CLI keeps
-//     its credentials), so user-scope config still loads. If a user's
-//     global instructions ever corrupt summaries, the next lever is the
-//     CLIs' own "ignore user config" flags — deliberately not passed
-//     blind here, because an unsupported flag makes the CLI exit with a
-//     usage error and kills the feature outright.
+//     files and run commands, so every run happens in an empty temporary
+//     directory with tools disabled — WHEN the installed version has a
+//     flag for that (see point 5). Containment is not total either way:
+//     HOME is inherited, because that's where the CLI keeps the
+//     credentials this whole feature depends on, so user-scope config
+//     still loads.
+//
+//  5. WE ASK THE BINARY WHAT IT SUPPORTS INSTEAD OF GUESSING. Flag names
+//     here are not hardcoded from documentation — the first run reads the
+//     installed CLI's `--help` and every optional flag is used only if it
+//     appears there. This is not neatness: an unsupported flag makes the
+//     CLI exit with a usage error, so guessing turns a version mismatch
+//     into a 100%-failure feature. Two of the flags in the first draft of
+//     this file WERE wrong, taken from docs that didn't match the shipped
+//     binaries. The probe is cached per binary path for the process
+//     lifetime, and a failed probe degrades to the smallest command line
+//     that can work rather than to nothing.
 //
 //  3. THE TRANSCRIPT LEAVES THE MAC. It goes to Anthropic or OpenAI
 //     under the user's own account. No worse than the API-key
@@ -97,37 +106,106 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Arguments for a single non-interactive completion reading the
-    /// prompt from stdin.
-    ///
-    /// - Claude Code: `--tools ""` is what actually restricts the tool
-    ///   set. (`--allowedTools` only pre-approves tools that would
-    ///   otherwise prompt — it does NOT take them away, which is the
-    ///   opposite of what a summarizer wants.)
-    /// - Codex: `--skip-git-repo-check` is REQUIRED — `codex exec`
-    ///   refuses to run outside a Git repository, and our scratch dir is
-    ///   a bare temp folder. Without it the feature fails 100% of the
-    ///   time.
-    func arguments(lastMessageFile: URL) -> [String] {
+    /// The subcommand that runs one non-interactive completion, if the
+    /// CLI has one. Claude Code takes `-p` as a flag; Codex needs `exec`.
+    var subcommand: String? {
         switch self {
-        case .claudeCode:
-            return ["-p", "--tools", "", "--output-format", "text"]
-        case .codex:
-            // `-o` writes just the final answer to a file, keeping us
-            // off Codex's stdout event log.
-            return [
-                "exec",
-                "--skip-git-repo-check",
-                "--sandbox", "read-only",
-                "-o", lastMessageFile.path,
-                "-",
-            ]
+        case .claudeCode: return nil
+        case .codex: return "exec"
         }
     }
 
-    /// Whether the answer is read from `lastMessageFile` rather than
-    /// stdout.
-    var readsAnswerFromFile: Bool { self == .codex }
+    /// Arguments built from what the INSTALLED binary says it supports,
+    /// rather than from flag names hardcoded here.
+    ///
+    /// Every optional flag is gated on `help.has(...)`. The point is not
+    /// tidiness — it's that this file integrates with someone else's CLI
+    /// across versions we can't see, and a flag that doesn't exist makes
+    /// the whole run exit with a usage error. Guessing gets the feature a
+    /// 100%-failure mode; asking gets it a graceful one. (Two flags were
+    /// already wrong when they were guessed from documentation.)
+    ///
+    /// What each optional flag buys, in the order we care:
+    ///  • tool restriction — this is a summarizer, not a file-read
+    ///    primitive. If the flag is missing we still run, and say so in
+    ///    the log rather than pretending the agent is contained.
+    ///  • `--skip-git-repo-check` — Codex refuses to start outside a Git
+    ///    repo, and our scratch dir is a bare temp folder.
+    ///  • `-o/--output-last-message` — writes just the final answer to a
+    ///    file, keeping us off a progress log.
+    ///  • sandbox / output format — nice to have, not load-bearing.
+    func arguments(lastMessageFile: URL, help: AgentCLIHelp) -> [String] {
+        var args: [String] = []
+        if let subcommand { args.append(subcommand) }
+
+        switch self {
+        case .claudeCode:
+            args.append("-p")
+            // `--tools ""` removes tools; `--allowedTools ""` only
+            // pre-approves them (it does NOT take them away). Prefer the
+            // former, fall back to nothing rather than to the flag that
+            // reads right and does the opposite.
+            if help.has("--tools") {
+                args += ["--tools", ""]
+            }
+            if help.has("--output-format") {
+                args += ["--output-format", "text"]
+            }
+        case .codex:
+            if help.has("--skip-git-repo-check") {
+                args.append("--skip-git-repo-check")
+            }
+            if help.has("--sandbox") {
+                args += ["--sandbox", "read-only"]
+            }
+            if help.has("--output-last-message") {
+                args += ["--output-last-message", lastMessageFile.path]
+            }
+            // Positional `-` = read the prompt from stdin.
+            args.append("-")
+        }
+        return args
+    }
+
+    /// Whether the answer will be in `lastMessageFile` — only when the
+    /// installed binary actually accepted the flag that writes it.
+    func readsAnswerFromFile(help: AgentCLIHelp) -> Bool {
+        self == .codex && help.has("--output-last-message")
+    }
+
+    /// True when we could NOT restrict the agent's tools on this
+    /// install. Not fatal, but the caller logs it: an agent with tools
+    /// is a bigger thing than the user asked for.
+    func toolsUnrestricted(help: AgentCLIHelp) -> Bool {
+        switch self {
+        case .claudeCode: return !help.has("--tools")
+        case .codex: return !help.has("--sandbox")
+        }
+    }
+}
+
+/// What the installed binary's `--help` says it accepts.
+///
+/// Deliberately dumb: a substring match over the help text. Parsing
+/// option grammars properly would be a project, and the question we ask
+/// is narrow — "does the literal string `--skip-git-repo-check` appear
+/// in this binary's help?" — where a substring is exactly right.
+struct AgentCLIHelp: Sendable {
+    private let text: String
+
+    init(text: String) { self.text = text }
+
+    /// Empty help (the probe failed) reports every flag as ABSENT, so we
+    /// fall back to the smallest command line that can work. Better a
+    /// summary with tools left on than a usage error and no summary.
+    static let unknown = AgentCLIHelp(text: "")
+
+    func has(_ flag: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        return text.contains(flag)
+    }
+
+    var isEmpty: Bool { text.isEmpty }
 }
 
 nonisolated struct AgentCLISummarizer: SummaryProvider {
@@ -215,6 +293,76 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
         }.value
     }
 
+    // MARK: - Capability probe
+
+    /// `--help` output per (binary path + subcommand), cached for the
+    /// process lifetime. The probe is a subprocess; running it before
+    /// every summary would add a spawn to each one for an answer that
+    /// only changes when the user upgrades the CLI.
+    private static let helpCache = HelpCache()
+
+    /// Ask the installed binary what it supports. Bounded and
+    /// failure-tolerant: on any error we return `.unknown`, which makes
+    /// every optional flag report absent and the caller falls back to the
+    /// minimal command line.
+    private static func probeHelp(executable: String, subcommand: String?) async -> AgentCLIHelp {
+        let key = "\(executable)|\(subcommand ?? "")"
+        if let cached = helpCache.value(for: key) { return cached }
+
+        let help: AgentCLIHelp = await Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = (subcommand.map { [$0] } ?? []) + ["--help"]
+            process.currentDirectoryURL = FileManager.default.temporaryDirectory
+            var env = ProcessInfo.processInfo.environment
+            env["PATH"] = childPath(for: executable)
+            process.environment = env
+
+            let pipe = Pipe()
+            // Some CLIs print help to stderr; take both so a tool that
+            // does isn't misread as having no options at all.
+            process.standardOutput = pipe
+            process.standardError = pipe
+            process.standardInput = FileHandle.nullDevice
+            do { try process.run() } catch { return .unknown }
+
+            // Watchdog BEFORE the read, not after: `readDataToEndOfFile`
+            // blocks until the pipe closes, so a `--help` that hangs
+            // would hang this read forever and a deadline checked
+            // afterwards would never be reached.
+            let deadline = Date().addingTimeInterval(shellProbeTimeout)
+            Thread.detachNewThread {
+                while process.isRunning, Date() < deadline { usleep(50_000) }
+                if process.isRunning { process.terminate() }
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+                return .unknown
+            }
+            return AgentCLIHelp(text: text)
+        }.value
+
+        if !help.isEmpty { helpCache.store(help, for: key) }
+        return help
+    }
+
+    /// Tiny lock-guarded cache. A `final class` because the summarizer is
+    /// a struct recreated per call — the cache has to outlive it.
+    private final class HelpCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [String: AgentCLIHelp] = [:]
+
+        func value(for key: String) -> AgentCLIHelp? {
+            lock.lock(); defer { lock.unlock() }
+            return entries[key]
+        }
+
+        func store(_ help: AgentCLIHelp, for key: String) {
+            lock.lock(); entries[key] = help; lock.unlock()
+        }
+    }
+
     /// PATH for the CHILD. The resolved binary's own directory first (a
     /// version manager's shim lives next to its runtime), then the usual
     /// install prefixes, then the system default. Without this an
@@ -265,7 +413,17 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
         let user = SummaryPrompt.userPrompt(title: title, transcript: trimmed, task: task)
         let prompt = system + "\n\n" + user
 
-        let output = try await run(executable: executable, prompt: prompt)
+        // Ask the installed binary what it accepts before building the
+        // command line — see `arguments(lastMessageFile:help:)`.
+        let help = await Self.probeHelp(executable: executable, subcommand: agent.subcommand)
+        if help.isEmpty {
+            log.warning("\(agent.displayName, privacy: .public): --help probe returned nothing — using the minimal command line")
+        }
+        if agent.toolsUnrestricted(help: help) {
+            log.warning("\(agent.displayName, privacy: .public): this version exposes no flag to restrict tools — the agent runs with its defaults")
+        }
+
+        let output = try await run(executable: executable, prompt: prompt, help: help)
         return try parse(output)
     }
 
@@ -274,7 +432,7 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
     /// Runs in an EMPTY temporary directory: these CLIs treat the working
     /// directory as their project context, and pointing one at the user's
     /// home would hand a summarizer a filesystem.
-    private func run(executable: String, prompt: String) async throws -> String {
+    private func run(executable: String, prompt: String, help: AgentCLIHelp) async throws -> String {
         // Writing to a pipe whose reader has exited raises SIGPIPE, which
         // kills the process by default. Ignoring it turns that into an
         // EPIPE error we can handle — and the agent exiting early (not
@@ -297,7 +455,7 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = agent.arguments(lastMessageFile: answerFile)
+        process.arguments = agent.arguments(lastMessageFile: answerFile, help: help)
         process.currentDirectoryURL = scratch
 
         // Inherit the environment (HOME is where the CLI keeps its
@@ -418,7 +576,7 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
             }
         }
 
-        if agent.readsAnswerFromFile,
+        if agent.readsAnswerFromFile(help: help),
            let fileText = try? String(contentsOf: answerFile, encoding: .utf8),
            !fileText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return fileText
