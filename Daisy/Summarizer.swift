@@ -367,7 +367,7 @@ final class Summarizer {
         self.lmStudioBaseURL = UserDefaults.standard.string(forKey: Self.kLMStudioBaseURL)
             ?? LMStudioAPISummarizer.defaultBaseURLString
         self.agentCLIKind = UserDefaults.standard.string(forKey: Self.kAgentCLIKind)
-            .flatMap(AgentCLIKind.init(rawValue:)) ?? .claudeCode
+            .flatMap(AgentCLIKind.init(rawValue:)) ?? .codex
         self.agentCLIPath = UserDefaults.standard.string(forKey: Self.kAgentCLIPath) ?? ""
 
         Task { await refreshAvailability() }

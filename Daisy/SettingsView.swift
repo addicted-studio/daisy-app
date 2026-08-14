@@ -2224,29 +2224,17 @@ struct SettingsView: View {
             }
 
         case .agentCLI:
-            Picker("Agent", selection: $summarizer.agentCLIKind) {
-                ForEach(AgentCLIKind.allCases, id: \.self) { agent in
-                    Text(agent.displayName).tag(agent)
+            // Only worth a control when there's a choice to make. One
+            // agent today (Claude Code is barred — see the footer), so
+            // the picker stays out of the way until a second one is
+            // permitted.
+            if AgentCLIKind.allCases.count > 1 {
+                Picker("Agent", selection: $summarizer.agentCLIKind) {
+                    ForEach(AgentCLIKind.allCases, id: \.self) { agent in
+                        Text(agent.displayName).tag(agent)
+                    }
                 }
-            }
-            .pickerStyle(.menu)
-            // Resolve OFF the render path: the last-resort lookup spawns
-            // a login shell (to see version managers), and doing that on
-            // every SwiftUI render would be both slow and a main-thread
-            // hazard. Re-runs when the agent or the override changes.
-            .task(id: "\(summarizer.agentCLIKind.rawValue)|\(summarizer.agentCLIPath)") {
-                let probe = AgentCLISummarizer(
-                    agent: summarizer.agentCLIKind,
-                    executableOverride: summarizer.agentCLIPath
-                )
-                resolvedAgentPath = nil
-                let found = await Task.detached { probe.resolvedExecutable() }.value
-                // `.task(id:)` cancels this task when the agent or path
-                // changes, but a detached child keeps running — without
-                // this guard a slow probe for the PREVIOUS agent could
-                // land after the new one and show the wrong binary.
-                guard !Task.isCancelled else { return }
-                resolvedAgentPath = found
+                .pickerStyle(.menu)
             }
             // Found-or-not is the whole configuration story here, and a
             // GUI app's PATH excludes ~/.local/bin and Homebrew — the
@@ -2279,6 +2267,25 @@ struct SettingsView: View {
                     .labelsHidden()
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity)
+            }
+            // The probe hangs off THIS row, not the picker above it: the
+            // picker is conditional (one agent today) and a `.task` on a
+            // view that isn't rendered never runs — the status line would
+            // have said "can't find this command" forever. Resolving is
+            // off the render path because the last-resort lookup spawns a
+            // login shell.
+            .task(id: "\(summarizer.agentCLIKind.rawValue)|\(summarizer.agentCLIPath)") {
+                let probe = AgentCLISummarizer(
+                    agent: summarizer.agentCLIKind,
+                    executableOverride: summarizer.agentCLIPath
+                )
+                resolvedAgentPath = nil
+                let found = await Task.detached { probe.resolvedExecutable() }.value
+                // `.task(id:)` cancels this task when the agent or path
+                // changes, but a detached child keeps running — without
+                // this guard a slow probe could land after a newer one.
+                guard !Task.isCancelled else { return }
+                resolvedAgentPath = found
             }
 
         case .mcp:
@@ -2376,7 +2383,7 @@ struct SettingsView: View {
         case .mcp:
             return String(localized: "Advanced — for users running a custom MCP server (Python shim, `mcp-ollama` wrapper, etc.). Daisy connects over HTTP+SSE and calls one tool per summary. For stock Ollama or LM Studio use their dedicated providers above instead — those work without an MCP shim.")
         case .agentCLI:
-            return String(localized: "Uses the Claude Code or Codex command you already have signed in — no API key. The transcript is sent to Anthropic or OpenAI by that CLI, under your own account, and counts against your subscription's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs the agent with tools disabled, in an empty temporary folder.")
+            return String(localized: "Uses the Codex command you already have signed in — no API key. The transcript is sent to OpenAI by that CLI, under your own account, and counts against your ChatGPT plan's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs it with tools disabled, in an empty temporary folder. (Claude Code isn't offered: Anthropic doesn't permit third-party apps to route requests through Claude subscription credentials — use the Anthropic API key provider instead.)")
         }
     }
 

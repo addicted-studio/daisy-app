@@ -2,38 +2,73 @@
 //  AgentCLISummarizer.swift
 //  Daisy
 //
-//  Summaries through a coding-agent CLI the user already has logged in —
-//  Claude Code (`claude -p`) or Codex (`codex exec`). No API key: the
-//  agent authenticates with the user's own Claude or ChatGPT
+//  Summaries through the Codex CLI the user already has signed in. No
+//  API key: Codex authenticates with the user's own ChatGPT
 //  subscription, and the request counts against that plan's limits.
+//
+//  WHY THERE IS NO CLAUDE CODE OPTION HERE, AND WHY IT MUST NOT BE
+//  ADDED BACK. The first version of this file drove `claude -p` too.
+//  That is not permitted. Anthropic's Claude Code legal page is
+//  explicit: OAuth authentication "is intended exclusively ... to
+//  support ordinary use of Claude Code and other native Anthropic
+//  applications", and "Anthropic does not permit third-party developers
+//  to offer Claude.ai login or to route requests through Free, Pro, or
+//  Max plan credentials on behalf of their users" — adding that
+//  "Anthropic reserves the right to take measures to enforce these
+//  restrictions and may do so without prior notice."
+//  (https://code.claude.com/docs/en/legal-and-compliance)
+//
+//  Daisy is a third-party product, publicly distributed. Shelling out to
+//  a CLI the user installed themselves does not change what the request
+//  IS: Daisy routing a summary through that user's Pro/Max credentials.
+//  For Claude the supported routes are an API key (which Daisy already
+//  offers as its own provider), a local model, or a written agreement
+//  with Anthropic. If someone wants Claude-without-a-key later, the
+//  honest shape is "open this transcript in Claude" — prepare the
+//  prompt, hand it over, let the user paste the answer back — not an
+//  automated round trip on subscription credentials.
 //
 //  WHY A SUBPROCESS AND NOT MCP. The elegant version of this is MCP
 //  sampling: Daisy's MCP server asks the connected client (Claude
 //  Desktop) to run the completion on the user's subscription. The
 //  protocol has `sampling/createMessage` for exactly this — but Claude
 //  Desktop has never implemented sampling, so the call has nobody to
-//  answer it. Both agent CLIs ship a documented non-interactive mode.
-//  So: a subprocess. (Daisy is not sandboxed — see Daisy.entitlements —
+//  answer it (and for Claude it would be barred anyway, per above).
+//  Codex ships a documented non-interactive mode. So: a subprocess. (Daisy is not sandboxed — see Daisy.entitlements —
 //  so it can spawn one; `MCPSummarizer` stayed HTTP-only for that
 //  reason. No extra entitlement is needed to exec a separate binary.)
 //
 //  FIVE THINGS THIS FILE IS CAREFUL ABOUT.
 //
 //  1. BILLING IS NOT GUARANTEED TO BE FREE, and Daisy must never imply
-//     it is. Both CLIs have open reports of headless runs billing as
+//     it is. Headless agent runs have open reports of billing as
 //     metered API usage when the account also has API access — one user
 //     reported four figures in two days. The settings copy says to check
 //     usage after the first run. We do not promise "free", and we record
 //     nothing to TokenLedger because the agent reports no usage we can
 //     price.
 //
-//  2. THESE ARE AGENTS, NOT MODELS. Left alone, `claude -p` can read
-//     files and run commands, so every run happens in an empty temporary
+//  2. THIS IS AN AGENT, NOT A MODEL. Left alone, Codex can read files
+//     and run commands, so every run happens in an empty temporary
 //     directory with tools disabled — WHEN the installed version has a
 //     flag for that (see point 5). Containment is not total either way:
 //     HOME is inherited, because that's where the CLI keeps the
 //     credentials this whole feature depends on, so user-scope config
 //     still loads.
+//
+//  3. THE TRANSCRIPT LEAVES THE MAC. It goes to OpenAI under the user's
+//     own account. No worse than the API-key
+//     providers, but not local — `privacyTag` says so plainly. The
+//     request being relayed by an app on the user's own machine must not
+//     read as "stays on my Mac".
+//
+//  4. A GUI APP'S ENVIRONMENT IS NOT A TERMINAL'S. Launched from Finder,
+//     Daisy inherits `PATH=/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew,
+//     no `~/.local/bin`. A CLI installed through a package manager can be
+//     a shim that execs its own runtime, so finding the shim isn't
+//     enough: the CHILD needs a PATH that can find that runtime, or it
+//     dies with exit 127. That is the single likeliest way this feature
+//     would "work in Terminal, do nothing in Daisy".
 //
 //  5. WE ASK THE BINARY WHAT IT SUPPORTS INSTEAD OF GUESSING. Flag names
 //     here are not hardcoded from documentation — the first run reads the
@@ -46,33 +81,20 @@
 //     lifetime, and a failed probe degrades to the smallest command line
 //     that can work rather than to nothing.
 //
-//  3. THE TRANSCRIPT LEAVES THE MAC. It goes to Anthropic or OpenAI
-//     under the user's own account. No worse than the API-key
-//     providers, but not local — `privacyTag` says so plainly. The
-//     request being relayed by an app on the user's own machine must not
-//     read as "stays on my Mac".
-//
-//  4. A GUI APP'S ENVIRONMENT IS NOT A TERMINAL'S. Launched from Finder,
-//     Daisy inherits `PATH=/usr/bin:/bin:/usr/sbin:/sbin` — no Homebrew,
-//     no `~/.local/bin`. The npm-installed `claude` is a `#!/usr/bin/env
-//     node` shim, so finding the shim isn't enough: the CHILD needs a
-//     PATH that can find node, or it dies with exit 127. That is the
-//     single likeliest way this feature would "work in Terminal, do
-//     nothing in Daisy".
-//
 
 import Darwin
 import Foundation
 import os
 
-/// Which agent CLI to drive. Raw values persist in UserDefaults.
+/// Which agent CLI to drive. A single case today (see the header for why
+/// Claude Code isn't one of them) but kept as an enum: the settings key
+/// already persists it, and the next permitted agent should be an added
+/// case rather than a rewrite.
 enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
-    case claudeCode
     case codex
 
     var displayName: String {
         switch self {
-        case .claudeCode: return String(localized: "Claude Code")
         case .codex: return String(localized: "Codex")
         }
     }
@@ -80,7 +102,6 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     /// Executable name as found on `PATH`.
     var executableName: String {
         switch self {
-        case .claudeCode: return "claude"
         case .codex: return "codex"
         }
     }
@@ -90,13 +111,6 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     var likelyPaths: [String] {
         let home = NSHomeDirectory()
         switch self {
-        case .claudeCode:
-            return [
-                "\(home)/.local/bin/claude",
-                "\(home)/.claude/local/claude",
-                "/opt/homebrew/bin/claude",
-                "/usr/local/bin/claude",
-            ]
         case .codex:
             return [
                 "\(home)/.local/bin/codex",
@@ -107,10 +121,9 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     }
 
     /// The subcommand that runs one non-interactive completion, if the
-    /// CLI has one. Claude Code takes `-p` as a flag; Codex needs `exec`.
+    /// CLI has one.
     var subcommand: String? {
         switch self {
-        case .claudeCode: return nil
         case .codex: return "exec"
         }
     }
@@ -139,18 +152,6 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
         if let subcommand { args.append(subcommand) }
 
         switch self {
-        case .claudeCode:
-            args.append("-p")
-            // `--tools ""` removes tools; `--allowedTools ""` only
-            // pre-approves them (it does NOT take them away). Prefer the
-            // former, fall back to nothing rather than to the flag that
-            // reads right and does the opposite.
-            if help.has("--tools") {
-                args += ["--tools", ""]
-            }
-            if help.has("--output-format") {
-                args += ["--output-format", "text"]
-            }
         case .codex:
             if help.has("--skip-git-repo-check") {
                 args.append("--skip-git-repo-check")
@@ -170,7 +171,7 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     /// Whether the answer will be in `lastMessageFile` — only when the
     /// installed binary actually accepted the flag that writes it.
     func readsAnswerFromFile(help: AgentCLIHelp) -> Bool {
-        self == .codex && help.has("--output-last-message")
+        help.has("--output-last-message")
     }
 
     /// True when we could NOT restrict the agent's tools on this
@@ -178,7 +179,6 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     /// is a bigger thing than the user asked for.
     func toolsUnrestricted(help: AgentCLIHelp) -> Bool {
         switch self {
-        case .claudeCode: return !help.has("--tools")
         case .codex: return !help.has("--sandbox")
         }
     }
@@ -465,14 +465,9 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = Self.childPath(for: executable)
         // `CODEX_API_KEY` is honoured specifically by `codex exec`, and
-        // the Bedrock/Vertex switches reroute Claude Code to a metered
-        // backend — all of them defeat the one thing this provider is
-        // for.
-        for key in [
-            "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-            "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
-            "OPENAI_API_KEY", "CODEX_API_KEY",
-        ] {
+        // `OPENAI_API_KEY` flips Codex to metered API billing — both
+        // defeat the one thing this provider is for.
+        for key in ["OPENAI_API_KEY", "CODEX_API_KEY"] {
             env.removeValue(forKey: key)
         }
         process.environment = env
