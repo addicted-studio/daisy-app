@@ -3652,6 +3652,16 @@
         }
       }
     },
+    "Claude Code / Codex (your subscription)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code / Codex (ваша подписка)"
+          }
+        }
+      }
+    },
     "Copy" : {
       "localizations" : {
         "ru" : {
@@ -4186,6 +4196,16 @@
         }
       }
     },
+    "Couldn’t create a temporary working folder for the agent." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать временную рабочую папку для агента."
+          }
+        }
+      }
+    },
     "Custom MCP server (advanced)" : {
       "localizations" : {
         "ru" : {
@@ -4274,6 +4294,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy не видит папку со скриншотами. Дайте доступ в Системных настройках → Конфиденциальность и безопасность → Файлы и папки."
+          }
+        }
+      }
+    },
+    "Daisy can't find this command. Install it and sign in (run it once in Terminal), or paste its full path below — `which %@` in Terminal prints it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не находит эту команду. Установите её и войдите в аккаунт (запустите один раз в Терминале) либо вставьте полный путь ниже — `which %@` в Терминале его покажет."
           }
         }
       }
@@ -5906,6 +5936,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Впервые назван"
+          }
+        }
+      }
+    },
+    "Found at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Найдено: %@"
           }
         }
       }
@@ -8483,6 +8523,46 @@
         }
       }
     },
+    "Not installed, or Daisy can’t see it. Install the CLI and sign in, or set its path in Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не установлено или Daisy его не видит. Установите CLI и войдите в аккаунт либо укажите путь в Настройки → Саммари."
+          }
+        }
+      }
+    },
+    "Timed out. A very long meeting can exceed the agent’s context — try a shorter recording or another provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Истекло время ожидания. Очень длинная встреча может не поместиться в контекст агента — попробуйте более короткую запись или другого провайдера."
+          }
+        }
+      }
+    },
+    "The agent didn’t finish within 3 minutes and was stopped. Try again, or pick another provider for long meetings." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент не завершил работу за 3 минуты и был остановлен. Попробуйте снова или выберите другого провайдера для длинных встреч."
+          }
+        }
+      }
+    },
+    "The agent exited without output. Check that you’re signed in — run it once in Terminal." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент завершился без ответа. Проверьте, что вы вошли в аккаунт — запустите его один раз в Терминале."
+          }
+        }
+      }
+    },
     "Notes" : {
       "localizations" : {
         "ru" : {
@@ -8712,6 +8792,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Добавлено в заметку со скриншотом"
+          }
+        }
+      }
+    },
+    "Agent" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент"
+          }
+        }
+      }
+    },
+    "Agent CLI" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент CLI"
           }
         }
       }
@@ -9388,6 +9488,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Заново вставляет последнюю диктовку под курсор — если она попала не в то окно или никуда вовсе"
+          }
+        }
+      }
+    },
+    "Path (optional)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Путь (необязательно)"
           }
         }
       }
@@ -10889,6 +10999,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Запись экрана"
+          }
+        }
+      }
+    },
+    "Sent to Anthropic or OpenAI by the CLI on your Mac, on your subscription — counts against your plan's limits." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляется в Anthropic или OpenAI через CLI на вашем Mac, по вашей подписке — расходует лимиты вашего плана."
           }
         }
       }
@@ -12520,6 +12640,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Включите сервер, чтобы подключить приложение."
+          }
+        }
+      }
+    },
+    "Uses the Claude Code or Codex command you already have signed in — no API key. The transcript is sent to Anthropic or OpenAI by that CLI, under your own account, and counts against your subscription's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs the agent with tools disabled, in an empty temporary folder." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использует команду Claude Code или Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в Anthropic или OpenAI под вашей учётной записью, расходуя лимиты вашей подписки. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает агента с отключёнными инструментами, в пустой временной папке."
           }
         }
       }

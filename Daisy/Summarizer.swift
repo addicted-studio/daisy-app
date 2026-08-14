@@ -312,6 +312,15 @@ final class Summarizer {
     var lmStudioBaseURL: String {
         didSet { UserDefaults.standard.set(lmStudioBaseURL, forKey: Self.kLMStudioBaseURL) }
     }
+    /// Which agent CLI drives the `.agentCLI` provider, and an optional
+    /// absolute path for installs auto-detection can't find (a version
+    /// manager, an unusual prefix). Empty path = auto-detect.
+    var agentCLIKind: AgentCLIKind {
+        didSet { UserDefaults.standard.set(agentCLIKind.rawValue, forKey: Self.kAgentCLIKind) }
+    }
+    var agentCLIPath: String {
+        didSet { UserDefaults.standard.set(agentCLIPath, forKey: Self.kAgentCLIPath) }
+    }
 
     // MARK: - Private
 
@@ -324,6 +333,8 @@ final class Summarizer {
     private static let kKimiModel = "daisy.kimiModel"
     private static let kOllamaModel = "daisy.ollamaModel"
     private static let kOllamaBaseURL = "daisy.ollamaBaseURL"
+    private static let kAgentCLIKind = "daisy.agentCLIKind"
+    private static let kAgentCLIPath = "daisy.agentCLIPath"
     private static let kLMStudioModel = "daisy.lmStudioModel"
     private static let kLMStudioBaseURL = "daisy.lmStudioBaseURL"
 
@@ -355,6 +366,9 @@ final class Summarizer {
             ?? LMStudioAPISummarizer.defaultModelID
         self.lmStudioBaseURL = UserDefaults.standard.string(forKey: Self.kLMStudioBaseURL)
             ?? LMStudioAPISummarizer.defaultBaseURLString
+        self.agentCLIKind = UserDefaults.standard.string(forKey: Self.kAgentCLIKind)
+            .flatMap(AgentCLIKind.init(rawValue:)) ?? .claudeCode
+        self.agentCLIPath = UserDefaults.standard.string(forKey: Self.kAgentCLIPath) ?? ""
 
         Task { await refreshAvailability() }
     }
@@ -394,6 +408,8 @@ final class Summarizer {
             return "Couldn't reach LM Studio at \(lmStudioBaseURL). Open the LM Studio app, load a model, then start the local server (Developer tab → Start)."
         case .mcp:
             return "MCP summarizer isn't configured. Open Settings → Summary → MCP and set the server URL, tool name, and arguments template."
+        case .agentCLI:
+            return "Daisy can't find the \(agentCLIKind.displayName) command. Install it and sign in (run it once in Terminal), or set its full path in Settings → Summary."
         }
     }
 
@@ -447,6 +463,15 @@ final class Summarizer {
             log.info("Summarized via \(self.providerKind.shortName, privacy: .public)")
             isSummarizing = false
             return summary
+        } catch is CancellationError {
+            // Benign: the caller withdrew (a new session started, a
+            // deadline elapsed). Surfacing it would put "The operation
+            // couldn't be completed. (Swift.CancellationError error 1.)"
+            // in front of the user as if summarizing had failed.
+            log.info("Summarize cancelled")
+            lastError = nil
+            isSummarizing = false
+            return nil
         } catch {
             log.error("Summarize failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
@@ -523,6 +548,9 @@ final class Summarizer {
             let s = UserDefaults.standard.string(forKey: "daisy.mcpSummarizer.url")
                 ?? MCPSummarizer.defaultBaseURLString
             return Self.isLoopbackURL(URL(string: s))
+        case .agentCLI:
+            // The CLI runs locally; the model does not. Never local.
+            return false
         }
     }
 
@@ -579,6 +607,11 @@ final class Summarizer {
                 baseURL: url,
                 toolName: toolName,
                 argumentsTemplate: template
+            )
+        case .agentCLI:
+            return AgentCLISummarizer(
+                agent: agentCLIKind,
+                executableOverride: agentCLIPath
             )
         }
     }

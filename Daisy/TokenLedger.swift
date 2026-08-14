@@ -407,7 +407,10 @@ nonisolated enum TokenCostEstimator {
                 // the normal input rate rather than inventing a discount.
                 return Price(input: 10, output: 30, cachedInput: 10, cacheWrite: 0, webSearch: 0)
             }
-        case .appleIntelligence, .ollama, .lmStudio, .mcp:
+        // `.agentCLI` joins them: the agent CLI reports no per-request
+        // usage we can price, and the spend lands on the user's
+        // subscription rather than a metered key.
+        case .appleIntelligence, .ollama, .lmStudio, .mcp, .agentCLI:
             return nil
         }
         return nil
@@ -827,7 +830,7 @@ final class TokenLedger {
     nonisolated static func isBilled(_ kind: SummaryProviderKind) -> Bool {
         switch kind {
         case .anthropic, .openai, .kimi: return true
-        case .appleIntelligence, .ollama, .lmStudio, .mcp: return false
+        case .appleIntelligence, .ollama, .lmStudio, .mcp, .agentCLI: return false
         }
     }
 }
