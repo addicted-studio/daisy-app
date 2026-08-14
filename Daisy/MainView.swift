@@ -490,11 +490,6 @@ struct MainView: View {
             .padding(.horizontal, 8)
             .padding(.bottom, 8)
             .background(Color.daisyBgSidebar)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(Color.daisyDivider.opacity(0.5))
-                    .frame(height: 1)
-            }
         }
     }
 

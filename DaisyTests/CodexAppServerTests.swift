@@ -107,6 +107,11 @@ struct CodexAppServerWireTests {
         let message = CodexAppServerError.friendlySummaryMessage("backend exploded: \(sentinel)")
         #expect(!message.contains(sentinel))
     }
+
+    @Test("App Server opts into the fields used to disable tools")
+    func experimentalSafetyFieldsAreEnabled() {
+        #expect(CodexAppServerConnection.protocolCapabilities["experimentalApi"]?.boolValue == true)
+    }
 }
 
 @Suite("ChatGPT account summary provider")
