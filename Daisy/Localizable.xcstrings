@@ -127,6 +127,12 @@
         }
       }
     },
+    "/Users/you/.local/bin/%@" : {
+
+    },
+    "/Users/you/.local/bin/cursor-agent" : {
+
+    },
     "%.0f MB" : {
       "localizations" : {
         "ru" : {
@@ -358,6 +364,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "«%@» запущен, пока Daisy уже ведёт запись — сначала остановите текущую запись, если хотите начать новую."
+          }
+        }
+      }
+    },
+    "%@ limit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит %@"
           }
         }
       }
@@ -969,6 +985,26 @@
         }
       }
     },
+    "%lld requests · %@s average" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld запросов · в среднем %@ с"
+          }
+        }
+      }
+    },
+    "%lld requests · %lld failed · %@s average" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld запросов · ошибок: %lld · в среднем %@ с"
+          }
+        }
+      }
+    },
     "%lld screenshots" : {
       "localizations" : {
         "en" : {
@@ -1168,6 +1204,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld токенов на выходе"
+          }
+        }
+      }
+    },
+    "%lld%% used" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовано %lld%%"
           }
         }
       }
@@ -1885,6 +1931,16 @@
         }
       }
     },
+    "Added to the screenshot note" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавлено в заметку со скриншотом"
+          }
+        }
+      }
+    },
     "Adds a short web-search pass about the attendees and their company. Leaves your Mac only when this is on." : {
       "localizations" : {
         "ru" : {
@@ -1961,6 +2017,27 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Когда вы называете спикера в транскрипте (например, «Алекс»), Daisy сохраняет короткий голосовой отпечаток локально и автоматически подписывает его в будущих записях. Откройте спикера, чтобы добавить его email (тогда приглашения в календаре тоже будут распознаваться) или заметки. Отпечатки никогда не покидают ваш Mac. Забыть можно в любой момент."
+          }
+        }
+      }
+    },
+    "Agent" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент"
+          }
+        }
+      }
+    },
+    "Agent CLI" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент CLI"
           }
         }
       }
@@ -2695,6 +2772,16 @@
         }
       }
     },
+    "Billing" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Оплата"
+          }
+        }
+      }
+    },
     "Bind this recording to an upcoming calendar event" : {
       "localizations" : {
         "ru" : {
@@ -2963,6 +3050,49 @@
         }
       }
     },
+    "ChatGPT" : {
+
+    },
+    "ChatGPT account" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт ChatGPT"
+          }
+        }
+      }
+    },
+    "ChatGPT or Codex isn't installed" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT или Codex не установлен"
+          }
+        }
+      }
+    },
+    "ChatGPT or Codex isn't installed, or Daisy can't find its Codex helper." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ChatGPT или Codex не установлен либо Daisy не может найти его вспомогательный процесс Codex."
+          }
+        }
+      }
+    },
+    "ChatGPT sign-in was cancelled or failed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход в ChatGPT отменён или завершился ошибкой."
+          }
+        }
+      }
+    },
     "Check for Updates…" : {
       "localizations" : {
         "ru" : {
@@ -3103,6 +3233,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Claude Code"
+          }
+        }
+      }
+    },
+    "Claude Code / Codex (your subscription)" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Claude Code / Codex (ваша подписка)"
           }
         }
       }
@@ -3315,12 +3456,71 @@
       }
     },
     "Codex" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Codex"
+          }
+        }
+      }
+    },
+    "Codex (your ChatGPT subscription)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex (ваша подписка ChatGPT)"
+          }
+        }
+      }
+    },
+    "Codex App Server couldn't complete the request." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex App Server не смог выполнить запрос."
+          }
+        }
+      }
+    },
+    "Codex CLI" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex CLI"
+          }
+        }
+      }
+    },
+    "Codex couldn't produce this summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не смог подготовить это саммари."
+          }
+        }
+      }
+    },
+    "Codex couldn't reach OpenAI. Check your internet connection and try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex не смог подключиться к OpenAI. Проверьте интернет-соединение и повторите попытку."
+          }
+        }
+      }
+    },
+    "Codex is using an API key. Sign out of Codex, then connect a ChatGPT account." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex использует API-ключ. Выйдите из Codex, затем подключите аккаунт ChatGPT."
           }
         }
       }
@@ -3341,6 +3541,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Codex не установлен"
+          }
+        }
+      }
+    },
+    "Codex returned an unexpected response." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex вернул неожиданный ответ."
+          }
+        }
+      }
+    },
+    "Codex took too long to respond." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex слишком долго не отвечал."
           }
         }
       }
@@ -3427,6 +3647,26 @@
         }
       }
     },
+    "Connect account" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить аккаунт"
+          }
+        }
+      }
+    },
+    "Connect again" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключить снова"
+          }
+        }
+      }
+    },
     "Connect calendar" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -3495,6 +3735,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Подключите календарь, чтобы Daisy запускала запись автоматически в начале встречи. Это можно изменить в любой момент в Настройках."
+          }
+        }
+      }
+    },
+    "Connect your ChatGPT account in Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите аккаунт ChatGPT в разделе «Настройки → Саммари»."
+          }
+        }
+      }
+    },
+    "Connect your Cursor account in Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключите аккаунт Cursor в разделе «Настройки → Саммари»."
           }
         }
       }
@@ -3602,6 +3862,16 @@
         }
       }
     },
+    "Connection" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Подключение"
+          }
+        }
+      }
+    },
     "Connection needs an update." : {
       "localizations" : {
         "ru" : {
@@ -3642,42 +3912,22 @@
         }
       }
     },
+    "Copied — ⌘V to paste." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировано — ⌘V, чтобы вставить."
+          }
+        }
+      }
+    },
     "Copied %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скопировано: %@"
-          }
-        }
-      }
-    },
-    "Claude Code / Codex (your subscription)" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Claude Code / Codex (ваша подписка)"
-          }
-        }
-      }
-    },
-    "Codex (your ChatGPT subscription)" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Codex (ваша подписка ChatGPT)"
-          }
-        }
-      }
-    },
-    "Codex CLI" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Codex CLI"
           }
         }
       }
@@ -3914,6 +4164,17 @@
         }
       }
     },
+    "Couldn’t create a temporary working folder for the agent." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать временную рабочую папку для агента."
+          }
+        }
+      }
+    },
     "Couldn’t download some models — check your connection and try again." : {
       "localizations" : {
         "ru" : {
@@ -3972,6 +4233,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не удалось прочитать этот файл."
+          }
+        }
+      }
+    },
+    "Couldn't refresh the ChatGPT account. Try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить данные аккаунта ChatGPT. Повторите попытку."
+          }
+        }
+      }
+    },
+    "Couldn't refresh the Cursor account. Try again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось обновить данные аккаунта Cursor. Повторите попытку."
           }
         }
       }
@@ -4175,12 +4456,110 @@
       }
     },
     "Cursor" : {
-      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Cursor"
+          }
+        }
+      }
+    },
+    "Cursor account" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт Cursor"
+          }
+        }
+      }
+    },
+    "Cursor account · Experimental" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт Cursor · Экспериментально"
+          }
+        }
+      }
+    },
+    "Cursor Agent CLI isn't installed." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor Agent CLI не установлен."
+          }
+        }
+      }
+    },
+    "Cursor Agent CLI isn't installed. Install `cursor-agent`, then return to Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor Agent CLI не установлен. Установите `cursor-agent`, затем вернитесь в раздел «Настройки → Саммари»."
+          }
+        }
+      }
+    },
+    "Cursor Agent CLI isn't installed. The Cursor editor command is not a substitute." : {
+
+    },
+    "Cursor Agent found at %@" : {
+
+    },
+    "Cursor API key" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "API-ключ Cursor"
+          }
+        }
+      }
+    },
+    "Cursor API key is missing. Add it in Settings → Summary Provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отсутствует API-ключ Cursor. Добавьте его в разделе «Настройки → Провайдер саммари»."
+          }
+        }
+      }
+    },
+    "Cursor didn't finish within %lld seconds and was stopped." : {
+
+    },
+    "Cursor returned an invalid response." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor вернул недопустимый ответ."
+          }
+        }
+      }
+    },
+    "Cursor returned an unrecognized account status." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor вернул неизвестное состояние аккаунта."
+          }
+        }
+      }
+    },
+    "Cursor returned more data than Daisy can safely process." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cursor вернул больше данных, чем Daisy может безопасно обработать."
           }
         }
       }
@@ -4212,16 +4591,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Своё — %@"
-          }
-        }
-      }
-    },
-    "Couldn’t create a temporary working folder for the agent." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось создать временную рабочую папку для агента."
           }
         }
       }
@@ -4308,16 +4677,6 @@
         }
       }
     },
-    "Daisy can’t see your screenshots folder. Grant access in System Settings → Privacy & Security → Files and Folders." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy не видит папку со скриншотами. Дайте доступ в Системных настройках → Конфиденциальность и безопасность → Файлы и папки."
-          }
-        }
-      }
-    },
     "Daisy can't find this command. Install it and sign in (run it once in Terminal), or paste its full path below — `which %@` in Terminal prints it." : {
       "localizations" : {
         "ru" : {
@@ -4370,6 +4729,16 @@
         }
       }
     },
+    "Daisy can’t see your screenshots folder. Grant access in System Settings → Privacy & Security → Files and Folders." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не видит папку со скриншотами. Дайте доступ в Системных настройках → Конфиденциальность и безопасность → Файлы и папки."
+          }
+        }
+      }
+    },
     "Daisy checks once a day and transcribes new recordings into a notes folder you pick below — separate from meeting sessions. No summaries — fully on-device." : {
       "localizations" : {
         "ru" : {
@@ -4379,6 +4748,32 @@
           }
         }
       }
+    },
+    "Daisy couldn’t create a private temporary folder for the agent." : {
+
+    },
+    "Daisy couldn't create a private temporary folder for the summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не удалось создать закрытую временную папку для саммари."
+          }
+        }
+      }
+    },
+    "Daisy couldn't start the Codex App Server." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy не удалось запустить Codex App Server."
+          }
+        }
+      }
+    },
+    "Daisy couldn’t start the installed agent client." : {
+
     },
     "Daisy deletes the audio from every session right now. Transcripts, summaries and screenshots stay. This can't be undone." : {
       "localizations" : {
@@ -4592,16 +4987,6 @@
         }
       }
     },
-    "Daisy stopped hearing the other side" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Daisy перестала слышать собеседника"
-          }
-        }
-      }
-    },
     "Daisy needs Input Monitoring to use the %@ hotkey." : {
       "localizations" : {
         "ru" : {
@@ -4746,6 +5131,22 @@
         }
       }
     },
+    "Daisy refused an unsafe temporary output path." : {
+
+    },
+    "Daisy refused to run an unknown or non-executable agent client." : {
+
+    },
+    "Daisy stopped hearing the other side" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy перестала слышать собеседника"
+          }
+        }
+      }
+    },
     "Daisy summarizes any meeting from the last week that still has none, in one pass. It waits if you're recording, and picks up anything it missed the next time it runs — including after the Mac was asleep or Daisy was closed." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -4774,6 +5175,46 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Daisy разом обработает встречи за день. Во время записи не запускается, а пропущенное берёт при следующем запуске — включая встречи после указанного часа и вечера, когда Mac спал или Daisy была закрыта."
+          }
+        }
+      }
+    },
+    "Daisy usage · 28 days" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использование Daisy · 28 дней"
+          }
+        }
+      }
+    },
+    "Daisy will send complete meeting transcripts to Cursor through Cursor Agent. Requests use your key or plan limits. Account mode is experimental because Cursor cannot disable every agent tool." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy отправит полные транскрипты встреч в Cursor через Cursor Agent. Запросы расходуют лимиты вашего ключа или плана. Режим аккаунта экспериментальный: Cursor не позволяет отключить абсолютно все инструменты агента."
+          }
+        }
+      }
+    },
+    "Daisy will send complete meeting transcripts to OpenAI through your ChatGPT account. Requests use your plan's limits; Daisy does not calculate a per-request price." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy отправит полные транскрипты встреч в OpenAI через ваш аккаунт ChatGPT. Запросы расходуют лимиты плана; Daisy не рассчитывает стоимость отдельного запроса."
+          }
+        }
+      }
+    },
+    "Daisy will send complete meeting transcripts to the selected cloud provider." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy отправит полные транскрипты встреч выбранному облачному провайдеру."
           }
         }
       }
@@ -5281,26 +5722,6 @@
         }
       }
     },
-    "Copied — ⌘V to paste." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Скопировано — ⌘V, чтобы вставить."
-          }
-        }
-      }
-    },
-    "Dictation had nowhere to land. Keep it?" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Диктовке некуда было лечь. Сохранить?"
-          }
-        }
-      }
-    },
     "Dictation copied — press ⌘V to paste. Clipboard reverts in %llds." : {
       "localizations" : {
         "ru" : {
@@ -5311,12 +5732,12 @@
         }
       }
     },
-    "It's in your dictation history — use “Paste my last dictation” to place it." : {
+    "Dictation had nowhere to land. Keep it?" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Она в истории диктовок — используйте «Вставить последнюю диктовку», чтобы разместить её."
+            "value" : "Диктовке некуда было лечь. Сохранить?"
           }
         }
       }
@@ -5816,22 +6237,22 @@
         }
       }
     },
-    "Turn my screenshots into notes" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Превращать мои скриншоты в заметки"
-          }
-        }
-      }
-    },
     "Expand" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Развернуть"
+          }
+        }
+      }
+    },
+    "Experimental. Transcripts are sent to Cursor through its Agent CLI and count against your Cursor plan's limits; Daisy doesn't estimate a per-request cost. Every run uses an empty temporary folder, never passes `--force`, and installs project-level deny rules for shell, file reads/writes, and MCP. Cursor does not expose a documented switch that removes every tool, so treat this account route as experimental." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Экспериментально. Транскрипты отправляются в Cursor через Agent CLI и расходуют лимиты вашего плана Cursor; Daisy не оценивает стоимость отдельного запроса. Каждый запуск идёт в пустой временной папке, без `--force`, с запретом команд оболочки, чтения и записи файлов и MCP на уровне проекта. Cursor не предоставляет документированный способ отключить все инструменты, поэтому этот способ подключения считается экспериментальным."
           }
         }
       }
@@ -5956,16 +6377,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Впервые назван"
-          }
-        }
-      }
-    },
-    "Found at %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Найдено: %@"
           }
         }
       }
@@ -6150,6 +6561,16 @@
         }
       }
     },
+    "Found at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Найдено: %@"
+          }
+        }
+      }
+    },
     "Freed %@" : {
       "localizations" : {
         "ru" : {
@@ -6323,6 +6744,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Получать бета-обновления"
+          }
+        }
+      }
+    },
+    "Get ChatGPT" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Установить ChatGPT"
           }
         }
       }
@@ -6771,6 +7202,16 @@
         }
       }
     },
+    "Included in subscription · uses provider limit" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Входит в подписку · расходует лимит провайдера"
+          }
+        }
+      }
+    },
     "Includes public info gathered online" : {
       "localizations" : {
         "ru" : {
@@ -6818,6 +7259,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Внутри контейнера Daisy (по умолчанию)"
+          }
+        }
+      }
+    },
+    "Install Cursor Agent CLI to connect" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для подключения установите Cursor Agent CLI"
+          }
+        }
+      }
+    },
+    "Install guide" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструкция по установке"
           }
         }
       }
@@ -6871,6 +7332,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Давно тишина."
+          }
+        }
+      }
+    },
+    "It's in your dictation history — use “Paste my last dictation” to place it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она в истории диктовок — используйте «Вставить последнюю диктовку», чтобы разместить её."
           }
         }
       }
@@ -6974,6 +7445,9 @@
           }
         }
       }
+    },
+    "key_…" : {
+
     },
     "Keyboard layout" : {
       "localizations" : {
@@ -7443,6 +7917,16 @@
         }
       }
     },
+    "Mark this moment" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отметить момент"
+          }
+        }
+      }
+    },
     "Markdown copied to clipboard" : {
       "localizations" : {
         "ru" : {
@@ -7459,6 +7943,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Markdown с заголовком скопирован"
+          }
+        }
+      }
+    },
+    "Marked at %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмечено на %@"
+          }
+        }
+      }
+    },
+    "Marked moments" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отмеченные моменты"
           }
         }
       }
@@ -7511,46 +8015,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Я и остальные"
-          }
-        }
-      }
-    },
-    "Mark this moment" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отметить момент"
-          }
-        }
-      }
-    },
-    "While recording, flag the minute you’re in — it lands in the transcript and leads the summary" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Во время записи отметьте минуту, на которой вы находитесь — она попадёт в транскрипт и возглавит саммари"
-          }
-        }
-      }
-    },
-    "Marked moments" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отмеченные моменты"
-          }
-        }
-      }
-    },
-    "Marked at %@" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отмечено на %@"
           }
         }
       }
@@ -8092,16 +8556,6 @@
         }
       }
     },
-    "No recent dictation to paste." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нет недавней диктовки для вставки."
-          }
-        }
-      }
-    },
     "No audio to delete" : {
       "localizations" : {
         "ru" : {
@@ -8228,6 +8682,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "С этими людьми ещё не было встреч."
+          }
+        }
+      }
+    },
+    "No recent dictation to paste." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нет недавней диктовки для вставки."
           }
         }
       }
@@ -8502,6 +8966,16 @@
         }
       }
     },
+    "Not installed, or Daisy can’t see it. Install the CLI and sign in, or set its path in Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не установлено или Daisy его не видит. Установите CLI и войдите в аккаунт либо укажите путь в Настройки → Саммари."
+          }
+        }
+      }
+    },
     "Not much was said in the last few minutes." : {
       "localizations" : {
         "ru" : {
@@ -8529,56 +9003,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Не запущен"
-          }
-        }
-      }
-    },
-    "Nothing to mark — Daisy isn’t recording." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Нечего отмечать — Daisy не записывает."
-          }
-        }
-      }
-    },
-    "Not installed, or Daisy can’t see it. Install the CLI and sign in, or set its path in Settings → Summary." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не установлено или Daisy его не видит. Установите CLI и войдите в аккаунт либо укажите путь в Настройки → Саммари."
-          }
-        }
-      }
-    },
-    "Timed out. A very long meeting can exceed the agent’s context — try a shorter recording or another provider." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Истекло время ожидания. Очень длинная встреча может не поместиться в контекст агента — попробуйте более короткую запись или другого провайдера."
-          }
-        }
-      }
-    },
-    "The agent didn’t finish within 3 minutes and was stopped. Try again, or pick another provider for long meetings." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Агент не завершил работу за 3 минуты и был остановлен. Попробуйте снова или выберите другого провайдера для длинных встреч."
-          }
-        }
-      }
-    },
-    "The agent exited without output. Check that you’re signed in — run it once in Terminal." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Агент завершился без ответа. Проверьте, что вы вошли в аккаунт — запустите его один раз в Терминале."
           }
         }
       }
@@ -8629,6 +9053,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нечего исправлять — выделите текст или сначала введите слово."
+          }
+        }
+      }
+    },
+    "Nothing to mark — Daisy isn’t recording." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нечего отмечать — Daisy не записывает."
           }
         }
       }
@@ -8802,36 +9236,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Выключено, пока запущена %@ — два исправителя раскладки исковеркают одно слово."
-          }
-        }
-      }
-    },
-    "Added to the screenshot note" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Добавлено в заметку со скриншотом"
-          }
-        }
-      }
-    },
-    "Agent" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Агент"
-          }
-        }
-      }
-    },
-    "Agent CLI" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Агент CLI"
           }
         }
       }
@@ -9236,6 +9640,7 @@
     },
     "OpenAI GPT API" : {
       "comment" : "Summary provider kind for OpenAI API-based summarization.",
+      "extractionState" : "stale",
       "isCommentAutoGenerated" : true,
       "localizations" : {
         "ru" : {
@@ -9462,6 +9867,16 @@
         }
       }
     },
+    "Paste my last dictation" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставить последнюю диктовку"
+          }
+        }
+      }
+    },
     "Paste your Notion integration secret." : {
       "localizations" : {
         "ru" : {
@@ -9488,26 +9903,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вставляет надиктованное в приложение, где вы сейчас."
-          }
-        }
-      }
-    },
-    "Paste my last dictation" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вставить последнюю диктовку"
-          }
-        }
-      }
-    },
-    "Re-inserts your most recent dictation at the cursor — for when it landed in the wrong window or nowhere at all" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Заново вставляет последнюю диктовку под курсор — если она попала не в то окно или никуда вовсе"
           }
         }
       }
@@ -9683,6 +10078,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Плейсхолдеры"
+          }
+        }
+      }
+    },
+    "Plan usage" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит плана"
           }
         }
       }
@@ -10033,6 +10438,16 @@
         }
       }
     },
+    "Re-inserts your most recent dictation at the cursor — for when it landed in the wrong window or nowhere at all" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заново вставляет последнюю диктовку под курсор — если она попала не в то окно или никуда вовсе"
+          }
+        }
+      }
+    },
     "Re-processed from the full audio archive after the app quit mid-recording. Complete transcript — no speaker labels." : {
       "comment" : "Body text for a transcript of a recording that was re-processed after the app quit mid-recording.",
       "isCommentAutoGenerated" : true,
@@ -10073,6 +10488,26 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пересоздаём саммари…"
+          }
+        }
+      }
+    },
+    "Reached" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исчерпан"
+          }
+        }
+      }
+    },
+    "Reached · resets %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Исчерпан · обновится %@"
           }
         }
       }
@@ -11023,32 +11458,12 @@
         }
       }
     },
-    "Sent to Anthropic or OpenAI by the CLI on your Mac, on your subscription — counts against your plan's limits." : {
+    "Screenshot saved to Notes" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Отправляется в Anthropic или OpenAI через CLI на вашем Mac, по вашей подписке — расходует лимиты вашего плана."
-          }
-        }
-      }
-    },
-    "Sent to OpenAI by the Codex CLI on your Mac, on your subscription — counts against your plan's limits." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Отправляется в OpenAI через Codex CLI на вашем Mac, по вашей подписке — расходует лимиты вашего плана."
-          }
-        }
-      }
-    },
-    "Screenshots (%lld)" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Скриншоты (%lld)"
+            "value" : "Скриншот сохранён в заметки"
           }
         }
       }
@@ -11063,12 +11478,12 @@
         }
       }
     },
-    "Screenshot saved to Notes" : {
+    "Screenshots (%lld)" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Скриншот сохранён в заметки"
+            "value" : "Скриншоты (%lld)"
           }
         }
       }
@@ -11246,6 +11661,16 @@
         }
       }
     },
+    "Send transcripts to a cloud provider?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправлять транскрипты облачному провайдеру?"
+          }
+        }
+      }
+    },
     "Sending to Notion…" : {
       "localizations" : {
         "ru" : {
@@ -11266,12 +11691,33 @@
         }
       }
     },
+    "Sent to Anthropic or OpenAI by the CLI on your Mac, on your subscription — counts against your plan's limits." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляется в Anthropic или OpenAI через CLI на вашем Mac, по вашей подписке — расходует лимиты вашего плана."
+          }
+        }
+      }
+    },
     "Sent to Anthropic over HTTPS, using your API key." : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отправляется в Anthropic по HTTPS с использованием вашего API-ключа."
+          }
+        }
+      }
+    },
+    "Sent to Cursor by the Agent CLI on your Mac — uses your key or subscription limits." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляется в Cursor через Agent CLI на вашем Mac — расходует лимит ключа или подписки."
           }
         }
       }
@@ -11285,6 +11731,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Отправлено в Notion · %@"
+          }
+        }
+      }
+    },
+    "Sent to OpenAI by the Codex CLI on your Mac, on your subscription — counts against your plan's limits." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляется в OpenAI через Codex CLI на вашем Mac, по вашей подписке — расходует лимиты вашего плана."
           }
         }
       }
@@ -11346,6 +11802,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "URL сервера"
+          }
+        }
+      }
+    },
+    "Session expired" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сессия истекла"
           }
         }
       }
@@ -12068,6 +12534,16 @@
         }
       }
     },
+    "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Захват системного звука прекратился и не восстановился — записывается только ваш микрофон. Остановите и перезапустите запись, если нужен собеседник."
+          }
+        }
+      }
+    },
     "System default" : {
       "localizations" : {
         "ru" : {
@@ -12084,16 +12560,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Системный по умолчанию (%@)"
-          }
-        }
-      }
-    },
-    "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Захват системного звука прекратился и не восстановился — записывается только ваш микрофон. Остановите и перезапустите запись, если нужен собеседник."
           }
         }
       }
@@ -12259,6 +12725,16 @@
         }
       }
     },
+    "That model isn't available on this ChatGPT account. Pick another model in Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель недоступна для данного аккаунта ChatGPT. Выберите другую в разделе «Настройки → Саммари»."
+          }
+        }
+      }
+    },
     "That shortcut needs ⌃ or ⌥ so it can't take over a system one like ⌘C." : {
 
     },
@@ -12271,6 +12747,53 @@
           }
         }
       }
+    },
+    "The account isn’t signed in. Connect it in Daisy settings and try again." : {
+
+    },
+    "The agent couldn’t reach its provider. Check the network connection and try again." : {
+
+    },
+    "The agent didn’t finish within %lld seconds and was stopped." : {
+
+    },
+    "The agent didn’t finish within 3 minutes and was stopped. Try again, or pick another provider for long meetings." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент не завершил работу за 3 минуты и был остановлен. Попробуйте снова или выберите другого провайдера для длинных встреч."
+          }
+        }
+      }
+    },
+    "The agent exited without output. Check that you’re signed in — run it once in Terminal." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Агент завершился без ответа. Проверьте, что вы вошли в аккаунт — запустите его один раз в Терминале."
+          }
+        }
+      }
+    },
+    "The agent process limits are invalid." : {
+
+    },
+    "The agent stopped with status %d: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "The agent stopped with status %1$d: %2$@"
+          }
+        }
+      }
+    },
+    "The agent stopped with status %d. Check that the account is signed in." : {
+
     },
     "The attached log covers the last 24 hours. It holds diagnostics only — no transcript text." : {
       "localizations" : {
@@ -12290,6 +12813,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Бриф собирался слишком долго и был остановлен — попробуйте ещё раз."
+          }
+        }
+      }
+    },
+    "The Codex App Server stopped. Try again; Daisy will reconnect automatically." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex App Server остановился. Повторите попытку — Daisy подключится заново автоматически."
+          }
+        }
+      }
+    },
+    "The Cursor account isn't signed in." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вход в аккаунт Cursor не выполнен."
+          }
+        }
+      }
+    },
+    "The Cursor usage limit has been reached. Try again after it resets." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит использования Cursor исчерпан. Повторите попытку после его обновления."
           }
         }
       }
@@ -12356,6 +12909,9 @@
         }
       }
     },
+    "The provider’s usage limit has been reached. Try again after it resets." : {
+
+    },
     "The shortcut fixes selected text in compatible apps. Automatic fixing decides while you're still typing the word, using the spell-check dictionaries already on your Mac, so a word you finish with Return is corrected before it's sent. Nothing is stored or sent anywhere, and it stands down in password fields, terminals, IDEs, password managers and remote desktops. Needs Accessibility access." : {
       "localizations" : {
         "ru" : {
@@ -12375,6 +12931,9 @@
           }
         }
       }
+    },
+    "This installed client can’t prove a safe read-only mode. Update it before using account summaries." : {
+
     },
     "This model is billed, but Daisy doesn't know its price." : {
       "localizations" : {
@@ -12442,6 +13001,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Этот спикер был удалён."
+          }
+        }
+      }
+    },
+    "Timed out. A very long meeting can exceed the agent’s context — try a shorter recording or another provider." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Истекло время ожидания. Очень длинная встреча может не поместиться в контекст агента — попробуйте более короткую запись или другого провайдера."
           }
         }
       }
@@ -12609,6 +13179,16 @@
         }
       }
     },
+    "Transcripts are sent to Cursor through its Agent CLI using your API key, stored in macOS Keychain and passed only through `CURSOR_API_KEY`. Every run uses an empty temporary folder, never passes `--force`, and installs deny rules for shell, file reads/writes, and MCP." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Транскрипты отправляются в Cursor через Agent CLI с вашим API-ключом. Ключ хранится в Связке ключей macOS и передаётся только через `CURSOR_API_KEY`. Каждый запуск идёт в пустой временной папке, без `--force`, с запретом команд оболочки, чтения и записи файлов и MCP."
+          }
+        }
+      }
+    },
     "Transcripts are sent to Moonshot over HTTPS using your own API key — and Moonshot's documentation states that requests to its international endpoint are processed in China. Create a key at platform.kimi.ai — it's stored in your macOS Keychain. Cheapest of the cloud providers here: roughly $0.005–0.02 per summary on K2.6." : {
 
     },
@@ -12618,6 +13198,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Транскрипты отправляются в OpenAI по HTTPS с использованием вашего собственного API-ключа. Создайте его на platform.openai.com/api-keys — он хранится в Keychain macOS. Каждое саммари стоит примерно $0.01–0.05."
+          }
+        }
+      }
+    },
+    "Transcripts are sent to OpenAI through the Codex App Server signed into your ChatGPT account. Requests use your plan's limits and are included in the subscription when the provider allows it; Daisy doesn't estimate a per-request cost. Summary threads are ephemeral, run in an empty temporary folder, and cannot request approvals or change files." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Транскрипты отправляются в OpenAI через Codex App Server, вошедший в ваш аккаунт ChatGPT. Запросы расходуют лимиты плана и входят в подписку, когда это допускает провайдер; Daisy не оценивает стоимость отдельного запроса. Потоки саммари временные, работают в пустой временной папке, не могут запрашивать разрешения или изменять файлы."
           }
         }
       }
@@ -12638,6 +13228,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Попробуйте записать снова"
+          }
+        }
+      }
+    },
+    "Turn my screenshots into notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Превращать мои скриншоты в заметки"
           }
         }
       }
@@ -12674,32 +13274,22 @@
         }
       }
     },
-    "Uses the Claude Code or Codex command you already have signed in — no API key. The transcript is sent to Anthropic or OpenAI by that CLI, under your own account, and counts against your subscription's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs the agent with tools disabled, in an empty temporary folder." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Использует команду Claude Code или Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в Anthropic или OpenAI под вашей учётной записью, расходуя лимиты вашей подписки. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает агента с отключёнными инструментами, в пустой временной папке."
-          }
-        }
-      }
-    },
-    "Uses the Codex command you already have signed in — no API key. The transcript is sent to OpenAI by that CLI, under your own account, and counts against your ChatGPT plan's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs it with tools disabled, in an empty temporary folder. (Claude Code isn't offered: Anthropic doesn't permit third-party apps to route requests through Claude subscription credentials — use the Anthropic API key provider instead.)" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Использует команду Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в OpenAI под вашей учётной записью, расходуя лимиты вашего плана ChatGPT. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает его с отключёнными инструментами, в пустой временной папке. (Claude Code не предлагается: Anthropic не разрешает сторонним приложениям направлять запросы через учётные данные подписки Claude — используйте провайдер с API-ключом Anthropic.)"
-          }
-        }
-      }
-    },
     "Unavailable" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Недоступен"
+          }
+        }
+      }
+    },
+    "Unavailable: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недоступно: %@"
           }
         }
       }
@@ -12859,6 +13449,27 @@
         }
       }
     },
+    "Uses the Claude Code or Codex command you already have signed in — no API key. The transcript is sent to Anthropic or OpenAI by that CLI, under your own account, and counts against your subscription's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs the agent with tools disabled, in an empty temporary folder." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использует команду Claude Code или Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в Anthropic или OpenAI под вашей учётной записью, расходуя лимиты вашей подписки. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает агента с отключёнными инструментами, в пустой временной папке."
+          }
+        }
+      }
+    },
+    "Uses the Codex command you already have signed in — no API key. The transcript is sent to OpenAI by that CLI, under your own account, and counts against your ChatGPT plan's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs it with tools disabled, in an empty temporary folder. (Claude Code isn't offered: Anthropic doesn't permit third-party apps to route requests through Claude subscription credentials — use the Anthropic API key provider instead.)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использует команду Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в OpenAI под вашей учётной записью, расходуя лимиты вашего плана ChatGPT. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает его с отключёнными инструментами, в пустой временной папке. (Claude Code не предлагается: Anthropic не разрешает сторонним приложениям направлять запросы через учётные данные подписки Claude — используйте провайдер с API-ключом Anthropic.)"
+          }
+        }
+      }
+    },
     "Uses the speech model built into macOS 26 — no download, ~2× faster than Whisper, nothing added to Daisy’s size. Needs a specific language below (not Auto); otherwise dictation falls back to Whisper." : {
       "localizations" : {
         "ru" : {
@@ -12935,6 +13546,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Полировка стиля"
+          }
+        }
+      }
+    },
+    "Waiting for sign-in in your browser…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ожидание входа в браузере…"
           }
         }
       }
@@ -13096,6 +13717,16 @@
         }
       }
     },
+    "While recording, flag the minute you’re in — it lands in the transcript and leads the summary" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Во время записи отметьте минуту, на которой вы находитесь — она попадёт в транскрипт и возглавит саммари"
+          }
+        }
+      }
+    },
     "Whisper model failed to load: %@" : {
       "localizations" : {
         "ru" : {
@@ -13202,6 +13833,36 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Всё готово"
+          }
+        }
+      }
+    },
+    "Your ChatGPT plan limit has been reached. Try again after it resets." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Лимит плана ChatGPT исчерпан. Повторите попытку после его обновления."
+          }
+        }
+      }
+    },
+    "Your ChatGPT session expired. Connect the account again in Settings → Summary." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сессия ChatGPT истекла. Подключите аккаунт снова в разделе «Настройки → Саммари»."
+          }
+        }
+      }
+    },
+    "Your ChatGPT session expired. Connect the account again." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сессия ChatGPT истекла. Подключите аккаунт снова."
           }
         }
       }

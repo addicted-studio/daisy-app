@@ -21,6 +21,9 @@ struct SettingsView: View {
     @Bindable var parakeet = ParakeetEngine.shared
     @Bindable var nemotron = NemotronLiveEngine.shared
     @Bindable var summarizer = Summarizer.shared
+    @Bindable private var openAIAccount = OpenAIAccountManager.shared
+    @Bindable private var cursorAccount = CursorAccountManager.shared
+    @Bindable private var subscriptionUsage = SubscriptionUsageLedger.shared
     // Calendar source state — needed by the General-tab Calendar
     // section (autoStart / autoStop / menu-bar next-meeting toggles).
     // Bound to the SAME observable the Permissions tab reads
@@ -34,6 +37,7 @@ struct SettingsView: View {
     @Bindable private var layoutFixExceptions = LayoutFixExceptions.shared
 
     @State private var summaryTestResult: TestResult = .idle
+    @State private var pendingAccountDisclosure: SummaryConnectionProvider?
     // Notion destination config (token / parent / auto-send / Test
     // connection) moved to the top-level Connections page →
     // Auto-routing tab in 1.0.7.16 — it's an external send-to
@@ -238,6 +242,23 @@ struct SettingsView: View {
         .padding()
         .background(Color.daisyBgPrimary)
         .task { await summarizer.refreshAvailability() }
+        .alert(
+            "Send transcripts to a cloud provider?",
+            isPresented: Binding(
+                get: { pendingAccountDisclosure != nil },
+                set: { if !$0 { pendingAccountDisclosure = nil } }
+            ),
+            presenting: pendingAccountDisclosure
+        ) { provider in
+            Button("Cancel", role: .cancel) {
+                pendingAccountDisclosure = nil
+            }
+            Button("Continue") {
+                confirmAccountDisclosure(for: provider)
+            }
+        } message: { provider in
+            Text(accountDisclosureMessage(for: provider))
+        }
     }
 
     /// Pull any one-shot Settings-tab request from AppNavigation,
@@ -1894,7 +1915,14 @@ struct SettingsView: View {
                     Spacer()
                     StatusBadge(state: summarizerBadgeState, message: summarizerStatusText)
                     Button("Refresh") {
-                        Task { await summarizer.refreshAvailability() }
+                        Task {
+                            if summarizer.providerKind == .openai,
+                               summarizer.openAIConnectionMethod == .account {
+                                await openAIAccount.refreshStatus()
+                                adoptDefaultOpenAIAccountModelIfNeeded()
+                            }
+                            await summarizer.refreshAvailability()
+                        }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -2133,21 +2161,148 @@ struct SettingsView: View {
             .pickerStyle(.menu)
 
         case .openai:
-            LabeledContent("API key") {
-                SecureField("", text: $settings.openaiAPIKey, prompt: Text("sk-proj-…"))
+            SummaryConnectionMethodPicker(
+                method: openAIConnectionMethodBinding,
+                accountTitle: String(localized: "ChatGPT account")
+            )
+
+            if summarizer.openAIConnectionMethod == .apiKey {
+                // Existing API block: intentionally unchanged. Account
+                // mode owns separate state and a separate model choice.
+                LabeledContent("API key") {
+                    SecureField("", text: $settings.openaiAPIKey, prompt: Text("sk-proj-…"))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                }
+                Picker("Model", selection: $summarizer.openaiModel) {
+                    ForEach(OpenAIAPISummarizer.availableModels, id: \.id) { item in
+                        Text(item.label).tag(item.id)
+                    }
+                    if !OpenAIAPISummarizer.availableModels.contains(where: { $0.id == summarizer.openaiModel }) {
+                        Text(String(localized: "Custom: \(summarizer.openaiModel)")).tag(summarizer.openaiModel)
+                    }
+                }
+                .pickerStyle(.menu)
+            } else {
+                SummaryAccountConnectionRows(
+                    accountLabel: String(localized: "ChatGPT account"),
+                    providerName: String(localized: "ChatGPT"),
+                    state: openAIAccount.accountState,
+                    availableModels: openAIAccount.availableModels,
+                    selectedModel: $summarizer.openAIAccountModel,
+                    installMessage: String(localized: "ChatGPT or Codex isn't installed"),
+                    installButtonTitle: String(localized: "Get ChatGPT"),
+                    installURL: URL(string: "https://openai.com/chatgpt/desktop/"),
+                    currentAccount: openAIAccount.account,
+                    planUsagePercent: openAIAccount.rateLimit?.usedPercent,
+                    usage: subscriptionUsage.recentUsage(provider: .openai),
+                    connect: {
+                        await openAIAccount.connect()
+                        adoptDefaultOpenAIAccountModelIfNeeded()
+                        await summarizer.refreshAvailability()
+                    },
+                    disconnect: {
+                        await openAIAccount.disconnect()
+                        await summarizer.refreshAvailability()
+                    },
+                    refresh: {
+                        await openAIAccount.refreshStatus()
+                        adoptDefaultOpenAIAccountModelIfNeeded()
+                        await summarizer.refreshAvailability()
+                    }
+                )
+                    .task(id: "\(summarizer.openAIConnectionMethod.rawValue)|\(summarizer.agentCLIPath)") {
+                        await openAIAccount.refreshStatus()
+                        adoptDefaultOpenAIAccountModelIfNeeded()
+                        await summarizer.refreshAvailability()
+                    }
+            }
+
+        case .cursor:
+            SummaryConnectionMethodPicker(
+                method: cursorConnectionMethodBinding,
+                accountTitle: String(localized: "Cursor account · Experimental")
+            )
+
+            if summarizer.cursorConnectionMethod == .apiKey {
+                LabeledContent("API key") {
+                    SecureField("", text: $settings.cursorAPIKey, prompt: Text("key_…"))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .frame(maxWidth: .infinity)
+                }
+            } else {
+                SummaryAccountConnectionRows(
+                    accountLabel: String(localized: "Cursor account"),
+                    providerName: String(localized: "Cursor"),
+                    state: cursorAccount.accountState,
+                    availableModels: cursorAccount.availableModels,
+                    selectedModel: $summarizer.cursorModel,
+                    installMessage: String(localized: "Install Cursor Agent CLI to connect"),
+                    installButtonTitle: String(localized: "Install guide"),
+                    installURL: URL(string: "https://cursor.com/docs/cli/installation"),
+                    currentAccount: cursorAccount.account,
+                    planUsagePercent: nil,
+                    usage: subscriptionUsage.recentUsage(provider: .cursor),
+                    connect: {
+                        await cursorAccount.connect()
+                        await summarizer.refreshAvailability()
+                    },
+                    disconnect: {
+                        await cursorAccount.disconnect()
+                        await summarizer.refreshAvailability()
+                    },
+                    refresh: {
+                        await cursorAccount.refreshStatus()
+                        await summarizer.refreshAvailability()
+                    }
+                )
+                    .task(id: "\(summarizer.cursorConnectionMethod.rawValue)|\(summarizer.cursorAgentPath)") {
+                        await cursorAccount.refreshStatus()
+                        await summarizer.refreshAvailability()
+                    }
+            }
+
+            if summarizer.cursorConnectionMethod == .apiKey {
+                LabeledContent("Model") {
+                    TextField("", text: $summarizer.cursorModel, prompt: Text(CursorAgentService.defaultModelID))
+                        .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            if let found = CursorAgentService.resolveExecutable(override: summarizer.cursorAgentPath) {
+                Label("Cursor Agent found at \(found.path)", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(Color.daisySuccess)
+            } else {
+                Label {
+                    HStack(spacing: 8) {
+                        Text("Cursor Agent CLI isn't installed. The Cursor editor command is not a substitute.")
+                        Button("Install guide") {
+                            if let url = URL(string: "https://cursor.com/docs/cli/installation") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.daisyWarning)
+                }
+                .font(.caption)
+            }
+
+            LabeledContent("Path (optional)") {
+                TextField("", text: $summarizer.cursorAgentPath, prompt: Text("/Users/you/.local/bin/cursor-agent"))
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
+                    .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity)
             }
-            Picker("Model", selection: $summarizer.openaiModel) {
-                ForEach(OpenAIAPISummarizer.availableModels, id: \.id) { item in
-                    Text(item.label).tag(item.id)
-                }
-                if !OpenAIAPISummarizer.availableModels.contains(where: { $0.id == summarizer.openaiModel }) {
-                    Text(String(localized: "Custom: \(summarizer.openaiModel)")).tag(summarizer.openaiModel)
-                }
-            }
-            .pickerStyle(.menu)
 
         case .ollama:
             LabeledContent("Server URL") {
@@ -2324,6 +2479,71 @@ struct SettingsView: View {
         }
     }
 
+    private func adoptDefaultOpenAIAccountModelIfNeeded() {
+        guard summarizer.openAIAccountModel.isEmpty,
+              let model = openAIAccount.defaultModelID
+        else { return }
+        summarizer.openAIAccountModel = model
+    }
+
+    private var openAIConnectionMethodBinding: Binding<SummaryConnectionMethod> {
+        Binding(
+            get: { summarizer.openAIConnectionMethod },
+            set: { requestConnectionMethod($0, for: .openAI) }
+        )
+    }
+
+    private var cursorConnectionMethodBinding: Binding<SummaryConnectionMethod> {
+        Binding(
+            get: { summarizer.cursorConnectionMethod },
+            set: { requestConnectionMethod($0, for: .cursor) }
+        )
+    }
+
+    private func requestConnectionMethod(
+        _ method: SummaryConnectionMethod,
+        for provider: SummaryConnectionProvider
+    ) {
+        let preferences = SummaryConnectionPreferences()
+        if method == .account,
+           !preferences.hasAcknowledgedCloudDisclosure(for: provider) {
+            pendingAccountDisclosure = provider
+            return
+        }
+        setConnectionMethod(method, for: provider)
+    }
+
+    private func confirmAccountDisclosure(for provider: SummaryConnectionProvider) {
+        SummaryConnectionPreferences().acknowledgeCloudDisclosure(for: provider)
+        setConnectionMethod(.account, for: provider)
+        pendingAccountDisclosure = nil
+    }
+
+    private func setConnectionMethod(
+        _ method: SummaryConnectionMethod,
+        for provider: SummaryConnectionProvider
+    ) {
+        switch provider {
+        case .openAI:
+            summarizer.openAIConnectionMethod = method
+        case .cursor:
+            summarizer.cursorConnectionMethod = method
+        case .anthropic, .kimi, .githubCopilot:
+            break
+        }
+    }
+
+    private func accountDisclosureMessage(for provider: SummaryConnectionProvider) -> String {
+        switch provider {
+        case .openAI:
+            return String(localized: "Daisy will send complete meeting transcripts to OpenAI through your ChatGPT account. Requests use your plan's limits; Daisy does not calculate a per-request price.")
+        case .cursor:
+            return String(localized: "Daisy will send complete meeting transcripts to Cursor through Cursor Agent. Requests use your key or plan limits. Account mode is experimental because Cursor cannot disable every agent tool.")
+        case .anthropic, .kimi, .githubCopilot:
+            return String(localized: "Daisy will send complete meeting transcripts to the selected cloud provider.")
+        }
+    }
+
     /// SummaryProviderKind cases visible to the user on the current
     /// macOS version. Apple Intelligence is hidden on macOS 14/15
     /// because its underlying framework (FoundationModels) only
@@ -2343,7 +2563,18 @@ struct SettingsView: View {
         switch summarizer.providerKind {
         case .appleIntelligence: return true
         case .anthropic: return settings.anthropicAPIKey.isEmpty
-        case .openai: return settings.openaiAPIKey.isEmpty
+        case .openai:
+            if summarizer.openAIConnectionMethod == .account {
+                return !openAIAccount.isConnected || summarizer.openAIAccountModel.isEmpty
+            }
+            return settings.openaiAPIKey.isEmpty
+        case .cursor:
+            guard CursorAgentService.resolveExecutable(override: summarizer.cursorAgentPath) != nil,
+                  !summarizer.cursorModel.isEmpty else { return true }
+            if summarizer.cursorConnectionMethod == .account {
+                return !cursorAccount.isConnected
+            }
+            return settings.cursorAPIKey.isEmpty
         case .kimi: return settings.kimiAPIKey.isEmpty
         case .ollama: return summarizer.ollamaBaseURL.isEmpty || summarizer.ollamaModel.isEmpty
         case .lmStudio: return summarizer.lmStudioBaseURL.isEmpty || summarizer.lmStudioModel.isEmpty
@@ -2370,7 +2601,15 @@ struct SettingsView: View {
         case .anthropic:
             return String(localized: "Transcripts are sent to Anthropic over HTTPS using your own API key. Create one at console.anthropic.com/settings/keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
         case .openai:
+            if summarizer.openAIConnectionMethod == .account {
+                return String(localized: "Transcripts are sent to OpenAI through the Codex App Server signed into your ChatGPT account. Requests use your plan's limits and are included in the subscription when the provider allows it; Daisy doesn't estimate a per-request cost. Summary threads are ephemeral, run in an empty temporary folder, and cannot request approvals or change files.")
+            }
             return String(localized: "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
+        case .cursor:
+            if summarizer.cursorConnectionMethod == .account {
+                return String(localized: "Experimental. Transcripts are sent to Cursor through its Agent CLI and count against your Cursor plan's limits; Daisy doesn't estimate a per-request cost. Every run uses an empty temporary folder, never passes `--force`, and installs project-level deny rules for shell, file reads/writes, and MCP. Cursor does not expose a documented switch that removes every tool, so treat this account route as experimental.")
+            }
+            return String(localized: "Transcripts are sent to Cursor through its Agent CLI using your API key, stored in macOS Keychain and passed only through `CURSOR_API_KEY`. Every run uses an empty temporary folder, never passes `--force`, and installs deny rules for shell, file reads/writes, and MCP.")
         case .kimi:
             return String(localized: "Transcripts are sent to Moonshot over HTTPS using your own API key — and Moonshot's documentation states that requests to its international endpoint are processed in China. Create a key at platform.kimi.ai — it's stored in your macOS Keychain. Cheapest of the cloud providers here: roughly $0.005–0.02 per summary on K2.6.")
         case .ollama:
@@ -2841,6 +3080,193 @@ struct SettingsView: View {
 
     // About content lives in `AboutView.swift` — promoted out of
     // Settings tabs into a top-level sidebar section.
+}
+
+/// Shared API/account selector used by every provider that supports both
+/// routes. Keeping one component prevents a provider-specific label or layout
+/// from silently changing the established API-key block beneath it.
+private struct SummaryConnectionMethodPicker: View {
+    @Binding var method: SummaryConnectionMethod
+    let accountTitle: String
+
+    var body: some View {
+        Picker("Connection", selection: $method) {
+            Text("API key").tag(SummaryConnectionMethod.apiKey)
+            Text(accountTitle).tag(SummaryConnectionMethod.account)
+        }
+        .pickerStyle(.segmented)
+    }
+}
+
+/// Provider-neutral rendering of `SummaryAccountState`, model selection,
+/// installation guidance, usage, and account actions. Provider managers keep
+/// ownership of OAuth and process details; this view owns no credentials.
+private struct SummaryAccountConnectionRows: View {
+    let accountLabel: String
+    let providerName: String
+    let state: SummaryAccountState
+    let availableModels: [SummaryAccountModel]
+    @Binding var selectedModel: String
+    let installMessage: String
+    let installButtonTitle: String?
+    let installURL: URL?
+    let currentAccount: SummaryAccount?
+    let planUsagePercent: Int?
+    let usage: SubscriptionUsageSummary?
+    let connect: @MainActor () async -> Void
+    let disconnect: @MainActor () async -> Void
+    let refresh: @MainActor () async -> Void
+
+    var body: some View {
+        accountStateRows
+
+        if !availableModels.isEmpty {
+            Picker("Model", selection: $selectedModel) {
+                ForEach(availableModels) { model in
+                    Text(model.displayName).tag(model.id)
+                }
+                if !selectedModel.isEmpty,
+                   !availableModels.contains(where: { $0.id == selectedModel }) {
+                    Text(String(localized: "Unavailable: \(selectedModel)"))
+                        .tag(selectedModel)
+                }
+            }
+            .pickerStyle(.menu)
+        }
+
+        if let used = planUsagePercent, used < 100 {
+            LabeledContent("Plan usage") {
+                Text(String(localized: "\(used)% used"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+
+        LabeledContent("Billing") {
+            Text("Included in subscription · uses provider limit")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        if let usage, usage.requestCount > 0 {
+            LabeledContent("Daisy usage · 28 days") {
+                Text(usageDescription(usage))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var accountStateRows: some View {
+        switch state {
+        case .notInstalled:
+            LabeledContent(accountLabel) {
+                HStack(spacing: 8) {
+                    Text(installMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let installButtonTitle, let installURL {
+                        Button(installButtonTitle) {
+                            NSWorkspace.shared.open(installURL)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+        case .signedOut:
+            LabeledContent(accountLabel) {
+                Button("Connect account") {
+                    Task { await connect() }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.daisyAccent)
+            }
+
+        case .connecting:
+            LabeledContent(accountLabel) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for sign-in in your browser…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+        case .connected(let account):
+            accountIdentityRow(account)
+
+        case .sessionExpired:
+            LabeledContent(accountLabel) {
+                HStack(spacing: 8) {
+                    Text("Session expired")
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyWarning)
+                    Button("Connect again") {
+                        Task { await connect() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+        case .limitReached(let resetAt):
+            if let currentAccount {
+                accountIdentityRow(currentAccount)
+            }
+            LabeledContent(String(localized: "\(providerName) limit")) {
+                Text(limitDescription(resetAt))
+                    .font(.caption)
+                    .foregroundStyle(Color.daisyWarning)
+            }
+
+        case .failed(let message):
+            LabeledContent(accountLabel) {
+                HStack(spacing: 8) {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(Color.daisyWarning)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Retry") {
+                        Task { await refresh() }
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+    }
+
+    private func accountIdentityRow(_ account: SummaryAccount) -> some View {
+        LabeledContent(accountLabel) {
+            HStack(spacing: 10) {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(account.email ?? account.displayName ?? String(localized: "Connected"))
+                    if let plan = account.plan {
+                        Text(plan.capitalized)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button("Disconnect") {
+                    Task { await disconnect() }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func limitDescription(_ resetAt: Date?) -> String {
+        guard let resetAt else { return String(localized: "Reached") }
+        return String(localized: "Reached · resets \(resetAt.formatted(date: .abbreviated, time: .shortened))")
+    }
+
+    private func usageDescription(_ usage: SubscriptionUsageSummary) -> String {
+        let average = usage.averageDurationSeconds.formatted(.number.precision(.fractionLength(1)))
+        if usage.failedRequests > 0 {
+            return String(localized: "\(usage.requestCount) requests · \(usage.failedRequests) failed · \(average)s average")
+        }
+        return String(localized: "\(usage.requestCount) requests · \(average)s average")
+    }
 }
 
 /// Result of a "Test connection / Test summary" probe — drives the

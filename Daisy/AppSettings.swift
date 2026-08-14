@@ -1063,6 +1063,12 @@ final class AppSettings {
             Task { @MainActor in await Summarizer.shared.refreshAvailability() }
         }
     }
+    var cursorAPIKey: String {
+        didSet {
+            Self.persist(cursorAPIKey, account: SecretKey.cursorAPIKey, label: String(localized: "Cursor API key"))
+            Task { @MainActor in await Summarizer.shared.refreshAvailability() }
+        }
+    }
     var kimiAPIKey: String {
         didSet {
             Self.persist(kimiAPIKey, account: SecretKey.kimiAPIKey, label: String(localized: "Kimi API key"))
@@ -1469,6 +1475,7 @@ final class AppSettings {
         self.notionParentID = KeychainStore.get(account: SecretKey.notionParentID) ?? ""
         self.anthropicAPIKey = KeychainStore.get(account: SecretKey.anthropicAPIKey) ?? ""
         self.openaiAPIKey = KeychainStore.get(account: SecretKey.openaiAPIKey) ?? ""
+        self.cursorAPIKey = KeychainStore.get(account: SecretKey.cursorAPIKey) ?? ""
         self.kimiAPIKey = KeychainStore.get(account: SecretKey.kimiAPIKey) ?? ""
 
         // Reconcile substrate to the policy ONCE at launch — but ONLY

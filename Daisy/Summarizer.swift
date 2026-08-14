@@ -293,6 +293,53 @@ final class Summarizer {
     var openaiModel: String {
         didSet { UserDefaults.standard.set(openaiModel, forKey: Self.kOpenAIModel) }
     }
+    /// OpenAI's API and account routes persist independently. The factory
+    /// below intentionally keeps using the API route until the account
+    /// client lands; adding this model must not alter existing behaviour.
+    var openAIConnectionMethod: SummaryConnectionMethod {
+        didSet {
+            SummaryConnectionPreferences().setMethod(
+                openAIConnectionMethod,
+                for: .openAI
+            )
+            Task {
+                if openAIConnectionMethod == .account {
+                    await OpenAIAccountManager.shared.refreshStatus()
+                }
+                await refreshAvailability()
+            }
+        }
+    }
+    var openAIAccountModel: String {
+        didSet {
+            SummaryConnectionPreferences().setAccountModel(
+                openAIAccountModel.isEmpty ? nil : openAIAccountModel,
+                for: .openAI
+            )
+        }
+    }
+    var cursorConnectionMethod: SummaryConnectionMethod {
+        didSet {
+            SummaryConnectionPreferences().setMethod(cursorConnectionMethod, for: .cursor)
+            Task {
+                if cursorConnectionMethod == .account {
+                    await CursorAccountManager.shared.refreshStatus()
+                }
+                await refreshAvailability()
+            }
+        }
+    }
+    var cursorModel: String {
+        didSet {
+            SummaryConnectionPreferences().setAccountModel(
+                cursorModel.isEmpty ? nil : cursorModel,
+                for: .cursor
+            )
+        }
+    }
+    var cursorAgentPath: String {
+        didSet { UserDefaults.standard.set(cursorAgentPath, forKey: Self.kCursorAgentPath) }
+    }
     /// Ollama model + base URL (build 40). Model is the tag the user
     /// has actually pulled (`ollama pull <name>`); base URL is the
     /// Ollama daemon endpoint (default 127.0.0.1:11434, overridable
@@ -335,6 +382,7 @@ final class Summarizer {
     private static let kOllamaBaseURL = "daisy.ollamaBaseURL"
     private static let kAgentCLIKind = "daisy.agentCLIKind"
     private static let kAgentCLIPath = "daisy.agentCLIPath"
+    private static let kCursorAgentPath = "daisy.cursorAgentPath"
     private static let kLMStudioModel = "daisy.lmStudioModel"
     private static let kLMStudioBaseURL = "daisy.lmStudioBaseURL"
 
@@ -356,6 +404,13 @@ final class Summarizer {
             ?? AnthropicAPISummarizer.defaultModelID
         self.openaiModel = UserDefaults.standard.string(forKey: Self.kOpenAIModel)
             ?? OpenAIAPISummarizer.defaultModelID
+        let connectionPreferences = SummaryConnectionPreferences()
+        self.openAIConnectionMethod = connectionPreferences.method(for: .openAI)
+        self.openAIAccountModel = connectionPreferences.accountModel(for: .openAI) ?? ""
+        self.cursorConnectionMethod = connectionPreferences.method(for: .cursor)
+        self.cursorModel = connectionPreferences.accountModel(for: .cursor)
+            ?? CursorAgentService.defaultModelID
+        self.cursorAgentPath = UserDefaults.standard.string(forKey: Self.kCursorAgentPath) ?? ""
         self.kimiModel = UserDefaults.standard.string(forKey: Self.kKimiModel)
             ?? KimiAPISummarizer.defaultModelID
         self.ollamaModel = UserDefaults.standard.string(forKey: Self.kOllamaModel)
@@ -399,7 +454,18 @@ final class Summarizer {
         case .anthropic:
             return "Anthropic API key is missing. Add it in Settings → Summary Provider."
         case .openai:
+            if openAIConnectionMethod == .account {
+                return String(localized: "Connect your ChatGPT account in Settings → Summary.")
+            }
             return "OpenAI API key is missing. Add it in Settings → Summary Provider."
+        case .cursor:
+            if CursorAgentService.resolveExecutable(override: cursorAgentPath) == nil {
+                return String(localized: "Cursor Agent CLI isn't installed. Install `cursor-agent`, then return to Settings → Summary.")
+            }
+            if cursorConnectionMethod == .account {
+                return String(localized: "Connect your Cursor account in Settings → Summary.")
+            }
+            return String(localized: "Cursor API key is missing. Add it in Settings → Summary Provider.")
         case .kimi:
             return "Kimi API key is missing. Add it in Settings → Summary Provider."
         case .ollama:
@@ -541,7 +607,7 @@ final class Summarizer {
     var providerIsEffectivelyLocal: Bool {
         switch providerKind {
         case .appleIntelligence: return true
-        case .anthropic, .openai, .kimi: return false
+        case .anthropic, .openai, .cursor, .kimi: return false
         case .ollama: return Self.isLoopbackURL(URL(string: ollamaBaseURL))
         case .lmStudio: return Self.isLoopbackURL(URL(string: lmStudioBaseURL))
         case .mcp:
@@ -577,7 +643,23 @@ final class Summarizer {
         case .anthropic:
             return AnthropicAPISummarizer(model: anthropicModel)
         case .openai:
+            // Keep the established API adapter exactly as-is. Only the
+            // explicit account selection routes through App Server.
+            if openAIConnectionMethod == .account {
+                return CodexAppServerSummarizer(
+                    model: openAIAccountModel,
+                    executableOverride: agentCLIPath
+                )
+            }
             return OpenAIAPISummarizer(model: openaiModel)
+        case .cursor:
+            return CursorAgentSummarizer(
+                model: cursorModel,
+                apiKey: cursorConnectionMethod == .apiKey
+                    ? (KeychainStore.get(account: SecretKey.cursorAPIKey) ?? "")
+                    : nil,
+                executableOverride: cursorAgentPath
+            )
         case .kimi:
             return KimiAPISummarizer(model: kimiModel)
         case .ollama:
