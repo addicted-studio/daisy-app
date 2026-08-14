@@ -48,6 +48,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     /// the Ollama / LM Studio / llama.cpp presets that used to live
     /// here — those are now their own first-class providers.
     case mcp
+    /// A coding-agent CLI the user already has signed in — Claude Code
+    /// or Codex. No API key: it runs on their Claude / ChatGPT
+    /// subscription. The transcript still leaves the Mac (see
+    /// `privacyTag`), and billing is the user's plan, not ours to
+    /// promise — see `AgentCLISummarizer`.
+    case agentCLI
 
     var displayName: String {
         switch self {
@@ -58,6 +64,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .ollama: return String(localized: "Ollama (local)")
         case .lmStudio: return String(localized: "LM Studio (local)")
         case .mcp: return String(localized: "Custom MCP server (advanced)")
+        case .agentCLI: return String(localized: "Claude Code / Codex (your subscription)")
         }
     }
 
@@ -70,9 +77,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .ollama: return String(localized: "Ollama")
         case .lmStudio: return String(localized: "LM Studio")
         case .mcp: return String(localized: "MCP")
+        case .agentCLI: return String(localized: "Agent CLI")
         }
     }
 
+    /// NOT local for `.agentCLI`: the request is relayed by a CLI on the
+    /// user's Mac, but the inference happens at Anthropic or OpenAI.
     var isLocal: Bool {
         self == .appleIntelligence || self == .ollama || self == .lmStudio || self == .mcp
     }
@@ -103,6 +113,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
             return String(localized: "Sent to your local LM Studio on 127.0.0.1 — stays on your Mac.")
         case .mcp:
             return String(localized: "Sent to your MCP server — stays local if it's on 127.0.0.1.")
+        case .agentCLI:
+            // Says "your plan's limits" rather than "free": headless runs
+            // have been reported billing as metered API usage when the
+            // account also has API access, and a summary provider must
+            // not be the thing that surprises someone with a bill.
+            return String(localized: "Sent to Anthropic or OpenAI by the CLI on your Mac, on your subscription — counts against your plan's limits.")
         }
     }
 

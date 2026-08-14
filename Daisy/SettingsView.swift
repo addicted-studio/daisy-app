@@ -178,6 +178,10 @@ struct SettingsView: View {
     /// it should be visible.
     @Bindable private var endOfDay = EndOfDaySummaries.shared
     @State private var lmStudioLoadedModels: [String] = []
+    /// Where the selected agent CLI was found, or nil when it isn't
+    /// installed. Filled by a `.task` (the lookup can spawn a login
+    /// shell, so it must not run during render).
+    @State private var resolvedAgentPath: String?
     @Bindable private var nav = AppNavigation.shared
 
     var body: some View {
@@ -2219,6 +2223,64 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
             }
 
+        case .agentCLI:
+            Picker("Agent", selection: $summarizer.agentCLIKind) {
+                ForEach(AgentCLIKind.allCases, id: \.self) { agent in
+                    Text(agent.displayName).tag(agent)
+                }
+            }
+            .pickerStyle(.menu)
+            // Resolve OFF the render path: the last-resort lookup spawns
+            // a login shell (to see version managers), and doing that on
+            // every SwiftUI render would be both slow and a main-thread
+            // hazard. Re-runs when the agent or the override changes.
+            .task(id: "\(summarizer.agentCLIKind.rawValue)|\(summarizer.agentCLIPath)") {
+                let probe = AgentCLISummarizer(
+                    agent: summarizer.agentCLIKind,
+                    executableOverride: summarizer.agentCLIPath
+                )
+                resolvedAgentPath = nil
+                let found = await Task.detached { probe.resolvedExecutable() }.value
+                // `.task(id:)` cancels this task when the agent or path
+                // changes, but a detached child keeps running — without
+                // this guard a slow probe for the PREVIOUS agent could
+                // land after the new one and show the wrong binary.
+                guard !Task.isCancelled else { return }
+                resolvedAgentPath = found
+            }
+            // Found-or-not is the whole configuration story here, and a
+            // GUI app's PATH excludes ~/.local/bin and Homebrew — the
+            // single likeliest reason this reads as broken for someone
+            // whose CLI works fine in Terminal. So say which it is.
+            if let found = resolvedAgentPath {
+                Label {
+                    Text("Found at \(found)")
+                } icon: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.daisySuccess)
+                }
+                .font(.caption)
+            } else {
+                Label {
+                    Text("Daisy can't find this command. Install it and sign in (run it once in Terminal), or paste its full path below — `which \(summarizer.agentCLIKind.executableName)` in Terminal prints it.")
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.daisyWarning)
+                }
+                .font(.caption)
+            }
+            // Always present, never conditional on the status above: a
+            // field that vanishes the moment the path resolves can't be
+            // corrected or cleared, and would yank focus mid-typing as
+            // soon as what you typed started working.
+            LabeledContent("Path (optional)") {
+                TextField("", text: $summarizer.agentCLIPath, prompt: Text("/Users/you/.local/bin/\(summarizer.agentCLIKind.executableName)"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity)
+            }
+
         case .mcp:
             // `prompt:` (placeholder) + `labelsHidden()` so Form
             // doesn't promote the title to a trailing accessory and
@@ -2281,6 +2343,12 @@ struct SettingsView: View {
         case .mcp:
             return settings.mcpSummarizerURL.isEmpty
                 || settings.mcpSummarizerToolName.isEmpty
+        case .agentCLI:
+            // Nothing to fill in when the CLI is where we can find it —
+            // the whole point is that there's no key to paste. Reads the
+            // cached probe, never re-runs it: the lookup can spawn a
+            // login shell and this is called during render.
+            return resolvedAgentPath == nil
         }
     }
 
@@ -2307,6 +2375,8 @@ struct SettingsView: View {
             return String(localized: "Daisy calls your local LM Studio server over its OpenAI-compatible `/v1/chat/completions` REST. No API key, no network egress — everything stays on your Mac. Load a model in the LM Studio app and click Developer → Start. The API identifier in this picker must match the one LM Studio shows under the loaded model. Free.")
         case .mcp:
             return String(localized: "Advanced — for users running a custom MCP server (Python shim, `mcp-ollama` wrapper, etc.). Daisy connects over HTTP+SSE and calls one tool per summary. For stock Ollama or LM Studio use their dedicated providers above instead — those work without an MCP shim.")
+        case .agentCLI:
+            return String(localized: "Uses the Claude Code or Codex command you already have signed in — no API key. The transcript is sent to Anthropic or OpenAI by that CLI, under your own account, and counts against your subscription's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs the agent with tools disabled, in an empty temporary folder.")
         }
     }
 
