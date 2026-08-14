@@ -410,7 +410,7 @@ nonisolated enum TokenCostEstimator {
         // `.agentCLI` joins them: the agent CLI reports no per-request
         // usage we can price, and the spend lands on the user's
         // subscription rather than a metered key.
-        case .appleIntelligence, .ollama, .lmStudio, .mcp, .agentCLI:
+        case .appleIntelligence, .cursor, .ollama, .lmStudio, .mcp, .agentCLI:
             return nil
         }
         return nil
@@ -429,7 +429,7 @@ final class TokenLedger {
     /// having thrown the data away. Pruning is silent by design but
     /// bounded and documented here; at ~a handful of buckets per active
     /// day the whole store is tens of KB.
-    static let retentionDays = 90
+    nonisolated static let retentionDays = 90
 
     /// The display window: the last `windowDays` days, today included.
     ///
@@ -829,7 +829,7 @@ final class TokenLedger {
     /// rather than showing a number we'd be inventing.
     nonisolated static func isBilled(_ kind: SummaryProviderKind) -> Bool {
         switch kind {
-        case .anthropic, .openai, .kimi: return true
+        case .anthropic, .openai, .cursor, .kimi: return true
         case .appleIntelligence, .ollama, .lmStudio, .mcp, .agentCLI: return false
         }
     }

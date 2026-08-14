@@ -50,8 +50,9 @@
 //
 //  2. THIS IS AN AGENT, NOT A MODEL. Left alone, Codex can read files
 //     and run commands, so every run happens in an empty temporary
-//     directory with tools disabled — WHEN the installed version has a
-//     flag for that (see point 5). Containment is not total either way:
+//     directory with read-only sandboxing. If the installed version cannot
+//     prove that capability, Daisy refuses to run it. Containment is not
+//     total either way:
 //     HOME is inherited, because that's where the CLI keeps the
 //     credentials this whole feature depends on, so user-scope config
 //     still loads.
@@ -78,19 +79,16 @@
 //     into a 100%-failure feature. Two of the flags in the first draft of
 //     this file WERE wrong, taken from docs that didn't match the shipped
 //     binaries. The probe is cached per binary path for the process
-//     lifetime, and a failed probe degrades to the smallest command line
-//     that can work rather than to nothing.
+//     lifetime, and a failed probe blocks the run with an update message.
 //
 
-import Darwin
 import Foundation
-import os
 
 /// Which agent CLI to drive. A single case today (see the header for why
 /// Claude Code isn't one of them) but kept as an enum: the settings key
 /// already persists it, and the next permitted agent should be an added
 /// case rather than a rewrite.
-enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
+nonisolated enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     case codex
 
     var displayName: String {
@@ -106,13 +104,18 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
         }
     }
 
-    /// Where each installer puts the binary. Checked in order before we
-    /// fall back to asking a login shell.
+    /// Where first-party apps and common installers put the binary.
+    /// Resolution is intentionally path-only: executing a login shell just
+    /// to find a client would violate the runner's no-shell boundary.
     var likelyPaths: [String] {
         let home = NSHomeDirectory()
         switch self {
         case .codex:
             return [
+                "/Applications/ChatGPT.app/Contents/Resources/codex",
+                "/Applications/Codex.app/Contents/Resources/codex",
+                "\(home)/Applications/ChatGPT.app/Contents/Resources/codex",
+                "\(home)/Applications/Codex.app/Contents/Resources/codex",
                 "\(home)/.local/bin/codex",
                 "/opt/homebrew/bin/codex",
                 "/usr/local/bin/codex",
@@ -147,23 +150,23 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
     ///  • `-o/--output-last-message` — writes just the final answer to a
     ///    file, keeping us off a progress log.
     ///  • sandbox / output format — nice to have, not load-bearing.
-    func arguments(lastMessageFile: URL, help: AgentCLIHelp) -> [String] {
-        var args: [String] = []
-        if let subcommand { args.append(subcommand) }
+    func arguments(help: AgentCLIHelp) -> [AgentProcessRunner.Argument] {
+        var args: [AgentProcessRunner.Argument] = []
+        if let subcommand { args.append(.literal(subcommand)) }
 
         switch self {
         case .codex:
             if help.has("--skip-git-repo-check") {
-                args.append("--skip-git-repo-check")
+                args.append(.literal("--skip-git-repo-check"))
             }
             if help.has("--sandbox") {
-                args += ["--sandbox", "read-only"]
+                args += [.literal("--sandbox"), .literal("read-only")]
             }
             if help.has("--output-last-message") {
-                args += ["--output-last-message", lastMessageFile.path]
+                args += [.literal("--output-last-message"), .temporaryFile("answer.txt")]
             }
             // Positional `-` = read the prompt from stdin.
-            args.append("-")
+            args.append(.literal("-"))
         }
         return args
     }
@@ -174,14 +177,6 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
         help.has("--output-last-message")
     }
 
-    /// True when we could NOT restrict the agent's tools on this
-    /// install. Not fatal, but the caller logs it: an agent with tools
-    /// is a bigger thing than the user asked for.
-    func toolsUnrestricted(help: AgentCLIHelp) -> Bool {
-        switch self {
-        case .codex: return !help.has("--sandbox")
-        }
-    }
 }
 
 /// What the installed binary's `--help` says it accepts.
@@ -190,14 +185,13 @@ enum AgentCLIKind: String, Codable, CaseIterable, Sendable {
 /// option grammars properly would be a project, and the question we ask
 /// is narrow — "does the literal string `--skip-git-repo-check` appear
 /// in this binary's help?" — where a substring is exactly right.
-struct AgentCLIHelp: Sendable {
+nonisolated struct AgentCLIHelp: Sendable {
     private let text: String
 
     init(text: String) { self.text = text }
 
-    /// Empty help (the probe failed) reports every flag as ABSENT, so we
-    /// fall back to the smallest command line that can work. Better a
-    /// summary with tools left on than a usage error and no summary.
+    /// Empty help (the probe failed) reports every flag as absent. The
+    /// caller refuses to run because safe containment cannot be proven.
     static let unknown = AgentCLIHelp(text: "")
 
     func has(_ flag: String) -> Bool {
@@ -220,12 +214,7 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
     /// retry — and a long meeting is a big prompt. Still bounded, so a
     /// hung agent can't wedge the finalize pipeline.
     private static let timeout: TimeInterval = 180
-    /// Hard cap on the login-shell lookup. A `.zshrc` with nvm/conda/mise
-    /// routinely takes seconds; forever is not an option on any path
-    /// that can reach the main actor.
-    private static let shellProbeTimeout: TimeInterval = 3
-
-    private let log = Logger(subsystem: "app.essazanov.Daisy", category: "AgentCLI")
+    private static let helpProbeTimeout: TimeInterval = 3
 
     init(agent: AgentCLIKind, executableOverride: String = "") {
         self.agent = agent
@@ -234,63 +223,34 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
 
     // MARK: - Locating the binary
 
-    /// Resolve the executable, or `nil` when it isn't installed where we
-    /// can see it. BLOCKING (the last resort spawns a login shell) —
-    /// never call this from the main actor; see `isReady`.
+    /// Resolve the executable from a known path, or `nil` when it isn't
+    /// installed where Daisy can safely see it. No shell is invoked.
     func resolvedExecutable() -> String? {
         let fm = FileManager.default
         let override = executableOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         if !override.isEmpty {
-            return fm.isExecutableFile(atPath: override) ? override : nil
+            let url = URL(fileURLWithPath: override).standardizedFileURL
+            return url.lastPathComponent == agent.executableName
+                && fm.isExecutableFile(atPath: url.path) ? url.path : nil
         }
         for path in agent.likelyPaths where fm.isExecutableFile(atPath: path) {
             return path
         }
-        return Self.whichViaLoginShell(agent.executableName)
-    }
-
-    /// Ask a login shell where the binary is — it sources the user's
-    /// profile and therefore knows about version managers we'd never
-    /// guess. Bounded: a slow profile must not hang the app.
-    private static func whichViaLoginShell(_ name: String) -> String? {
-        let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: shell)
-        process.arguments = ["-lc", "command -v \(name)"]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-
-        let deadline = Date().addingTimeInterval(shellProbeTimeout)
-        while process.isRunning, Date() < deadline {
-            usleep(50_000)
-        }
-        if process.isRunning {
-            process.terminate()
-            return nil
-        }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0,
-              let out = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-              !out.isEmpty,
-              FileManager.default.isExecutableFile(atPath: out)
-        else { return nil }
-        return out
+        return nil
     }
 
     /// `Task.detached` because the lookup blocks and, under this
     /// target's approachable-concurrency setting, a `nonisolated async`
     /// func would otherwise inherit the CALLER's isolation — and the
     /// caller (`Summarizer.refreshAvailability`) is `@MainActor`. That
-    /// would put a login shell on the main thread at every launch.
+    /// keeps filesystem checks off the main thread at launch.
     func isReady() async -> Bool {
         let probe = self
-        return await Task.detached(priority: .utility) {
-            probe.resolvedExecutable() != nil
-        }.value
+        guard let executable = await Task.detached(priority: .utility, operation: {
+            probe.resolvedExecutable()
+        }).value else { return false }
+        let help = await Self.probeHelp(executable: executable, subcommand: agent.subcommand)
+        return help.has("--sandbox") && help.has("--skip-git-repo-check")
     }
 
     // MARK: - Capability probe
@@ -302,42 +262,40 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
     private static let helpCache = HelpCache()
 
     /// Ask the installed binary what it supports. Bounded and
-    /// failure-tolerant: on any error we return `.unknown`, which makes
-    /// every optional flag report absent and the caller falls back to the
-    /// minimal command line.
+    /// failure-tolerant: on any error we return `.unknown`; the caller then
+    /// refuses to start because it cannot prove the required containment.
     private static func probeHelp(executable: String, subcommand: String?) async -> AgentCLIHelp {
         let key = "\(executable)|\(subcommand ?? "")"
         if let cached = helpCache.value(for: key) { return cached }
 
         let help: AgentCLIHelp = await Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = (subcommand.map { [$0] } ?? []) + ["--help"]
-            process.currentDirectoryURL = FileManager.default.temporaryDirectory
+            let runner: AgentProcessRunner
+            do {
+                runner = try AgentProcessRunner(
+                    executable: .codex(URL(fileURLWithPath: executable))
+                )
+            } catch {
+                return .unknown
+            }
+
             var env = ProcessInfo.processInfo.environment
             env["PATH"] = childPath(for: executable)
-            process.environment = env
-
-            let pipe = Pipe()
-            // Some CLIs print help to stderr; take both so a tool that
-            // does isn't misread as having no options at all.
-            process.standardOutput = pipe
-            process.standardError = pipe
-            process.standardInput = FileHandle.nullDevice
-            do { try process.run() } catch { return .unknown }
-
-            // Watchdog BEFORE the read, not after: `readDataToEndOfFile`
-            // blocks until the pipe closes, so a `--help` that hangs
-            // would hang this read forever and a deadline checked
-            // afterwards would never be reached.
-            let deadline = Date().addingTimeInterval(shellProbeTimeout)
-            Thread.detachNewThread {
-                while process.isRunning, Date() < deadline { usleep(50_000) }
-                if process.isRunning { process.terminate() }
+            let args = (subcommand.map { [AgentProcessRunner.Argument.literal($0)] } ?? [])
+                + [.literal("--help")]
+            let request = AgentProcessRunner.Request(
+                arguments: args,
+                stdin: Data(),
+                environment: env,
+                timeout: helpProbeTimeout,
+                stdoutLimit: 64 * 1_024,
+                stderrLimit: 64 * 1_024
+            )
+            guard let result = try? await runner.run(request) else {
+                return .unknown
             }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+            // Some clients print help to stderr.
+            let text = result.stdoutText + "\n" + result.stderrText
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return .unknown
             }
             return AgentCLIHelp(text: text)
@@ -365,8 +323,7 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
 
     /// PATH for the CHILD. The resolved binary's own directory first (a
     /// version manager's shim lives next to its runtime), then the usual
-    /// install prefixes, then the system default. Without this an
-    /// npm-installed `claude` can't find `node` and exits 127.
+    /// install prefixes, then the system default.
     private static func childPath(for executable: String) -> String {
         var parts = [URL(fileURLWithPath: executable).deletingLastPathComponent().path]
         let home = NSHomeDirectory()
@@ -414,49 +371,36 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
         let prompt = system + "\n\n" + user
 
         // Ask the installed binary what it accepts before building the
-        // command line — see `arguments(lastMessageFile:help:)`.
+        // command line. Running without both containment flags is refused:
+        // an account-backed summarizer must never silently become a general
+        // filesystem agent because an older client happens to be installed.
         let help = await Self.probeHelp(executable: executable, subcommand: agent.subcommand)
-        if help.isEmpty {
-            log.warning("\(agent.displayName, privacy: .public): --help probe returned nothing — using the minimal command line")
-        }
-        if agent.toolsUnrestricted(help: help) {
-            log.warning("\(agent.displayName, privacy: .public): this version exposes no flag to restrict tools — the agent runs with its defaults")
+        guard help.has("--sandbox"), help.has("--skip-git-repo-check") else {
+            throw SummaryProviderError.modelUnavailable(
+                provider: agent.displayName,
+                reason: String(localized: "This installed client can’t prove a safe read-only mode. Update it before using account summaries.")
+            )
         }
 
         let output = try await run(executable: executable, prompt: prompt, help: help)
         return try parse(output)
     }
 
-    /// Spawn the agent, write the prompt to stdin, read the answer.
-    ///
-    /// Runs in an EMPTY temporary directory: these CLIs treat the working
-    /// directory as their project context, and pointing one at the user's
-    /// home would hand a summarizer a filesystem.
+    /// Spawn the known client through the shared constrained runner. The
+    /// runner owns stdin piping, the empty 0700 scratch directory, output
+    /// bounds, timeout, cancellation, and cleanup.
     private func run(executable: String, prompt: String, help: AgentCLIHelp) async throws -> String {
-        // Writing to a pipe whose reader has exited raises SIGPIPE, which
-        // kills the process by default. Ignoring it turns that into an
-        // EPIPE error we can handle — and the agent exiting early (not
-        // signed in) while we're still writing a 100 KB prompt is the
-        // most likely first-run failure there is.
-        _ = Self.ignoreSIGPIPEOnce
-
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("daisy-agent-\(UUID().uuidString)", isDirectory: true)
+        let runner: AgentProcessRunner
         do {
-            try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+            runner = try AgentProcessRunner(
+                executable: .codex(URL(fileURLWithPath: executable))
+            )
         } catch {
             throw SummaryProviderError.modelUnavailable(
                 provider: agent.displayName,
-                reason: String(localized: "Couldn’t create a temporary working folder for the agent.")
+                reason: error.localizedDescription
             )
         }
-        defer { try? FileManager.default.removeItem(at: scratch) }
-        let answerFile = scratch.appendingPathComponent("answer.txt")
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = agent.arguments(lastMessageFile: answerFile, help: help)
-        process.currentDirectoryURL = scratch
 
         // Inherit the environment (HOME is where the CLI keeps its
         // credentials) but fix PATH, and strip API keys: with one
@@ -470,182 +414,37 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
         for key in ["OPENAI_API_KEY", "CODEX_API_KEY"] {
             env.removeValue(forKey: key)
         }
-        process.environment = env
 
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardInput = stdinPipe
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        // Collect output through readability handlers rather than a
-        // blocking `readDataToEndOfFile`: if the agent spawns a helper
-        // that inherits the pipe, EOF may never arrive, and a blocked
-        // read inside `withCheckedContinuation` can never be cancelled —
-        // `run()` would hang forever.
-        let sink = OutputSink()
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil
-                sink.markOutEOF()
-            } else {
-                sink.appendOut(data)
-            }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if data.isEmpty {
-                handle.readabilityHandler = nil
-                sink.markErrEOF()
-            } else {
-                sink.appendErr(data)
-            }
-        }
+        let request = AgentProcessRunner.Request(
+            arguments: agent.arguments(help: help),
+            stdin: Data(prompt.utf8),
+            environment: env,
+            removingEnvironmentVariables: ["OPENAI_API_KEY", "CODEX_API_KEY"],
+            timeout: Self.timeout,
+            outputFiles: agent.readsAnswerFromFile(help: help) ? ["answer.txt"] : []
+        )
 
         do {
-            try process.run()
+            let result = try await runner.run(request)
+            if agent.readsAnswerFromFile(help: help),
+               let data = result.outputFiles["answer.txt"] {
+                let answer = String(decoding: data, as: UTF8.self)
+                if !answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return answer
+                }
+            }
+            return result.stdoutText
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            // Do not log the child output: clients can echo a prompt, and a
+            // transcript must never enter Daisy's logs.
             throw SummaryProviderError.modelUnavailable(
                 provider: agent.displayName,
                 reason: error.localizedDescription
             )
         }
-
-        // Write the prompt on a background queue and close stdin so the
-        // agent knows the input is complete. On its own queue because a
-        // prompt bigger than the pipe buffer (a long meeting always is)
-        // would otherwise deadlock — we'd block writing while the agent
-        // blocks on output nobody is draining. `try?`: the throwing
-        // variant turns a dead reader into an error instead of an
-        // uncatchable ObjC exception.
-        let promptData = Data(prompt.utf8)
-        DispatchQueue.global(qos: .userInitiated).async {
-            try? stdinPipe.fileHandleForWriting.write(contentsOf: promptData)
-            try? stdinPipe.fileHandleForWriting.close()
-        }
-
-        let outcome = await Self.wait(for: process, timeout: Self.timeout)
-
-        // Wait for the handlers to report EOF rather than sleeping a
-        // fixed interval and hoping: a guessed drain silently truncates
-        // the tail of the JSON, which surfaces as a parse failure. Still
-        // bounded — if a grandchild holds the pipe open, EOF never
-        // comes and we take what we have.
-        let drainDeadline = Date().addingTimeInterval(1.5)
-        while !sink.sawBothEOF, Date() < drainDeadline {
-            do { try await Task.sleep(for: .milliseconds(40)) } catch { break }
-        }
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-        let err = sink.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        switch outcome {
-        case .cancelled:
-            throw CancellationError()
-        case .timedOut:
-            log.error("\(agent.displayName, privacy: .public) hit the \(Int(Self.timeout), privacy: .public)s limit — killed")
-            throw SummaryProviderError.modelUnavailable(
-                provider: agent.displayName,
-                reason: String(localized: "The agent didn’t finish within 3 minutes and was stopped. Try again, or pick another provider for long meetings.")
-            )
-        case .exited(let status):
-            guard status == 0 else {
-                // WHICH stream carries the reason differs by agent, and
-                // getting this wrong makes the most common first-run
-                // failure undiagnosable. Claude Code prints "Not logged
-                // in · Please run /login" to STDOUT and exits 1 with an
-                // empty stderr; Codex streams its whole progress log to
-                // stderr, so the failure is at the END, not the start.
-                let stdoutText = sink.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
-                let detail = err.isEmpty ? stdoutText : String(err.suffix(300))
-                log.error("\(agent.displayName, privacy: .public) exited \(status, privacy: .public): \(detail, privacy: .private)")
-                throw SummaryProviderError.modelUnavailable(
-                    provider: agent.displayName,
-                    reason: detail.isEmpty
-                        ? String(localized: "The agent exited without output. Check that you’re signed in — run it once in Terminal.")
-                        : String(detail.suffix(300))
-                )
-            }
-        }
-
-        if agent.readsAnswerFromFile(help: help),
-           let fileText = try? String(contentsOf: answerFile, encoding: .utf8),
-           !fileText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return fileText
-        }
-        return sink.outputText
     }
-
-    private enum RunOutcome {
-        case exited(Int32)
-        case timedOut
-        case cancelled
-    }
-
-    /// Bounded wait that also honours task cancellation. Kills the agent
-    /// in both the timeout and the cancel case: an abandoned CLI keeps
-    /// burning the user's subscription quota.
-    ///
-    /// `Task.sleep` (throwing) rather than `try?` — a cancelled `try?`
-    /// sleep returns instantly, turning this into a tight spin that pegs
-    /// a core for the rest of the timeout. That matters because callers
-    /// like `TranscriptPolisher` cancel on their own, much shorter,
-    /// deadlines.
-    private static func wait(for process: Process, timeout: TimeInterval) async -> RunOutcome {
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning {
-            if Task.isCancelled {
-                await kill(process)
-                return .cancelled
-            }
-            if Date() >= deadline {
-                await kill(process)
-                return .timedOut
-            }
-            do {
-                try await Task.sleep(for: .milliseconds(120))
-            } catch {
-                await kill(process)
-                return .cancelled
-            }
-        }
-        return .exited(process.terminationStatus)
-    }
-
-    /// SIGTERM, then SIGKILL if it's still alive. `Process.terminate`
-    /// alone can leave a node runtime running.
-    ///
-    /// `async` with `Task.sleep`, NOT a `usleep` spin: under this
-    /// target's approachable-concurrency setting a `nonisolated async`
-    /// function inherits the caller's isolation, and the caller here is
-    /// ultimately `@MainActor` — a blocking grace period would freeze
-    /// the UI for a second on every timeout or cancel. A cancelled sleep
-    /// throws, and there the right answer is to stop being polite and
-    /// SIGKILL immediately.
-    private static func kill(_ process: Process) async {
-        guard process.isRunning else { return }
-        process.terminate()
-        let deadline = Date().addingTimeInterval(1.0)
-        while process.isRunning, Date() < deadline {
-            do {
-                try await Task.sleep(for: .milliseconds(50))
-            } catch {
-                break
-            }
-        }
-        if process.isRunning {
-            Darwin.kill(process.processIdentifier, SIGKILL)
-        }
-    }
-
-    /// One-shot `signal(SIGPIPE, SIG_IGN)`. A `static let` runs exactly
-    /// once, lazily, the first time we're about to write to a pipe.
-    private static let ignoreSIGPIPEOnce: Void = {
-        signal(SIGPIPE, SIG_IGN)
-    }()
 
     // MARK: - Response parsing
 
@@ -662,52 +461,5 @@ nonisolated struct AgentCLISummarizer: SummaryProvider {
                 message: error.localizedDescription
             )
         }
-    }
-}
-
-/// Thread-safe accumulator for the child's stdout/stderr. The readability
-/// handlers fire on an arbitrary queue, so the buffers need a lock.
-private final class OutputSink: @unchecked Sendable {
-    /// Codex streams a progress log for the whole run; without a cap a
-    /// three-minute summary would buffer it all for the sake of the last
-    /// few hundred characters we actually use.
-    private static let maxBytes = 256 * 1024
-
-    private let lock = NSLock()
-    private var out = Data()
-    private var err = Data()
-    private var outEOF = false
-    private var errEOF = false
-
-    func appendOut(_ data: Data) {
-        lock.lock()
-        out.append(data)
-        if out.count > Self.maxBytes { out.removeFirst(out.count - Self.maxBytes) }
-        lock.unlock()
-    }
-
-    func appendErr(_ data: Data) {
-        lock.lock()
-        err.append(data)
-        if err.count > Self.maxBytes { err.removeFirst(err.count - Self.maxBytes) }
-        lock.unlock()
-    }
-
-    func markOutEOF() { lock.lock(); outEOF = true; lock.unlock() }
-    func markErrEOF() { lock.lock(); errEOF = true; lock.unlock() }
-
-    var sawBothEOF: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return outEOF && errEOF
-    }
-
-    var outputText: String {
-        lock.lock(); defer { lock.unlock() }
-        return String(data: out, encoding: .utf8) ?? ""
-    }
-
-    var errorText: String {
-        lock.lock(); defer { lock.unlock() }
-        return String(data: err, encoding: .utf8) ?? ""
     }
 }

@@ -1,0 +1,288 @@
+//
+//  CursorAgent.swift
+//  Daisy
+//
+//  Constrained adapter for Cursor's separate `cursor-agent` CLI. Cursor's
+//  print mode is still an agent with tools, so every summary runs in an
+//  empty directory with a project-level deny policy. This is defense in
+//  depth, not a claim of total containment: the CLI has no documented flag
+//  that removes every tool, and account credentials require the real HOME.
+//
+
+import Foundation
+
+nonisolated struct CursorAgentStatus: Equatable, Sendable {
+    let account: SummaryAccount
+}
+
+nonisolated protocol CursorAgentServing: Sendable {
+    func status(executableOverride: String) async throws -> CursorAgentStatus?
+    func login(executableOverride: String) async throws
+    func logout(executableOverride: String) async throws
+    func summarize(
+        prompt: String,
+        model: String?,
+        apiKey: String?,
+        executableOverride: String
+    ) async throws -> String
+}
+
+nonisolated struct CursorAgentService: CursorAgentServing, Sendable {
+    static let shared = CursorAgentService()
+
+    static let defaultModelID = "auto"
+    static let executableName = "cursor-agent"
+
+    static var likelyExecutablePaths: [String] {
+        let home = NSHomeDirectory()
+        return [
+            "\(home)/.local/bin/cursor-agent",
+            "\(home)/.cursor/bin/cursor-agent",
+            "/opt/homebrew/bin/cursor-agent",
+            "/usr/local/bin/cursor-agent",
+            "/usr/bin/cursor-agent",
+        ]
+    }
+
+    static func resolveExecutable(override: String = "") -> URL? {
+        let fm = FileManager.default
+        let explicit = override.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !explicit.isEmpty {
+            let url = URL(fileURLWithPath: explicit).standardizedFileURL
+            guard url.lastPathComponent == executableName,
+                  fm.isExecutableFile(atPath: url.path) else { return nil }
+            return url
+        }
+        return likelyExecutablePaths.lazy
+            .map { URL(fileURLWithPath: $0).standardizedFileURL }
+            .first { fm.isExecutableFile(atPath: $0.path) }
+    }
+
+    func status(executableOverride: String) async throws -> CursorAgentStatus? {
+        do {
+            let result = try await run(
+                arguments: [.literal("status")],
+                stdin: Data(),
+                executableOverride: executableOverride,
+                removingEnvironmentVariables: ["CURSOR_API_KEY"],
+                timeout: 15
+            )
+            let text = result.stdoutText + "\n" + result.stderrText
+            let normalized = text.lowercased()
+            if normalized.contains("not authenticated")
+                || normalized.contains("not logged in")
+                || normalized.contains("signed out") {
+                return nil
+            }
+            guard normalized.contains("authenticated")
+                    || normalized.contains("logged in")
+                    || normalized.contains("signed in")
+            else { throw CursorAgentError.invalidStatus }
+
+            let email = Self.firstEmail(in: text)
+            return CursorAgentStatus(
+                account: SummaryAccount(
+                    id: email,
+                    email: email,
+                    displayName: nil,
+                    plan: nil
+                )
+            )
+        } catch let error as AgentProcessRunnerError {
+            if case .exited(_, let detail) = error,
+               detail?.localizedCaseInsensitiveContains("isn’t signed in") == true {
+                return nil
+            }
+            throw Self.map(error)
+        }
+    }
+
+    func login(executableOverride: String) async throws {
+        do {
+            _ = try await run(
+                arguments: [.literal("login")],
+                stdin: Data(),
+                executableOverride: executableOverride,
+                removingEnvironmentVariables: ["CURSOR_API_KEY"],
+                timeout: 300
+            )
+        } catch let error as AgentProcessRunnerError {
+            throw Self.map(error)
+        }
+    }
+
+    func logout(executableOverride: String) async throws {
+        do {
+            _ = try await run(
+                arguments: [.literal("logout")],
+                stdin: Data(),
+                executableOverride: executableOverride,
+                removingEnvironmentVariables: ["CURSOR_API_KEY"],
+                timeout: 30
+            )
+        } catch let error as AgentProcessRunnerError {
+            throw Self.map(error)
+        }
+    }
+
+    func summarize(
+        prompt: String,
+        model: String?,
+        apiKey: String?,
+        executableOverride: String
+    ) async throws -> String {
+        var arguments: [AgentProcessRunner.Argument] = [
+            .literal("--print"),
+            .literal("--output-format"),
+            .literal("json"),
+        ]
+        if let model,
+           !model.isEmpty,
+           model.localizedCaseInsensitiveCompare(Self.defaultModelID) != .orderedSame {
+            arguments += [.literal("--model"), .literal(model)]
+        }
+
+        var environment = ProcessInfo.processInfo.environment
+        let removingAPIKey: Set<String>
+        if let apiKey, !apiKey.isEmpty {
+            // Cursor documents the environment variable as the preferred
+            // automation path. The secret never appears in argv.
+            environment["CURSOR_API_KEY"] = apiKey
+            removingAPIKey = []
+        } else {
+            removingAPIKey = ["CURSOR_API_KEY"]
+        }
+
+        do {
+            let result = try await run(
+                arguments: arguments,
+                stdin: Data(prompt.utf8),
+                executableOverride: executableOverride,
+                environment: environment,
+                removingEnvironmentVariables: removingAPIKey,
+                timeout: 180,
+                inputFiles: [".cursor/cli.json": Self.denyPolicy]
+            )
+            guard !result.stdoutWasTruncated else { throw CursorAgentError.responseTooLarge }
+            let envelope = try JSONDecoder().decode(CursorResultEnvelope.self, from: result.stdout)
+            guard envelope.type == "result",
+                  envelope.subtype == "success",
+                  envelope.isError != true,
+                  let answer = envelope.result,
+                  !answer.isEmpty else {
+                throw CursorAgentError.invalidResponse
+            }
+            return answer
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as CursorAgentError {
+            throw error
+        } catch let error as AgentProcessRunnerError {
+            throw Self.map(error)
+        } catch {
+            throw CursorAgentError.invalidResponse
+        }
+    }
+
+    private func run(
+        arguments: [AgentProcessRunner.Argument],
+        stdin: Data,
+        executableOverride: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        removingEnvironmentVariables: Set<String> = [],
+        timeout: TimeInterval,
+        inputFiles: [String: Data] = [:]
+    ) async throws -> AgentProcessRunner.Result {
+        guard let executable = Self.resolveExecutable(override: executableOverride) else {
+            throw CursorAgentError.notInstalled
+        }
+        var childEnvironment = environment
+        childEnvironment["PATH"] = Self.childPath(for: executable.path)
+        let runner = try AgentProcessRunner(executable: .cursorAgent(executable))
+        return try await runner.run(
+            AgentProcessRunner.Request(
+                arguments: arguments,
+                stdin: stdin,
+                environment: childEnvironment,
+                removingEnvironmentVariables: removingEnvironmentVariables,
+                timeout: timeout,
+                stdoutLimit: 512 * 1_024,
+                stderrLimit: 128 * 1_024,
+                inputFiles: inputFiles
+            )
+        )
+    }
+
+    private static func childPath(for executable: String) -> String {
+        let directory = URL(fileURLWithPath: executable).deletingLastPathComponent().path
+        let inherited = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+        return ([directory, NSHomeDirectory() + "/.local/bin", NSHomeDirectory() + "/.cursor/bin", "/opt/homebrew/bin", "/usr/local/bin", inherited])
+            .joined(separator: ":")
+    }
+
+    private static let denyPolicy = Data(#"{"permissions":{"allow":[],"deny":["Shell(*)","Read(**)","Read(/**)","Write(**)","Write(/**)","Mcp(*:*)"]}}"#.utf8)
+
+    private static func firstEmail(in text: String) -> String? {
+        text.split(whereSeparator: \Character.isWhitespace)
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "<>()[]{}\",;")) }
+            .first { token in
+                let parts = token.split(separator: "@")
+                return parts.count == 2 && parts.allSatisfy { !$0.isEmpty }
+            }
+    }
+
+    private static func map(_ error: AgentProcessRunnerError) -> CursorAgentError {
+        switch error {
+        case .timedOut(let seconds): return .timedOut(seconds: seconds)
+        case .exited(_, let detail) where detail?.localizedCaseInsensitiveContains("usage limit") == true:
+            return .limitReached
+        case .exited(_, let detail) where detail?.localizedCaseInsensitiveContains("isn’t signed in") == true:
+            return .signedOut
+        default: return .process(error.localizedDescription)
+        }
+    }
+}
+
+private nonisolated struct CursorResultEnvelope: Decodable {
+    let type: String
+    let subtype: String?
+    let isError: Bool?
+    let result: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case type, subtype, result
+        case isError = "is_error"
+    }
+}
+
+nonisolated enum CursorAgentError: LocalizedError, Equatable {
+    case notInstalled
+    case signedOut
+    case limitReached
+    case invalidStatus
+    case invalidResponse
+    case responseTooLarge
+    case timedOut(seconds: TimeInterval)
+    case process(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notInstalled:
+            return String(localized: "Cursor Agent CLI isn't installed.")
+        case .signedOut:
+            return String(localized: "The Cursor account isn't signed in.")
+        case .limitReached:
+            return String(localized: "The Cursor usage limit has been reached. Try again after it resets.")
+        case .invalidStatus:
+            return String(localized: "Cursor returned an unrecognized account status.")
+        case .invalidResponse:
+            return String(localized: "Cursor returned an invalid response.")
+        case .responseTooLarge:
+            return String(localized: "Cursor returned more data than Daisy can safely process.")
+        case .timedOut(let seconds):
+            return String(localized: "Cursor didn't finish within \(Int(seconds)) seconds and was stopped.")
+        case .process(let message):
+            return message
+        }
+    }
+}
