@@ -48,11 +48,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
     /// the Ollama / LM Studio / llama.cpp presets that used to live
     /// here — those are now their own first-class providers.
     case mcp
-    /// A coding-agent CLI the user already has signed in — Claude Code
-    /// or Codex. No API key: it runs on their Claude / ChatGPT
-    /// subscription. The transcript still leaves the Mac (see
-    /// `privacyTag`), and billing is the user's plan, not ours to
-    /// promise — see `AgentCLISummarizer`.
+    /// The Codex CLI the user already has signed in. No API key: it runs
+    /// on their ChatGPT subscription. The transcript still leaves the Mac
+    /// (see `privacyTag`), and billing is the user's plan, not ours to
+    /// promise. Claude Code is deliberately NOT an option here —
+    /// Anthropic forbids third parties routing requests through consumer
+    /// plan credentials; see `AgentCLISummarizer`'s header.
     case agentCLI
 
     var displayName: String {
@@ -64,7 +65,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .ollama: return String(localized: "Ollama (local)")
         case .lmStudio: return String(localized: "LM Studio (local)")
         case .mcp: return String(localized: "Custom MCP server (advanced)")
-        case .agentCLI: return String(localized: "Claude Code / Codex (your subscription)")
+        case .agentCLI: return String(localized: "Codex (your ChatGPT subscription)")
         }
     }
 
@@ -77,12 +78,12 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .ollama: return String(localized: "Ollama")
         case .lmStudio: return String(localized: "LM Studio")
         case .mcp: return String(localized: "MCP")
-        case .agentCLI: return String(localized: "Agent CLI")
+        case .agentCLI: return String(localized: "Codex CLI")
         }
     }
 
     /// NOT local for `.agentCLI`: the request is relayed by a CLI on the
-    /// user's Mac, but the inference happens at Anthropic or OpenAI.
+    /// user's Mac, but the inference happens at OpenAI.
     var isLocal: Bool {
         self == .appleIntelligence || self == .ollama || self == .lmStudio || self == .mcp
     }
@@ -118,7 +119,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
             // have been reported billing as metered API usage when the
             // account also has API access, and a summary provider must
             // not be the thing that surprises someone with a bill.
-            return String(localized: "Sent to Anthropic or OpenAI by the CLI on your Mac, on your subscription — counts against your plan's limits.")
+            return String(localized: "Sent to OpenAI by the Codex CLI on your Mac, on your subscription — counts against your plan's limits.")
         }
     }
 

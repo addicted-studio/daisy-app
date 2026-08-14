@@ -3662,6 +3662,26 @@
         }
       }
     },
+    "Codex (your ChatGPT subscription)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex (ваша подписка ChatGPT)"
+          }
+        }
+      }
+    },
+    "Codex CLI" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Codex CLI"
+          }
+        }
+      }
+    },
     "Copy" : {
       "localizations" : {
         "ru" : {
@@ -11013,6 +11033,16 @@
         }
       }
     },
+    "Sent to OpenAI by the Codex CLI on your Mac, on your subscription — counts against your plan's limits." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправляется в OpenAI через Codex CLI на вашем Mac, по вашей подписке — расходует лимиты вашего плана."
+          }
+        }
+      }
+    },
     "Screenshots (%lld)" : {
       "localizations" : {
         "ru" : {
@@ -12650,6 +12680,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Использует команду Claude Code или Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в Anthropic или OpenAI под вашей учётной записью, расходуя лимиты вашей подписки. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает агента с отключёнными инструментами, в пустой временной папке."
+          }
+        }
+      }
+    },
+    "Uses the Codex command you already have signed in — no API key. The transcript is sent to OpenAI by that CLI, under your own account, and counts against your ChatGPT plan's limits. Note: if your account also has API access, some setups have been reported to bill these runs as metered API usage — check your usage after the first summary. Daisy runs it with tools disabled, in an empty temporary folder. (Claude Code isn't offered: Anthropic doesn't permit third-party apps to route requests through Claude subscription credentials — use the Anthropic API key provider instead.)" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использует команду Codex, в которую вы уже вошли — без API-ключа. Транскрипт отправляет этот CLI в OpenAI под вашей учётной записью, расходуя лимиты вашего плана ChatGPT. Важно: если у вашего аккаунта есть ещё и API-доступ, в некоторых конфигурациях такие запуски тарифицировались как API — проверьте расход после первого саммари. Daisy запускает его с отключёнными инструментами, в пустой временной папке. (Claude Code не предлагается: Anthropic не разрешает сторонним приложениям направлять запросы через учётные данные подписки Claude — используйте провайдер с API-ключом Anthropic.)"
           }
         }
       }
