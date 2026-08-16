@@ -22,6 +22,10 @@ struct HomeView: View {
     /// Which provider is selected right now; the tokens card leads with
     /// its number when it has spend in the window.
     @Bindable var summarizer = Summarizer.shared
+    /// Real subscription windows reported by the Codex App Server. Unlike
+    /// the token card, these are provider-side limits rather than Daisy's
+    /// local accounting.
+    @Bindable private var openAIAccount = OpenAIAccountManager.shared
     @Bindable var nav = AppNavigation.shared
     @Bindable var calendar = CalendarService.shared
     /// Observe Google OAuth state so the upcoming-events section
@@ -43,11 +47,21 @@ struct HomeView: View {
     /// the dismiss button, which only appears once the required permissions
     /// are granted. Hides the block for good on Home.
     @AppStorage("daisy.onboardingDismissed") private var onboardingDismissed = false
+    // Historical key retained so the old meeting-card selection migrates
+    // into the new dashboard-wide selector instead of resetting.
+    @AppStorage("daisy.home.meetingSummaryRange")
+    private var dashboardPeriod: DashboardPeriod = .thirtyDays
+    /// One boundary shared by every calculation in a render. Refreshed on
+    /// launch and activation so widgets cannot disagree around midnight.
+    @State private var dashboardNow = Date()
 
     /// Free space on the volume recordings land on, re-read on appear and
     /// on every foreground activation. nil until the first read — treated
     /// as "plenty", so a failed stat never invents a warning.
     @State private var freeDiskBytes: Int64?
+    /// Agenda selection opens the preparation surface; recording begins only
+    /// from the explicit primary action inside that sheet.
+    @State private var selectedMeeting: DaisyMeeting?
 
 
     var body: some View {
@@ -66,12 +80,13 @@ struct HomeView: View {
             // Cap the content column and centre it, instead of stretching
             // edge-to-edge on wide windows. Was 720 to match the grouped-Form
             // pages; widened to 1040 so the stats row (words/min · total
-            // words · activity heatmap) fits on ONE line with the 26-week
-            // heatmap taking half the width (Egor, 2026-07-14).
+            // words · activity heatmap) fits on one line while the analytics
+            // rail remains wide enough for its densest yearly grid.
             .frame(maxWidth: 1040, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .task {
+            dashboardNow = Date()
             await store.refresh()
             // Rebuild the open-items list now that the session corpus is
             // loaded. MorningBriefStore.prepare also rebuilds, but the day
@@ -87,6 +102,10 @@ struct HomeView: View {
             MorningBriefStore.rescheduleNotification(settings: settings)
             freeDiskBytes = DiskSpace.recordingsVolumeFreeBytes()
         }
+        .task(id: "\(summarizer.openAIConnectionMethod.rawValue)|\(summarizer.agentCLIPath)") {
+            guard summarizer.openAIConnectionMethod == .account else { return }
+            await openAIAccount.refreshStatus()
+        }
         // Re-read on activation: the user very likely left Daisy to go
         // empty the Trash, and a warning that survives the cleanup reads
         // as broken. Cheap — one volume stat, no I/O.
@@ -95,25 +114,69 @@ struct HomeView: View {
                 for: NSApplication.didBecomeActiveNotification
             )
         ) { _ in
+            dashboardNow = Date()
             freeDiskBytes = DiskSpace.recordingsVolumeFreeBytes()
+            if summarizer.openAIConnectionMethod == .account {
+                Task { await openAIAccount.refreshStatus() }
+            }
         }
         .tint(Color.daisyHomeAccent)
+        .sheet(item: $selectedMeeting) { meeting in
+            MeetingPreparationSheet(
+                meeting: meeting,
+                session: session,
+                settings: settings
+            )
+        }
     }
 
     // MARK: - Welcome header
 
-    /// Serif greeting at the very top of Home. Uses Apple's system serif
-    /// (New York) via `.serif` fontDesign. Appends the user's display
-    /// name when set ("Welcome back, Egor"); bare "Welcome back" otherwise.
+    /// Serif greeting at the very top of Home. Its tone follows the time of
+    /// day, while TimelineView advances it at the next boundary even when
+    /// Daisy stays open. The copy remains calm and stable within each part
+    /// of the day instead of changing randomly on every render.
     private var welcomeHeader: some View {
         let name = settings.userDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let greeting = name.isEmpty
-            ? String(localized: "Welcome back")
-            : String(localized: "Welcome back, \(name)")
-        return Text(greeting)
-            .font(.system(.largeTitle, design: .serif).weight(.medium))
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 24)
+        return HStack(alignment: .center, spacing: 16) {
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(welcomeGreeting(at: context.date, name: name))
+                    .font(.system(.largeTitle, design: .serif).weight(.medium))
+                    .foregroundStyle(.primary)
+            }
+
+            Spacer()
+
+            if usage.totalCount > 0 || tokens.hasTrackedSpend {
+                dashboardPeriodPicker
+            }
+        }
+        .padding(.horizontal, 24)
+    }
+
+    private func welcomeGreeting(at date: Date, name: String) -> String {
+        let hour = Calendar.current.component(.hour, from: date)
+        let greeting: String
+        let namedGreeting: String
+
+        switch hour {
+        case 5..<12:
+            greeting = String(localized: "Good morning")
+            namedGreeting = String(localized: "Good morning, \(name)")
+        case 12..<18:
+            greeting = String(localized: "Good afternoon")
+            namedGreeting = String(localized: "Good afternoon, \(name)")
+        case 18..<23:
+            greeting = String(localized: "Good evening")
+            namedGreeting = String(localized: "Good evening, \(name)")
+        default:
+            // A neutral late-hours fallback avoids implying that the person
+            // should be asleep or celebrating work at night.
+            greeting = String(localized: "Welcome back")
+            namedGreeting = String(localized: "Welcome back, \(name)")
+        }
+
+        return name.isEmpty ? greeting : namedGreeting
     }
 
     // MARK: - Onboarding checklist
@@ -382,23 +445,19 @@ struct HomeView: View {
     /// calendar/recordings band) so vertical boundaries align.
     static let columnGap: CGFloat = 16
 
-    /// Home body layout (columns swapped 2026-07-25, per Egor): two
-    /// full-height columns. LEFT = the DayCard (morning lede + agenda +
-    /// open items). RIGHT = activity heatmap, then the fixes/words
-    /// number pair, then recent recordings. (`leftColumn` kept its
-    /// historical name to avoid churn — it now renders on the right.)
+    /// Home body layout: two full-height columns. LEFT = the DayCard and
+    /// recent recordings. RIGHT = local usage / workload analytics. Keeping
+    /// the recordings with the day frees the narrower stats rail for cards
+    /// that share one compact visual rhythm.
     ///
     /// The layout is FIXED regardless of calendar state (Egor 2026-07-22):
     /// no calendar just means the day card shows less inside it — it must
     /// NOT restack the whole screen into one column. The old single-column
     /// fallback made a fresh install (or a permissions-reset release build)
     /// look like a different app.
-    /// Fixed width for the stats column (right): the 26-week heatmap
-    /// grid's natural width + the card's 16pt padding on both sides.
-    /// A 50/50 split left ~100pt of dead space inside the activity
-    /// card on wide windows (Egor, 2026-07-25) — the heatmap grid has
-    /// intrinsic width, so its column should hug it; the day card
-    /// takes everything else.
+    /// Fixed width for the stats column (right): the activity grid's natural
+    /// width + the card's 16pt padding on both sides. The day card takes the
+    /// remaining space instead of leaving dead width inside analytics.
     private static let statsColumnWidth: CGFloat =
         MeetingsHeatmap.defaultGridWidth + 32
 
@@ -412,8 +471,9 @@ struct HomeView: View {
         .padding(.horizontal, 24)
     }
 
-    /// Day column (now LEFT): the onboarding checklist (while setup is
-    /// unfinished) stacked above the day card.
+    /// Day column (LEFT): setup, today's agenda, then recent recordings.
+    /// The recent list moved here from the narrow stats rail so titles get
+    /// the room they need and the right side can remain an analytics column.
     @ViewBuilder
     private var dayColumn: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -421,18 +481,20 @@ struct HomeView: View {
                 onboardingChecklist
             }
             dayCard
+            recentSessionsSection
         }
     }
 
-    /// Stats column (now RIGHT; name is historical): heatmap on top, the
-    /// fixes/words number pair beneath it, then recent recordings. Stats
-    /// hide until there's at least one session so a fresh install isn't
-    /// greeted by zeros.
+    /// Stats column (RIGHT; name is historical): existing activity and AI
+    /// spend plus meeting-time widgets. Stats hide until there is at least
+    /// one recording so a fresh install isn't greeted by a wall of zeros.
     @ViewBuilder
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: 16) {
             if usage.totalCount > 0 {
                 heatmapCard
+                meetingSummaryCards
+                meetingLoadCard
                 HStack(alignment: .top, spacing: Self.columnGap) {
                     fixesCard
                     wordsCard
@@ -442,9 +504,208 @@ struct HomeView: View {
             // Full-width under the number pair rather than squeezed in
             // beside them: the provider name + per-model line needs the
             // horizontal room, and a third ⅓ card would crush all three.
-            if tokens.hasRecentSpend { tokensCard }
-            recentSessionsSection
+            if tokens.hasTrackedSpend { tokensCard }
+            if summarizer.openAIConnectionMethod == .account {
+                chatGPTLimitsCard
+            }
         }
+    }
+
+    private var dashboardPeriodPicker: some View {
+        GlassSegmentedControl(
+            selection: $dashboardPeriod,
+            segments: [
+                .init(value: .sevenDays, title: String(localized: "7 days")),
+                .init(value: .thirtyDays, title: String(localized: "30 days")),
+                .init(value: .ninetyDays, title: String(localized: "90 days")),
+                .init(value: .year, title: String(localized: "1 year")),
+            ],
+            segmentHPadding: 10,
+            segmentVPadding: 5,
+            trackInset: 2
+        )
+        .accessibilityLabel("Period")
+    }
+
+    // MARK: - ChatGPT subscription limits
+
+    @ViewBuilder
+    private var chatGPTLimitsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Weekly limit")
+                    .daisyStatLabel()
+                Spacer()
+                if let plan = openAIAccount.account?.plan, !plan.isEmpty {
+                    Text(plan.capitalized)
+                        .daisyStatLabel()
+                }
+            }
+
+            if let limits = openAIAccount.rateLimit {
+                let buckets = displayedRateLimitBuckets(limits)
+                if buckets.isEmpty {
+                    Text("OpenAI didn't return limit windows for this plan.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(Array(buckets.enumerated()), id: \.element.id) { index, bucket in
+                        if index > 0 { fullCardDivider }
+                        chatGPTLimitBucket(bucket)
+                    }
+                }
+            } else {
+                chatGPTLimitEmptyState
+            }
+        }
+        .meetingDashboardCard()
+    }
+
+    @ViewBuilder
+    private func chatGPTLimitBucket(_ bucket: CodexRateLimitBucket) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let primary = bucket.primary {
+                chatGPTLimitWindow(primary, bucket: bucket)
+            }
+            if let secondary = bucket.secondary {
+                chatGPTLimitWindow(secondary, bucket: bucket)
+            }
+        }
+    }
+
+    /// App Server reports metered pools, not one allowance per selected
+    /// model. Sol, Terra and Luna draw from the general `codex` pool while
+    /// Spark has a separate pool. Home shows only the pool used by the current
+    /// selection and names that selection in the row; switching among the
+    /// shared models changes the label, not the underlying percentage.
+    private func displayedRateLimitBuckets(
+        _ limits: CodexRateLimitInfo
+    ) -> [CodexRateLimitBucket] {
+        let buckets = limits.buckets.isEmpty
+            ? legacyRateLimitBuckets(limits)
+            : limits.buckets
+        guard buckets.count > 1 else { return buckets }
+
+        let selectedIsSpark = summarizer.openAIAccountModel
+            .localizedCaseInsensitiveContains("spark")
+        if let matching = buckets.first(where: { bucket in
+            isSparkRateLimitBucket(bucket) == selectedIsSpark
+        }) {
+            return [matching]
+        }
+        return [buckets[0]]
+    }
+
+    private func rateLimitModelLabel(_ bucket: CodexRateLimitBucket) -> String {
+        let selected = summarizer.openAIAccountModel
+        guard !selected.isEmpty else { return bucket.name }
+        if let model = openAIAccount.availableModels.first(where: { $0.id == selected }) {
+            return model.displayName
+        }
+
+        return selected
+            .split(separator: "-")
+            .enumerated()
+            .map { index, component in
+                index == 0 ? component.uppercased() : component.capitalized
+            }
+            .joined(separator: "-")
+    }
+
+    private func isSparkRateLimitBucket(_ bucket: CodexRateLimitBucket) -> Bool {
+        "\(bucket.id) \(bucket.name)".localizedCaseInsensitiveContains("spark")
+    }
+
+    private func chatGPTLimitWindow(
+        _ window: CodexRateLimitWindow,
+        bucket: CodexRateLimitBucket
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text(rateLimitModelLabel(bucket))
+                    .font(.title.weight(.semibold))
+                    .foregroundStyle(Color.daisyTextPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if bucket.isReached {
+                    Text("Limit reached")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.daisyWarning)
+                }
+                Spacer()
+                Text(String(localized: "\(max(0, 100 - window.usedPercent))% remaining"))
+                    .daisyStatLabel()
+                    .monospacedDigit()
+            }
+
+            ProgressView(value: Double(window.usedPercent), total: 100)
+                .progressViewStyle(.linear)
+                .tint(window.usedPercent >= 90 ? Color.daisyWarning : Color.daisyHomeAccent)
+
+            if let reset = window.resetsAt {
+                Text(rateLimitResetLabel(reset))
+                    .daisyStatLabel()
+                    .monospacedDigit()
+                    .help(reset.formatted(date: .abbreviated, time: .shortened))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var chatGPTLimitEmptyState: some View {
+        switch openAIAccount.accountState {
+        case .connecting:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Refreshing limits…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .connected(_), .limitReached(_):
+            Text("Limit data is temporarily unavailable. Daisy will refresh it when you return to the app.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        default:
+            Button {
+                nav.openInSettings(.summary)
+            } label: {
+                HStack(spacing: 8) {
+                    Text("Connect your ChatGPT account to see subscription limits.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func legacyRateLimitBuckets(_ limits: CodexRateLimitInfo) -> [CodexRateLimitBucket] {
+        guard let used = limits.usedPercent else { return [] }
+        return [
+            CodexRateLimitBucket(
+                id: "openai",
+                name: String(localized: "OpenAI"),
+                primary: CodexRateLimitWindow(
+                    usedPercent: used,
+                    resetsAt: limits.resetsAt,
+                    durationMinutes: nil
+                ),
+                secondary: nil,
+                isReached: limits.isReached
+            )
+        ]
+    }
+
+    private func rateLimitResetLabel(_ reset: Date) -> String {
+        let relative = RelativeDateTimeFormatter()
+        relative.unitsStyle = .short
+        let value = relative.localizedString(for: reset, relativeTo: Date())
+        return String(localized: "Resets \(value)")
     }
 
     /// The unified "your day" card — lede + agenda (with inline Prep +
@@ -455,8 +716,8 @@ struct HomeView: View {
             events: displayedEvents,
             isTomorrow: showingTomorrow,
             settings: settings,
-            onStartMeeting: { event in
-                Task { await session.startFromMeeting(event) }
+            onOpenMeeting: { event in
+                selectedMeeting = event
             }
         )
     }
@@ -489,10 +750,11 @@ struct HomeView: View {
     /// replacements / voice-polish changes). Counters start at zero on
     /// this build — they can't be backfilled.
     private var fixesCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(usage.totalFixes.formatted(.number))
+        let stats = usage.snapshot(period: dashboardPeriod, endingAt: dashboardNow)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(stats.totalFixes.formatted(.number))
                 .font(.title.weight(.semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.daisyTextPrimary)
             Text("Fixes made by Daisy")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -502,18 +764,14 @@ struct HomeView: View {
                 .frame(height: 1)
                 .padding(.horizontal, -16)
                 .padding(.vertical, 4)
-            HStack(spacing: 6) {
-                Text(usage.totalDictionaryFixes.formatted(.number))
-                Text("Dictionary")
-                Spacer()
-            }
-            .daisyStatLabel()
-            HStack(spacing: 6) {
-                Text(usage.totalPolishedWords.formatted(.number))
-                Text("Voice polish")
-                Spacer()
-            }
-            .daisyStatLabel()
+            smallMeetingMetric(
+                value: stats.totalDictionaryFixes.formatted(.number),
+                label: String(localized: "Dictionary")
+            )
+            smallMeetingMetric(
+                value: stats.totalPolishedWords.formatted(.number),
+                label: String(localized: "Voice polish")
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
@@ -522,10 +780,11 @@ struct HomeView: View {
 
     /// Combined words card: total words big, dictation words/min beneath.
     private var wordsCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(usage.totalWords.formatted(.number))
+        let stats = usage.snapshot(period: dashboardPeriod, endingAt: dashboardNow)
+        return VStack(alignment: .leading, spacing: 4) {
+            Text(stats.totalWords.formatted(.number))
                 .font(.title.weight(.semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.daisyTextPrimary)
             Text("Total words")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -535,14 +794,12 @@ struct HomeView: View {
                 .frame(height: 1)
                 .padding(.horizontal, -16)
                 .padding(.vertical, 4)
-            HStack(spacing: 6) {
-                // "—" until the first dictation lands: WPM is dictation-
-                // only, and a literal 0 reads as broken.
-                Text(usage.averageWPM > 0 ? "\(usage.averageWPM)" : "—")
-                Text("Words / min")
-                Spacer()
-            }
-            .daisyStatLabel()
+            // "—" until the first dictation lands: WPM is dictation-
+            // only, and a literal 0 reads as broken.
+            smallMeetingMetric(
+                value: stats.averageWPM > 0 ? "\(stats.averageWPM)" : "—",
+                label: String(localized: "Words / min")
+            )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(16)
@@ -571,6 +828,14 @@ struct HomeView: View {
     /// Compact token count — "1.2M", "840K", localized.
     private func compactTokens(_ n: Int) -> String {
         n.formatted(.number.notation(.compactName))
+    }
+
+    private var tokenChartIntervalLabel: String {
+        switch dashboardPeriod.tokenChartInterval {
+        case .day: String(localized: "By day")
+        case .week: String(localized: "By week")
+        case .month: String(localized: "By month")
+        }
     }
 
     /// A model's own cost, for the legend table.
@@ -628,12 +893,16 @@ struct HomeView: View {
 
     @ViewBuilder
     private var tokensCard: some View {
-        let rows = tokens.recentModelSeries()
+        let rows = tokens.dashboardModelSeries(period: dashboardPeriod, endingAt: dashboardNow)
         if !rows.isEmpty {
-            let total = tokens.recentTotalTokens()
-            let cost = tokens.recentCostEstimate()
-            let searches = tokens.recentWebSearches()
-            let cached = tokens.recentCachedInputTokens()
+            let chartBuckets = tokens.dashboardChartBuckets(
+                period: dashboardPeriod,
+                endingAt: dashboardNow
+            )
+            let total = tokens.dashboardTotalTokens(period: dashboardPeriod, endingAt: dashboardNow)
+            let cost = tokens.dashboardCostEstimate(period: dashboardPeriod, endingAt: dashboardNow)
+            let searches = tokens.dashboardWebSearches(period: dashboardPeriod, endingAt: dashboardNow)
+            let cached = tokens.dashboardCachedInputTokens(period: dashboardPeriod, endingAt: dashboardNow)
             // Driven by the SMALLEST priced row: two decimals would round
             // a cheap model to $0.00 and make it look free, and a mix of
             // precisions down the column stops it adding up by eye.
@@ -646,12 +915,7 @@ struct HomeView: View {
                     Text("Tokens")
                         .daisyStatLabel()
                     Spacer()
-                    // The window, spelled out. It used to be the month
-                    // name, which on the 1st sat above a near-zero total
-                    // and read as a broken widget. Interpolated from the
-                    // ledger's own constant so the label cannot drift
-                    // from the period the numbers cover.
-                    Text("Last \(TokenLedger.windowDays) days")
+                    Text(tokenChartIntervalLabel)
                         .daisyStatLabel()
                 }
                 // One headline for the whole window, not one model's.
@@ -671,7 +935,12 @@ struct HomeView: View {
                     }
                 }
 
-                TokenUsageChart(rows: rows)
+                TokenUsageChart(
+                    rows: rows,
+                    buckets: chartBuckets,
+                    interval: dashboardPeriod.tokenChartInterval,
+                    dayCount: dashboardPeriod.dayCount
+                )
                     .frame(height: 44)
                     .padding(.top, 4)
 
@@ -753,10 +1022,40 @@ struct HomeView: View {
                     .daisyStatLabel()
                     .padding(.top, 2)
                 }
+
+                tokenCoverageNote
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
             .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Tokens")
+                    .daisyStatLabel()
+                Text("0")
+                    .font(.title.weight(.semibold))
+                    .foregroundStyle(Color.daisyTextPrimary)
+                Text("No API usage in this period")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                tokenCoverageNote
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    @ViewBuilder
+    private var tokenCoverageNote: some View {
+        if let start = tokens.incompleteCoverageStart(
+            period: dashboardPeriod,
+            endingAt: dashboardNow
+        ) {
+            Text("Data available since \(start.formatted(date: .abbreviated, time: .omitted))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
         }
     }
 
@@ -773,11 +1072,193 @@ struct HomeView: View {
                      : String(localized: "\(usage.currentStreak) day streak"))
                     .daisyStatLabel()
             }
-            MeetingsHeatmap(dayCounts: usage.dayCounts())
+            MeetingsHeatmap(
+                dayCounts: usage.dayCounts(),
+                dayCount: dashboardPeriod.dayCount,
+                now: dashboardNow
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // MARK: - Meeting time and workload
+
+    /// Private / Work are already user-visible Library folders. Their
+    /// children inherit the classification; Inbox, Calls and unrelated
+    /// custom folders stay unclassified instead of Daisy guessing.
+    private var personalFolderSlugs: Set<String> {
+        Set([SessionFolder.private_.slug] + folders.children(of: SessionFolder.private_.slug).map(\.slug))
+    }
+
+    private var workFolderSlugs: Set<String> {
+        Set([SessionFolder.work.slug] + folders.children(of: SessionFolder.work.slug).map(\.slug))
+    }
+
+    private var configuredWorkday: MeetingAnalytics.Workday? {
+        guard settings.workingHoursEnabled,
+              settings.workingDayEndMinutes > settings.workingDayStartMinutes
+        else { return nil }
+        return MeetingAnalytics.Workday(
+            startMinutes: settings.workingDayStartMinutes,
+            endMinutes: settings.workingDayEndMinutes
+        )
+    }
+
+    private var meetingAnalytics: MeetingAnalytics.Snapshot {
+        MeetingAnalytics.snapshot(
+            sessions: store.sessions,
+            personalFolderSlugs: personalFolderSlugs,
+            workFolderSlugs: workFolderSlugs,
+            workday: configuredWorkday,
+            summaryRange: dashboardPeriod,
+            now: dashboardNow
+        )
+    }
+
+    private var meetingSummaryCards: some View {
+        let analytics = meetingAnalytics
+        return HStack(alignment: .top, spacing: Self.columnGap) {
+            VStack(alignment: .leading, spacing: 10) {
+                meetingMetric(
+                    value: analytics.totalMeetings.formatted(.number),
+                    label: String(localized: "Calls")
+                )
+                fullCardDivider
+                    .padding(.vertical, 2)
+                VStack(alignment: .leading, spacing: 4) {
+                    smallMeetingMetric(
+                        value: analytics.workMeetings.formatted(.number),
+                        label: String(localized: "Work calls")
+                    )
+                    smallMeetingMetric(
+                        value: analytics.personalMeetings.formatted(.number),
+                        label: String(localized: "Personal calls")
+                    )
+                }
+            }
+            .meetingDashboardCard()
+
+            VStack(alignment: .leading, spacing: 10) {
+                meetingMetric(
+                    value: compactMeetingDuration(analytics.totalSeconds),
+                    label: String(localized: "Total time")
+                )
+                fullCardDivider
+                    .padding(.vertical, 2)
+                VStack(alignment: .leading, spacing: 4) {
+                    smallMeetingMetric(
+                        value: compactMeetingDuration(analytics.averageSeconds),
+                        label: String(localized: "Average")
+                    )
+                    smallMeetingMetric(
+                        value: analytics.afterHoursSeconds.map(compactMeetingDuration) ?? "—",
+                        label: String(localized: "After work")
+                    )
+                }
+            }
+            .meetingDashboardCard()
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func meetingMetric(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.title.weight(.semibold))
+                .foregroundStyle(Color.daisyTextPrimary)
+                .monospacedDigit()
+            Text(label)
+                .daisyStatLabel()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func smallMeetingMetric(value: String, label: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label)
+                .daisyStatLabel()
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.daisyTextPrimary)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var meetingLoadCard: some View {
+        let analytics = meetingAnalytics
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(dashboardPeriod == .sevenDays ? "Daily meeting load" : "Average meeting load")
+                    .daisyStatLabel()
+                Spacer()
+                if let workday = configuredWorkday {
+                    Text(workdayLabel(workday))
+                        .daisyStatLabel()
+                        .monospacedDigit()
+                }
+            }
+
+            if settings.workingHoursEnabled {
+                MeetingLoadBars(days: analytics.dayLoads)
+            } else {
+                Button {
+                    nav.openInSettings(.recording)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "clock.badge.questionmark")
+                            .foregroundStyle(Color.daisyHomeAccent)
+                        Text("Set your working hours to see daily capacity, back-to-back meetings, and after-hours time.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .meetingDashboardCard()
+    }
+
+    private var fullCardDivider: some View {
+        Rectangle()
+            .fill(Color.daisyDivider.opacity(0.5))
+            .frame(height: 1)
+            .padding(.horizontal, -16)
+    }
+
+    private func workdayLabel(_ workday: MeetingAnalytics.Workday) -> String {
+        "\(clockLabel(workday.startMinutes))–\(clockLabel(workday.endMinutes))"
+    }
+
+    private func clockLabel(_ minutes: Int) -> String {
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        let day = calendar.startOfDay(for: Date())
+        let date = calendar.date(byAdding: .minute, value: minutes, to: day) ?? day
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func compactMeetingDuration(_ seconds: Double) -> String {
+        guard seconds >= 60 else { return seconds > 0 ? String(localized: "<1m") : "—" }
+        let totalMinutes = Int((seconds / 60).rounded())
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0, minutes > 0 { return String(localized: "\(hours)h \(minutes)m") }
+        if hours > 0 { return String(localized: "\(hours)h") }
+        return String(localized: "\(minutes)m")
     }
 
     // MARK: - Recent sessions
@@ -867,6 +1348,9 @@ private let homeRowMinHeight: CGFloat = 36
 /// secondary encoding, so the legend is load-bearing, not decoration.
 private struct TokenUsageChart: View {
     let rows: [ModelSeriesRow]
+    let buckets: [TokenChartBucket]
+    let interval: TokenChartInterval
+    let dayCount: Int
 
     /// Fixed categorical order — a model keeps its colour when another
     /// model appears or drops out of the window. Assigned by position in
@@ -904,7 +1388,7 @@ private struct TokenUsageChart: View {
         GeometryReader { proxy in
             let totals = dailyTotals
             let highest = max(totals.max() ?? 0, 1)
-            let gap: CGFloat = 3
+            let gap: CGFloat = totals.count > 31 ? 1.5 : 3
             let columns = max(totals.count, 1)
             let width = max(2, (proxy.size.width - gap * CGFloat(max(columns - 1, 0))) / CGFloat(columns))
 
@@ -916,7 +1400,7 @@ private struct TokenUsageChart: View {
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottom)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Token usage day by day over the last \(TokenLedger.windowDays) days, by model"))
+        .accessibilityLabel(String(localized: "Token usage over the last \(dayCount) days, by model"))
     }
 
     @ViewBuilder
@@ -928,6 +1412,7 @@ private struct TokenUsageChart: View {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                 .fill(Color.daisyDivider.opacity(0.45))
                 .frame(width: width, height: 3)
+                .help(bucketHelp(day: day, total: total))
         } else {
             let columnHeight = max(4, height * CGFloat(total) / CGFloat(highest))
             let live = rows.indices.filter { index in
@@ -991,7 +1476,30 @@ private struct TokenUsageChart: View {
                     style: .continuous
                 )
             )
+            .help(bucketHelp(day: day, total: total))
         }
+    }
+
+    private func bucketHelp(day: Int, total: Int) -> String {
+        guard buckets.indices.contains(day),
+              let firstKey = buckets[day].dayKeys.first,
+              let lastKey = buckets[day].dayKeys.last,
+              let start = UsageStats.date(fromKey: firstKey),
+              let end = UsageStats.date(fromKey: lastKey)
+        else { return total.formatted(.number) }
+
+        let label: String
+        switch interval {
+        case .day:
+            label = start.formatted(.dateTime.day().month(.abbreviated))
+        case .week:
+            let from = start.formatted(.dateTime.day().month(.abbreviated))
+            let through = end.formatted(.dateTime.day().month(.abbreviated))
+            label = "\(from)–\(through)"
+        case .month:
+            label = start.formatted(.dateTime.month(.wide).year())
+        }
+        return "\(label) · \(total.formatted(.number))"
     }
 }
 
@@ -1029,6 +1537,133 @@ extension View {
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
     }
+
+    /// Shared chrome for the meeting analytics added to Home. Kept beside
+    /// `daisyStatLabel` so new cards cannot drift from the existing heatmap,
+    /// words and token surfaces.
+    func meetingDashboardCard() -> some View {
+        self.frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+/// Seven-day "battery" view. Meeting time consumes the configured workday;
+/// each fill is split into personal (Private folder) and work (everything
+/// else). The bar caps visually at 100% while the tooltip preserves exact
+/// durations and over-capacity percentage.
+private struct MeetingLoadBars: View {
+    let days: [MeetingAnalytics.DayLoad]
+
+    private static let barHeight: CGFloat = 9
+
+    var body: some View {
+        VStack(spacing: 7) {
+            ForEach(days) { day in
+                HStack(spacing: 8) {
+                    Text(Self.weekdayFormatter.string(from: day.date))
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, alignment: .leading)
+
+                    GeometryReader { proxy in
+                        let rawWidth = proxy.size.width * min(max(day.utilization, 0), 1)
+                        // A sub-height fill looks like a square hairline even
+                        // when clipped to a capsule. Give every non-zero day
+                        // one capsule diameter so the leading edge always
+                        // keeps the same rounding as the empty track.
+                        let totalWidth = day.meetingSeconds > 0
+                            ? min(proxy.size.width, max(rawWidth, Self.barHeight))
+                            : 0
+                        let personalShare = day.meetingSeconds > 0
+                            ? min(max(day.personalSeconds / day.meetingSeconds, 0), 1)
+                            : 0
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.gray.opacity(0.12))
+                            HStack(spacing: 0) {
+                                Color.blue.opacity(0.72)
+                                    .frame(width: totalWidth * personalShare)
+                                Color.daisyHomeAccent
+                                    .frame(width: totalWidth * (1 - personalShare))
+                            }
+                            .frame(width: totalWidth, alignment: .leading)
+                            .clipShape(Capsule(style: .continuous))
+                        }
+                    }
+                    .frame(height: Self.barHeight)
+                    .help(Self.tooltip(day))
+
+                    Text(Self.duration(day.meetingSeconds))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(day.utilization >= 0.5 ? Color.daisyWarning : Color.secondary)
+                        .monospacedDigit()
+                        .frame(width: 48, alignment: .trailing)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Self.accessibilityLabel(day))
+            }
+        }
+    }
+
+    private static let weekdayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EE"
+        return formatter
+    }()
+
+    private static let fullDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
+    private static func duration(_ seconds: Double) -> String {
+        guard seconds >= 60 else { return "—" }
+        let minutes = Int((seconds / 60).rounded())
+        if minutes >= 60 {
+            let hours = minutes / 60
+            let remainder = minutes % 60
+            return remainder > 0
+                ? String(localized: "\(hours)h \(remainder)m")
+                : String(localized: "\(hours)h")
+        }
+        return String(localized: "\(minutes)m")
+    }
+
+    private static func tooltip(_ day: MeetingAnalytics.DayLoad) -> String {
+        let date = fullDateFormatter.string(from: day.date)
+        let percent = Int((day.utilization * 100).rounded())
+        let personal = String(localized: "Personal")
+        let work = String(localized: "Work")
+        let total = String(localized: "Total time")
+        if day.isAverage {
+            let weekday = weekdayLongFormatter.string(from: day.date)
+            let average = String(localized: "Average")
+            let meetings = String(localized: "Meetings")
+            return "\(weekday) · \(average)\n\(personal): \(duration(day.personalSeconds))\n\(work): \(duration(day.workSeconds))\n\(total): \(duration(day.meetingSeconds)) · \(percent)%\n\(meetings): \(day.meetingCount) · \(duration(day.totalMeetingSeconds))"
+        }
+        return "\(date)\n\(personal): \(duration(day.personalSeconds))\n\(work): \(duration(day.workSeconds))\n\(total): \(duration(day.meetingSeconds)) · \(percent)%"
+    }
+
+    private static func accessibilityLabel(_ day: MeetingAnalytics.DayLoad) -> String {
+        let personal = String(localized: "Personal")
+        let work = String(localized: "Work")
+        let meetings = String(localized: "Meetings")
+        if day.isAverage {
+            let average = String(localized: "Average")
+            let period = String(localized: "in period")
+            return "\(weekdayLongFormatter.string(from: day.date)), \(average), \(meetings) \(period): \(day.meetingCount), \(personal) \(duration(day.personalSeconds)), \(work) \(duration(day.workSeconds))"
+        }
+        return "\(fullDateFormatter.string(from: day.date)), \(meetings): \(day.meetingCount), \(personal) \(duration(day.personalSeconds)), \(work) \(duration(day.workSeconds))"
+    }
+
+    private static let weekdayLongFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
+        return formatter
+    }()
 }
 
 private struct RecentSessionRow: View {

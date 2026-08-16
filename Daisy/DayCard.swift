@@ -8,8 +8,9 @@
 //
 //    HEADER   greeting / TOMORROW + "N meetings · M open items" + refresh
 //    LEDE     LLM intro (MorningBriefStore — local auto / cloud consent)
-//    EVENTS   each meeting row: calendar dot · time · title; tap = start
-//             recording; "Prep" disclosure expands the pre-meeting brief
+//    EVENTS   each meeting row: calendar-coloured record icon · time ·
+//             title; tap the icon to start recording; "Prep" disclosure
+//             expands the pre-meeting brief
 //             inline; open items whose SOURCE session strongly matches
 //             the meeting (shared attendee email) nest under it.
 //    TO CLOSE remaining open items (not tied to today's meetings).
@@ -27,7 +28,7 @@ struct DayCard: View {
     let events: [DaisyMeeting]
     let isTomorrow: Bool
     let settings: AppSettings
-    let onStartMeeting: (DaisyMeeting) -> Void
+    let onOpenMeeting: (DaisyMeeting) -> Void
 
     @Bindable private var brief = MorningBriefStore.shared
     @Bindable private var actionItems = ActionItemStore.shared
@@ -40,9 +41,8 @@ struct DayCard: View {
     /// separate "Overdue" block instead of "To close" (tunable).
     private static let overdueAfterDays = 3
 
-    /// Width of the leading glyph column shared by the calendar dot and the
-    /// task checkbox, so the dot's centre lines up with the checkbox centre
-    /// and both titles start at the same x.
+    /// Width of the leading glyph column shared by the meeting record button
+    /// and task checkbox, so both glyphs and their titles stay aligned.
     private static let glyphColumn: CGFloat = 20
 
     var body: some View {
@@ -265,22 +265,37 @@ struct DayCard: View {
 
     private func eventRow(_ event: DaisyMeeting, briefable: Bool) -> some View {
         HStack(spacing: 8) {
-            // Coloured calendar dot, centred in the shared glyph column so
-            // it lines up with the task checkboxes below.
-            Circle()
-                .fill(dotColor(event))
-                .frame(width: 8, height: 8)
-                .frame(width: Self.glyphColumn)
+            // The recording action now occupies the old calendar-dot slot.
+            // Its tint still comes from the meeting's calendar, preserving
+            // the visual calendar cue without a second icon on the right.
+            Button {
+                onOpenMeeting(event)
+            } label: {
+                Image(systemName: "record.circle")
+                    .font(.body)
+                    .foregroundStyle(calendarColor(event))
+                    .frame(width: Self.glyphColumn)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Open details for “\(event.title)”"))
             // Time FIRST (Egor 2026-07-25), monospaced digits so the
             // titles after it start at the same x across rows.
-            Text(event.startDate, style: .time)
-                .font(.callout)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            Text(event.title)
-                .font(.callout.weight(.medium))
-                .lineLimit(1)
-                .foregroundStyle(.primary)
+            Button {
+                onOpenMeeting(event)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(event.startDate, style: .time)
+                        .font(.callout)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    Text(event.title)
+                        .font(.callout.weight(.medium))
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                }
+            }
+            .buttonStyle(.plain)
             Spacer()
             if briefable {
                 // Prep brief toggle. Textual and neutral (Egor
@@ -301,24 +316,12 @@ struct DayCard: View {
                 .tint(Color.daisyTextPrimary)
                 .help(String(localized: "Prep brief"))
             }
-            // Record icon back on the far right (Egor 2026-07-25) —
-            // the explicit start-recording affordance the old
-            // Today/Tomorrow column had; title is plain text again.
-            Button {
-                onStartMeeting(event)
-            } label: {
-                Image(systemName: "record.circle")
-                    .font(.body)
-                    .foregroundStyle(Color.daisyRecording)
-            }
-            .buttonStyle(.plain)
-            .help(String(localized: "Start recording for “\(event.title)”"))
         }
         .frame(minHeight: 24)
         .dayRowHover()
     }
 
-    private func dotColor(_ event: DaisyMeeting) -> Color {
+    private func calendarColor(_ event: DaisyMeeting) -> Color {
         if let hex = event.calendarColorHex, let parsed = Color(hexString: hex) {
             return parsed
         }

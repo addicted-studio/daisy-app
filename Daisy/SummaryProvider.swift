@@ -110,7 +110,7 @@ enum SummaryProviderKind: String, Codable, CaseIterable, Sendable {
         case .openai:
             return String(localized: "Sent to OpenAI over HTTPS, using your API key.")
         case .cursor:
-            return String(localized: "Sent to Cursor by the Agent CLI on your Mac — uses your key or subscription limits.")
+            return String(localized: "Sent to Cursor by the Agent CLI on your Mac, using your API key.")
         case .kimi:
             // Says where, because Moonshot's own docs say the
             // international endpoint is served from China and a user

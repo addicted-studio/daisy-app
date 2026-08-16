@@ -22,7 +22,6 @@ struct SettingsView: View {
     @Bindable var nemotron = NemotronLiveEngine.shared
     @Bindable var summarizer = Summarizer.shared
     @Bindable private var openAIAccount = OpenAIAccountManager.shared
-    @Bindable private var cursorAccount = CursorAccountManager.shared
     @Bindable private var subscriptionUsage = SubscriptionUsageLedger.shared
     // Calendar source state — needed by the General-tab Calendar
     // section (autoStart / autoStop / menu-bar next-meeting toggles).
@@ -935,6 +934,42 @@ struct SettingsView: View {
                     meetingAppsRow
                 }
 
+                Toggle(isOn: $settings.workingHoursEnabled) {
+                    Text("Track working hours")
+                    Text("Used only for the local Home dashboard: daily meeting load and time outside your workday.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if settings.workingHoursEnabled {
+                    LabeledContent("Working day") {
+                        HStack(spacing: 8) {
+                            Picker("From", selection: $settings.workingDayStartMinutes) {
+                                ForEach(Array(stride(from: 0, through: 22 * 60 + 30, by: 30)), id: \.self) { minutes in
+                                    Text(workingTimeLabel(minutes)).tag(minutes)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 92)
+
+                            Text("to")
+                                .foregroundStyle(.secondary)
+
+                            Picker("To", selection: $settings.workingDayEndMinutes) {
+                                ForEach(Array(stride(from: settings.workingDayStartMinutes + 30, through: 24 * 60, by: 30)), id: \.self) { minutes in
+                                    Text(workingTimeLabel(minutes)).tag(minutes)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 92)
+                        }
+                    }
+                    .onChange(of: settings.workingDayStartMinutes) { _, start in
+                        if settings.workingDayEndMinutes <= start {
+                            settings.workingDayEndMinutes = min(start + 8 * 60, 24 * 60)
+                        }
+                    }
+                }
+
                 Toggle("Record the other side", isOn: $settings.captureSystemAudio)
 
                 // Applies to every recording (not just meetings) → ungated,
@@ -1118,6 +1153,17 @@ struct SettingsView: View {
                 }
             }
         )
+    }
+
+    /// Locale-aware half-hour labels for the workday pickers. 1440 is a
+    /// useful end-of-day sentinel but Date wraps it to tomorrow's 00:00,
+    /// which is exactly the label we want.
+    private func workingTimeLabel(_ minutes: Int) -> String {
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        let day = calendar.startOfDay(for: Date())
+        let date = calendar.date(byAdding: .minute, value: minutes, to: day) ?? day
+        return date.formatted(date: .omitted, time: .shortened)
     }
 
     // MARK: - Transcription (Whisper)
@@ -2023,6 +2069,14 @@ struct SettingsView: View {
                         .foregroundStyle(Color.daisyWarning)
                 }
 
+                Toggle(isOn: $settings.protectSensitiveDataBeforeCloudAI) {
+                    Text("Protect sensitive data before cloud AI")
+                    Text("When enabled, Daisy locally replaces detected people, companies, contacts, and links before a remote request, then restores them in the result. Passwords, API keys, and payment-card numbers stay redacted. Local providers are unchanged. This reduces disclosure risk but cannot guarantee anonymity.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 // Transcript-quality pass, listed before the summary
                 // knobs because it runs before them and everything below
                 // reads its output. The caption states the privacy gate
@@ -2220,58 +2274,19 @@ struct SettingsView: View {
             }
 
         case .cursor:
-            SummaryConnectionMethodPicker(
-                method: cursorConnectionMethodBinding,
-                accountTitle: String(localized: "Cursor account · Experimental")
-            )
-
-            if summarizer.cursorConnectionMethod == .apiKey {
-                LabeledContent("API key") {
-                    SecureField("", text: $settings.cursorAPIKey, prompt: Text("key_…"))
-                        .textFieldStyle(.roundedBorder)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity)
-                }
-            } else {
-                SummaryAccountConnectionRows(
-                    accountLabel: String(localized: "Cursor account"),
-                    providerName: String(localized: "Cursor"),
-                    state: cursorAccount.accountState,
-                    availableModels: cursorAccount.availableModels,
-                    selectedModel: $summarizer.cursorModel,
-                    installMessage: String(localized: "Install Cursor Agent CLI to connect"),
-                    installButtonTitle: String(localized: "Install guide"),
-                    installURL: URL(string: "https://cursor.com/docs/cli/installation"),
-                    currentAccount: cursorAccount.account,
-                    planUsagePercent: nil,
-                    usage: subscriptionUsage.recentUsage(provider: .cursor),
-                    connect: {
-                        await cursorAccount.connect()
-                        await summarizer.refreshAvailability()
-                    },
-                    disconnect: {
-                        await cursorAccount.disconnect()
-                        await summarizer.refreshAvailability()
-                    },
-                    refresh: {
-                        await cursorAccount.refreshStatus()
-                        await summarizer.refreshAvailability()
-                    }
-                )
-                    .task(id: "\(summarizer.cursorConnectionMethod.rawValue)|\(summarizer.cursorAgentPath)") {
-                        await cursorAccount.refreshStatus()
-                        await summarizer.refreshAvailability()
-                    }
+            LabeledContent("API key") {
+                SecureField("", text: $settings.cursorAPIKey, prompt: Text("key_…"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
             }
 
-            if summarizer.cursorConnectionMethod == .apiKey {
-                LabeledContent("Model") {
-                    TextField("", text: $summarizer.cursorModel, prompt: Text(CursorAgentService.defaultModelID))
-                        .textFieldStyle(.roundedBorder)
-                        .labelsHidden()
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity)
-                }
+            LabeledContent("Model") {
+                TextField("", text: $summarizer.cursorModel, prompt: Text(CursorAgentService.defaultModelID))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity)
             }
 
             if let found = CursorAgentService.resolveExecutable(override: summarizer.cursorAgentPath) {
@@ -2493,13 +2508,6 @@ struct SettingsView: View {
         )
     }
 
-    private var cursorConnectionMethodBinding: Binding<SummaryConnectionMethod> {
-        Binding(
-            get: { summarizer.cursorConnectionMethod },
-            set: { requestConnectionMethod($0, for: .cursor) }
-        )
-    }
-
     private func requestConnectionMethod(
         _ method: SummaryConnectionMethod,
         for provider: SummaryConnectionProvider
@@ -2526,9 +2534,7 @@ struct SettingsView: View {
         switch provider {
         case .openAI:
             summarizer.openAIConnectionMethod = method
-        case .cursor:
-            summarizer.cursorConnectionMethod = method
-        case .anthropic, .kimi, .githubCopilot:
+        case .anthropic, .kimi, .cursor, .githubCopilot:
             break
         }
     }
@@ -2537,9 +2543,7 @@ struct SettingsView: View {
         switch provider {
         case .openAI:
             return String(localized: "Daisy will send complete meeting transcripts to OpenAI through your ChatGPT account. Requests use your plan's limits; Daisy does not calculate a per-request price.")
-        case .cursor:
-            return String(localized: "Daisy will send complete meeting transcripts to Cursor through Cursor Agent. Requests use your key or plan limits. Account mode is experimental because Cursor cannot disable every agent tool.")
-        case .anthropic, .kimi, .githubCopilot:
+        case .anthropic, .kimi, .cursor, .githubCopilot:
             return String(localized: "Daisy will send complete meeting transcripts to the selected cloud provider.")
         }
     }
@@ -2571,9 +2575,6 @@ struct SettingsView: View {
         case .cursor:
             guard CursorAgentService.resolveExecutable(override: summarizer.cursorAgentPath) != nil,
                   !summarizer.cursorModel.isEmpty else { return true }
-            if summarizer.cursorConnectionMethod == .account {
-                return !cursorAccount.isConnected
-            }
             return settings.cursorAPIKey.isEmpty
         case .kimi: return settings.kimiAPIKey.isEmpty
         case .ollama: return summarizer.ollamaBaseURL.isEmpty || summarizer.ollamaModel.isEmpty
@@ -2606,9 +2607,6 @@ struct SettingsView: View {
             }
             return String(localized: "Transcripts are sent to OpenAI over HTTPS using your own API key. Create one at platform.openai.com/api-keys — it's stored in your macOS Keychain. Each summary costs roughly $0.01–0.05.")
         case .cursor:
-            if summarizer.cursorConnectionMethod == .account {
-                return String(localized: "Experimental. Transcripts are sent to Cursor through its Agent CLI and count against your Cursor plan's limits; Daisy doesn't estimate a per-request cost. Every run uses an empty temporary folder, never passes `--force`, and installs project-level deny rules for shell, file reads/writes, and MCP. Cursor does not expose a documented switch that removes every tool, so treat this account route as experimental.")
-            }
             return String(localized: "Transcripts are sent to Cursor through its Agent CLI using your API key, stored in macOS Keychain and passed only through `CURSOR_API_KEY`. Every run uses an empty temporary folder, never passes `--force`, and installs deny rules for shell, file reads/writes, and MCP.")
         case .kimi:
             return String(localized: "Transcripts are sent to Moonshot over HTTPS using your own API key — and Moonshot's documentation states that requests to its international endpoint are processed in China. Create a key at platform.kimi.ai — it's stored in your macOS Keychain. Cheapest of the cloud providers here: roughly $0.005–0.02 per summary on K2.6.")

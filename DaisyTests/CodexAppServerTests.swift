@@ -112,6 +112,46 @@ struct CodexAppServerWireTests {
     func experimentalSafetyFieldsAreEnabled() {
         #expect(CodexAppServerConnection.protocolCapabilities["experimentalApi"]?.boolValue == true)
     }
+
+    @Test("Multi-bucket subscription limits preserve model groups and reset windows")
+    func multiBucketRateLimits() throws {
+        let result = CodexJSON.object([
+            "rateLimits": .object([
+                "primary": .object([
+                    "usedPercent": .number(32),
+                    "resetsAt": .number(1_900_000_000)
+                ])
+            ]),
+            "rateLimitsByLimitId": .object([
+                "codex": .object([
+                    "limitId": .string("codex"),
+                    "limitName": .string("GPT-5 models"),
+                    "primary": .object([
+                        "usedPercent": .number(32),
+                        "windowDurationMins": .number(300),
+                        "resetsAt": .number(1_900_000_000)
+                    ]),
+                    "secondary": .object([
+                        "usedPercent": .number(64),
+                        "windowDurationMins": .number(10_080),
+                        "resetsAt": .number(1_900_500_000)
+                    ])
+                ]),
+                "other": .object([
+                    "limitName": .string("Other models"),
+                    "primary": .object(["usedPercent": .number(100)]),
+                    "rateLimitReachedType": .string("rate_limit_reached")
+                ])
+            ])
+        ])
+
+        let parsed = try #require(CodexAppServerService.parseRateLimits(result))
+        #expect(parsed.usedPercent == 32)
+        #expect(parsed.buckets.map(\.name) == ["GPT-5 models", "Other models"])
+        #expect(parsed.buckets[0].primary?.durationMinutes == 300)
+        #expect(parsed.buckets[0].secondary?.usedPercent == 64)
+        #expect(parsed.buckets[1].isReached)
+    }
 }
 
 @Suite("ChatGPT account summary provider")

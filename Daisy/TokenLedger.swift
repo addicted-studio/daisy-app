@@ -235,8 +235,9 @@ nonisolated struct ModelSeriesRow: Identifiable, Sendable {
     /// total printed above the chart, which reads as an arithmetic bug.
     let inputTokens: Int
     let outputTokens: Int
-    /// Daily totals, one entry per day of the display window, oldest
-    /// first. Same window as the total above the chart.
+    /// Display-bucket totals, oldest first. The bucket interval follows
+    /// the dashboard period; all buckets together cover the exact same
+    /// daily window as the total above the chart.
     let values: [Int]
     /// This model's own share of the window's bill. Three outcomes, and
     /// the UI must tell them apart: priced (show it), billed but
@@ -247,6 +248,15 @@ nonisolated struct ModelSeriesRow: Identifiable, Sendable {
     let cost: TokenCostEstimate
 
     var totalTokens: Int { inputTokens + outputTokens }
+}
+
+/// One calendar-aware x-axis bucket in the token usage chart. Keeping the
+/// original day keys makes aggregation lossless and lets tests prove that
+/// every day appears exactly once.
+nonisolated struct TokenChartBucket: Identifiable, Sendable, Equatable {
+    let dayKeys: [String]
+
+    var id: String { dayKeys.first ?? "empty" }
 }
 
 // MARK: - Approximate API cost
@@ -429,7 +439,7 @@ final class TokenLedger {
     /// having thrown the data away. Pruning is silent by design but
     /// bounded and documented here; at ~a handful of buckets per active
     /// day the whole store is tens of KB.
-    nonisolated static let retentionDays = 90
+    nonisolated static let retentionDays = 400
 
     /// The display window: the last `windowDays` days, today included.
     ///
@@ -474,6 +484,7 @@ final class TokenLedger {
     /// observe a value written DURING a body evaluation is how you get a
     /// re-render loop.
     @ObservationIgnored private var cachedWindow: (day: String, keys: [String], set: Set<String>)?
+    @ObservationIgnored private var cachedPeriodWindows: [String: (keys: [String], set: Set<String>)] = [:]
 
     private func window() -> (day: String, keys: [String], set: Set<String>) {
         let today = UsageStats.dayKey(for: Date())
@@ -484,7 +495,21 @@ final class TokenLedger {
         return fresh
     }
 
+    private func window(
+        period: DashboardPeriod,
+        endingAt end: Date
+    ) -> (keys: [String], set: Set<String>) {
+        let endKey = UsageStats.dayKey(for: end)
+        let cacheKey = "\(endKey)|\(period.rawValue)"
+        if let cached = cachedPeriodWindows[cacheKey] { return cached }
+        let keys = period.dayKeys(endingAt: end)
+        let fresh = (keys: keys, set: Set(keys))
+        cachedPeriodWindows = [cacheKey: fresh]
+        return fresh
+    }
+
     private static let defaultsKey = "daisy.tokenLedger"
+    private static let trackingStartDefaultsKey = "daisy.tokenLedger.trackingStart"
 
     /// Keyed by `yyyy-MM-dd` (local day), same key format as
     /// `UsageStats` so the two can be joined later.
@@ -496,6 +521,12 @@ final class TokenLedger {
             days = decoded
         } else {
             days = [:]
+        }
+        if UserDefaults.standard.string(forKey: Self.trackingStartDefaultsKey) == nil {
+            UserDefaults.standard.set(
+                days.keys.min() ?? UsageStats.dayKey(for: Date()),
+                forKey: Self.trackingStartDefaultsKey
+            )
         }
         pruneOldDays()
     }
@@ -556,6 +587,26 @@ final class TokenLedger {
     /// who never point Daisy at a paid API.
     var hasRecentSpend: Bool {
         recentSpend().contains(where: \.hasActivity)
+    }
+
+    var hasTrackedSpend: Bool {
+        days.values.joined().contains { $0.totalTokens > 0 || $0.webSearches > 0 }
+    }
+
+    func hasSpend(period: DashboardPeriod, endingAt end: Date) -> Bool {
+        modelSpend(in: window(period: period, endingAt: end).set).contains(where: \.hasActivity)
+    }
+
+    /// First day for which Daisy can honestly claim local API coverage,
+    /// but only when it falls inside the requested range. Older provider
+    /// usage cannot be reconstructed from the API after the fact.
+    func incompleteCoverageStart(period: DashboardPeriod, endingAt end: Date) -> Date? {
+        let keys = window(period: period, endingAt: end).keys
+        guard let requestedStart = keys.first,
+              let tracked = UserDefaults.standard.string(forKey: Self.trackingStartDefaultsKey),
+              tracked > requestedStart
+        else { return nil }
+        return UsageStats.date(fromKey: tracked)
     }
 
     /// The provider whose number the card leads with: the one currently
@@ -715,6 +766,144 @@ final class TokenLedger {
     /// set so the UI can avoid presenting a misleading total.
     func recentCostEstimate() -> TokenCostEstimate {
         costEstimate(in: window().set)
+    }
+
+    // MARK: Dashboard-period queries
+
+    func dashboardModelSpend(
+        period: DashboardPeriod,
+        endingAt end: Date
+    ) -> [ModelSpend] {
+        modelSpend(in: window(period: period, endingAt: end).set)
+    }
+
+    func dashboardTotalTokens(period: DashboardPeriod, endingAt end: Date) -> Int {
+        dashboardModelSpend(period: period, endingAt: end).reduce(0) { $0 + $1.totalTokens }
+    }
+
+    func dashboardCostEstimate(period: DashboardPeriod, endingAt end: Date) -> TokenCostEstimate {
+        costEstimate(in: window(period: period, endingAt: end).set)
+    }
+
+    func dashboardWebSearches(period: DashboardPeriod, endingAt end: Date) -> Int {
+        dashboardModelSpend(period: period, endingAt: end).reduce(0) { $0 + $1.webSearches }
+    }
+
+    func dashboardCachedInputTokens(period: DashboardPeriod, endingAt end: Date) -> Int {
+        dashboardModelSpend(period: period, endingAt: end).reduce(0) { $0 + $1.cachedInputTokens }
+    }
+
+    func dashboardChartBuckets(
+        period: DashboardPeriod,
+        endingAt end: Date
+    ) -> [TokenChartBucket] {
+        Self.chartBuckets(
+            dayKeys: window(period: period, endingAt: end).keys,
+            interval: period.tokenChartInterval
+        )
+    }
+
+    /// Groups a sorted list of local-day keys without replacing calendar
+    /// months with fixed 30-day approximations. Partial first and last
+    /// buckets are retained so the chart and headline always cover exactly
+    /// the same rolling period.
+    nonisolated static func chartBuckets(
+        dayKeys: [String],
+        interval: TokenChartInterval,
+        calendar inputCalendar: Calendar = .current
+    ) -> [TokenChartBucket] {
+        var calendar = inputCalendar
+        calendar.timeZone = .current
+        var result: [TokenChartBucket] = []
+        var currentGroup: String?
+
+        for key in dayKeys {
+            guard let date = UsageStats.date(fromKey: key) else { continue }
+            let group: String
+            switch interval {
+            case .day:
+                group = key
+            case .week:
+                let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? date
+                group = UsageStats.dayKey(for: start)
+            case .month:
+                let components = calendar.dateComponents([.year, .month], from: date)
+                group = String(format: "%04d-%02d", components.year ?? 0, components.month ?? 0)
+            }
+
+            if group == currentGroup, let last = result.indices.last {
+                result[last] = TokenChartBucket(dayKeys: result[last].dayKeys + [key])
+            } else {
+                result.append(TokenChartBucket(dayKeys: [key]))
+                currentGroup = group
+            }
+        }
+        return result
+    }
+
+    func dashboardModelSeries(
+        period: DashboardPeriod,
+        endingAt end: Date,
+        limit: Int = 4
+    ) -> [ModelSeriesRow] {
+        let periodWindow = window(period: period, endingAt: end)
+        let all = modelSpend(in: periodWindow.set).filter(\.hasActivity)
+        guard !all.isEmpty else { return [] }
+        let leading = all.prefix(limit)
+        let merged = all.dropFirst(limit)
+        let chartBuckets = Self.chartBuckets(
+            dayKeys: periodWindow.keys,
+            interval: period.tokenChartInterval
+        )
+
+        func estimate(_ spend: ModelSpend) -> TokenCostEstimate {
+            costEstimate(
+                in: periodWindow.set,
+                provider: spend.provider,
+                model: spend.model
+            )
+        }
+
+        func series(_ spend: ModelSpend) -> [Int] {
+            chartBuckets.map { bucket in
+                bucket.dayKeys.reduce(0) { bucketTotal, key in
+                    bucketTotal + (days[key] ?? [])
+                        .filter { $0.provider == spend.provider.rawValue && $0.model == spend.model }
+                        .reduce(0) { $0 + $1.totalTokens }
+                }
+            }
+        }
+
+        var rows = leading.map { spend in
+            ModelSeriesRow(
+                id: spend.id,
+                name: Self.friendlyModelName(spend.model, provider: spend.provider),
+                inputTokens: spend.inputTokens + spend.cachedInputTokens + spend.cacheWriteTokens,
+                outputTokens: spend.outputTokens,
+                values: series(spend),
+                cost: estimate(spend)
+            )
+        }
+        if !merged.isEmpty {
+            let mergedSeries = merged.map(series)
+            let length = mergedSeries.map(\.count).max() ?? 0
+            let summed = (0..<length).map { day in
+                mergedSeries.reduce(0) {
+                    $0 + ($1.indices.contains(day) ? $1[day] : 0)
+                }
+            }
+            rows.append(ModelSeriesRow(
+                id: "other",
+                name: String(localized: "\(merged.count) other models"),
+                inputTokens: merged.reduce(0) {
+                    $0 + $1.inputTokens + $1.cachedInputTokens + $1.cacheWriteTokens
+                },
+                outputTokens: merged.reduce(0) { $0 + $1.outputTokens },
+                values: summed,
+                cost: merged.reduce(TokenCostEstimate()) { $0 + estimate($1) }
+            ))
+        }
+        return rows
     }
 
     private func spend(in keys: Set<String>) -> [ProviderSpend] {

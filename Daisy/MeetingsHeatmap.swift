@@ -2,11 +2,11 @@
 //  MeetingsHeatmap.swift
 //  Daisy
 //
-//  GitHub-style activity heatmap of recording days, built entirely from
-//  the local session corpus (each `StoredSession.startedAt`). Columns are
-//  weeks (oldest → newest, Sunday-started), rows are weekdays. Cell
-//  intensity encodes how many recordings happened that day. Purely local,
-//  purely derived — no new data, no network.
+//  Activity heatmap of recording days, built entirely from the local session
+//  corpus (each `StoredSession.startedAt`). Calendar weeks flow left-to-right
+//  and wrap according to the selected dashboard period. Cell intensity
+//  encodes how many recordings happened that day. Purely local, purely
+//  derived — no new data, no network.
 //
 
 import SwiftUI
@@ -14,48 +14,51 @@ import SwiftUI
 struct MeetingsHeatmap: View {
     /// Activity count per local start-of-day (dictations + recordings).
     let dayCounts: [Date: Int]
-    /// How many week-columns to show. 26 ≈ half a year, fits the 720pt
-    /// content column comfortably.
-    var weeks: Int = 26
+    /// Exact rolling dashboard period. The grid still aligns to calendar
+    /// weeks, but days before the range are blank and never enter totals.
+    var dayCount: Int = 26 * 7
+    /// The same render boundary used by the rest of Home's dashboard.
+    /// Injected from Home so a midnight activation cannot make the grid and
+    /// the numeric cards disagree by one day.
+    var now: Date = Date()
 
-    private static let cellSize: CGFloat = 11
-    private static let gapSize: CGFloat = 3
-    private var cell: CGFloat { Self.cellSize }
-    private var gap: CGFloat { Self.gapSize }
+    private var layout: Layout { Self.layout(dayCount: dayCount) }
+    private var gap: CGFloat { layout.gap }
+    private var gridColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 1), spacing: gap),
+            count: layout.columnsPerRow
+        )
+    }
 
-    /// Natural width of the default 26-week grid: 26 cells + 25 gaps.
-    /// HomeView pins its stats column to this (+ card padding) so the
-    /// heatmap card hugs its content instead of leaving dead space
-    /// (Egor, 2026-07-25).
+    /// Stable analytics-rail content width retained across periods. HomeView
+    /// adds card padding; each adaptive layout stays within this width.
     nonisolated static let defaultGridWidth: CGFloat =
-        26 * cellSize + 25 * gapSize
+        26 * 11 + 25 * 3
 
     var body: some View {
-        let model = Self.build(dayCounts: dayCounts, weeks: weeks, now: Date())
+        let model = Self.build(dayCounts: dayCounts, dayCount: dayCount, now: now)
+        let days = displayDays(for: model)
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: gap) {
-                ForEach(model.columns) { column in
-                    VStack(spacing: gap) {
-                        ForEach(column.days) { day in
-                            cellView(day)
-                        }
-                    }
+            LazyVGrid(columns: gridColumns, alignment: .leading, spacing: gap) {
+                ForEach(days) { day in
+                    cellView(day)
                 }
             }
-            legend(max: model.maxCount)
+            legend(model: model)
         }
     }
 
     @ViewBuilder
     private func cellView(_ day: DayCell) -> some View {
-        RoundedRectangle(cornerRadius: 2)
+        RoundedRectangle(cornerRadius: Self.cellCornerRadius, style: .continuous)
             .fill(color(for: day))
-            .frame(width: cell, height: cell)
-            .help(day.inFuture ? "" : "\(Self.tooltip(day))")
+            .aspectRatio(1, contentMode: .fit)
+            .help(day.outsideWindow ? "" : "\(Self.tooltip(day))")
     }
 
     private func color(for day: DayCell) -> Color {
-        if day.inFuture { return .clear }
+        if day.outsideWindow { return .clear }
         switch day.count {
         case 0:      return Color.gray.opacity(0.12)
         case 1:      return Color.daisyHomeAccent.opacity(0.30)
@@ -65,15 +68,15 @@ struct MeetingsHeatmap: View {
         }
     }
 
-    private func legend(max: Int) -> some View {
+    private func legend(model: Model) -> some View {
         HStack(spacing: 6) {
             Text("Less")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach(0..<5) { level in
-                RoundedRectangle(cornerRadius: 2)
+                RoundedRectangle(cornerRadius: Self.cellCornerRadius, style: .continuous)
                     .fill(legendColor(level))
-                    .frame(width: cell, height: cell)
+                    .frame(width: Self.legendCellSize, height: Self.legendCellSize)
             }
             // Keyed separately from the generic "More" (the ⋯ menu label,
             // RU «Ещё») — as a heatmap-legend pair with "Less" it must
@@ -82,7 +85,7 @@ struct MeetingsHeatmap: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
-            Text(summaryLabel(max: max))
+            Text(summaryLabel(activeDays: model.activeDayCount))
                 .daisyStatLabel()
         }
     }
@@ -97,10 +100,9 @@ struct MeetingsHeatmap: View {
         }
     }
 
-    private func summaryLabel(max: Int) -> String {
-        let total = dayCounts.values.reduce(0, +)
-        if total == 1 { return String(localized: "1 session") }
-        return String(localized: "\(total) sessions")
+    private func summaryLabel(activeDays: Int) -> String {
+        if activeDays == 1 { return String(localized: "1 active day") }
+        return String(localized: "\(activeDays) active days")
     }
 
     // MARK: - Tooltip
@@ -123,7 +125,7 @@ struct MeetingsHeatmap: View {
         var id: Date { date }
         let date: Date
         let count: Int
-        let inFuture: Bool
+        let outsideWindow: Bool
     }
 
     struct Column: Identifiable {
@@ -134,38 +136,112 @@ struct MeetingsHeatmap: View {
     struct Model {
         let columns: [Column]
         let maxCount: Int
+        /// Days with at least one recording or dictation inside the exact
+        /// selected window rendered by the grid. This intentionally replaces
+        /// the old all-time "sessions" total, which looked like a duplicate
+        /// of the recordings-only Calls metric on the card below.
+        let activeDayCount: Int
     }
 
-    /// Build the week-columns grid. Each column is a Sunday-started week;
-    /// the last column contains today. Future cells in the last column are
-    /// flagged so they render blank.
-    nonisolated static func build(dayCounts: [Date: Int], weeks: Int, now: Date) -> Model {
+    /// A readable row-major layout for the fixed-width Home rail. Calendar
+    /// weeks always stay intact and flow left-to-right; longer ranges place
+    /// more whole weeks on each row rather than shrinking 53 columns into
+    /// indistinguishable pixels. Month labels are deliberately omitted.
+    struct Layout: Equatable, Sendable {
+        let weeksPerRow: Int
+        let columnsPerRow: Int
+        let gap: CGFloat
+        let alignsToCalendarWeeks: Bool
+    }
+
+    nonisolated static func layout(dayCount: Int) -> Layout {
+        switch max(dayCount, 1) {
+        case ...7:
+            return Layout(
+                weeksPerRow: 1,
+                columnsPerRow: 7,
+                gap: 5,
+                alignsToCalendarWeeks: false
+            )
+        case ...31:
+            return Layout(
+                weeksPerRow: 2,
+                columnsPerRow: 14,
+                gap: 4,
+                alignsToCalendarWeeks: true
+            )
+        case ...100:
+            return Layout(
+                weeksPerRow: 2,
+                columnsPerRow: 14,
+                gap: 3,
+                alignsToCalendarWeeks: true
+            )
+        default:
+            return Layout(
+                weeksPerRow: 4,
+                columnsPerRow: 28,
+                gap: 2,
+                alignsToCalendarWeeks: true
+            )
+        }
+    }
+
+    private func displayDays(for model: Model) -> [DayCell] {
+        let calendarOrdered = model.columns.flatMap(\.days)
+        return layout.alignsToCalendarWeeks
+            ? calendarOrdered
+            : calendarOrdered.filter { !$0.outsideWindow }
+    }
+
+    /// Build a Sunday-aligned grid while counting only the exact rolling
+    /// window. This matters most for 7 days, which can span two partial
+    /// calendar weeks but must still mean seven days rather than fourteen.
+    nonisolated static func build(dayCounts: [Date: Int], dayCount: Int, now: Date) -> Model {
         var cal = Calendar(identifier: .gregorian)
         cal.firstWeekday = 1  // Sunday
+        cal.timeZone = .current
 
         let todayStart = cal.startOfDay(for: now)
-        // Sunday of the current week.
-        let weekdayIndex = (cal.component(.weekday, from: todayStart) - cal.firstWeekday + 7) % 7
-        guard let thisWeekStart = cal.date(byAdding: .day, value: -weekdayIndex, to: todayStart),
-              let gridStart = cal.date(byAdding: .day, value: -(weeks - 1) * 7, to: thisWeekStart) else {
-            return Model(columns: [], maxCount: 0)
+        guard let rangeStart = cal.date(byAdding: .day, value: -(max(dayCount, 1) - 1), to: todayStart) else {
+            return Model(columns: [], maxCount: 0, activeDayCount: 0)
         }
+        let startWeekdayIndex = (cal.component(.weekday, from: rangeStart) - cal.firstWeekday + 7) % 7
+        let endWeekdayIndex = (cal.component(.weekday, from: todayStart) - cal.firstWeekday + 7) % 7
+        guard let gridStart = cal.date(byAdding: .day, value: -startWeekdayIndex, to: rangeStart),
+              let thisWeekStart = cal.date(byAdding: .day, value: -endWeekdayIndex, to: todayStart)
+        else { return Model(columns: [], maxCount: 0, activeDayCount: 0) }
+        let weeks = max(1, (cal.dateComponents([.day], from: gridStart, to: thisWeekStart).day ?? 0) / 7 + 1)
 
         var columns: [Column] = []
         var maxCount = 0
+        var activeDayCount = 0
         for col in 0..<weeks {
             var days: [DayCell] = []
             for row in 0..<7 {
                 let offset = col * 7 + row
                 guard let date = cal.date(byAdding: .day, value: offset, to: gridStart) else { continue }
-                let inFuture = date > todayStart
+                let outsideWindow = date < rangeStart || date > todayStart
                 // `date` is midnight; dayCounts is keyed by start-of-day.
                 let count = dayCounts[date] ?? 0
-                maxCount = Swift.max(maxCount, count)
-                days.append(DayCell(date: date, count: count, inFuture: inFuture))
+                if !outsideWindow {
+                    maxCount = Swift.max(maxCount, count)
+                    if count > 0 { activeDayCount += 1 }
+                }
+                days.append(DayCell(date: date, count: count, outsideWindow: outsideWindow))
             }
             columns.append(Column(id: col, days: days))
         }
-        return Model(columns: columns, maxCount: maxCount)
+        return Model(columns: columns, maxCount: maxCount, activeDayCount: activeDayCount)
     }
+
+    /// Compatibility helper for pure-model tests and older callers.
+    nonisolated static func build(dayCounts: [Date: Int], weeks: Int, now: Date) -> Model {
+        build(dayCounts: dayCounts, dayCount: max(1, weeks) * 7, now: now)
+    }
+
+    private static let legendCellSize: CGFloat = 11
+    /// Shared by both the grid and its legend so every heatmap cell has the
+    /// requested subtle 2 pt rounding at every dashboard density.
+    private static let cellCornerRadius: CGFloat = 2
 }

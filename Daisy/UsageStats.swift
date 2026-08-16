@@ -61,6 +61,26 @@ final class UsageStats {
         }
     }
 
+    struct PeriodSnapshot: Sendable {
+        let totalWords: Int
+        let totalSeconds: Double
+        let totalCount: Int
+        let totalDictationWords: Int
+        let totalDictationSeconds: Double
+        let totalDictionaryFixes: Int
+        let totalPolishedWords: Int
+
+        var totalFixes: Int { totalDictionaryFixes + totalPolishedWords }
+
+        /// Weighted across the whole period. Averaging daily WPM would
+        /// give a two-second dictation the same influence as an hour.
+        var averageWPM: Int {
+            let minutes = totalDictationSeconds / 60
+            guard minutes >= 0.1 else { return 0 }
+            return Int((Double(totalDictationWords) / minutes).rounded())
+        }
+    }
+
     private static let defaultsKey = "daisy.usageStats"
 
     /// Keyed by `yyyy-MM-dd` (local). Observable so the widgets refresh
@@ -153,6 +173,20 @@ final class UsageStats {
     var totalDictionaryFixes: Int { days.values.reduce(0) { $0 + $1.dictionaryFixes } }
     var totalPolishedWords: Int { days.values.reduce(0) { $0 + $1.polishedWords } }
     var totalFixes: Int { totalDictionaryFixes + totalPolishedWords }
+
+    func snapshot(period: DashboardPeriod, endingAt end: Date = Date()) -> PeriodSnapshot {
+        let keys = Set(period.dayKeys(endingAt: end))
+        let values = days.compactMap { keys.contains($0.key) ? $0.value : nil }
+        return PeriodSnapshot(
+            totalWords: values.reduce(0) { $0 + $1.words },
+            totalSeconds: values.reduce(0) { $0 + $1.seconds },
+            totalCount: values.reduce(0) { $0 + $1.count },
+            totalDictationWords: values.reduce(0) { $0 + $1.dictationWords },
+            totalDictationSeconds: values.reduce(0) { $0 + $1.dictationSeconds },
+            totalDictionaryFixes: values.reduce(0) { $0 + $1.dictionaryFixes },
+            totalPolishedWords: values.reduce(0) { $0 + $1.polishedWords }
+        )
+    }
 
     /// Words-per-minute of the user's own DICTATION only (not meeting
     /// transcripts, which mix every speaker). 0 until there's meaningful

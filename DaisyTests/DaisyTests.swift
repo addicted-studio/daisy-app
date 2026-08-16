@@ -77,6 +77,47 @@ struct DaisyTests {
         #expect(TokenLedger.windowDays <= TokenLedger.retentionDays)
     }
 
+    @Test("Token chart uses calendar-aware resolution without dropping days")
+    func tokenLedger_dashboardChartBucketsMatchPeriod() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 2
+        calendar.timeZone = .current
+        let end = calendar.date(from: DateComponents(year: 2026, month: 8, day: 16))!
+
+        let expectations: [(DashboardPeriod, TokenChartInterval)] = [
+            (.sevenDays, .day),
+            (.thirtyDays, .day),
+            (.ninetyDays, .week),
+            (.year, .month),
+        ]
+
+        for (period, interval) in expectations {
+            #expect(period.tokenChartInterval == interval)
+            let keys = period.dayKeys(endingAt: end, calendar: calendar)
+            let buckets = TokenLedger.chartBuckets(
+                dayKeys: keys,
+                interval: interval,
+                calendar: calendar
+            )
+            let flattened = buckets.flatMap(\.dayKeys)
+            #expect(flattened == keys)
+            #expect(Set(flattened).count == keys.count)
+
+            switch period {
+            case .sevenDays:
+                #expect(buckets.count == 7)
+            case .thirtyDays:
+                #expect(buckets.count == 30)
+            case .ninetyDays:
+                #expect((13...14).contains(buckets.count))
+            case .year:
+                // A rolling 365-day window normally touches 13 calendar
+                // months because both edge months are partial.
+                #expect(buckets.count == 13)
+            }
+        }
+    }
+
     @Test("Claude Opus 5 is priced at its 2026 list rates")
     func tokenCostEstimate_anthropicOpus5() {
         let estimate = TokenCostEstimator.estimate(

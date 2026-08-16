@@ -15,8 +15,8 @@ nonisolated enum SummaryConnectionMethod: String, Codable, CaseIterable, Sendabl
 }
 
 /// Stable provider identifiers for connection preferences. This is kept
-/// separate from `SummaryProviderKind`: Cursor and Copilot can have account
-/// settings before their summary adapters become selectable providers.
+/// separate from `SummaryProviderKind`: Copilot can have account settings
+/// before its summary adapter becomes a selectable provider.
 nonisolated enum SummaryConnectionProvider: String, Codable, CaseIterable, Sendable {
     case openAI = "openai"
     case anthropic
@@ -26,11 +26,11 @@ nonisolated enum SummaryConnectionProvider: String, Codable, CaseIterable, Senda
 
     nonisolated var supportedMethods: [SummaryConnectionMethod] {
         switch self {
-        case .openAI, .cursor:
+        case .openAI:
             return [.apiKey, .account]
         case .githubCopilot:
             return [.account]
-        case .anthropic, .kimi:
+        case .anthropic, .kimi, .cursor:
             return [.apiKey]
         }
     }

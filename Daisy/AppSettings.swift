@@ -88,6 +88,20 @@ final class AppSettings {
     var screenTextInSummary: Bool {
         didSet { defaults.set(screenTextInSummary, forKey: Self.k_screenTextInSummary) }
     }
+
+    /// Opt-in local pseudonymization before content reaches a configured
+    /// remote summary provider. Confirmed local providers bypass it. The
+    /// first release is OFF by default while EN/RU detection quality is
+    /// evaluated; the Settings copy explicitly avoids promising complete
+    /// anonymity.
+    var protectSensitiveDataBeforeCloudAI: Bool {
+        didSet {
+            defaults.set(
+                protectSensitiveDataBeforeCloudAI,
+                forKey: Self.k_protectSensitiveDataBeforeCloudAI
+            )
+        }
+    }
     /// Opt-in: import Apple Voice Memos recordings as transcripts into a
     /// "Voice Memos" subfolder of the transcripts folder. Off by default.
     /// Reading the Voice Memos library needs Full Disk Access (the
@@ -140,6 +154,24 @@ final class AppSettings {
     /// meaningful for `.endOfDay`.
     var endOfDaySummaryHour: Int {
         didSet { defaults.set(endOfDaySummaryHour, forKey: Self.k_endOfDaySummaryHour) }
+    }
+
+    /// Optional workday boundary used only by the local Home analytics.
+    /// Off by default: Daisy must not guess that a 19:00 recording is
+    /// "after hours" until the user has said what their hours are.
+    var workingHoursEnabled: Bool {
+        didSet { defaults.set(workingHoursEnabled, forKey: Self.k_workingHoursEnabled) }
+    }
+
+    /// Minutes from local midnight. Half-hour steps in Settings, stored as
+    /// integers so the analytics can do calendar math without formatter
+    /// round-trips. End may be 1440, meaning midnight at the end of the day.
+    var workingDayStartMinutes: Int {
+        didSet { defaults.set(workingDayStartMinutes, forKey: Self.k_workingDayStartMinutes) }
+    }
+
+    var workingDayEndMinutes: Int {
+        didSet { defaults.set(workingDayEndMinutes, forKey: Self.k_workingDayEndMinutes) }
     }
 
     /// Pre-meeting brief: when ON, Home assembles a short brief for an
@@ -1131,6 +1163,11 @@ final class AppSettings {
         self.screenshotIntervalSec = interval > 0 ? interval : 60
         // Default ON — matches what shipped before the switch existed.
         self.screenTextInSummary = defaults.object(forKey: Self.k_screenTextInSummary) as? Bool ?? true
+        // Default OFF — named-entity detection can make mistakes, so this
+        // remains an explicit user choice until its EN/RU evaluation is done.
+        self.protectSensitiveDataBeforeCloudAI = defaults.bool(
+            forKey: Self.k_protectSensitiveDataBeforeCloudAI
+        )
         // Default OFF — opt-in, and reading Voice Memos needs Full Disk Access.
         self.ingestVoiceMemos = defaults.bool(forKey: Self.k_ingestVoiceMemos)
         // Default OFF — when the user hasn't picked a summarizer
@@ -1171,6 +1208,19 @@ final class AppSettings {
         // 20:00: late enough that the day's meetings are done, early
         // enough that the Mac is plausibly still awake.
         self.endOfDaySummaryHour = (storedHour.map { (0...23).contains($0) ? $0 : 20 }) ?? 20
+        // Work-hours analytics is opt-in. 09:00–18:00 is only the picker
+        // seed; it is never used to label time as after-hours until the
+        // toggle is explicitly enabled.
+        self.workingHoursEnabled = defaults.bool(forKey: Self.k_workingHoursEnabled)
+        let storedWorkStart = defaults.object(forKey: Self.k_workingDayStartMinutes) as? Int
+        let storedWorkEnd = defaults.object(forKey: Self.k_workingDayEndMinutes) as? Int
+        let resolvedWorkStart = min(max(storedWorkStart ?? 9 * 60, 0), 22 * 60 + 30)
+        let candidateWorkEnd = min(max(storedWorkEnd ?? 18 * 60, 30), 24 * 60)
+        let resolvedWorkEnd = candidateWorkEnd > resolvedWorkStart
+            ? candidateWorkEnd
+            : min(resolvedWorkStart + 8 * 60, 24 * 60)
+        self.workingDayStartMinutes = resolvedWorkStart
+        self.workingDayEndMinutes = resolvedWorkEnd
         // Default OFF — opt-in; a cloud provider also needs a per-meeting
         // consent tap (see PreMeetingBriefStore).
         self.preMeetingBriefEnabled = defaults.object(forKey: Self.k_preMeetingBriefEnabled) as? Bool ?? false
@@ -1536,13 +1586,24 @@ final class AppSettings {
         UserDefaults.standard.bool(forKey: k_followUpsInMyVoice)
     }
 
+    /// Summarizer has no live AppSettings reference; read the persisted
+    /// privacy switch at the provider boundary, where every request passes.
+    nonisolated static var protectSensitiveDataBeforeCloudAIEnabled: Bool {
+        UserDefaults.standard.bool(forKey: k_protectSensitiveDataBeforeCloudAI)
+    }
+
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_screenTextInSummary = "daisy.screenTextInSummary"
+    nonisolated private static let k_protectSensitiveDataBeforeCloudAI =
+        "daisy.protectSensitiveDataBeforeCloudAI"
     private static let k_summaryTiming = "daisy.summaryTiming"
     private static let k_endOfDaySummaryHour = "daisy.endOfDaySummaryHour"
+    private static let k_workingHoursEnabled = "daisy.workingHoursEnabled"
+    private static let k_workingDayStartMinutes = "daisy.workingDayStartMinutes"
+    private static let k_workingDayEndMinutes = "daisy.workingDayEndMinutes"
     private static let k_ingestVoiceMemos = "daisy.ingestVoiceMemos"
     private static let k_autoSummarize = "daisy.autoSummarize"
     private static let k_preMeetingBriefEnabled = "daisy.preMeetingBriefEnabled"
