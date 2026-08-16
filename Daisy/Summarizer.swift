@@ -318,17 +318,6 @@ final class Summarizer {
             )
         }
     }
-    var cursorConnectionMethod: SummaryConnectionMethod {
-        didSet {
-            SummaryConnectionPreferences().setMethod(cursorConnectionMethod, for: .cursor)
-            Task {
-                if cursorConnectionMethod == .account {
-                    await CursorAccountManager.shared.refreshStatus()
-                }
-                await refreshAvailability()
-            }
-        }
-    }
     var cursorModel: String {
         didSet {
             SummaryConnectionPreferences().setAccountModel(
@@ -407,7 +396,6 @@ final class Summarizer {
         let connectionPreferences = SummaryConnectionPreferences()
         self.openAIConnectionMethod = connectionPreferences.method(for: .openAI)
         self.openAIAccountModel = connectionPreferences.accountModel(for: .openAI) ?? ""
-        self.cursorConnectionMethod = connectionPreferences.method(for: .cursor)
         self.cursorModel = connectionPreferences.accountModel(for: .cursor)
             ?? CursorAgentService.defaultModelID
         self.cursorAgentPath = UserDefaults.standard.string(forKey: Self.kCursorAgentPath) ?? ""
@@ -461,9 +449,6 @@ final class Summarizer {
         case .cursor:
             if CursorAgentService.resolveExecutable(override: cursorAgentPath) == nil {
                 return String(localized: "Cursor Agent CLI isn't installed. Install `cursor-agent`, then return to Settings → Summary.")
-            }
-            if cursorConnectionMethod == .account {
-                return String(localized: "Connect your Cursor account in Settings → Summary.")
             }
             return String(localized: "Cursor API key is missing. Add it in Settings → Summary Provider.")
         case .kimi:
@@ -519,7 +504,8 @@ final class Summarizer {
 
         let provider = makeProvider()
         do {
-            let summary = try await provider.summarize(
+            let summary = try await summarizeWithPrivacy(
+                provider: provider,
                 transcript: transcript,
                 title: title,
                 localeHint: localeHint,
@@ -577,12 +563,56 @@ final class Summarizer {
         task: SummaryTask = .standard
     ) async throws -> MeetingSummary {
         let provider = makeProvider()
-        return try await provider.summarize(
+        return try await summarizeWithPrivacy(
+            provider: provider,
             transcript: transcript,
             title: title,
             localeHint: localeHint,
             task: task
         )
+    }
+
+    /// One privacy boundary shared by normal summaries, Settings probes and
+    /// every task routed through `SummaryProvider`. Detection runs off the
+    /// MainActor; only aggregate counts are logged, never values or spans.
+    private func summarizeWithPrivacy(
+        provider: any SummaryProvider,
+        transcript: String,
+        title: String,
+        localeHint: String?,
+        task: SummaryTask
+    ) async throws -> MeetingSummary {
+        let enabled = AppSettings.protectSensitiveDataBeforeCloudAIEnabled
+        let shouldProtect = SensitiveDataProtector.shouldProtect(
+            enabled: enabled,
+            providerIsLocal: providerIsEffectivelyLocal
+        )
+        guard shouldProtect else {
+            return try await provider.summarize(
+                transcript: transcript,
+                title: title,
+                localeHint: localeHint,
+                task: task
+            )
+        }
+
+        let protected = await Task.detached(priority: .userInitiated) {
+            SensitiveDataProtector.protect(
+                transcript: transcript,
+                title: title,
+                task: task
+            )
+        }.value
+        log.info(
+            "Cloud privacy filter prepared \(protected.report.distinctReplacements, privacy: .public) pseudonyms and \(protected.report.redactedOccurrences, privacy: .public) irreversible redactions"
+        )
+        let remoteSummary = try await provider.summarize(
+            transcript: protected.transcript,
+            title: protected.title,
+            localeHint: localeHint,
+            task: protected.task
+        )
+        return protected.restore(remoteSummary)
     }
 
     // MARK: - Factory
@@ -608,7 +638,9 @@ final class Summarizer {
         switch providerKind {
         case .appleIntelligence: return true
         case .anthropic, .openai, .cursor, .kimi: return false
-        case .ollama: return Self.isLoopbackURL(URL(string: ollamaBaseURL))
+        case .ollama:
+            return Self.isLoopbackURL(URL(string: ollamaBaseURL))
+                && !OllamaAPISummarizer.isCloudModel(ollamaModel)
         case .lmStudio: return Self.isLoopbackURL(URL(string: lmStudioBaseURL))
         case .mcp:
             let s = UserDefaults.standard.string(forKey: "daisy.mcpSummarizer.url")
@@ -655,9 +687,7 @@ final class Summarizer {
         case .cursor:
             return CursorAgentSummarizer(
                 model: cursorModel,
-                apiKey: cursorConnectionMethod == .apiKey
-                    ? (KeychainStore.get(account: SecretKey.cursorAPIKey) ?? "")
-                    : nil,
+                apiKey: KeychainStore.get(account: SecretKey.cursorAPIKey) ?? "",
                 executableOverride: cursorAgentPath
             )
         case .kimi:

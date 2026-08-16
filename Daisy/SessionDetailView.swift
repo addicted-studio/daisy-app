@@ -198,6 +198,9 @@ struct SessionDetailView: View {
                         followUpSection(summary)
                     }
                 }
+                if !(session.meetingPreparation?.planItems.isEmpty ?? true) {
+                    MeetingPlanAnalysisView(session: session)
+                }
                 CollapsibleBlock(
                     title: "Transcript",
                     storageKey: "daisy.session.detail.transcriptExpanded",
@@ -1609,8 +1612,26 @@ struct SessionDetailView: View {
             // watching and both are deliberately left out.
             let voiced = await FollowUpVoice.polished(summary)
             Summarizer.shared.adopt(voiced)
-            await SessionStore.shared.updateSummary(voiced, for: session)
-            ToastCenter.shared.show(String(localized: "Summary updated"), style: .success)
+            let saved = await SessionStore.shared.updateSummary(voiced, for: session)
+            if saved {
+                if let preparation = session.meetingPreparation, !preparation.planItems.isEmpty {
+                    MeetingPlanAnalysisStore.shared.analyzeIfNeeded(
+                        sessionID: session.id,
+                        directory: session.directoryURL,
+                        title: session.title,
+                        localeHint: localeHint,
+                        preparation: preparation,
+                        durationSeconds: Double(session.durationSec),
+                        force: true
+                    )
+                }
+                ToastCenter.shared.show(String(localized: "Summary updated"), style: .success)
+            } else {
+                ToastCenter.shared.show(
+                    SessionStore.shared.lastError ?? String(localized: "Couldn’t save summary"),
+                    style: .error
+                )
+            }
         } else if let err = Summarizer.shared.lastError {
             ToastCenter.shared.show(err, style: .error)
         } else {

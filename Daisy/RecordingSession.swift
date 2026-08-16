@@ -287,6 +287,11 @@ final class RecordingSession {
     // setter internal for RecordingSession+AutoStop.swift
     var boundMeeting: DaisyMeeting?
 
+    /// Immutable preparation captured when this calendar recording began.
+    /// Persisted immediately as `meeting-preparation.json` in the session
+    /// directory and surfaced by `StoredSession` after a Library refresh.
+    var meetingPreparationSnapshot: MeetingPreparationSnapshot?
+
     /// Folder this recording will be filed into. Defaults to .inbox;
     /// the user can change it from the Home toolbar before pressing
     /// Start, and from SessionDetailView after the fact (which
@@ -638,6 +643,12 @@ final class RecordingSession {
     @ObservationIgnored
     private var pendingBoundMeeting: DaisyMeeting?
 
+    /// Preparation companion to `pendingBoundMeeting`. It must cross the
+    /// internal reset boundary through a pending channel for the same reason
+    /// as the event itself.
+    @ObservationIgnored
+    private var pendingMeetingPreparation: MeetingPreparationSnapshot?
+
     /// Folder hint applied in the same after-reset() phase as
     /// `pendingBoundMeeting`. Used by calendar starts to default
     /// the new session into Work (instead of Inbox) without leaking
@@ -709,12 +720,16 @@ final class RecordingSession {
         self.silenceMonitor = nil  // assigned below once `self` is usable
         self.silenceMonitor = SilenceMonitor(session: self)
 
-        // Preload the Whisper + diarization models so the first
-        // Record click is instant and the post-process speaker
-        // labelling on stop doesn't stall while the diarizer
-        // downloads its CoreML weights.
-        Task { await WhisperEngine.shared.ensureLoaded() }
-        Task { await DiarizationEngine.shared.ensureLoaded() }
+        // Preload the Whisper + diarization models so the first Record click
+        // is instant. An XCTest bundle is hosted inside Daisy.app, however,
+        // and must reach the test runner before app-startup model I/O begins.
+        // Otherwise a slow or unavailable model volume can block every unit
+        // test at "waiting for workers to materialize" without running one.
+        let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        if !isRunningTests {
+            Task { await WhisperEngine.shared.ensureLoaded() }
+            Task { await DiarizationEngine.shared.ensureLoaded() }
+        }
 
         // 1.0.5.1 hotfix: REMOVED recorder.prewarm() — calling
         // AVAudioEngine.prepare() at app-init time crashes the
@@ -856,7 +871,11 @@ final class RecordingSession {
     /// repopulated before `scheduleAutoStopIfNeeded()` reads it). The
     /// pending properties are picked up AFTER reset() and applied to
     /// the fresh session, which is what actually wires up auto-stop.
-    func startFromMeeting(_ meeting: DaisyMeeting) async {
+    func startFromMeeting(
+        _ meeting: DaisyMeeting,
+        preparation: MeetingPreparationSnapshot? = nil,
+        userInitiated: Bool = false
+    ) async {
         // Same event re-fired — no-op rather than stamping title/
         // binding on top of an already-running session. Checked BEFORE
         // the policy gate so a 15s calendar re-tick during an active
@@ -871,19 +890,22 @@ final class RecordingSession {
         // drive `performStartFromMeeting` via consumePendingAutoStartTrigger.
         // Applies whether idle or already recording a different meeting:
         // we never silently rotate in Prompt mode.
-        if settings.autoStartPromptMode {
+        if settings.autoStartPromptMode && !userInitiated {
             promptToStartFromMeeting(meeting)
             return
         }
 
-        await performStartFromMeeting(meeting)
+        await performStartFromMeeting(meeting, preparation: preparation)
     }
 
     /// The actual calendar-bound start (and back-to-back rotation),
     /// bypassing the policy gate. Called directly by `startFromMeeting`
     /// in Always/Selective modes, and by `consumePendingAutoStartTrigger`
     /// when the user taps Record in Prompt mode.
-    private func performStartFromMeeting(_ meeting: DaisyMeeting) async {
+    private func performStartFromMeeting(
+        _ meeting: DaisyMeeting,
+        preparation suppliedPreparation: MeetingPreparationSnapshot? = nil
+    ) async {
         // Same event re-fired — no-op rather than stamping title/
         // binding on top of an already-running session.
         if (status == .recording || status == .paused),
@@ -939,11 +961,14 @@ final class RecordingSession {
         // Stash for after-reset() pickup inside start(). Setting these
         // directly here would be erased by reset().
         pendingBoundMeeting = meeting
+        let preparation = suppliedPreparation ?? savedPreparationSnapshot(for: meeting)
+        pendingMeetingPreparation = preparation
         // Meetings file into the user's configured default folder (was
         // hardcoded `.work`); falls back to Inbox if that folder was
         // deleted. Applied in start() only when the session is still in
         // Inbox, so a manual folder pick still wins.
-        pendingFolderHint = FolderStore.shared.existingFolder(slug: settings.defaultMeetingFolderSlug) ?? .inbox
+        let projectSlug = preparation?.projectSlug ?? settings.defaultMeetingFolderSlug
+        pendingFolderHint = FolderStore.shared.existingFolder(slug: projectSlug) ?? .inbox
         // 2026-05-25: previously we set `title = meeting.title` here
         // because reset() didn't clear title. That created the bug
         // where a meeting's name leaked into a later voice-note
@@ -962,6 +987,25 @@ final class RecordingSession {
         if settings.notifyOnAutoStart {
             AutoStartNotification.post(meetingTitle: meeting.title)
         }
+    }
+
+    /// Resolve a stored draft at the moment the recording actually starts.
+    /// This matters for Prompt mode: the user may edit the preparation while
+    /// the prompt is waiting, and the recording should capture that latest
+    /// version rather than an earlier trigger-time copy.
+    private func savedPreparationSnapshot(for meeting: DaisyMeeting) -> MeetingPreparationSnapshot? {
+        let key = PreMeetingBriefStore.key(for: meeting)
+        guard let draft = MeetingPreparationStore.shared.preparations[key] else { return nil }
+        let briefSources: [String]
+        if case .ready(let brief) = PreMeetingBriefStore.shared.state(for: meeting) {
+            briefSources = brief.sourceSessionIDs
+        } else {
+            briefSources = []
+        }
+        return MeetingPreparationSnapshot(
+            preparation: draft,
+            briefSourceSessionIDs: briefSources
+        )
     }
 
     // MARK: - Auto-start prompt (policy = .prompt)
@@ -1137,8 +1181,15 @@ final class RecordingSession {
                 tag = suggested
             }
         }
+        if let preparation = pendingMeetingPreparation {
+            meetingPreparationSnapshot = preparation
+            pendingMeetingPreparation = nil
+            // Explicit preparation wins over automatic folder/tag hints.
+            folder = FolderStore.shared.existingFolder(slug: preparation.projectSlug) ?? .inbox
+            tag = preparation.tag
+        }
         if let hint = pendingFolderHint {
-            if folder == .inbox { folder = hint }
+            if meetingPreparationSnapshot == nil, folder == .inbox { folder = hint }
             pendingFolderHint = nil
         }
         if let mode = pendingMode {
@@ -1274,6 +1325,20 @@ final class RecordingSession {
             dir = nil
         }
         sessionDirectory = dir
+        if let dir, let preparation = meetingPreparationSnapshot {
+            do {
+                try preparation.write(to: dir)
+            } catch {
+                // Recording remains usable even if this lightweight context
+                // sidecar cannot be written; surface the loss instead of
+                // aborting microphone capture.
+                log.error("Meeting preparation sidecar failed: \(error.localizedDescription, privacy: .public)")
+                ToastCenter.shared.show(
+                    String(localized: "Couldn’t save the meeting preparation with this recording."),
+                    style: .warning
+                )
+            }
+        }
         // Fresh session, fresh markers. Resume keeps them (this runs on
         // start only) — a mark made before a pause still points at the
         // same media time afterwards.
@@ -2288,6 +2353,7 @@ final class RecordingSession {
         startedAt = nil
         sideNoteWindows = []
         boundMeeting = nil
+        meetingPreparationSnapshot = nil
         // Tester bug 2026-05-25: a calendar-bound meeting (title set
         // to the event name, e.g. "Pilik's Birthday") completed days
         // earlier, the session was saved, and `title` lived on in

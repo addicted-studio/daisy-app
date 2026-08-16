@@ -274,6 +274,14 @@ extension Color {
         dark:  Color(hex: 0xE98A73)
     )
 
+    /// Filled destructive controls. Deliberately darker than `daisyError`,
+    /// which is tuned for icons and text; white labels on that lighter coral
+    /// did not have enough contrast in the Library's bulk-action bar.
+    static let daisyDestructiveControl = Color(
+        light: Color(hex: 0xA9362B),
+        dark:  Color(hex: 0xB63D31)
+    )
+
     /// Brand accent / primary CTA when NOT in recording state.
     /// Warm amber owns general interaction; green stays semantic-only.
     static let daisyAccent = Color(

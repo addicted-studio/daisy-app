@@ -520,10 +520,37 @@ nonisolated struct CodexModelInfo: Identifiable, Equatable, Sendable {
     let isDefault: Bool
 }
 
+nonisolated struct CodexRateLimitWindow: Equatable, Sendable {
+    let usedPercent: Int
+    let resetsAt: Date?
+    let durationMinutes: Int?
+}
+
+nonisolated struct CodexRateLimitBucket: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let primary: CodexRateLimitWindow?
+    let secondary: CodexRateLimitWindow?
+    let isReached: Bool
+}
+
 nonisolated struct CodexRateLimitInfo: Equatable, Sendable {
     let usedPercent: Int?
     let resetsAt: Date?
     let isReached: Bool
+    let buckets: [CodexRateLimitBucket]
+
+    init(
+        usedPercent: Int?,
+        resetsAt: Date?,
+        isReached: Bool,
+        buckets: [CodexRateLimitBucket] = []
+    ) {
+        self.usedPercent = usedPercent
+        self.resetsAt = resetsAt
+        self.isReached = isReached
+        self.buckets = buckets
+    }
 }
 
 nonisolated struct CodexLoginAttempt: Equatable, Sendable {
@@ -596,14 +623,66 @@ actor CodexAppServerService: CodexAppServerServing {
         let result = try await retryingRead {
             try await connection.request(method: "account/rateLimits/read")
         }
-        guard let limits = result["rateLimits"], limits != .null else { return nil }
-        let window = limits["primary"]
-        let reset = window?["resetsAt"]?.intValue.map { Date(timeIntervalSince1970: TimeInterval($0)) }
-        let used = window?["usedPercent"]?.intValue
-        let reached = limits["rateLimitReachedType"]?.stringValue != nil
-            || limits["spendControlReached"]?.boolValue == true
-            || (used ?? 0) >= 100
-        return CodexRateLimitInfo(usedPercent: used, resetsAt: reset, isReached: reached)
+        return Self.parseRateLimits(result)
+    }
+
+    /// The App Server keeps the historical single bucket and also exposes a
+    /// multi-bucket map keyed by the backend's metered limit id. The latter
+    /// is what Home uses for model-group rows; the legacy fields remain for
+    /// Settings and for older App Server versions.
+    nonisolated static func parseRateLimits(_ result: CodexJSON) -> CodexRateLimitInfo? {
+        let legacy = result["rateLimits"]
+        let legacyWindow = parseRateLimitWindow(legacy?["primary"])
+        let legacyReached = isRateLimitReached(legacy, primary: legacyWindow)
+
+        let bucketValues = result["rateLimitsByLimitId"]?.objectValue ?? [:]
+        let buckets = bucketValues.keys.sorted().compactMap { id -> CodexRateLimitBucket? in
+            guard let snapshot = bucketValues[id], snapshot != .null else { return nil }
+            let primary = parseRateLimitWindow(snapshot["primary"])
+            let secondary = parseRateLimitWindow(snapshot["secondary"])
+            let rawName = snapshot["limitName"]?.stringValue?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayName = rawName.flatMap { $0.isEmpty ? nil : $0 } ?? id
+            return CodexRateLimitBucket(
+                id: snapshot["limitId"]?.stringValue ?? id,
+                name: displayName,
+                primary: primary,
+                secondary: secondary,
+                isReached: isRateLimitReached(snapshot, primary: primary)
+            )
+        }
+
+        guard legacy != nil || !buckets.isEmpty else { return nil }
+        return CodexRateLimitInfo(
+            usedPercent: legacyWindow?.usedPercent,
+            resetsAt: legacyWindow?.resetsAt,
+            isReached: legacyReached,
+            buckets: buckets
+        )
+    }
+
+    private nonisolated static func parseRateLimitWindow(
+        _ value: CodexJSON?
+    ) -> CodexRateLimitWindow? {
+        guard let value, value != .null,
+              let used = value["usedPercent"]?.intValue
+        else { return nil }
+        return CodexRateLimitWindow(
+            usedPercent: min(max(used, 0), 100),
+            resetsAt: value["resetsAt"]?.intValue.map {
+                Date(timeIntervalSince1970: TimeInterval($0))
+            },
+            durationMinutes: value["windowDurationMins"]?.intValue
+        )
+    }
+
+    private nonisolated static func isRateLimitReached(
+        _ snapshot: CodexJSON?,
+        primary: CodexRateLimitWindow?
+    ) -> Bool {
+        snapshot?["rateLimitReachedType"]?.stringValue != nil
+            || snapshot?["spendControlReached"]?.boolValue == true
+            || (primary?.usedPercent ?? 0) >= 100
     }
 
     func beginLogin(executableOverride: String = "") async throws -> CodexLoginAttempt {

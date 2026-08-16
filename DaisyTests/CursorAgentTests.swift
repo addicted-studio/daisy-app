@@ -15,37 +15,22 @@ private actor MockCursorAgentService: CursorAgentServing {
         let executableOverride: String
     }
 
-    var statusValue: CursorAgentStatus?
     var summaryText: String
     var summaryError: CursorAgentError?
     private(set) var lastSummaryRequest: SummaryRequest?
-    private(set) var loginCount = 0
-    private(set) var logoutCount = 0
 
     init(
-        status: CursorAgentStatus? = CursorAgentStatus(
-            account: SummaryAccount(id: "cursor@example.com", email: "cursor@example.com", displayName: nil, plan: nil)
-        ),
         summaryText: String = #"{"summary":"Cursor summary","sections":[],"actionItems":[],"clientFollowUp":""}"#,
         summaryError: CursorAgentError? = nil
     ) {
-        self.statusValue = status
         self.summaryText = summaryText
         self.summaryError = summaryError
     }
 
-    func status(executableOverride: String) async throws -> CursorAgentStatus? {
-        if let summaryError { throw summaryError }
-        return statusValue
-    }
-
-    func login(executableOverride: String) async throws { loginCount += 1 }
-    func logout(executableOverride: String) async throws { logoutCount += 1 }
-
     func summarize(
         prompt: String,
         model: String?,
-        apiKey: String?,
+        apiKey: String,
         executableOverride: String
     ) async throws -> String {
         if let summaryError { throw summaryError }
@@ -108,7 +93,7 @@ struct CursorAgentSummarizerTests {
     @Test("Long transcripts reach Cursor without provider-side truncation")
     func longTranscriptIsPreserved() async throws {
         let mock = MockCursorAgentService()
-        let provider = CursorAgentSummarizer(model: "auto", apiKey: nil, service: mock)
+        let provider = CursorAgentSummarizer(model: "auto", apiKey: "key", service: mock)
         let transcript = String(repeating: "Long meeting sentence with substantive content. ", count: 5_000)
 
         _ = try await provider.summarize(
@@ -120,7 +105,7 @@ struct CursorAgentSummarizerTests {
 
         let request = try #require(await mock.lastSummaryRequest)
         #expect(request.prompt.contains(transcript))
-        #expect(request.apiKey == nil)
+        #expect(request.apiKey == "key")
     }
 }
 
@@ -176,52 +161,4 @@ struct CursorAgentProcessContractTests {
         #expect(result.contains(#""summary":"Safe""#))
     }
 
-}
-
-@Suite("Cursor account manager")
-@MainActor
-struct CursorAccountManagerTests {
-    @Test("Connected, missing, signed-out, limit, login and logout states are mapped")
-    func sharedStates() async throws {
-        let connectedService = MockCursorAgentService()
-        let connected = CursorAccountManager(service: connectedService, executableAvailable: { _ in true })
-        await connected.refreshStatus()
-        guard case .connected(let account) = connected.accountState else {
-            Issue.record("Expected connected Cursor account")
-            return
-        }
-        #expect(account.email == "cursor@example.com")
-        #expect(connected.availableModels.first?.id == "auto")
-
-        await connected.connect()
-        #expect(await connectedService.loginCount == 1)
-        await connected.disconnect()
-        #expect(await connectedService.logoutCount == 1)
-        #expect(connected.accountState == .signedOut)
-
-        let missing = CursorAccountManager(service: connectedService, executableAvailable: { _ in false })
-        await missing.refreshStatus()
-        #expect(missing.accountState == .notInstalled)
-
-        let signedOut = CursorAccountManager(
-            service: MockCursorAgentService(status: nil),
-            executableAvailable: { _ in true }
-        )
-        await signedOut.refreshStatus()
-        #expect(signedOut.accountState == .signedOut)
-
-        let limited = CursorAccountManager(
-            service: MockCursorAgentService(summaryError: .limitReached),
-            executableAvailable: { _ in true }
-        )
-        await limited.refreshStatus()
-        #expect(limited.accountState == .limitReached(resetAt: nil))
-
-        let expired = CursorAccountManager(
-            service: MockCursorAgentService(summaryError: .signedOut),
-            executableAvailable: { _ in true }
-        )
-        await expired.refreshStatus()
-        #expect(expired.accountState == .sessionExpired)
-    }
 }

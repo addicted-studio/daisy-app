@@ -393,6 +393,7 @@ extension RecordingSession {
         // segments while the on-disk transcript.md had final-quality
         // ones. Now both share the same source.
         var summary: MeetingSummary? = nil
+        var summaryPersisted = false
         if willSummarize {
             // Fold the OCR'd screen content into what the summarizer sees
             // so slides/dashboards influence the notes (Circleback-style
@@ -443,6 +444,7 @@ extension RecordingSession {
                 do {
                     let data = try JSONEncoder().encode(summary)
                     try data.write(to: url)
+                    summaryPersisted = true
                 } catch {
                     log.error("Failed to write summary.json: \(error.localizedDescription, privacy: .public)")
                     ToastCenter.shared.show(
@@ -476,6 +478,22 @@ extension RecordingSession {
                         log.error("Failed to rewrite summary.json after voice polish: \(error.localizedDescription, privacy: .public)")
                     }
                 }
+            }
+
+            // Independent second pass over the saved plan. Fire-and-forget:
+            // provider or validation failures write their own sidecar and
+            // never change summary state, auto-send, or audio retention.
+            if summaryPersisted,
+               let preparation = MeetingPreparationSnapshot.load(from: directory),
+               !preparation.planItems.isEmpty {
+                MeetingPlanAnalysisStore.shared.analyzeIfNeeded(
+                    sessionID: sessionID,
+                    directory: directory,
+                    title: title,
+                    localeHint: localeHint,
+                    preparation: preparation,
+                    durationSeconds: elapsed
+                )
             }
         }
 
@@ -1202,6 +1220,7 @@ extension RecordingSession {
             folderSlug: sessionFolderSlug,
             kind: sessionKind,
             tag: tag,
+            meetingPreparation: meetingPreparationSnapshot,
             systemAudioStatus: systemAudioStatusValue
         )
         for integration in autoIntegrations {
@@ -1306,6 +1325,7 @@ extension RecordingSession {
             folderSlug: folder.slug,
             kind: sessionKind,
             tag: tag,
+            meetingPreparation: meetingPreparationSnapshot,
             systemAudioStatus: systemAudioStatusValue
         )
     }
@@ -1548,6 +1568,7 @@ extension RecordingSession {
         folderSlug: String,
         kind: SessionKind = .recording,
         tag: String = "",
+        meetingPreparation: MeetingPreparationSnapshot? = nil,
         systemAudioStatus: String? = nil
     ) -> StoredSession {
         let transcriptText = segments
@@ -1605,6 +1626,9 @@ extension RecordingSession {
             // event metadata from disk.
             meetingAttendeeEmails: [],
             linkedEventTitle: nil,
+            meetingPreparation: meetingPreparation,
+            planAnalysis: MeetingPlanAnalysis.load(from: directory),
+            planAnalysisError: MeetingPlanAnalysisErrorRecord.load(from: directory),
             speakerMap: [:],
             speakerCentroidIDs: centroidIDs,
             systemAudioStatus: systemAudioStatus

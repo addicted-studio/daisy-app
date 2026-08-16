@@ -31,8 +31,8 @@ struct SummaryConnectionTests {
         }
     }
 
-    @Test("Connection methods are stored independently per provider")
-    func methodsArePerProvider() {
+    @Test("Cursor stays on API key when an old account preference exists")
+    func cursorAccountPreferenceMigratesToAPIKey() {
         withDefaults { defaults in
             let preferences = SummaryConnectionPreferences(defaults: defaults)
             preferences.setMethod(.account, for: .openAI)
@@ -40,9 +40,13 @@ struct SummaryConnectionTests {
             #expect(preferences.method(for: .openAI) == .account)
             #expect(preferences.method(for: .cursor) == .apiKey)
 
+            defaults.set(
+                SummaryConnectionMethod.account.rawValue,
+                forKey: SummaryConnectionPreferences.methodKey(for: .cursor)
+            )
             preferences.setMethod(.account, for: .cursor)
             #expect(preferences.method(for: .openAI) == .account)
-            #expect(preferences.method(for: .cursor) == .account)
+            #expect(preferences.method(for: .cursor) == .apiKey)
         }
     }
 

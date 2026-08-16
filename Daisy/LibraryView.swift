@@ -112,14 +112,6 @@ struct LibraryListColumn: View {
             // List (below) lets this show through.
             .background(Color.daisyBgPrimary)
             .toolbar {
-                // Tags pill → LIST section, pinned to its RIGHT edge.
-                // `.primaryAction` on the CONTENT column attributes the
-                // item to the list region's trailing edge (the detail
-                // column's own `.primaryAction` items sit in the detail
-                // region further right). Only shown once there's a real
-                // (non-empty) tag to filter by.
-                // Shown on BOTH tabs (Library and Notes) so tag filtering is
-                // consistent now that notes and recordings share tags.
                 if tagGroups.contains(where: { !$0.name.isEmpty }) {
                     ToolbarItem(placement: .primaryAction) {
                         tagSelector
@@ -221,7 +213,7 @@ struct LibraryListColumn: View {
     /// request. No-op if nothing's selected. Shared by the Backspace
     /// shortcut and (potentially) any future bulk-delete button.
     private func requestBulkDelete() {
-        let toDelete = store.sessions.filter { model.selectedIDs.contains($0.id) }
+        let toDelete = selectedSessions
         guard !toDelete.isEmpty else { return }
         model.pendingDelete = toDelete
     }
@@ -256,10 +248,11 @@ struct LibraryListColumn: View {
             ForEach(moveTargets, id: \.folder.slug) { row in
                 let f = row.folder
                 Button {
-                    Task { await store.moveSession(session, to: f) }
+                    let targets = sessionsForRowAction(session)
+                    move(targets, to: f)
                 } label: {
                     let label = row.isChild ? "    \(f.name)" : f.name
-                    if f.slug == session.folderSlug {
+                    if sessionsForRowAction(session).allSatisfy({ $0.folderSlug == f.slug }) {
                         Label(label, systemImage: "checkmark")
                     } else {
                         Text(label)
@@ -378,6 +371,15 @@ struct LibraryListColumn: View {
                         .contextMenu {
                             sessionContextMenu(for: session)
                         }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                model.pendingDelete = [session]
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                                    .foregroundStyle(.white)
+                            }
+                            .tint(Color.daisyDestructiveControl)
+                        }
                 }
             }
             .listStyle(.plain)
@@ -416,6 +418,104 @@ struct LibraryListColumn: View {
                     }
                 }
             }
+
+            if model.selectedIDs.count > 1 {
+                bulkSelectionBar
+            }
+        }
+    }
+
+    private var bulkSelectionBar: some View {
+        HStack(spacing: 10) {
+            Button {
+                toggleSelectAll()
+            } label: {
+                Label(
+                    allVisibleSelected ? String(localized: "Deselect all") : String(localized: "Select all"),
+                    systemImage: allVisibleSelected ? "checkmark.circle.fill" : "circle"
+                )
+                .labelStyle(.iconOnly)
+            }
+            .help(allVisibleSelected ? String(localized: "Deselect all") : String(localized: "Select all"))
+
+            Text(String(localized: "\(model.selectedIDs.count) selected"))
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+
+            Spacer(minLength: 4)
+
+            Menu {
+                ForEach(moveTargets, id: \.folder.slug) { row in
+                    let folder = row.folder
+                    Button {
+                        move(selectedSessions, to: folder)
+                    } label: {
+                        let label = row.isChild ? "    \(folder.name)" : folder.name
+                        Text(label)
+                    }
+                }
+            } label: {
+                Label("Move", systemImage: "folder")
+            }
+            .disabled(model.selectedIDs.isEmpty)
+
+            Button(role: .destructive) {
+                requestBulkDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+                    .foregroundStyle(.white)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.daisyDestructiveControl)
+            .disabled(model.selectedIDs.isEmpty)
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Color.daisyBgElevated)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.daisyDivider)
+                .frame(height: 0.5)
+        }
+    }
+
+    private var selectedSessions: [StoredSession] {
+        store.sessions.filter { model.selectedIDs.contains($0.id) }
+    }
+
+    private var allVisibleSelected: Bool {
+        !filteredSessions.isEmpty
+            && filteredSessions.allSatisfy { model.selectedIDs.contains($0.id) }
+    }
+
+    private func toggleSelectAll() {
+        let visibleIDs = Set(filteredSessions.map(\.id))
+        if allVisibleSelected {
+            model.selectedIDs.subtract(visibleIDs)
+        } else {
+            model.selectedIDs.formUnion(visibleIDs)
+        }
+    }
+
+    private func sessionsForRowAction(_ session: StoredSession) -> [StoredSession] {
+        let selected = selectedSessions
+        if selected.count > 1, model.selectedIDs.contains(session.id) {
+            return selected
+        }
+        return [session]
+    }
+
+    private func move(_ sessions: [StoredSession], to folder: SessionFolder) {
+        guard !sessions.isEmpty else { return }
+        Task {
+            await store.moveMany(sessions, to: folder)
+            model.selectedIDs.subtract(sessions.map(\.id))
+            let message = sessions.count == 1
+                ? String(localized: "Moved to \(folder.name)")
+                : String(localized: "Moved \(sessions.count) items to \(folder.name)")
+            ToastCenter.shared.show(message, style: .success)
         }
     }
 
@@ -650,9 +750,9 @@ struct LibraryDetailColumn: View {
 
     private var multiSelectDetail: some View {
         ContentUnavailableView {
-            Label(String(localized: "\(model.selectedIDs.count) recordings selected"), systemImage: "doc.on.doc")
+            Label(selectionTitle, systemImage: "checkmark.circle")
         } description: {
-            Text("Press ⌫ to delete the selection, or click a single row to read its transcript.")
+            Text("Move or delete the selection using the actions below the list.")
         } actions: {
             Button(role: .destructive) {
                 model.pendingDelete = store.sessions.filter { model.selectedIDs.contains($0.id) }
@@ -660,8 +760,13 @@ struct LibraryDetailColumn: View {
                 Label(String(localized: "Delete \(model.selectedIDs.count) sessions…"), systemImage: "trash")
             }
             .buttonStyle(.borderedProminent)
-            .tint(Color.daisyError)
+            .tint(Color.daisyDestructiveControl)
+            .foregroundStyle(.white)
         }
+    }
+
+    private var selectionTitle: String {
+        String(localized: "\(model.selectedIDs.count) selected")
     }
 
     private var emptyDetail: some View {

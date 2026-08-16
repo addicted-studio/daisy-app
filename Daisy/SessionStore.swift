@@ -549,24 +549,36 @@ final class SessionStore {
     /// in the transcript markdown frontmatter (adding it if missing)
     /// and reloads the store so chips / lists update.
     func moveSession(_ session: StoredSession, to folder: SessionFolder) async {
-        guard let url = session.transcriptURL else { return }
-        do {
-            var text = try String(contentsOf: url, encoding: .utf8)
-            text = Self.upsertFrontmatter(in: text, key: "daisy_folder", value: folder.slug)
-            // Pin the kind on every move. Otherwise a LEGACY note (no
-            // `daisy_kind:` on disk, currently inferred `.note` only
-            // because it sits in the Notes folder) that the user moves
-            // to another project would, on the next scan, infer as a
-            // `.recording` and vanish from the Notes tab. `session.kind`
-            // is the value we already resolved at parse time, so writing
-            // it here makes the classification permanent and folder-
-            // independent — the whole point of the note/recording split.
-            text = Self.upsertFrontmatter(in: text, key: "daisy_kind", value: session.kind.rawValue)
-            try text.write(to: url, atomically: true, encoding: .utf8)
-            await refresh()
-        } catch {
-            log.error("Move failed: \(error.localizedDescription, privacy: .public)")
-            lastError = error.localizedDescription
+        await moveMany([session], to: folder)
+    }
+
+    /// Move several recordings or notes with one trailing refresh. The
+    /// single-item path delegates here as well so both operations preserve
+    /// legacy note kinds and report partial failures identically.
+    func moveMany(_ sessions: [StoredSession], to folder: SessionFolder) async {
+        var firstError: String?
+        for session in sessions {
+            guard let url = session.transcriptURL else { continue }
+            do {
+                var text = try String(contentsOf: url, encoding: .utf8)
+                text = Self.upsertFrontmatter(in: text, key: "daisy_folder", value: folder.slug)
+                // Pin the kind on every move. Otherwise a LEGACY note (no
+                // `daisy_kind:` on disk, currently inferred `.note` only
+                // because it sits in the Notes folder) that the user moves
+                // to another project would, on the next scan, infer as a
+                // `.recording` and vanish from the Notes tab.
+                text = Self.upsertFrontmatter(in: text, key: "daisy_kind", value: session.kind.rawValue)
+                try text.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                log.error("Move failed for \(session.title, privacy: .private): \(error.localizedDescription, privacy: .public)")
+                if firstError == nil {
+                    firstError = error.localizedDescription
+                }
+            }
+        }
+        await refresh()
+        if let firstError {
+            lastError = firstError
         }
     }
 
@@ -672,15 +684,18 @@ final class SessionStore {
     }
 
     /// Replace a session's `summary.json` and reload metadata.
-    func updateSummary(_ summary: MeetingSummary, for session: StoredSession) async {
+    @discardableResult
+    func updateSummary(_ summary: MeetingSummary, for session: StoredSession) async -> Bool {
         let url = session.directoryURL.appendingPathComponent("summary.json")
         do {
             let data = try JSONEncoder().encode(summary)
             try data.write(to: url, options: .atomic)
             await refresh()
+            return true
         } catch {
             log.error("Save summary failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
+            return false
         }
     }
 
@@ -1050,6 +1065,10 @@ final class SessionStore {
             centroidIDs = Set(centroids.keys)
         }
 
+        let meetingPreparation = MeetingPreparationSnapshot.load(from: directory)
+        let planAnalysis = MeetingPlanAnalysis.load(from: directory)
+        let planAnalysisError = MeetingPlanAnalysisErrorRecord.load(from: directory)
+
         return StoredSession(
             id: id,
             directoryURL: directory,
@@ -1072,6 +1091,9 @@ final class SessionStore {
             meetingAttendees: attendees,
             meetingAttendeeEmails: attendeeEmails,
             linkedEventTitle: linkedEventTitle,
+            meetingPreparation: meetingPreparation,
+            planAnalysis: planAnalysis,
+            planAnalysisError: planAnalysisError,
             speakerMap: speakerMap,
             speakerCentroidIDs: centroidIDs,
             systemAudioStatus: systemAudioStatus
@@ -1207,6 +1229,13 @@ struct StoredSession: Identifiable, Sendable {
     /// SpeakerNameRow attendee picker as a header so the user can
     /// verify the attendee list is from the expected event.
     let linkedEventTitle: String?
+    /// Immutable preparation captured when this recording began. Nil for
+    /// manual and legacy sessions. Stored in `meeting-preparation.json`.
+    let meetingPreparation: MeetingPreparationSnapshot?
+    /// Optional second-pass plan analysis. Independent of summary.json.
+    let planAnalysis: MeetingPlanAnalysis?
+    /// Last analysis failure, if any. A summary can still be fully valid.
+    let planAnalysisError: MeetingPlanAnalysisErrorRecord?
     /// User-supplied mapping from speaker id (`"A"`, `"B"`, …) to
     /// real attendee name. Read from `daisy_speaker_map:`
     /// frontmatter. Empty until user fills it in via Detail view.
