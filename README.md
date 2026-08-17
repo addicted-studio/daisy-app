@@ -95,8 +95,9 @@ Docs: <https://mydaisy.io/docs/mcp>.
 [`Benchmarks/`](./Benchmarks/) contains the product-pipeline runner, a neutral
 standard-library scorer for WER/CER/DER/JER, fixtures, and published raw
 evidence. The first public baseline is AMI `ES2004a`: Daisy 1.0.7.59 detected
-4/4 speakers with 15.68% DER and 20.28% JER at 0.139× real time on an M4
-MacBook Air. It is one reproducible diarization case, not a general accuracy
+4/4 speakers with 15.68% DER and 20.28% JER at a median 0.122× real time
+across three warm runs on an M4 MacBook Air. It is one reproducible
+diarization case, not a general accuracy
 claim; Humla and OpenWhispr remain unscored until their raw output exists for
 the exact same audio. See the [methodology and publication gate](./Benchmarks/README.md)
 and the [public evidence](./Benchmarks/reports/public/).

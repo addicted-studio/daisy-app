@@ -26,10 +26,22 @@ Run the product pipeline and scorer:
   Benchmarks/datasets/ami/ES2004a.Mix-Headset.wav \
   Benchmarks/reports/public/2026-08-17-ami-es2004a-daisy-hypothesis.json en
 
+./Benchmarks/run_daisy.sh \
+  Benchmarks/datasets/ami/ES2004a.Mix-Headset.wav \
+  Benchmarks/reports/public/2026-08-17-ami-es2004a-daisy-run-2.json en
+
+./Benchmarks/run_daisy.sh \
+  Benchmarks/datasets/ami/ES2004a.Mix-Headset.wav \
+  Benchmarks/reports/public/2026-08-17-ami-es2004a-daisy-run-3.json en
+
 python3 Benchmarks/score.py Benchmarks/datasets/ami/manifest.json \
   --json Benchmarks/reports/public/2026-08-17-ami-es2004a.json \
   --markdown Benchmarks/reports/public/2026-08-17-ami-es2004a.md
 ```
+
+All three runs produced the same 15.68% DER, 20.28% JER, and 4/4 speaker
+count. Their RTF values were 0.139×, 0.122×, and 0.107×; the published timing
+is the warm median, 0.122×.
 
 This is a diarization-only baseline: AMI's NXT word annotations have not yet
 been converted into the benchmark's normalized transcript reference, so WER

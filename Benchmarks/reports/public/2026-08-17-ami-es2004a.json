@@ -53,7 +53,89 @@
         "data_ownership": "not_tested",
         "mcp": "not_tested"
       },
-      "notes": "AMI ES2004a Mix-Headset; automatic speaker count; uncorrected product-pipeline output"
+      "notes": "Warm run 1/3; AMI ES2004a Mix-Headset; automatic speaker count; uncorrected product-pipeline output"
+    },
+    {
+      "case_id": "ami-es2004a-mix-headset-auto",
+      "language": "en",
+      "duration_seconds": 1049.3546875,
+      "system": "Daisy",
+      "version": "1.0.7.59",
+      "engine": "WhisperKit large-v3-v20240930_626MB + FluidAudio",
+      "hypothesis": "../../reports/public/2026-08-17-ami-es2004a-daisy-run-2.json",
+      "hypothesis_sha256": "d4738a1e3f39a1a0cf894d48d67ed0b0d8a06c2691e8f1cb4aa3edd3d5246933",
+      "metrics": {
+        "wer": null,
+        "cer": null,
+        "diarization": {
+          "der": 0.15684810156331663,
+          "jer": 0.20284942211049317,
+          "miss_seconds": 79.77445869445773,
+          "false_alarm_seconds": 9.109392395019768,
+          "confusion_seconds": 15.219370880126945,
+          "reference_speaker_seconds": 663.7199999999996,
+          "reference_speakers": 4,
+          "detected_speakers": 4,
+          "speaker_count_correct": true,
+          "mapping": {
+            "A": "FEE013",
+            "B": "FEE016",
+            "C": "MEO015",
+            "D": "MEE014"
+          },
+          "collar_seconds": 0.25
+        },
+        "capture_completeness": 1.0,
+        "real_time_factor": 0.12168806845896857
+      },
+      "checks": {
+        "recoverability": "not_tested",
+        "export": "not_tested",
+        "data_ownership": "not_tested",
+        "mcp": "not_tested"
+      },
+      "notes": "Warm run 2/3; AMI ES2004a Mix-Headset; automatic speaker count; uncorrected product-pipeline output"
+    },
+    {
+      "case_id": "ami-es2004a-mix-headset-auto",
+      "language": "en",
+      "duration_seconds": 1049.3546875,
+      "system": "Daisy",
+      "version": "1.0.7.59",
+      "engine": "WhisperKit large-v3-v20240930_626MB + FluidAudio",
+      "hypothesis": "../../reports/public/2026-08-17-ami-es2004a-daisy-run-3.json",
+      "hypothesis_sha256": "fc1479b37f00af822a14392817fdfac1be24c2948dd45174fadd25f3030ecef3",
+      "metrics": {
+        "wer": null,
+        "cer": null,
+        "diarization": {
+          "der": 0.15684810156331663,
+          "jer": 0.20284942211049317,
+          "miss_seconds": 79.77445869445773,
+          "false_alarm_seconds": 9.109392395019768,
+          "confusion_seconds": 15.219370880126945,
+          "reference_speaker_seconds": 663.7199999999996,
+          "reference_speakers": 4,
+          "detected_speakers": 4,
+          "speaker_count_correct": true,
+          "mapping": {
+            "A": "FEE013",
+            "B": "FEE016",
+            "C": "MEO015",
+            "D": "MEE014"
+          },
+          "collar_seconds": 0.25
+        },
+        "capture_completeness": 1.0,
+        "real_time_factor": 0.10654102981022295
+      },
+      "checks": {
+        "recoverability": "not_tested",
+        "export": "not_tested",
+        "data_ownership": "not_tested",
+        "mcp": "not_tested"
+      },
+      "notes": "Warm run 3/3; AMI ES2004a Mix-Headset; automatic speaker count; uncorrected product-pipeline output"
     }
   ]
 }
