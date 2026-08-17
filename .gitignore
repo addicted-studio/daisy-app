@@ -32,3 +32,13 @@ xcuserdata/
 # Claude Code local settings (do not commit)
 .claude/settings.local.json
 .ref-fluidaudio-asr/
+
+# Benchmark corpora and generated runs are intentionally local. Only the
+# reproducible harness, schemas, tiny synthetic fixtures, and explicitly
+# published evidence under reports/public belong in git.
+Benchmarks/datasets/
+Benchmarks/runs/
+Benchmarks/reports/*.json
+Benchmarks/reports/*.md
+!Benchmarks/reports/.gitkeep
+Benchmarks/__pycache__/

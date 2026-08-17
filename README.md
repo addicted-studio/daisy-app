@@ -49,6 +49,7 @@ The Swift Package Manager dependencies (Sparkle, WhisperKit via [`argmax-oss-swi
 ```
 Daisy/                  → SwiftUI app sources (PBXFileSystemSynchronizedRootGroup)
 DaisyTests/             → unit tests
+Benchmarks/             → reproducible WER/DER/JER scorer, product runner, and public evidence
 Daisy.xcodeproj/        → Xcode project
 scripts/
   release.sh            → end-to-end release: archive → notarize → DMG → sign → Sparkle appcast
@@ -88,6 +89,17 @@ Daisy's MCP server turns your recordings into a live data source for AI clients,
 - **Act** — `resummarize_session`, `set_session_title`, `rename_speaker`, `route_session_to_destination` (Notion / Linear / Slack / webhook)
 
 Docs: <https://mydaisy.io/docs/mcp>.
+
+## Reproducible benchmarks
+
+[`Benchmarks/`](./Benchmarks/) contains the product-pipeline runner, a neutral
+standard-library scorer for WER/CER/DER/JER, fixtures, and published raw
+evidence. The first public baseline is AMI `ES2004a`: Daisy 1.0.7.59 detected
+4/4 speakers with 15.68% DER and 20.28% JER at 0.139× real time on an M4
+MacBook Air. It is one reproducible diarization case, not a general accuracy
+claim; Humla and OpenWhispr remain unscored until their raw output exists for
+the exact same audio. See the [methodology and publication gate](./Benchmarks/README.md)
+and the [public evidence](./Benchmarks/reports/public/).
 
 ## Release flow
 

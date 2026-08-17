@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "suite": {
+    "name": "Daisy benchmark scorer fixture",
+    "date": "2026-08-17",
+    "environment": {"machine": "synthetic", "os": "fixture"}
+  },
+  "cases": [
+    {
+      "id": "fixture-en-2spk",
+      "language": "en",
+      "duration_seconds": 4.0,
+      "reference": {
+        "text": "reference.txt",
+        "rttm": "reference.rttm",
+        "speaker_count": 2
+      },
+      "runs": [
+        {
+          "system": "Fixture",
+          "version": "1",
+          "hypothesis": "hypothesis.json",
+          "capture": {"captured_duration_seconds": 4.0},
+          "recoverability": "pass",
+          "export": "pass",
+          "data_ownership": "pass",
+          "mcp": "not_applicable"
+        }
+      ]
+    }
+  ]
+}

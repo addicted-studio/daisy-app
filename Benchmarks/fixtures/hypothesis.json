@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "product": "Fixture",
+  "version": "1",
+  "audio_duration_seconds": 4.0,
+  "processing_seconds": 2.0,
+  "segments": [
+    {"start": 0.0, "end": 2.0, "speaker": "B", "text": "Hello world"},
+    {"start": 2.0, "end": 4.0, "speaker": "A", "text": "Daisy works locally"}
+  ]
+}
