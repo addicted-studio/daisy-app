@@ -1,77 +1,74 @@
 # Releasing Daisy
 
-Branch model: **trunk + a stable line**, with audience separation handled by the
-Sparkle appcast channel (not by the branch).
+Daisy uses trunk development with a separate stable source line. Sparkle
+channels decide who receives a build; git branches record the source that made
+it.
 
-- **`main`** — trunk. All work lands here and ships as **beta** by default.
-- **`stable`** — points at the last release promoted to the stable channel. The
-  base for hotfixes to what everyone currently runs. Lags `main` on purpose.
-- **tags** — `v<version>` on every release: rollback points + a version→commit map.
+- `main` is the active product line and normally ships beta builds.
+- `stable` points to the source of the latest promoted stable build and is the
+  base for stable hotfixes.
+- `v<version>` tags map every published build to its app source.
 
-The Sparkle **channel** (who receives a build) is independent of the git branch
-(the source). One file — `../Daisy-web/public/appcast.xml` — holds every release;
-beta items carry `<sparkle:channel>beta</sparkle:channel>`, stable items don't.
-The site's two buttons read `lib/latestVersion.ts` (stable) and `lib/betaVersion.ts`
-(beta). Users opt into beta in-app via About → "Get beta updates".
+The website repository owns the distribution state:
 
-Current pointers (2026-06-14): stable = **1.0.7.18 (b59)** @ `0e5db73`;
-beta = **1.0.7.20 (b61)** on `main`.
+- `public/appcast.xml` is the Sparkle release history.
+- `lib/latestVersion.ts` points the main download CTA to stable.
+- `lib/betaVersion.ts` points opt-in users to the newest beta.
+- `public/downloads/` keeps every referenced signed DMG.
 
----
+`scripts/release.sh` finds daisy-web when it is the parent checkout or a
+lowercase sibling. Set `DAISY_WEB_REPO=/absolute/path/to/daisy-web` for any
+other layout. Read the current stable and beta versions from the generated
+files above; do not duplicate those values in this document.
 
-## 1. Cut a beta — the default
+## 1. Cut a beta
 
-From `main`, build green on device:
+Start from a clean, tested `main`. The build number must be greater than every
+`sparkle:version` already in the appcast.
 
 ```sh
-cd ~/Develop/Daisy
-rm -f .git/index.lock                              # sandbox can leave a stale lock
+git switch main
 DAISY_AUTO_PUSH=1 ./scripts/release.sh <version> <build> beta
-#   builds / signs / notarizes, copies the DMG into Daisy-web, injects the
-#   appcast beta <item>, rewrites lib/betaVersion.ts, commits + pushes Daisy-web.
-#   It does NOT push daisy-app.
-git add Daisy.xcodeproj/project.pbxproj            # release.sh bumps it (step 7)
+git add Daisy.xcodeproj/project.pbxproj
 git commit -m "<version> (b<build>)"
 git push
-git tag v<version> && git push origin v<version>
+git tag v<version>
+git push origin v<version>
 ```
 
-`<build>` must exceed the highest build already in `appcast.xml`.
+The script runs tests, archives, signs, notarizes, builds the DMG, publishes it
+to daisy-web, injects the beta appcast item, updates `lib/betaVersion.ts`, and
+commits the website. It never pushes the app repository.
 
-## 2. Promote a soaked beta → stable — no rebuild
+## 2. Promote a soaked beta to stable
+
+Promotion reuses the already signed beta DMG; it does not rebuild it.
 
 ```sh
-cd ~/Develop/Daisy
 DAISY_AUTO_PUSH=1 ./scripts/release.sh promote <version>
-#   strips the beta channel tag from that appcast <item> and points
-#   lib/latestVersion.ts at it. Same DMG — everyone now gets it.
-git switch stable && git merge --ff-only v<version> && git push   # advance the stable source pointer
+git switch stable
+git merge --ff-only v<version>
+git push
 git switch main
 ```
 
-## 3. Hotfix a shipped stable — when `main` has already moved on
+The command removes the beta channel tag from the existing appcast item and
+updates `lib/latestVersion.ts` to the same artifact.
 
-This is the whole reason the `stable` branch exists.
+## 3. Ship a stable hotfix
 
 ```sh
-cd ~/Develop/Daisy
 git switch stable
-git switch -c hotfix/<short-desc>
-#   … fix …
-DAISY_AUTO_PUSH=1 ./scripts/release.sh <version>.<patch> <build> stable
-git switch stable && git merge --ff-only hotfix/<short-desc>
-git tag v<version>.<patch> && git push origin stable v<version>.<patch>
-git switch main && git merge stable                # carry the fix forward into the beta line
+git switch -c hotfix/<short-description>
+# implement and verify the fix
+DAISY_AUTO_PUSH=1 ./scripts/release.sh <version> <build> stable
+git switch stable
+git merge --ff-only hotfix/<short-description>
+git tag v<version>
+git push origin stable v<version>
+git switch main
+git merge stable
 ```
 
-## Notes
-
-- Claude (the sandbox) can commit from `~/Develop/Daisy` but **cannot build,
-  sign, notarize, or push** — those run on this Mac. Claude also tends to leave a
-  stale `.git/index.lock`; if git complains, `rm -f .git/index.lock` before
-  `add`/`commit`. `git push` itself doesn't use the lock.
-- Tagging had lapsed at `v1.0.6.1`; it resumes here. Tag **every** release
-  (stable and beta).
-- Optional automation (not yet wired): teach `release.sh` to tag the app repo on
-  each release and to fast-forward `stable` during `promote`. Until then the two
-  `git` lines above do it by hand.
+Always review both generated commits and verify the deployed download before
+announcing a release. Keep all historical DMGs referenced by the appcast.

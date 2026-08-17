@@ -1,6 +1,6 @@
 # Cursor Agent integration security decision
 
-Status: account mode is **Experimental**.
+Status: **API-key mode only**.
 
 Cursor's documented `--print` mode is not a tool-free completion API. It has
 agent tools, including file operations and shell access, and the CLI may also
@@ -28,10 +28,10 @@ The prompt additionally treats the transcript as untrusted meeting data and
 instructs the agent not to use tools. This is defense in depth, not the primary
 permission boundary.
 
-Account authentication uses the documented `cursor-agent login`, `status`, and
-`logout` commands. Cursor owns and stores the credentials; Daisy does not read
-the credential files. API-key mode uses the same constrained transport because
-Cursor documents `CURSOR_API_KEY` as the preferred automation mechanism.
+Daisy does not use Cursor account sessions or inspect Cursor credential files.
+The only supported route passes a user-provided API key from Keychain through
+`CURSOR_API_KEY`, which Cursor documents as its automation mechanism. This keeps
+the connection explicit and avoids depending on undocumented account behavior.
 
 References:
 

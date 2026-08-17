@@ -2,7 +2,15 @@
 
 ## Extended ChatGPT subscription limits
 
-**Status:** Backlog — not scheduled
+**Status:** Base plan-window display implemented; credits and spend controls remain backlog
+
+### Implemented foundation
+
+- Home reads the provider-returned model, bucket label, used percentage, and
+  reset window for connected ChatGPT accounts.
+- Multiple returned usage buckets are shown independently instead of being
+  collapsed into a guessed message count.
+- Missing provider fields stay hidden rather than being represented as zero.
 
 When the Codex App Server returns these fields, extend the Home limits card
 with conditional account details:
@@ -20,7 +28,17 @@ useful information.
 
 ## Call quality review
 
-**Status:** Backlog — not scheduled
+**Status:** Analytics and plan-analysis foundations implemented; full review remains backlog
+
+### Implemented foundation
+
+- Local meeting analytics compute explainable observed metrics from the saved
+  transcript and speaker turns.
+- Meeting-plan analysis tracks agenda progress and attaches transcript evidence
+  through a local evidence index.
+- Meeting preparation persists the user's agenda and context for the session.
+- The product does not yet provide the complete four-area post-call review,
+  presentation assessment, or versioned sales-script coverage described below.
 
 Create a dedicated post-call review with four independent, explainable
 assessments. Do not collapse them into a single opaque employee score.

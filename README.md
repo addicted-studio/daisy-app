@@ -4,7 +4,7 @@ A local-first meeting recorder, push-to-talk dictation tool, and AI-notes app fo
 
 [![Support Daisy on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G3W723TUZD)
 
-Daisy captures meeting audio (microphone + system-audio loopback via ScreenCaptureKit), transcribes it on-device with Whisper on the Neural Engine, and produces a Granola-style outline with action items and a draft follow-up. Audio and transcripts never leave the Mac unless you explicitly enable a cloud LLM provider for the summary step — and even then you supply your own API key.
+Daisy captures meeting audio (microphone + system-audio loopback via ScreenCaptureKit), transcribes it on-device with Whisper on the Neural Engine, and produces a structured outline with action items and a draft follow-up. Audio and transcripts never leave the Mac unless you explicitly enable a remote summary provider. Remote summaries can use your own API key or an explicitly connected ChatGPT account; an optional on-device privacy filter pseudonymizes detected sensitive data before supported cloud requests.
 
 End-user installation, FAQ, and the privacy story live at **<https://mydaisy.io>**. This README is for people building Daisy from source.
 
@@ -12,11 +12,11 @@ End-user installation, FAQ, and the privacy story live at **<https://mydaisy.io>
 
 Three capture modes, one app:
 
-- **Meetings** — records both sides of a call (your mic + the other side via system-audio loopback), no bot joining the meeting. On-device transcription + diarization (`Remote A` / `Remote B`, with optional mic-side attribution), a summary, action items, and a draft follow-up. Optional extras: periodic screenshots with on-device OCR feeding screen content into the transcript and summary, a pre-meeting brief built from your past sessions, and custom meeting apps beyond the built-in list.
+- **Meetings** — records both sides of a call (your mic + the other side via system-audio loopback), no bot joining the meeting. On-device transcription + diarization (`Remote A` / `Remote B`, with optional mic-side attribution), a summary, action items, and a draft follow-up. Optional extras include periodic screenshots with on-device OCR, a preparation brief built from the agenda and past sessions, evidence-backed progress against the meeting plan, local meeting analytics, and custom meeting apps beyond the built-in list.
 - **Push-to-talk dictation** — hold a hotkey, speak, and the text is pasted at your cursor in any app. Three on-device engines: Whisper (default), Parakeet (FluidAudio) for lower latency, and Apple SpeechAnalyzer on macOS 26 (zero download). A custom-vocabulary dictionary fixes names/jargon, an optional voice profile learns your phrasing, and a rolling 24-hour history lets you re-copy.
 - **Voice notes** — quick one-off thoughts saved to your Library. Optional: import existing **Apple Voice Memos** as flat transcripts (on-device, opt-in, needs Full Disk Access).
 
-Around the edges: morning and end-of-day summaries on Home, an opt-in keyboard-layout auto-fixer (retypes text entered in the wrong layout, with undo and per-app exceptions), and a token-spend card for cloud summarizers. The UI is localized in English and Russian.
+Around the edges: morning and end-of-day summaries on Home, an opt-in keyboard-layout auto-fixer (retypes text entered in the wrong layout, with undo and per-app exceptions), and provider-returned ChatGPT plan-window usage plus local token accounting for API providers. The UI is localized in English and Russian.
 
 The differentiator: Daisy ships a **local MCP server** bound to `127.0.0.1` that exposes your sessions as a queryable, actionable data source to any MCP client (Claude Desktop, Cursor, Codex). Because the transcript is already local, Daisy can be a local-only MCP source — something cloud meeting tools structurally can't offer.
 
@@ -68,7 +68,9 @@ Key services that drive the app:
 - Diarization + speaker memory — FluidAudio (Pyannote) labels remote voices; named speakers are remembered locally by a short voice fingerprint
 - `DictationPaste` — pastes dictated text at the cursor via the Accessibility API, restoring your prior clipboard
 - `RecordingSession` — orchestrates a session, owns calendar binding and auto-stop scheduling
-- `Summarizer` — multi-provider LLM dispatch: Apple Intelligence (on-device), Anthropic, OpenAI, Kimi (Moonshot), Ollama, LM Studio (local), or an MCP summarizer
+- `Summarizer` — multi-provider LLM dispatch: Apple Intelligence (on-device), ChatGPT account, Anthropic, OpenAI, Kimi (Moonshot), Cursor API key, Ollama, LM Studio (local), or an MCP summarizer
+- `SensitiveDataProtector` — optional on-device pseudonymization/redaction boundary for supported remote summaries
+- `MeetingPreparation` / `MeetingPlanAnalysis` / `MeetingAnalytics` — pre-meeting context, evidence-backed agenda progress, and local call metrics
 - `ScreenshotCapture` — opt-in periodic screenshots of the meeting window with Vision OCR; screen text flows into the transcript and summary
 - `PreMeetingBrief` / `MorningBrief` / `EndOfDaySummaries` — local briefs assembled from your calendar and past sessions, plus an evening digest
 - `VoiceProfile` — opt-in personalization learned from your dictations (and, optionally, your mic side of meetings)

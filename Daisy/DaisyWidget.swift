@@ -622,7 +622,7 @@ struct DaisyWidget: View {
 // MARK: - Daisy petal shape (traced from the brand logomark)
 
 /// Single petal traced VERBATIM from the brand logomark
-/// (`daisy_logo.svg` → `lib/daisyPetals.ts` on the web; same shape as
+/// (`daisy_logo.svg` on the web; same shape as
 /// the favicon / app icon / in-app DaisyMark). We use the "Top" cardinal
 /// petal — it's symmetric left-right, so it rotates cleanly into all 8
 /// positions and can be length-scaled per petal (audio bloom + loader

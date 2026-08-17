@@ -126,31 +126,35 @@ image packaging.
 
 ---
 
-## 7. Daisy-web repo layout
+## 7. daisy-web repo layout
 
-The release script assumes Daisy-web is cloned next to Daisy:
+The release script automatically supports either layout:
 
+```text
+daisy-web/                 # website checkout
+└── daisy-app/             # this repository nested inside it
 ```
-Develop/
-├── Daisy/             # this repo
-└── Daisy-web/         # landing + appcast.xml host
+
+```text
+workspace/
+├── daisy-app/             # this repository
+└── daisy-web/             # website + appcast host
 ```
 
-If yours lives elsewhere, edit `DAISY_WEB_REPO` at the top of
-`release.sh` to the real path.
+For any other layout, set `DAISY_WEB_REPO=/absolute/path/to/daisy-web`.
 
 ---
 
 ## First release — smoke test plan
 
-1. `cd Daisy && ./scripts/release.sh 1.0.1 3`
-2. Paste the printed `<item>` block into
-   `Daisy-web/public/appcast.xml` (between `<channel>` tags).
-   Replace the `<ul><li>…</li></ul>` placeholder with the real
-   release-notes bullets.
-3. `cd ../Daisy-web && git add . && git commit -m "release: 1.0.1" && git push`
-4. Wait ~90 s for Vercel to deploy.
-5. On a Mac running Daisy 1.0 (e.g. the first tester): open Daisy →
+1. Add markdown bullets to `scripts/release-notes/1.0.1.md`.
+2. `cd daisy-app && ./scripts/release.sh 1.0.1 3 stable`.
+   The script copies the signed DMG, injects the appcast item, updates the
+   stable download pointer, and commits the website repository.
+3. Review the generated daisy-web commit and push it. Set
+   `DAISY_AUTO_PUSH=1` when the same command should push automatically.
+4. Wait for Vercel to deploy.
+5. On a Mac running the previous Daisy build: open Daisy →
    sidebar → **About → Updates → Check for Updates…**. Sparkle
    should find 1.0.1, show release notes, offer Install. Click
    Install — Daisy quits, the new DMG is mounted and copied in
