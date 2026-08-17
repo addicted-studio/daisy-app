@@ -1,5 +1,20 @@
 # Daisy Product Backlog
 
+## Website product comparison and language coverage
+
+**Status:** Shipped on 2026-08-17
+
+- The English and Russian homepages now compare Daisy with Wispr Flow,
+  Granola, Otter, and Fireflies as complete voice-product bundles. Notion and
+  weaker comparison targets are intentionally excluded.
+- The matrix uses checks and crosses for binary capabilities and short text
+  only where it adds information: language count, local/cloud boundaries,
+  disk footprint, CRM mode, pseudonymization, MCP access, and per-user price.
+- Daisy 1.0.7.60 (build 104, beta) expands the explicit transcription picker
+  from 7 to 12 languages: English, Russian, Ukrainian, Polish, Spanish,
+  German, French, Italian, Portuguese, Japanese, Korean, and Chinese.
+- A regression test keeps transcription and summary language catalogs aligned.
+
 ## Extended ChatGPT subscription limits
 
 **Status:** Base plan-window display implemented; credits and spend controls remain backlog
