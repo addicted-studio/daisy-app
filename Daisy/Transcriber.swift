@@ -1523,10 +1523,15 @@ final class Transcriber {
         ("auto",  String(localized: "Auto-detect")),
         ("en",    "English"),
         ("ru",    "Русский"),
+        ("uk",    "Українська"),
+        ("pl",    "Polski"),
         ("es",    "Español"),
         ("de",    "Deutsch"),
         ("fr",    "Français"),
+        ("it",    "Italiano"),
+        ("pt",    "Português"),
         ("ja",    "日本語"),
+        ("ko",    "한국어"),
         ("zh",    "中文"),
     ]
 }

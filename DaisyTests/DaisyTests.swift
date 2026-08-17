@@ -390,6 +390,14 @@ struct DaisyTests {
         #expect(detected == "en")
     }
 
+    @Test("Transcription picker exposes the same 12 languages as summaries")
+    func transcriptionLocales_matchSummaryLanguages() {
+        let transcriptionCodes = Set(Transcriber.availableLocales.map(\.id).filter { $0 != "auto" })
+        let summaryCodes = Set(SummaryLanguage.allCases.map(\.id).filter { $0 != "auto" })
+        #expect(transcriptionCodes.count == 12)
+        #expect(transcriptionCodes == summaryCodes)
+    }
+
     // MARK: - SummaryLabels localisation
     //
     // The UI structural headers (Meeting / Next actions / Follow-up
