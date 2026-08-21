@@ -118,7 +118,10 @@ struct LibraryListColumn: View {
                     }
                 }
             }
-            .task { await store.refresh() }
+            .task {
+                await store.refresh()
+                await store.monitorExternalChanges()
+            }
             .onAppear {
                 consumePendingSelection()
                 if model.selectedIDs.isEmpty, let first = store.sessions.first?.id {
@@ -829,11 +832,15 @@ private struct SessionRow: View {
                 Text(formattedDate)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("·")
-                    .foregroundStyle(.tertiary)
-                Text(formattedDuration)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let contentLabel {
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+                    Text(contentLabel)
+                        .font(.caption)
+                        .foregroundStyle(
+                            session.contentState == .transcript ? Color.secondary : Color.orange
+                        )
+                }
                 if session.hasSummary {
                     Text("·")
                         .foregroundStyle(.tertiary)
@@ -865,6 +872,25 @@ private struct SessionRow: View {
     @ViewBuilder
     private var badges: some View {
         HStack(spacing: 4) {
+            switch session.contentState {
+            case .audioOnly:
+                Image(systemName: "waveform")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .help("Audio without transcript")
+            case .empty:
+                Image(systemName: "folder")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help("Empty folder")
+            case .inCloud:
+                Image(systemName: "icloud.and.arrow.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help("Stored in iCloud — download in Finder to open")
+            case .transcript:
+                EmptyView()
+            }
             // `speaker.wave.2` (hasSystemAudio) removed in 1.0.6.4 —
             // it was repeating what the session title already says
             // ("Meeting …" implies system audio was on). Removed
@@ -893,6 +919,18 @@ private struct SessionRow: View {
         let s = total % 60
         if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%d:%02d", m, s)
+    }
+
+    /// nil hides the subtitle chunk entirely (empty folders: the quiet
+    /// corner icon is enough — an orange "Empty folder" label next to
+    /// every Finder-created folder read as an error state).
+    private var contentLabel: String? {
+        switch session.contentState {
+        case .transcript: formattedDuration
+        case .audioOnly: String(localized: "Audio without transcript")
+        case .empty: nil
+        case .inCloud: String(localized: "Stored in iCloud")
+        }
     }
 }
 

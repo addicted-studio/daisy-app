@@ -10,6 +10,7 @@
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct SessionDetailView: View {
     /// Initial snapshot — passed in by the caller (the History list).
@@ -49,6 +50,8 @@ struct SessionDetailView: View {
     /// level re-summarize banner.
     @State private var isDraftingFollowUp = false
     @State private var confirmDelete = false
+    @State private var confirmDeleteAudio = false
+    @State private var showRetranscriptionSheet = false
     /// Bumped whenever a Suggest-mode suggestion is confirmed or
     /// dismissed so the Name-the-speakers card re-reads the
     /// `speaker_suggestions.json` sidecar from disk (it's not in the
@@ -201,14 +204,25 @@ struct SessionDetailView: View {
                 if !(session.meetingPreparation?.planItems.isEmpty ?? true) {
                     MeetingPlanAnalysisView(session: session)
                 }
-                CollapsibleBlock(
-                    title: "Transcript",
-                    storageKey: "daisy.session.detail.transcriptExpanded",
-                    copyLabel: "Copy transcript",
-                    copyText: { mappedTranscriptText },
-                    accessory: { screenStepper }
-                ) {
-                    transcriptSection
+                if session.transcriptURL != nil, session.contentState != .inCloud {
+                    CollapsibleBlock(
+                        title: "Transcript",
+                        storageKey: "daisy.session.detail.transcriptExpanded",
+                        copyLabel: "Copy transcript",
+                        copyText: { mappedTranscriptText },
+                        accessory: { screenStepper }
+                    ) {
+                        transcriptSection
+                    }
+                } else {
+                    folderContentStateCard
+                }
+
+                // Audio lives at the very bottom (Egor 2026-08-21) —
+                // playback is a secondary affordance next to the summary
+                // and transcript above.
+                if retainedAudioFiles.hasAny || session.transcriptURL != nil {
+                    audioPlaybackBlock
                 }
             }
             .padding(.horizontal, 32)
@@ -230,11 +244,23 @@ struct SessionDetailView: View {
         } message: {
             Text("Audio, transcript, summary and screenshots will be removed from disk. This can't be undone.")
         }
+        .alert("Delete audio files for this recording?",
+               isPresented: $confirmDeleteAudio) {
+            Button("Cancel", role: .cancel) {}
+            Button("Move to Trash", role: .destructive) {
+                deleteRetainedAudio()
+            }
+        } message: {
+            Text("The audio tracks move to the Trash. The transcript, summary and screenshots stay.")
+        }
         // A sheet rather than a popover: the strip's 160pt thumbnails are
         // too small to read a slide off, and a popover anchored to a
         // click inside an NSTextView has nothing stable to attach to.
         .sheet(item: $previewedScreenshot) { frame in
             screenPreview(frame.url)
+        }
+        .sheet(isPresented: $showRetranscriptionSheet) {
+            SessionRetranscriptionSheet(session: session)
         }
     }
 
@@ -407,7 +433,7 @@ struct SessionDetailView: View {
                         .padding(.horizontal, 10)
                 }
             }
-            .disabled(isRunningAction)
+            .disabled(isRunningAction || session.transcriptURL == nil)
             .help("Re-summarize via current provider")
         }
         // ⋯ overflow menu — its OWN ToolbarItem (NOT a ToolbarItemGroup) so,
@@ -433,6 +459,24 @@ struct SessionDetailView: View {
                 } label: {
                     Label("Move to folder…", systemImage: "folder")
                 }
+                Divider()
+                Button {
+                    showRetranscriptionSheet = true
+                } label: {
+                    Label(
+                        session.transcriptURL == nil
+                            ? String(localized: "Transcribe audio")
+                            : String(localized: "Re-transcribe"),
+                        systemImage: "waveform.badge.magnifyingglass"
+                    )
+                }
+                .disabled(!retainedAudioFiles.hasAny || SessionAudioProcessing.shared.isRunning)
+                Button {
+                    exportRetainedAudio()
+                } label: {
+                    Label("Export audio", systemImage: "square.and.arrow.up")
+                }
+                .disabled(!retainedAudioFiles.hasAny || SessionAudioProcessing.shared.isRunning)
                 Divider()
                 // Per-section copies (Egor 2026-06-17). Each copies that
                 // section as plain markdown — the SAME text the matching
@@ -619,6 +663,11 @@ struct SessionDetailView: View {
                     if !isFocused { commitTitle() }
                 }
                 .help("Click to rename this recording")
+                // Renaming works without a transcript too: SessionStore
+                // falls back to renaming the folder itself (2026-08-21,
+                // Finder-created/empty folders were stuck with their
+                // directory name). Only the LIVE recording is off-limits.
+                .disabled(session.id == SessionStore.shared.activeRecordingDirName)
             HStack(spacing: 8) {
                 Text(formattedDate)
                 Text("·")
@@ -669,6 +718,74 @@ struct SessionDetailView: View {
             // External title change (MCP set_session_title, or the
             // post-stop auto-title) — reflect unless the user is editing.
             if !titleFieldFocused { titleDraft = newValue }
+        }
+    }
+
+    @ViewBuilder
+    private var folderContentStateCard: some View {
+        let state = session.contentState
+        let headline: String = switch state {
+        case .audioOnly: String(localized: "Audio without transcript")
+        case .inCloud: String(localized: "Stored in iCloud")
+        default: String(localized: "Empty recording folder")
+        }
+        let explanation: String = switch state {
+        case .audioOnly:
+            String(localized: "The audio is still on disk. You can create a transcript from it or reveal the folder in Finder.")
+        case .inCloud:
+            String(localized: "macOS moved this recording's files to iCloud to free up disk space. Download them to view the recording — this needs enough free disk space and may take a while.")
+        default:
+            String(localized: "Daisy found this folder in your recordings storage, but it does not contain audio or a transcript. It remains visible until you delete it.")
+        }
+        // Text-only card — no leading icon column (Egor 2026-08-21:
+        // consistency with the other blocks' empty states).
+        VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(headline)
+                    .font(.headline)
+                Text(explanation)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if state == .audioOnly {
+                        Button("Transcribe audio") {
+                            showRetranscriptionSheet = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(SessionAudioProcessing.shared.isRunning)
+                    }
+                    if state == .inCloud {
+                        Button("Download from iCloud") {
+                            Self.downloadEvictedFiles(in: session.directoryURL)
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([session.directoryURL])
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.daisyBgElevated, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Ask the system to materialize every evicted file in the session
+    /// folder. Fire-and-forget: downloads proceed in the FileProvider
+    /// daemon; the Library's storage monitor picks up the change and the
+    /// row flips back to a normal session once files are local.
+    nonisolated private static func downloadEvictedFiles(in directory: URL) {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else { return }
+        for case let url as URL in enumerator {
+            guard SessionStore.isCloudEvicted(url) else { continue }
+            try? fm.startDownloadingUbiquitousItem(at: url)
         }
     }
 
@@ -1571,6 +1688,160 @@ struct SessionDetailView: View {
     }
 
     // MARK: - Actions
+
+    private var retainedAudioFiles: SessionAudioFiles {
+        SessionAudioFiles.discover(in: session.directoryURL)
+    }
+
+    @ViewBuilder
+    private var audioPlaybackBlock: some View {
+        let audio = retainedAudioFiles
+        CollapsibleBlock(
+            title: String(localized: "Audio"),
+            storageKey: "daisy.session.detail.audioExpanded",
+            copyLabel: "",
+            copyText: { "" },
+            showsCopy: false,
+            accessory: {
+                // Same visual grammar as the header copy buttons on the
+                // other blocks: borderless, secondary, .callout icons.
+                if audio.hasAny {
+                    HStack(spacing: 10) {
+                        Button {
+                            showRetranscriptionSheet = true
+                        } label: {
+                            Image(systemName: "text.redaction")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .disabled(SessionAudioProcessing.shared.isRunning)
+                        .help("Create a new transcript from this audio")
+
+                        Button {
+                            confirmDeleteAudio = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.callout)
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Delete audio files")
+                    }
+                }
+            }
+        ) {
+            VStack(alignment: .leading, spacing: 14) {
+                if audio.hasAny {
+                    if !audio.microphone.isEmpty {
+                        SessionAudioPlayerView(
+                            title: String(localized: "Your microphone"),
+                            files: audio.microphone
+                        )
+                    }
+                    if !audio.system.isEmpty {
+                        if !audio.microphone.isEmpty {
+                            Divider()
+                        }
+                        SessionAudioPlayerView(
+                            title: String(localized: "Other side"),
+                            files: audio.system
+                        )
+                    }
+                } else {
+                    // Text-only, matching the other blocks' empty states
+                    // (Egor 2026-08-21: the waveform.slash icon read as
+                    // noise; the follow-up plaque set the pattern).
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Audio is no longer stored for this recording.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Text("To play future recordings here, choose 24 hours, 7 days, 30 days, or Keep forever in Settings → Privacy → Delete audio after.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Move this session's retained audio (all rotated parts, both
+    /// tracks) to the Trash. Transcript/summary/screenshots stay; the
+    /// block flips to its "audio no longer stored" explainer after the
+    /// store refresh. Trash rather than unlink so a misclick is
+    /// recoverable — unlike the Settings-wide "Delete audio files"
+    /// purge, this sits one click from the player.
+    private func deleteRetainedAudio() {
+        let audio = retainedAudioFiles
+        guard audio.hasAny else { return }
+        let ticket = SessionsFolder.acquireAccess(to: session.directoryURL)
+        defer { ticket?.release() }
+        var failed = false
+        for url in audio.all {
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            } catch {
+                // Container paths can't always reach the Trash — fall
+                // back to a plain delete rather than leaving a mix.
+                do {
+                    try FileManager.default.removeItem(at: url)
+                } catch {
+                    failed = true
+                }
+            }
+        }
+        if failed {
+            ToastCenter.shared.show(
+                String(localized: "Some audio files couldn't be deleted."),
+                style: .error
+            )
+        } else {
+            ToastCenter.shared.show(String(localized: "Audio moved to the Trash."), style: .success)
+        }
+        Task { await SessionStore.shared.refresh() }
+    }
+
+    private func exportRetainedAudio() {
+        guard retainedAudioFiles.hasAny else {
+            ToastCenter.shared.show(
+                String(localized: "This session does not contain retained audio."),
+                style: .warning
+            )
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = String(localized: "Export audio")
+        panel.prompt = String(localized: "Export")
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = safeAudioFilename(for: session.title) + ".m4a"
+        if let m4a = UTType(filenameExtension: "m4a") {
+            panel.allowedContentTypes = [m4a]
+        }
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+
+        ToastCenter.shared.show(String(localized: "Exporting audio"), style: .info)
+        Task {
+            do {
+                try await SessionAudioProcessing.shared.exportAudio(session, to: destination)
+                ToastCenter.shared.show(String(localized: "Audio exported"), style: .success)
+            } catch is CancellationError {
+                ToastCenter.shared.show(String(localized: "Audio export was cancelled."), style: .info)
+            } catch {
+                ToastCenter.shared.show(error.localizedDescription, style: .error)
+            }
+        }
+    }
+
+    private func safeAudioFilename(for title: String) -> String {
+        let invalid = CharacterSet(charactersIn: "/:")
+            .union(.newlines)
+            .union(.controlCharacters)
+        let cleaned = title.components(separatedBy: invalid).joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? String(localized: "Daisy meeting") : cleaned
+    }
 
     private func moveTo(folder: SessionFolder) async {
         isRunningAction = true

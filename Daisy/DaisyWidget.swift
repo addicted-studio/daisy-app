@@ -565,8 +565,9 @@ struct DaisyWidget: View {
             switch WhisperEngine.shared.state {
             case .downloading(let p):
                 return String(localized: "Downloading transcription model… \(Int(p * 100))%")
-            case .loading(let status):
-                return String(localized: "Loading transcription model · \(status)")
+            case .loading:
+                let percent = Int((WhisperEngine.shared.loadProgress * 100).rounded())
+                return String(localized: "Preparing model… about \(percent)%")
             case .notLoaded:
                 return String(localized: "Setting up transcription model…")
             default:

@@ -40,16 +40,10 @@ final class SessionStore {
     private(set) var sessionsGenerating: Set<String> = []
 
     /// Folder name of the session CURRENTLY being recorded — set by
-    /// `RecordingSession` at start. The husk-cleanup in `refresh()` must
-    /// NEVER delete this folder: a live recording has audio but no
-    /// `transcript.md` yet (it's written only at Stop), so it matches the
-    /// "audioOnly husk" shape and — once past the 5-min age guard — would
-    /// otherwise be classified `.orphan` and DELETED mid-recording by any
-    /// `refresh()` that fires during a long session (an MCP query via
-    /// `MCPTools.resolveSession`, opening the Library, etc.). Confirmed
-    /// data-loss path 2026-06-04 (22-min meeting nuked → 0-byte archives).
-    /// Overwritten on the next start; no explicit clearing needed (a
-    /// finalized folder has transcript.md, so it's `.valid`, not a husk).
+    /// `RecordingSession` at start. Used to avoid queueing the live folder
+    /// for interrupted-recording recovery while its audio is still open.
+    /// Every directory is now visible in the Library and refresh never
+    /// deletes storage folders, including empty ones.
     var activeRecordingDirName: String?
 
     @ObservationIgnored
@@ -95,6 +89,91 @@ final class SessionStore {
         refreshTask = nil
     }
 
+    /// Keep an open Library in sync with folders created or removed in
+    /// Finder. The full parser remains event-driven: this loop only reads a
+    /// shallow directory fingerprint once per second and calls `refresh()`
+    /// when that fingerprint changes. The task is owned by LibraryView and
+    /// is cancelled automatically when the Library leaves the view tree.
+    func monitorExternalChanges() async {
+        var previous = await currentStorageFingerprint()
+        while !Task.isCancelled {
+            do {
+                try await Task.sleep(for: .seconds(1))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
+            let current = await currentStorageFingerprint()
+            guard current != previous else { continue }
+            previous = current
+            await refresh()
+            // Refresh may create the active `Daisy/Sessions` directory or
+            // update a stale bookmark. Re-baseline after those side effects
+            // so they don't cause a second redundant refresh.
+            previous = await currentStorageFingerprint()
+        }
+    }
+
+    private func currentStorageFingerprint() async -> String {
+        var roots: [URL] = []
+        var tickets: [SessionsFolder.AccessTicket] = []
+        if let defaultRoot = try? Self.defaultSessionsDirectory() {
+            roots.append(defaultRoot)
+        }
+        let configuredBases = ([SessionsFolder.resolveUserFolder()].compactMap { $0 }
+            + SessionsFolder.resolveLegacyFolders())
+        for base in configuredBases {
+            guard let ticket = SessionsFolder.acquireAccess(to: base) else { continue }
+            tickets.append(ticket)
+            roots.append(SessionsFolder.sessionsDirectory(in: base))
+        }
+        defer { tickets.forEach { $0.release() } }
+
+        var seen = Set<String>()
+        let uniqueRoots = roots.filter {
+            seen.insert($0.standardizedFileURL.path).inserted
+        }
+        return await Task.detached(priority: .utility) {
+            Self.storageFingerprint(for: uniqueRoots)
+        }.value
+    }
+
+    /// Stable, shallow snapshot of session-directory membership. Exposed to
+    /// tests so the Finder-created-empty-folder regression stays covered.
+    nonisolated static func storageFingerprint(for roots: [URL]) -> String {
+        let fm = FileManager.default
+        var lines: [String] = []
+        for root in roots.sorted(by: { $0.path < $1.path }) {
+            let rootValues = try? root.resourceValues(forKeys: [.contentModificationDateKey])
+            let rootStamp = rootValues?.contentModificationDate?
+                .timeIntervalSinceReferenceDate.bitPattern ?? 0
+            lines.append("root|\(root.standardizedFileURL.path)|\(rootStamp)")
+
+            let entries = (try? fm.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: [
+                    .isDirectoryKey,
+                    .creationDateKey,
+                    .contentModificationDateKey
+                ],
+                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]
+            )) ?? []
+            for entry in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+                guard let values = try? entry.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .creationDateKey,
+                    .contentModificationDateKey
+                ]), values.isDirectory == true else { continue }
+                let created = values.creationDate?
+                    .timeIntervalSinceReferenceDate.bitPattern ?? 0
+                let modified = values.contentModificationDate?
+                    .timeIntervalSinceReferenceDate.bitPattern ?? 0
+                lines.append("dir|\(entry.lastPathComponent)|\(created)|\(modified)")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func performRefresh() async {
         isLoading = true
         lastError = nil
@@ -108,23 +187,32 @@ final class SessionStore {
         if let defaultDir = try? Self.defaultSessionsDirectory() {
             roots.append((defaultDir, nil))
         }
-        if let userBase = SessionsFolder.resolveUserFolder() {
-            // Acquire security scope just for the scan; release at
-            // function exit via the ticket array's cleanup below.
-            if userBase.startAccessingSecurityScopedResource() {
-                let userSessionsDir = userBase
-                    .appendingPathComponent("Daisy/Sessions", isDirectory: true)
-                // Touch-create — the dir may not exist yet if the
-                // user picked the folder but hasn't recorded anything
-                // there yet.
+        let configuredBases = ([SessionsFolder.resolveUserFolder()].compactMap { $0 }
+            + SessionsFolder.resolveLegacyFolders())
+        var seenRootPaths = Set(roots.map { $0.url.standardizedFileURL.path })
+        var inaccessibleConfiguredFolder = false
+        for userBase in configuredBases {
+            guard let ticket = SessionsFolder.acquireAccess(to: userBase) else {
+                inaccessibleConfiguredFolder = true
+                log.warning("Couldn't access configured sessions folder during scan: \(userBase.path, privacy: .private)")
+                continue
+            }
+            let userSessionsDir = SessionsFolder.sessionsDirectory(in: userBase)
+            // Only the active destination is touch-created. Previous roots
+            // are read-only history sources and should not be recreated if
+            // the user intentionally removed them.
+            if let active = SessionsFolder.resolveUserFolder(),
+               SessionsFolder.sameFolder(active, userBase) {
                 try? FileManager.default.createDirectory(
                     at: userSessionsDir,
                     withIntermediateDirectories: true
                 )
-                let ticket = SessionsFolder.AccessTicket(url: userBase, securityScoped: true)
+            }
+            let normalized = userSessionsDir.standardizedFileURL.path
+            if seenRootPaths.insert(normalized).inserted {
                 roots.append((userSessionsDir, ticket))
             } else {
-                log.warning("Couldn't acquire security scope for user sessions folder during scan")
+                ticket.release()
             }
         }
         defer {
@@ -152,7 +240,6 @@ final class SessionStore {
             Self.scanRoots(rootURLs, activeRecordingDirName: activeDirName)
         }.value
         let loaded = scan.loaded
-        let orphansToTrash = scan.orphans
         let interruptedToRecover = scan.interrupted
         let quitSavedToFinalize = scan.quitSaved
         // Most recent first. Session ids are directory names — the
@@ -160,30 +247,12 @@ final class SessionStore {
         // impossible (two recordings starting at the same millisecond
         // would have to come from different installs of Daisy).
         sessions = loaded.sorted(by: { $0.startedAt > $1.startedAt })
+        if inaccessibleConfiguredFolder {
+            lastError = String(localized: "Daisy couldn't access one of your recordings folders. Choose it again in Settings to restore access.")
+        }
         // Reconcile the search index lazily on the next search — the
         // per-session content stamp keeps that cheap for unchanged rows.
         searchIndexDirty = true
-
-        // Best-effort cleanup of empty stub directories — they get
-        // created when start() runs the prepare phase but the user
-        // pressed Stop before any audio was captured, or when an
-        // earlier crash left a husk behind. Use removeItem rather
-        // than trashItem because sandbox containers can't surface
-        // items in Finder's Trash UI anyway — the stub has zero
-        // user-recoverable content, so straight delete is correct.
-        for url in orphansToTrash {
-            // NEVER delete the live recording's folder. Mid-session it has
-            // audio but no transcript.md yet, so it matches the audioOnly
-            // husk shape past the 5-min age guard — deleting it here
-            // orphans the open .caf descriptors (0-byte archives) and
-            // breaks the post-stop transcript write. See activeRecordingDirName.
-            if let active = activeRecordingDirName, url.lastPathComponent == active {
-                log.info("Skipped husk-cleanup of the in-progress recording: \(url.lastPathComponent, privacy: .public)")
-                continue
-            }
-            try? FileManager.default.removeItem(at: url)
-            log.info("Removed orphan session: \(url.lastPathComponent, privacy: .public)")
-        }
 
         // Best-effort recovery of interrupted recordings (audio on disk,
         // no transcript). Idempotent — recovery dedupes folders it's
@@ -214,7 +283,6 @@ final class SessionStore {
     /// actor by `scanRoots` — plain value type, all Sendable.
     nonisolated struct ScanResult: Sendable {
         var loaded: [StoredSession] = []
-        var orphans: [URL] = []
         var interrupted: [URL] = []
         var quitSaved: [URL] = []
     }
@@ -261,11 +329,12 @@ final class SessionStore {
                        ) {
                         result.quitSaved.append(url)
                     }
-                case .orphan:
-                    result.orphans.append(url)
                 case .unreadable:
                     break
-                case .interrupted:
+                case .interrupted(let session):
+                    // Interrupted sessions are still real user folders.
+                    // Keep them visible while best-effort recovery runs.
+                    result.loaded.append(session)
                     // Crash / power-loss leftover with real audio. NEVER
                     // delete. Skip the live recording (still being written);
                     // queue the rest for best-effort recovery.
@@ -278,160 +347,124 @@ final class SessionStore {
         return result
     }
 
-    /// Result of classifying a directory inside `Sessions/`. Either a
-    /// real session we want to show, an empty stub to clean up, or
-    /// unreadable (don't touch, don't show).
+    /// Result of classifying a directory inside `Sessions/`. Every
+    /// readable folder becomes a visible session, including empty and
+    /// audio-only folders. Unreadable folders are never modified.
     /// Name of the marker file `RecordingSession` writes into a session
     /// folder while capture is live (and removes on a clean Stop). Its
     /// presence on a folder with audio but no finished transcript means
     /// "interrupted recording — recover, never delete".
     nonisolated static let recordingMarkerName = ".recording"
 
-    /// A `.caf` smaller than this is a throwaway stub (0-byte / a few
-    /// frames), not a recoverable recording — guards the size-based
-    /// fallback against resurrecting husks. ~256 KB ≈ ~1.4 s of 48 kHz
-    /// float-mono audio.
+    /// A marker-less `.caf` must reach this size before Daisy assumes an
+    /// interrupted recording and starts automatic recovery. Smaller
+    /// audio-only folders still remain visible in the Library.
     nonisolated static let minRecoverableAudioBytes: Int64 = 256 * 1024
 
     nonisolated enum ParseResult {
         case valid(StoredSession)
-        case orphan
         case unreadable
         /// Audio on disk but no finished transcript — an interrupted
         /// recording (crash / power-loss). NEVER deleted; handed to
         /// `InterruptedRecordingRecovery`.
-        case interrupted
+        case interrupted(StoredSession)
     }
 
     nonisolated static func classify(directory: URL) -> ParseResult {
         let fm = FileManager.default
-        let micURL    = directory.appendingPathComponent("microphone.caf")
-        let systemURL = directory.appendingPathComponent("system_audio.caf")
         let transcriptURL = directory.appendingPathComponent("transcript.md")
 
-        let hasMic    = fm.fileExists(atPath: micURL.path)
-        let hasSystem = fm.fileExists(atPath: systemURL.path)
+        let retainedAudio = SessionAudioFiles.discover(in: directory)
+        let hasMic    = !retainedAudio.microphone.isEmpty
+        let hasSystem = !retainedAudio.system.isEmpty
         let hasTranscript = fm.fileExists(atPath: transcriptURL.path)
 
-        // Examine transcript.md once up-front — needed both to decide
-        // husk-vs-valid and (later) for parseSession.
+        // Examine transcript.md once up-front to distinguish a completed
+        // recording from one that can be recovered from its audio.
+        //
+        // iCloud eviction guard (2026-08-20 field audit): a session folder
+        // on Desktop/Documents with "Optimize Mac Storage" can have its
+        // files evicted — they stay listed under their real names
+        // (`fileExists` == true, stat size real) but reading them triggers
+        // a synchronous download that FAILS on a full disk. An evicted or
+        // unreadable transcript must NEVER look like "no transcript":
+        // that's how ≤1.0.7.59 husk-deleted the only copy of a recording
+        // (tombstone then synced to iCloud). Don't even attempt the read
+        // when the file is evicted — a Library scan must not trigger a
+        // download storm over hundreds of sessions.
+        let transcriptEvicted = hasTranscript && isCloudEvicted(transcriptURL)
+        var transcriptUnreadable = false
         var transcriptBodyEmpty = true
         var hasMeaningfulFrontmatter = false
-        if hasTranscript,
-           let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
-            let parsed = parseFrontmatter(in: text)
-            transcriptBodyEmpty = parsed.body
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
-            // `title` and `started` are the two fields stop() writes
-            // on a successful finish. If either is present we treat
-            // the transcript as "real" even if the body is empty
-            // (e.g. zero-segment recording that nonetheless completed
-            // its lifecycle and deserves a History entry).
-            hasMeaningfulFrontmatter = parsed.title != nil || parsed.started != nil
+        if hasTranscript, !transcriptEvicted {
+            do {
+                let text = try String(contentsOf: transcriptURL, encoding: .utf8)
+                let parsed = parseFrontmatter(in: text)
+                transcriptBodyEmpty = parsed.body
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
+                // `title` and `started` are the two fields stop() writes
+                // on a successful finish. If either is present we treat
+                // the transcript as "real" even if the body is empty
+                // (e.g. zero-segment recording that nonetheless completed
+                // its lifecycle and deserves a History entry).
+                hasMeaningfulFrontmatter = parsed.title != nil || parsed.started != nil
+            } catch {
+                // Read error ≠ empty file. Treat as "transcript present
+                // but unknown" — visible, never recovered, never deleted.
+                transcriptUnreadable = true
+            }
         }
 
         // Interrupted recording (crash / power-loss): real audio on disk
         // but no FINISHED transcript. Recoverable — never delete. Identified
         // by the in-progress marker, or (belt-and-suspenders for recordings
         // predating the marker) by a non-trivial .caf on disk. Takes
-        // precedence over the husk shapes below.
+        // precedence over the normal visible-folder result below.
         let hasFinishedTranscript = hasTranscript
             && (!transcriptBodyEmpty || hasMeaningfulFrontmatter)
         let hasMarker = fm.fileExists(
             atPath: directory.appendingPathComponent(recordingMarkerName).path
         )
-        if (hasMic || hasSystem), !hasFinishedTranscript,
-           hasMarker || largestAudioBytes(mic: micURL, system: systemURL) >= minRecoverableAudioBytes {
-            return .interrupted
-        }
-
-        // Orphan = directory that exists on disk but represents no
-        // recoverable session. Three shapes occur in the wild:
-        //
-        //  (a) Empty folder — start() created the directory but never
-        //      wrote audio or transcript (immediate crash / force-quit
-        //      before AudioRecorder.start, or stop() pressed before
-        //      capture began).
-        //  (b) Audio-only, no transcript.md — recording captured
-        //      .caf data but the app died before stop() could flush
-        //      transcript.md. The .caf alone has no metadata and no
-        //      playback UI in Daisy, so it'd render as "Untitled,
-        //      0:00, today" — actively misleading.
-        //  (c) Audio + transcript.md with empty body AND no
-        //      meaningful frontmatter — partial stop(), aborted
-        //      between file creation and content write.
-        //  (d) No audio + transcript.md with empty body — start()
-        //      wrote the YAML shell, then user reset() before any
-        //      audio arrived.
-        //
-        // All four are husks. Auto-delete them so they don't pile up
-        // in the user's History (observed during QA 2026-05-17: two
-        // (b)-shaped husks from dev crashes on May 16 / 17 showed up
-        // alongside a single real recording, looking like dupes).
-        //
-        // The 5-minute age guard avoids racing against an in-flight
-        // recording: between `mkdir` and the first audio frame there's
-        // a window where a freshly-started session looks like (a),
-        // and we never want to nuke that.
-        let isEmpty   = !hasMic && !hasSystem && !hasTranscript
-        let audioOnly = (hasMic || hasSystem) && !hasTranscript
-        let audioPlusEmptyShell = (hasMic || hasSystem)
-            && hasTranscript
-            && transcriptBodyEmpty
-            && !hasMeaningfulFrontmatter
-        // `!hasMeaningfulFrontmatter` mirrors audioPlusEmptyShell above:
-        // a transcript whose body is empty but whose frontmatter carries
-        // title/started is a REAL zero-segment session that completed its
-        // lifecycle (e.g. audio purged by delete-after-transcription) —
-        // it deserves its History entry, not husk cleanup. Caught by
-        // SessionClassifyTests 2026-07-20: without this term such
-        // sessions aged into .orphan and were deleted.
-        let transcriptShellOnly = !hasMic && !hasSystem
-            && hasTranscript
-            && transcriptBodyEmpty
-            && !hasMeaningfulFrontmatter
-
-        let isHusk = isEmpty || audioOnly || audioPlusEmptyShell || transcriptShellOnly
-        if isHusk {
-            if directoryAgeSeconds(directory) >= 300 {
-                return .orphan
-            }
-            // Young husk — possibly an in-flight recording. Don't
-            // delete, don't show in History either (would just flash
-            // a confusing "Untitled · 0:00" row during the window).
-            return .unreadable
-        }
-
         guard let session = parseSession(at: directory) else {
             return .unreadable
+        }
+        // Never hand an evicted/unreadable folder to recovery: the
+        // transcript may be perfectly fine in iCloud, and recovery's full
+        // re-transcribe would materialize a multi-GB .caf onto what is
+        // likely an already-full disk.
+        let audioEvicted = retainedAudio.all.contains(where: isCloudEvicted)
+        if (hasMic || hasSystem), !hasFinishedTranscript,
+           !transcriptEvicted, !transcriptUnreadable, !audioEvicted,
+           hasMarker || largestAudioBytes(retainedAudio.all) >= minRecoverableAudioBytes {
+            return .interrupted(session)
         }
         return .valid(session)
     }
 
-    /// Largest of the mic / system `.caf` sizes in bytes (0 if neither
-    /// exists / is readable). The size-based fallback for spotting a
-    /// recoverable interrupted recording when the marker is absent.
-    nonisolated static func largestAudioBytes(mic: URL, system: URL) -> Int64 {
+    /// True when `url` is an iCloud (FileProvider) item whose bytes are
+    /// NOT local — the file is listed under its real name, but any read
+    /// triggers a synchronous download that can fail (offline / full
+    /// disk). Non-iCloud files always return false.
+    nonisolated static func isCloudEvicted(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [
+            .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey
+        ]) else { return false }
+        guard values.isUbiquitousItem == true,
+              let status = values.ubiquitousItemDownloadingStatus else { return false }
+        return status == .notDownloaded
+    }
+
+    /// Largest retained `.caf` part in bytes (0 if none is readable). The
+    /// size-based fallback for spotting a recoverable interrupted recording
+    /// when the marker is absent.
+    nonisolated static func largestAudioBytes(_ urls: [URL]) -> Int64 {
         func size(_ url: URL) -> Int64 {
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
                   let n = attrs[.size] as? Int64 else { return 0 }
             return n
         }
-        return max(size(mic), size(system))
-    }
-
-    /// Seconds since `directory` was last modified. Used as the age
-    /// guard for husk cleanup. Returns `.greatestFiniteMagnitude` if
-    /// mtime can't be read — that errs on the side of "old enough to
-    /// delete" rather than leaking husks indefinitely on systems with
-    /// quirky filesystem metadata.
-    nonisolated static func directoryAgeSeconds(_ directory: URL) -> TimeInterval {
-        let values = try? directory.resourceValues(forKeys: [.contentModificationDateKey])
-        guard let mtime = values?.contentModificationDate else {
-            return .greatestFiniteMagnitude
-        }
-        return Date().timeIntervalSince(mtime)
+        return urls.map(size).max() ?? 0
     }
 
     /// Permanently delete a session's folder + its contents.
@@ -482,13 +515,10 @@ final class SessionStore {
     /// (`nil` == every folder). Always excludes the currently-recording
     /// session: its directory has audio but no `transcript.md` mid-
     /// session, and removing it would orphan the open `.caf`
-    /// descriptors and break the post-stop transcript write — the same
-    /// data-loss path `activeRecordingDirName` guards in husk cleanup.
+    /// descriptors and break the post-stop transcript write.
     /// A `StoredSession.id` IS its directory name, so the guard is a
-    /// direct id comparison. (In practice a young live recording isn't
-    /// in `sessions` yet — it's `.unreadable` until transcript.md
-    /// lands — but a finalized-then-still-flagged folder could be, so
-    /// the explicit skip is the safe belt-and-suspenders.)
+    /// direct id comparison. Live folders are intentionally visible now,
+    /// so this guard is required for every bulk-delete path.
     private func sessionsToDelete(inFolder slug: String?) -> [StoredSession] {
         var pool = sessions
         if let slug, !slug.isEmpty {
@@ -613,8 +643,15 @@ final class SessionStore {
     /// `parseSession` fall back to the folder-name id, which is
     /// confusing) — this method trusts its input is non-empty.
     func setTitle(_ title: String, for session: StoredSession) async {
-        guard let url = session.transcriptURL else { return }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // No transcript — nothing to carry a `title:` frontmatter line.
+        // The visible name of such a session IS its directory name
+        // (Finder-created / empty / audio-only folders), so a rename
+        // means renaming the folder itself.
+        guard let url = session.transcriptURL else {
+            await renameDirectory(session, to: trimmed)
+            return
+        }
         do {
             var text = try String(contentsOf: url, encoding: .utf8)
             // Same quoting as MarkdownExporter.yamlQuote (escape `\`
@@ -630,6 +667,37 @@ final class SessionStore {
             await refresh()
         } catch {
             log.error("Set title failed: \(error.localizedDescription, privacy: .public)")
+            lastError = error.localizedDescription
+        }
+    }
+
+    /// Rename a transcript-less session by renaming its directory. The
+    /// directory name IS the session id, so the row re-appears under the
+    /// new id after refresh. Guards: never the live recording (open .caf
+    /// descriptors), never onto an existing folder, and the new name is
+    /// sanitized for the filesystem.
+    private func renameDirectory(_ session: StoredSession, to rawName: String) async {
+        guard session.id != activeRecordingDirName else { return }
+        var name = rawName
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        while name.hasPrefix(".") { name.removeFirst() }
+        guard !name.isEmpty, name != session.id else { return }
+
+        let parent = session.directoryURL.deletingLastPathComponent()
+        let destination = parent.appendingPathComponent(name, isDirectory: true)
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            lastError = String(localized: "A folder with this name already exists.")
+            return
+        }
+        let ticket = SessionsFolder.acquireAccess(to: session.directoryURL)
+        defer { ticket?.release() }
+        do {
+            try FileManager.default.moveItem(at: session.directoryURL, to: destination)
+            await refresh()
+        } catch {
+            log.error("Folder rename failed: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
         }
     }
@@ -746,9 +814,14 @@ final class SessionStore {
             .deletingLastPathComponent()
             .path == containerOK
         var ticket: SessionsFolder.AccessTicket?
-        if !isInContainer, let userBase = SessionsFolder.resolveUserFolder() {
-            if userBase.startAccessingSecurityScopedResource() {
-                ticket = SessionsFolder.AccessTicket(url: userBase, securityScoped: true)
+        if !isInContainer {
+            let bases = ([SessionsFolder.resolveUserFolder()].compactMap { $0 }
+                + SessionsFolder.resolveLegacyFolders())
+            if let owningBase = bases.first(where: {
+                existing.directoryURL.standardizedFileURL.path
+                    .hasPrefix(SessionsFolder.sessionsDirectory(in: $0).standardizedFileURL.path + "/")
+            }) {
+                ticket = SessionsFolder.acquireAccess(to: owningBase)
             }
         }
         defer { ticket?.release() }
@@ -973,18 +1046,31 @@ final class SessionStore {
 
         let transcriptURL = directory.appendingPathComponent("transcript.md")
         let summaryURL = directory.appendingPathComponent("summary.json")
-        let micURL = directory.appendingPathComponent("microphone.caf")
-        let systemURL = directory.appendingPathComponent("system_audio.caf")
         let screenshotsDir = directory.appendingPathComponent("screenshots", isDirectory: true)
+        let retainedAudio = SessionAudioFiles.discover(in: directory)
 
         // Read transcript.md (lazily — only frontmatter + body for search).
         var title = id
-        var startedAt = Self.dateFromFolderName(id) ?? Date()
+        // Empty and hand-created folders have no frontmatter date. Use
+        // filesystem metadata rather than Date() so rows do not jump to
+        // "now" and reorder on every Library refresh.
+        let directoryDates = try? directory.resourceValues(
+            forKeys: [.creationDateKey, .contentModificationDateKey]
+        )
+        var startedAt = Self.dateFromFolderName(id)
+            ?? directoryDates?.creationDate
+            ?? directoryDates?.contentModificationDate
+            ?? .distantPast
         var durationSec = 0
         var locale = "auto"
         var transcriptBody = ""
         var transcriptPreview = ""
-        if let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
+        // Evicted-by-iCloud files must not be read during a scan — each
+        // read triggers a synchronous download (see isCloudEvicted).
+        let transcriptEvicted = fm.fileExists(atPath: transcriptURL.path)
+            && Self.isCloudEvicted(transcriptURL)
+        if !transcriptEvicted,
+           let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
             let parsed = parseFrontmatter(in: text)
             title = parsed.title ?? title
             if let dateStr = parsed.started,
@@ -1028,7 +1114,8 @@ final class SessionStore {
         var linkedEventTitle: String?
         var speakerMap: [String: String] = [:]
         var systemAudioStatus: String?
-        if let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
+        if !transcriptEvicted,
+           let text = try? String(contentsOf: transcriptURL, encoding: .utf8) {
             let parsedFm = parseFrontmatter(in: text)
             folderSlug = parsedFm.folder ?? "inbox"
             // Explicit `daisy_kind:` wins; otherwise INFER for legacy
@@ -1078,8 +1165,8 @@ final class SessionStore {
             locale: locale,
             transcriptPreview: transcriptPreview,
             transcriptText: transcriptBody,
-            hasMicAudio: fm.fileExists(atPath: micURL.path),
-            hasSystemAudio: fm.fileExists(atPath: systemURL.path),
+            hasMicAudio: !retainedAudio.microphone.isEmpty,
+            hasSystemAudio: !retainedAudio.system.isEmpty,
             screenshotURLs: screenshots,
             screenshotOffsets: screenshotOffsets,
             screenshotHighlights: screenshotHighlights,
@@ -1096,7 +1183,14 @@ final class SessionStore {
             planAnalysisError: planAnalysisError,
             speakerMap: speakerMap,
             speakerCentroidIDs: centroidIDs,
-            systemAudioStatus: systemAudioStatus
+            systemAudioStatus: systemAudioStatus,
+            // "Evicted" only when the PRIMARY content is unreachable: a
+            // local transcript with cloud-evicted audio still reads fine —
+            // the audio player is the only thing that would trigger a
+            // download, and it copes.
+            cloudEvicted: transcriptEvicted
+                || (!fm.fileExists(atPath: transcriptURL.path)
+                    && retainedAudio.all.contains(where: Self.isCloudEvicted))
         )
     }
 
@@ -1171,6 +1265,16 @@ final class SessionStore {
 nonisolated enum SessionKind: String, Sendable {
     case recording
     case note
+}
+
+nonisolated enum SessionContentState: Sendable, Equatable {
+    case transcript
+    case audioOnly
+    case empty
+    /// Files exist but their bytes live in iCloud (evicted by "Optimize
+    /// Mac Storage"). Content can't be shown until the user downloads
+    /// them — e.g. via Finder's cloud icon on the session folder.
+    case inCloud
 }
 
 struct StoredSession: Identifiable, Sendable {
@@ -1258,6 +1362,11 @@ struct StoredSession: Identifiable, Sendable {
     /// understands why every transcript line collapses to their
     /// own display name instead of per-speaker labels.
     let systemAudioStatus: String?
+    /// True when transcript.md or a retained .caf is present on disk but
+    /// its bytes were evicted to iCloud — reading would require a
+    /// download. Sessions built in-memory after a live recording are
+    /// never evicted, hence the default.
+    var cloudEvicted: Bool = false
 
     var hasSummary: Bool { summary != nil }
     var hasScreenshots: Bool { !screenshotURLs.isEmpty }
@@ -1311,6 +1420,16 @@ struct StoredSession: Identifiable, Sendable {
         let wanted = Set(screenshotHighlights)
         let matched = screenshotURLs.filter { wanted.contains($0.lastPathComponent) }
         return matched.isEmpty ? screenshotURLs : matched
+    }
+
+    /// Disk-backed content state used by Library and detail UI. A directory
+    /// itself is always a recording entry; this only describes what Daisy
+    /// found inside it.
+    var contentState: SessionContentState {
+        if cloudEvicted { return .inCloud }
+        if transcriptURL != nil { return .transcript }
+        if hasMicAudio || hasSystemAudio { return .audioOnly }
+        return .empty
     }
 
     /// Cheap full-text search across title, body, summary, and

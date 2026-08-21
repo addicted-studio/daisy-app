@@ -52,9 +52,7 @@ struct RecordCapsule: View {
                 if session.status == .recording || session.status == .paused {
                     Text(formatTime(session.elapsed))
                         .font(.system(.caption, design: .monospaced))
-                        // Ink-on-accent: white on the recording orange
-                        // was ≈2.2:1 (WCAG fail for caption text).
-                        .foregroundStyle(Color.daisyTextOnAccent.opacity(0.9))
+                        .foregroundStyle(Color.white)
                 } else if let label = hotkeyLabel {
                     // Idle: show the configured global record hotkey as a
                     // chip (mirrors the popover Record button) so the

@@ -57,12 +57,13 @@ struct SettingsView: View {
     /// UserDefaults under the hood — not @Observable — so SwiftUI
     /// needs a state nudge to re-read the path.
     @State private var storageRefreshTick: Int = 0
-    /// Live list of input devices for the Capture-tab mic picker.
-    /// Re-read on generalTab .task and on the Refresh button so the
-    /// picker reflects current plugged-in hardware without us having
-    /// to subscribe to CoreAudio hot-plug notifications (added in
-    /// post-launch hardening).
-    @State private var micDevices: [AudioInputDevice] = []
+    /// Folder change is a two-stage decision: pick the destination, then
+    /// explicitly decide what should happen to directories in the previous
+    /// active root. The destructive branch gets a second confirmation.
+    @State private var pendingStorageChange: SessionsFolderChangeRequest?
+    @State private var showingStorageChangeChoices = false
+    @State private var showingStorageDeleteConfirmation = false
+    @State private var storageChangeInProgress = false
     /// On-disk Whisper cache stats — populated by an off-thread
     /// scan in `transcriptionTab.task`. `cacheRefreshTick` is the
     /// nudge the task watches; we bump it after Remove unused so
@@ -465,14 +466,12 @@ struct SettingsView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Button("Choose folder…") {
-                    if SessionsFolder.presentPicker() != nil {
-                        storageRefreshTick &+= 1
-                        ToastCenter.shared.show(String(localized: "New recordings will land here."), style: .success)
-                    }
+                    chooseRecordingsFolder()
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .tint(Color.daisyTextPrimary)
+                .disabled(storageChangeInProgress)
                 if SessionsFolder.hasUserFolder {
                     // Was .borderless + tertiary grey — read as plain
                     // text, not as an actionable control. Promoted to
@@ -480,21 +479,146 @@ struct SettingsView: View {
                     // adjacent to Choose folder… as a peer secondary
                     // action.
                     Button("Reset to default") {
-                        SessionsFolder.clearUserFolder()
-                        storageRefreshTick &+= 1
+                        resetRecordingsFolder()
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(Color.daisyTextPrimary)
+                    .disabled(storageChangeInProgress)
                 }
             }
         }
         .id(storageRefreshTick)
+        .confirmationDialog(
+            "What should Daisy do with the existing recordings?",
+            isPresented: $showingStorageChangeChoices,
+            titleVisibility: .visible,
+            presenting: pendingStorageChange
+        ) { request in
+            Button("Move them to the new folder") {
+                runStorageChange(.move, request: request)
+            }
+            Button("Leave them where they are") {
+                runStorageChange(.keep, request: request)
+            }
+            Button("Delete the existing recordings", role: .destructive) {
+                DispatchQueue.main.async {
+                    pendingStorageChange = request
+                    showingStorageDeleteConfirmation = true
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingStorageChange = nil
+            }
+        } message: { request in
+            if SessionsFolder.isCloudSynced(request.destinationBaseURL) {
+                Text("Daisy found \(request.existingFolderCount) recording folders in the current location. Old folders left in place will remain visible in the Library, while new recordings will use the new location.\n\nNote: the new folder is synced with iCloud. With “Optimize Mac Storage” enabled, macOS can move recordings to the cloud when disk space runs low — they will show as “Stored in iCloud” until downloaded again. A folder outside iCloud is safer for recordings.")
+            } else {
+                Text("Daisy found \(request.existingFolderCount) recording folders in the current location. Old folders left in place will remain visible in the Library, while new recordings will use the new location.")
+            }
+        }
+        .alert(
+            "Move the existing recordings to the Trash?",
+            isPresented: $showingStorageDeleteConfirmation,
+            presenting: pendingStorageChange
+        ) { request in
+            Button("Cancel", role: .cancel) {
+                pendingStorageChange = nil
+            }
+            Button("Move to Trash", role: .destructive) {
+                runStorageChange(.delete, request: request)
+            }
+        } message: { request in
+            Text("Daisy will move \(request.existingFolderCount) recording folders from the current location to the Trash. This does not affect files already stored elsewhere.")
+        }
     }
 
     private var storageDisplayPath: String {
         SessionsFolder.userFolderDisplayPath()
             ?? SessionsFolder.defaultContainerLabel
+    }
+
+    private func chooseRecordingsFolder() {
+        guard let destination = SessionsFolder.chooseFolder(),
+              let request = SessionsFolderChange.prepare(destination: destination) else { return }
+        beginStorageChange(request)
+    }
+
+    private func resetRecordingsFolder() {
+        guard let destination = SessionsFolder.defaultBase(),
+              let request = SessionsFolderChange.prepare(
+                destination: destination,
+                destinationIsDefault: true
+              ) else { return }
+        beginStorageChange(request)
+    }
+
+    private func beginStorageChange(_ request: SessionsFolderChangeRequest) {
+        if !SessionsFolderChange.requiresUserDecision(request) {
+            storageChangeInProgress = true
+            Task {
+                defer { storageChangeInProgress = false }
+                do {
+                    try await SessionsFolderChange.reauthorize(request)
+                    storageRefreshTick &+= 1
+                    ToastCenter.shared.show(
+                        String(localized: "Recordings folder access restored."),
+                        style: .success
+                    )
+                } catch {
+                    ToastCenter.shared.show(error.localizedDescription, style: .error)
+                }
+            }
+        } else {
+            // Always ask on a real destination change. A zero count can mean
+            // either an intentionally empty recordings folder or that the
+            // previous location was temporarily unavailable while counting;
+            // neither case is permission to choose a migration policy for
+            // the user. Defer one run-loop turn so AppKit has fully dismissed
+            // the folder picker before SwiftUI presents this dialog.
+            DispatchQueue.main.async {
+                pendingStorageChange = request
+                showingStorageChangeChoices = true
+            }
+        }
+    }
+
+    private func runStorageChange(
+        _ action: SessionsFolderExistingFilesAction,
+        request: SessionsFolderChangeRequest
+    ) {
+        pendingStorageChange = nil
+        storageChangeInProgress = true
+        Task {
+            defer { storageChangeInProgress = false }
+            do {
+                let report = try await SessionsFolderChange.apply(action, request: request)
+                storageRefreshTick &+= 1
+                audioCacheRefreshTick &+= 1
+                if !report.isComplete, action != .keep {
+                    let format = String(localized: "%lld recording folders could not be processed. They remain in the previous location and are still visible in the Library.")
+                    ToastCenter.shared.show(
+                        String.localizedStringWithFormat(format, Int64(report.remainingCount)),
+                        style: .warning,
+                        duration: .seconds(8)
+                    )
+                } else {
+                    let message: String
+                    switch action {
+                    case .move:
+                        message = String(localized: "Recordings moved to the new folder.")
+                    case .delete:
+                        message = String(localized: "Existing recordings moved to the Trash.")
+                    case .keep:
+                        message = String(localized: "Existing recordings will stay where they are and remain visible in the Library.")
+                    }
+                    ToastCenter.shared.show(message, style: .success)
+                }
+            } catch {
+                storageRefreshTick &+= 1
+                ToastCenter.shared.show(error.localizedDescription, style: .error, duration: .seconds(8))
+            }
+        }
     }
 
     // MARK: - Notion destination (under Storage)
@@ -650,7 +774,6 @@ struct SettingsView: View {
 
     private var generalTab: some View {
         generalTabForm
-            .task { refreshMicDevices() }
     }
 
     private var generalTabForm: some View {
@@ -854,17 +977,11 @@ struct SettingsView: View {
 
     private var recordingTab: some View {
         recordingTabForm
-            .task { refreshMicDevices() }
     }
 
     private var recordingTabForm: some View {
         Form {
-            // ── Audio input ───────────────────────────────────
-            Section {
-                micPickerRow
-            } header: {
-                Text("Audio")
-            }
+            RecordingAudioSettingsSection(settings: settings)
 
             // ── Shortcuts ─────────────────────────────────────
             // One hotkey per recording mode. Each row offers the
@@ -970,8 +1087,6 @@ struct SettingsView: View {
                     }
                 }
 
-                Toggle("Record the other side", isOn: $settings.captureSystemAudio)
-
                 // Applies to every recording (not just meetings) → ungated,
                 // above the calendar-only row.
                 Toggle("Open the session window when recording stops", isOn: $settings.showSessionAfterStop)
@@ -1050,68 +1165,6 @@ struct SettingsView: View {
             // display setting in one place.)
         }
         .formStyle(.grouped)
-    }
-
-    // Microphone selector row in the General tab. Empty UID == follow
-    // the macOS system default (the v1.0 behaviour). For the default
-    // option we suffix the name of the device currently in that slot
-    // so the user knows what "system default" actually resolves to
-    // right now ("System default (AirPods Pro)") — far more useful
-    // than a bare "System default" label.
-    @ViewBuilder
-    private var micPickerRow: some View {
-        // 2026-05-25 — pre-fix this row carried a manual re-scan
-        // button (`arrow.trianglehead.2.clockwise` glyph next to the
-        // Picker) and a one-line explainer caption. Both removed:
-        //   • Re-scan: redundant — Daisy already observes CoreAudio
-        //     device changes via `refreshMicDevices()` on form load,
-        //     and AVAudioSession route-change notifications keep
-        //     `micDevices` live. The button only existed as a paranoid
-        //     fallback that never fired in practice; visual clutter on
-        //     a row that's a single picker.
-        //   • Caption ("Daisy uses this device for the microphone
-        //     track. Pick \"System default\" to follow your macOS Sound
-        //     settings."): the LabeledContent label "Microphone" and
-        //     the explicit "System default (…)" option name carry
-        //     enough intent for anyone scanning Settings. The longer
-        //     "what System default does" explanation isn't load-
-        //     bearing — picker behaviour is obvious on tap.
-        LabeledContent("Microphone") {
-            Picker("", selection: $settings.selectedMicDeviceUID) {
-                Text(systemDefaultLabel).tag("")
-                if !micDevices.isEmpty {
-                    Divider()
-                    ForEach(micDevices) { device in
-                        Text(device.name).tag(device.uid)
-                    }
-                }
-                // If the saved UID isn't in the live list (device
-                // unplugged since selection), include a disabled
-                // placeholder so the Picker can still display the
-                // current value rather than silently snapping to
-                // System default. The user sees that something is
-                // missing and can act on it.
-                if !settings.selectedMicDeviceUID.isEmpty,
-                   !micDevices.contains(where: { $0.uid == settings.selectedMicDeviceUID }) {
-                    Divider()
-                    Text("Saved device (not connected)")
-                        .tag(settings.selectedMicDeviceUID)
-                }
-            }
-            .labelsHidden()
-            .fixedSize()
-        }
-    }
-
-    private var systemDefaultLabel: String {
-        if let current = micDevices.first(where: { $0.isSystemDefault }) {
-            return String(localized: "System default (\(current.name))")
-        }
-        return String(localized: "System default")
-    }
-
-    private func refreshMicDevices() {
-        micDevices = AudioInputDevices.list()
     }
 
     /// At least one calendar source is connected — Apple EventKit

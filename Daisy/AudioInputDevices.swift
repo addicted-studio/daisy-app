@@ -253,6 +253,21 @@ enum AudioInputDevices {
         return status == noErr ? id : 0
     }
 
+    /// Human-readable output route used by ScreenCaptureKit diagnostics.
+    /// Daisy follows the macOS output rather than selecting a second route
+    /// inside the app, so the settings UI shows this value explicitly and
+    /// links to Sound Settings when the user wants to change it.
+    static func systemDefaultOutputName() -> String {
+        let id = systemDefaultOutputID()
+        guard id != 0 else { return String(localized: "No output device") }
+        return deviceName(id) ?? String(localized: "Unknown output")
+    }
+
+    static func systemDefaultOutputIsBluetooth() -> Bool {
+        let id = systemDefaultOutputID()
+        return id != 0 && isBluetooth(id)
+    }
+
     /// One-line audio-route snapshot for the log report: the pinned mic
     /// (or "system default"), the live default input, and the live
     /// default OUTPUT — each flagged `[BT]` when Bluetooth. Bluetooth
@@ -461,6 +476,62 @@ enum AudioInputDevices {
         let status = AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size)
         guard status == noErr else { return false }
         return size > 0
+    }
+
+    static func hasOutputStreams(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let status = AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size)
+        guard status == noErr else { return false }
+        return size > 0
+    }
+
+    /// Every connected OUTPUT device, system default flagged. Reuses the
+    /// `AudioInputDevice` shape (id/uid/name/isSystemDefault) — the
+    /// Settings output picker needs exactly the same fields.
+    static func listOutputs() -> [AudioInputDevice] {
+        let ids = allDeviceIDs()
+        guard !ids.isEmpty else { return [] }
+        let defaultID = systemDefaultOutputID()
+        return ids.compactMap { id -> AudioInputDevice? in
+            guard hasOutputStreams(id) else { return nil }
+            guard let uid = deviceUID(id), !uid.isEmpty else { return nil }
+            let name = deviceName(id) ?? "Unknown output"
+            return AudioInputDevice(
+                id: id,
+                uid: uid,
+                name: name,
+                isSystemDefault: id == defaultID
+            )
+        }
+    }
+
+    /// Change the SYSTEM default output device (the same thing the Sound
+    /// Settings picker or the menu-bar sound menu does — affects the whole
+    /// Mac, not just Daisy). Daisy deliberately follows the macOS output
+    /// rather than keeping a private route, so the Settings picker writes
+    /// the system default directly. Returns false if CoreAudio refuses.
+    @discardableResult
+    static func setSystemDefaultOutput(deviceID: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var id = deviceID
+        let status = AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &addr, 0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size), &id
+        )
+        if status != noErr {
+            log.error("Couldn't set default output to \(deviceID, privacy: .public): OSStatus \(status, privacy: .public)")
+        }
+        return status == noErr
     }
 
     private static func deviceName(_ id: AudioDeviceID) -> String? {

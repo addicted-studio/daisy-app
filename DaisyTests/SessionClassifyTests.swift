@@ -4,7 +4,7 @@
 //
 //  Regression locks for `SessionStore.classify` — the single function
 //  standing between the refresh scan and user data. Its misjudgements
-//  have historically been the app's worst bug class (husk-cleanup
+//  have historically been the app's worst bug class (older cleanup
 //  deleting a live recording, pre-marker crash leftovers), so every
 //  shape it distinguishes gets a table row here. Also locks
 //  `upsertFrontmatter` and the QuitFinalizeRecovery helpers that
@@ -40,9 +40,8 @@ struct SessionClassifyTests {
         try Data(count: bytes).write(to: dir.appendingPathComponent(name))
     }
 
-    /// Push the directory's mtime into the past — classify's husk age
-    /// guard (300 s) reads the DIRECTORY mtime, and file writes bump
-    /// it, so backdate AFTER all writes.
+    /// Push the directory's mtime into the past to lock the regression
+    /// that folder age never makes it disappear from the Library.
     private func backdate(_ dir: URL, by seconds: TimeInterval) throws {
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-seconds)],
@@ -62,40 +61,62 @@ struct SessionClassifyTests {
     Hello world transcript body.
     """
 
-    // MARK: - Husk shapes
+    // MARK: - Every folder stays visible
 
-    @Test("Fresh empty dir is left alone (young husk → unreadable)")
+    @Test("Fresh empty dir is a visible recording")
     func emptyDirYoung() throws {
         let dir = try makeDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        guard case .unreadable = SessionStore.classify(directory: dir) else {
-            Issue.record("young empty dir must be .unreadable (not deleted, not shown)")
+        guard case .valid(let session) = SessionStore.classify(directory: dir) else {
+            Issue.record("young empty dir must be visible")
             return
         }
+        #expect(session.directoryURL == dir)
+        #expect(session.transcriptURL == nil)
     }
 
-    @Test("Old empty dir is an orphan (cleanup allowed)")
+    @Test("Old empty dir remains visible")
     func emptyDirOld() throws {
         let dir = try makeDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         try backdate(dir, by: 600)
-        guard case .orphan = SessionStore.classify(directory: dir) else {
-            Issue.record("old empty dir must be .orphan")
+        guard case .valid = SessionStore.classify(directory: dir) else {
+            Issue.record("old empty dir must stay visible")
             return
         }
+        guard case .valid(let first) = SessionStore.classify(directory: dir),
+              case .valid(let second) = SessionStore.classify(directory: dir) else { return }
+        #expect(first.startedAt == second.startedAt)
     }
 
-    @Test("Old tiny audio-only dir is an orphan, not a recording")
-    func tinyAudioOldIsOrphan() throws {
+    @Test("Old tiny audio-only dir remains visible")
+    func tinyAudioOldIsVisible() throws {
         let dir = try makeDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        // Below minRecoverableAudioBytes and no marker → throwaway stub.
         try writeBlob(bytes: 1_024, as: "microphone.caf", in: dir)
         try backdate(dir, by: 600)
-        guard case .orphan = SessionStore.classify(directory: dir) else {
-            Issue.record("tiny old .caf without marker must be .orphan")
+        guard case .valid(let session) = SessionStore.classify(directory: dir) else {
+            Issue.record("tiny old .caf without marker must stay visible")
             return
         }
+        #expect(session.hasMicAudio)
+    }
+
+    @Test("Rotated audio parts are recognised without the first CAF")
+    func rotatedAudioPartIsVisible() throws {
+        let dir = try makeDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try writeBlob(
+            bytes: Int(SessionStore.minRecoverableAudioBytes) + 1,
+            as: "microphone.part2.caf",
+            in: dir
+        )
+        guard case .interrupted(let session) = SessionStore.classify(directory: dir) else {
+            Issue.record("a retained rotated CAF must be recoverable and visible")
+            return
+        }
+        #expect(session.hasMicAudio)
+        #expect(session.contentState == .audioOnly)
     }
 
     // MARK: - Interrupted (crash / power loss) — NEVER delete
@@ -125,6 +146,26 @@ struct SessionClassifyTests {
             Issue.record("large marker-less .caf must be .interrupted, never orphaned")
             return
         }
+    }
+
+    @Test("Interrupted folder is visible while recovery is queued")
+    func interruptedFolderIsLoadedByScan() throws {
+        let root = try makeDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dir = root.appendingPathComponent("2026-07-20T10-00-00Z", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try writeBlob(
+            bytes: Int(SessionStore.minRecoverableAudioBytes) + 1,
+            as: "microphone.caf",
+            in: dir
+        )
+
+        let scan = SessionStore.scanRoots([root], activeRecordingDirName: nil)
+        #expect(scan.loaded.count == 1)
+        #expect(
+            scan.interrupted.map { $0.resolvingSymlinksInPath() }
+                == [dir.resolvingSymlinksInPath()]
+        )
     }
 
     // MARK: - Valid

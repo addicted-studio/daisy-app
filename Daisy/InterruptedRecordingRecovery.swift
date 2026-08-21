@@ -4,9 +4,9 @@
 //
 //  Recovers a meeting recording interrupted by a crash, power loss, or
 //  force-quit: the `.caf` audio is on disk but `transcript.md` was never
-//  written (it's produced only at Stop). `SessionStore`'s husk-cleanup now
-//  classifies such a folder as `.interrupted` and hands it here instead of
-//  deleting it.
+//  written (it's produced only at Stop). `SessionStore` keeps the folder
+//  visible, classifies it as `.interrupted`, and hands it here for a
+//  best-effort transcript.
 //
 //  Best-effort BY DESIGN. The hard safety guarantee lives in SessionStore
 //  (never delete a recoverable folder); this layer only adds the nice-to-

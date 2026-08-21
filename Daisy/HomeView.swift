@@ -62,6 +62,10 @@ struct HomeView: View {
     /// Agenda selection opens the preparation surface; recording begins only
     /// from the explicit primary action inside that sheet.
     @State private var selectedMeeting: DaisyMeeting?
+    /// Public, aggregate-only activity card for the currently selected
+    /// dashboard period. Names, meeting titles, projects and AI spend never
+    /// enter the snapshot shown in this sheet.
+    @State private var showsAnalyticsShare = false
 
 
     var body: some View {
@@ -128,6 +132,9 @@ struct HomeView: View {
                 settings: settings
             )
         }
+        .sheet(isPresented: $showsAnalyticsShare) {
+            AnalyticsShareSheet(snapshot: analyticsShareSnapshot)
+        }
     }
 
     // MARK: - Welcome header
@@ -150,8 +157,44 @@ struct HomeView: View {
             if usage.totalCount > 0 || tokens.hasTrackedSpend {
                 dashboardPeriodPicker
             }
+            if usage.totalCount > 0 {
+                Button {
+                    showsAnalyticsShare = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .background(.regularMaterial, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                }
+                .help("Share analytics")
+                .accessibilityLabel("Share analytics")
+            }
         }
         .padding(.horizontal, 24)
+    }
+
+    private var analyticsShareSnapshot: AnalyticsShareSnapshot {
+        let heatmap = MeetingsHeatmap.build(
+            dayCounts: usage.dayCounts(),
+            dayCount: dashboardPeriod.dayCount,
+            now: dashboardNow
+        )
+        return AnalyticsShareSnapshot(
+            period: dashboardPeriod,
+            generatedAt: dashboardNow,
+            displayName: settings.userDisplayName,
+            dayCounts: usage.dayCounts(),
+            meetingCount: meetingAnalytics.totalMeetings,
+            totalMeetingSeconds: meetingAnalytics.totalSeconds,
+            activeDays: heatmap.activeDayCount,
+            currentStreak: usage.currentStreak
+        )
     }
 
     private func welcomeGreeting(at date: Date, name: String) -> String {
@@ -1154,7 +1197,7 @@ struct HomeView: View {
                     )
                     smallMeetingMetric(
                         value: analytics.afterHoursSeconds.map(compactMeetingDuration) ?? "—",
-                        label: String(localized: "After work")
+                        label: String(localized: "Off-hours")
                     )
                 }
             }

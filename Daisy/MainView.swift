@@ -746,7 +746,9 @@ enum ModelLoadActivity: Equatable {
     /// models…" with an indeterminate bar.
     case checking
     case downloading(progress: Double, totalMB: Int?)
-    case loading
+    /// CoreML does not publish unit progress. Whisper supplies a
+    /// determinate estimate; optional engines without one pass nil.
+    case loading(estimatedProgress: Double?)
 
     /// True while real bytes are moving — the only phase with a
     /// meaningful fraction. `totalMB` (when known) lets the label show
@@ -767,20 +769,21 @@ enum ModelLoadActivity: Equatable {
     static func current(settings: AppSettings) -> ModelLoadActivity? {
         switch WhisperEngine.shared.state {
         case .downloading(let progress): return classify(progress, totalMB: WhisperEngine.shared.activeModelSizeMB)
-        case .loading: return .loading
+        case .loading:
+            return .loading(estimatedProgress: WhisperEngine.shared.loadProgress)
         case .notLoaded, .ready, .failed: break
         }
         if settings.dictationUseParakeet {
             switch ParakeetEngine.shared.state {
             case .downloading(let progress): return classify(progress, totalMB: nil)
-            case .loading: return .loading
+            case .loading: return .loading(estimatedProgress: nil)
             case .notLoaded, .ready, .failed: break
             }
         }
         if settings.dictationUseNemotronLive {
             switch NemotronLiveEngine.shared.state {
             case .downloading(let progress): return classify(progress, totalMB: nil)
-            case .loading: return .loading
+            case .loading: return .loading(estimatedProgress: nil)
             case .notLoaded, .ready, .failed: break
             }
         }
@@ -799,7 +802,8 @@ enum ModelLoadActivity: Equatable {
 ///
 ///   • `.checking`    → "Checking models…" + indeterminate bar
 ///   • `.downloading` → "Downloading model… 67%" + determinate bar
-///   • `.loading`     → "Loading model…" + indeterminate bar
+///   • `.loading`     → approximate percentage + determinate bar when
+///                      the engine can provide an estimate
 ///   • ready / failed / not loaded → renders nothing (steady state;
 ///     failures keep their existing Settings-badge + status-label paths)
 struct ModelDownloadPill: View {
@@ -820,13 +824,12 @@ struct ModelDownloadPill: View {
                 icon: "arrow.down.circle",
                 progress: min(max(progress, 0), 1)
             )
-        case .loading?:
-            // Live "…Ns" counter (re-rendered each second by TimelineView)
-            // so a long cold CoreML/ANE compile visibly progresses instead
-            // of sitting behind a bar that looks frozen.
-            TimelineView(.periodic(from: WhisperEngine.shared.loadStartedAt ?? Date(), by: 1)) { _ in
-                pill(label: loadingLabel(), icon: "arrow.down.circle", progress: nil)
-            }
+        case .loading(let estimatedProgress)?:
+            pill(
+                label: loadingLabel(progress: estimatedProgress),
+                icon: "arrow.down.circle",
+                progress: estimatedProgress
+            )
         case nil:
             EmptyView()
         }
@@ -845,14 +848,12 @@ struct ModelDownloadPill: View {
         return String(localized: "Downloading model… \(Int(progress * 100))%")
     }
 
-    /// "Loading model… 32s" once the load clock is running; plain
-    /// "Loading model…" for the brief window before it starts.
-    private func loadingLabel() -> String {
-        if let started = WhisperEngine.shared.loadStartedAt {
-            let secs = max(0, Int(Date().timeIntervalSince(started)))
-            let e = "\(secs)s"
-            return String(localized: "modelload.loading.elapsed",
-                          defaultValue: "Loading model… \(e)")
+    /// CoreML does not expose exact specialization progress, so the
+    /// percentage is marked approximate and reaches 100 only on success.
+    private func loadingLabel(progress: Double?) -> String {
+        if let progress {
+            let percent = Int((min(max(progress, 0), 1) * 100).rounded())
+            return String(localized: "Preparing model… about \(percent)%")
         }
         return String(localized: "Loading model…")
     }

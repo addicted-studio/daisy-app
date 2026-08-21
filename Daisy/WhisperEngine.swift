@@ -9,6 +9,7 @@
 //
 
 import Foundation
+import Darwin
 import Observation
 import os
 import WhisperKit
@@ -67,9 +68,13 @@ final class WhisperEngine {
     /// Progress 0.0–1.0 during the .downloading phase. Mirrors the value
     /// from .downloading associated value for binding-friendly UI.
     private(set) var downloadProgress: Double = 0
-    /// Wall-clock start of the CoreML load phase, or nil when not loading.
-    /// The sidebar model pill reads this to show a live "…Ns" counter so a
-    /// long cold ANE compile visibly progresses instead of looking frozen.
+    /// Estimated 0.0–1.0 progress during CoreML specialization/loading.
+    /// Core ML exposes no byte or unit callback for this phase, so Daisy
+    /// advances a determinate estimate based on elapsed time and the last
+    /// successful load of this model. It never reaches 100% until the model
+    /// is actually ready.
+    private(set) var loadProgress: Double = 0
+    /// Wall-clock start of the CoreML load phase, retained for diagnostics.
     private(set) var loadStartedAt: Date?
 
     /// Disk/download size (MB) of the currently selected model — powers the
@@ -81,8 +86,19 @@ final class WhisperEngine {
 
     @ObservationIgnored
     private var kitBox: WhisperKitBox?
+    /// Job-scoped model used by explicit re-transcription. Kept separate
+    /// from `modelID` so choosing a model in the session sheet never
+    /// changes the user's default meeting model or UserDefaults. Only one
+    /// alternate is retained at a time and the batch service releases it
+    /// when the derived session has been written.
+    @ObservationIgnored
+    private var alternateModelID: String?
+    @ObservationIgnored
+    private var alternateKitBox: WhisperKitBox?
     @ObservationIgnored
     private var loadTask: Task<Void, Never>?
+    @ObservationIgnored
+    private var loadProgressTask: Task<Void, Never>?
     #if canImport(FluidAudio)
     /// Silero VAD wrapper, loaded lazily alongside Whisper. Used as a
     /// pre-pass on every `transcribe` call to gate out non-speech
@@ -112,6 +128,7 @@ final class WhisperEngine {
     private let log = Logger(subsystem: "app.essazanov.Daisy", category: "Whisper")
 
     private static let modelKey = "daisy.whisperModelID"
+    private static let loadDurationKeyPrefix = "daisy.whisperLoadDuration."
 
     private init() {
         let stored = UserDefaults.standard.string(forKey: Self.modelKey) ?? Self.defaultModelID
@@ -152,9 +169,11 @@ final class WhisperEngine {
     }
 
     func reload() async {
+        stopLoadProgressClock()
         kitBox = nil
         state = .notLoaded
         downloadProgress = 0
+        loadProgress = 0
         await ensureLoaded()
     }
 
@@ -183,6 +202,7 @@ final class WhisperEngine {
         loadTask = nil
         state = .notLoaded
         downloadProgress = 0
+        loadProgress = 0
         log.info("Whisper download cancelled by user")
     }
 
@@ -304,14 +324,17 @@ final class WhisperEngine {
         // problem than this prewarm-doubling fix.
         let loadStart = Date()
         loadStartedAt = loadStart
+        startLoadProgressClock(startedAt: loadStart, variant: variant)
         do {
             let kit = try await Self.loadKit(folder: folder)
             self.kitBox = WhisperKitBox(kit)
+            let loadSec = Date().timeIntervalSince(loadStart)
+            finishLoadProgressClock(successfulDuration: loadSec, variant: variant)
             self.state = .ready
             loadStartedAt = nil
-            let loadSec = Date().timeIntervalSince(loadStart)
             log.info("WhisperKit ready — model \(variant, privacy: .public) — CoreML load \(String(format: "%.1f", loadSec), privacy: .public)s")
         } catch {
+            finishLoadProgressClock(successfulDuration: nil, variant: variant)
             loadStartedAt = nil
             log.error("Whisper load failed: \(error.localizedDescription, privacy: .public)")
             state = .failed("Init failed: \(error.localizedDescription)")
@@ -330,6 +353,69 @@ final class WhisperEngine {
         // for dictation that cost lands on the user's first hotkey
         // release. Pay it here instead, against 1 s of silence.
         warmUpIfNeeded()
+    }
+
+    /// Starts the UI-only estimate for CoreML loading. `WhisperKit` and
+    /// `MLModel` do not expose progress for device specialization, so the
+    /// percentage is explicitly approximate and capped below completion.
+    private func startLoadProgressClock(startedAt: Date, variant: String) {
+        loadProgressTask?.cancel()
+        loadProgress = 0.02
+        let stored = UserDefaults.standard.double(
+            forKey: Self.loadDurationKeyPrefix + variant
+        )
+        let expectedSeconds = stored > 0 ? min(max(stored, 60), 600) : 360
+        loadProgressTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let elapsed = max(0, Date().timeIntervalSince(startedAt))
+                self.loadProgress = Self.estimatedLoadProgress(
+                    elapsed: elapsed,
+                    expectedDuration: expectedSeconds
+                )
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+        }
+    }
+
+    private func finishLoadProgressClock(
+        successfulDuration: TimeInterval?,
+        variant: String
+    ) {
+        loadProgressTask?.cancel()
+        loadProgressTask = nil
+        if let successfulDuration {
+            loadProgress = 1
+            // Leave headroom for normal run-to-run variance. A later cold
+            // ANE compilation will teach the estimate its longer duration.
+            let estimate = min(max(successfulDuration * 1.25, 60), 600)
+            UserDefaults.standard.set(
+                estimate,
+                forKey: Self.loadDurationKeyPrefix + variant
+            )
+        } else {
+            loadProgress = 0
+        }
+    }
+
+    private func stopLoadProgressClock() {
+        loadProgressTask?.cancel()
+        loadProgressTask = nil
+        loadStartedAt = nil
+        loadProgress = 0
+    }
+
+    /// Logarithmic motion gives useful early feedback during both a warm
+    /// two-second load and a several-minute cold ANE compilation. The cap
+    /// prevents the estimate from claiming completion before Core ML does.
+    nonisolated static func estimatedLoadProgress(
+        elapsed: TimeInterval,
+        expectedDuration: TimeInterval
+    ) -> Double {
+        let safeElapsed = max(0, elapsed)
+        let safeExpected = max(1, expectedDuration)
+        let fraction = Darwin.log(1 + safeElapsed) / Darwin.log(1 + safeExpected)
+        return min(max(fraction, 0.02), 0.98)
     }
 
     /// Run a single throwaway `.lite` pass over 1 s of silence so the
@@ -422,8 +508,12 @@ final class WhisperEngine {
         repo: String,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> URL {
+        // Explicit downloadBase keeps models OUT of ~/Documents —
+        // WhisperKit's default lands there, which iCloud "Desktop &
+        // Documents" sync then uploads and evicts (see modelsDownloadBase).
         try await WhisperKit.download(
             variant: variant,
+            downloadBase: modelsDownloadBase(),
             from: repo,
             progressCallback: { p in
                 progress(p.fractionCompleted)
@@ -444,10 +534,10 @@ final class WhisperEngine {
         let sizeBytes: Int64
     }
 
-    /// Enumerate downloaded model folders under
-    /// `~/Documents/huggingface/models/argmaxinc/whisperkit-coreml/`.
-    /// Sandboxed apps see that as their container's Documents
-    /// directory — same place WhisperKit.download writes to.
+    /// Enumerate downloaded model folders under `whisperCacheRoot()` —
+    /// normally `~/Library/Application Support/Daisy/huggingface/models/
+    /// argmaxinc/whisperkit-coreml/`, or the legacy `~/Documents/…` root
+    /// until its one-shot migration has run.
     /// Returns an empty array if the folder doesn't exist yet
     /// (no models ever downloaded).
     /// Folder for `variant` when it's on disk AND complete — nil
@@ -527,14 +617,52 @@ final class WhisperEngine {
                 log.error("Failed to remove \(model.variant, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
+        // Stuck legacy cache: migration skips when ~/Documents files are
+        // iCloud-evicted, and once a fresh download populates the new
+        // root the legacy copy becomes invisible dead weight in the
+        // user's iCloud quota. Deleting evicted files needs NO
+        // materialization, so this is cheap. Never touches the legacy
+        // root while it's still the active fallback.
+        if let old = Self.legacyCacheRoot(),
+           let current = Self.whisperCacheRoot(),
+           current.standardizedFileURL.path != old.standardizedFileURL.path,
+           fm.fileExists(atPath: old.path) {
+            do {
+                try fm.removeItem(at: old)
+                log.info("Removed stale legacy Whisper model cache in ~/Documents")
+            } catch {
+                log.warning("Couldn't remove legacy Whisper cache: \(error.localizedDescription, privacy: .public)")
+            }
+        }
         return freed
     }
 
-    /// Root directory of WhisperKit's model cache inside the sandbox.
-    /// Mirrors WhisperKit's own internal path resolution — kept
-    /// in one place so a future Argmax-side change to the layout is
-    /// a one-spot fix here.
-    nonisolated private static func whisperCacheRoot() -> URL? {
+    /// Base directory handed to `WhisperKit.download(downloadBase:)`.
+    /// Lives under ~/Library/Application Support — NOT ~/Documents.
+    ///
+    /// WhisperKit's default base is `~/Documents/huggingface`, and Daisy
+    /// is NOT sandboxed (the old comment here assumed a container
+    /// Documents — wrong), so until 2026-08 every model landed in the
+    /// user's real Documents folder. With iCloud "Desktop & Documents"
+    /// sync that meant: ~0.6–1.5 GB of model artefacts uploaded into the
+    /// user's iCloud quota, and — worse — EVICTED first when the disk
+    /// filled up. The next launch then re-materialized every weight file
+    /// over the network ("model takes forever to load", field report
+    /// 2026-08-19). ~/Library is never synced or evicted by iCloud.
+    nonisolated private static func modelsDownloadBase() -> URL? {
+        guard let appSupport = try? FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        ) else { return nil }
+        return appSupport
+            .appendingPathComponent("Daisy", isDirectory: true)
+            .appendingPathComponent("huggingface", isDirectory: true)
+    }
+
+    /// The legacy (≤1.0.7.60) model location inside ~/Documents.
+    nonisolated private static func legacyCacheRoot() -> URL? {
         guard let docs = try? FileManager.default.url(
             for: .documentDirectory,
             in: .userDomainMask,
@@ -546,6 +674,85 @@ final class WhisperEngine {
             .appendingPathComponent("models", isDirectory: true)
             .appendingPathComponent("argmaxinc", isDirectory: true)
             .appendingPathComponent("whisperkit-coreml", isDirectory: true)
+    }
+
+    /// One-shot migration of the legacy ~/Documents model cache into
+    /// Application Support. `static let` gives thread-safe run-once.
+    ///
+    /// A plain same-volume `moveItem` is instant for local files. If any
+    /// model file was already evicted to iCloud the move can fail (moving
+    /// out of an iCloud domain forces materialization) — in that case we
+    /// leave the legacy cache in place and keep reading from it
+    /// (`whisperCacheRoot` falls back), so nothing breaks; fresh
+    /// downloads still go to the new home.
+    nonisolated private static let legacyCacheMigration: Void = {
+        let log = Logger(subsystem: "app.essazanov.Daisy", category: "Whisper")
+        let fm = FileManager.default
+        guard let old = legacyCacheRoot(),
+              let base = modelsDownloadBase() else { return }
+        let new = whisperKitModelsRoot(under: base)
+        guard fm.fileExists(atPath: old.path),
+              !fm.fileExists(atPath: new.path) else { return }
+        // If ANY legacy file is already iCloud-evicted, moving the tree
+        // out of the iCloud domain would force a synchronous
+        // materialization of hundreds of MB — potentially ON THE MAIN
+        // THREAD (first whisperCacheRoot call comes from performLoad).
+        // Skip the move entirely in that case; whisperCacheRoot keeps
+        // serving the legacy root and fresh downloads use the new home.
+        if let enumerator = fm.enumerator(at: old, includingPropertiesForKeys: [
+            .isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey
+        ]) {
+            for case let url as URL in enumerator where SessionStore.isCloudEvicted(url) {
+                log.warning("Whisper model cache migration skipped — legacy cache has iCloud-evicted files; still reading from ~/Documents")
+                return
+            }
+        }
+        do {
+            try fm.createDirectory(
+                at: new.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fm.moveItem(at: old, to: new)
+            log.info("Migrated Whisper model cache out of ~/Documents into Application Support")
+            // Sweep the now-empty ~/Documents/huggingface skeleton so it
+            // stops syncing to iCloud. Only removes directories that are
+            // actually empty — anything else (HubApi locks with content,
+            // other tools' caches) survives.
+            var parent = old.deletingLastPathComponent()
+            for _ in 0..<3 {
+                let contents = (try? fm.contentsOfDirectory(atPath: parent.path)) ?? []
+                let removable = contents.isEmpty
+                    || contents.allSatisfy { $0 == ".DS_Store" }
+                guard removable, parent.lastPathComponent != "Documents" else { break }
+                try? fm.removeItem(at: parent)
+                parent = parent.deletingLastPathComponent()
+            }
+        } catch {
+            log.warning("Whisper model cache migration failed — continuing to read the legacy ~/Documents cache: \(error.localizedDescription, privacy: .public)")
+        }
+    }()
+
+    /// Mirrors WhisperKit's own internal path resolution — kept
+    /// in one place so a future Argmax-side change to the layout is
+    /// a one-spot fix here.
+    nonisolated private static func whisperKitModelsRoot(under base: URL) -> URL {
+        base
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("argmaxinc", isDirectory: true)
+            .appendingPathComponent("whisperkit-coreml", isDirectory: true)
+    }
+
+    nonisolated private static func whisperCacheRoot() -> URL? {
+        _ = legacyCacheMigration
+        guard let base = modelsDownloadBase() else { return legacyCacheRoot() }
+        let new = whisperKitModelsRoot(under: base)
+        if FileManager.default.fileExists(atPath: new.path) { return new }
+        // Migration didn't (couldn't) run — keep serving the legacy cache
+        // until a fresh download populates the new root.
+        if let old = legacyCacheRoot(), FileManager.default.fileExists(atPath: old.path) {
+            return old
+        }
+        return new
     }
 
     /// Recursive directory size in bytes. Walks the enumerator
@@ -686,6 +893,100 @@ final class WhisperEngine {
 
         await ensureLoaded()
         guard let box = kitBox else { throw WhisperEngineError.notReady }
+
+        return try await transcribeLocked(
+            samples: samples,
+            language: language,
+            profile: profile,
+            biasTerms: biasTerms,
+            box: box
+        )
+    }
+
+    /// Batch transcription with a model chosen for this job only. This
+    /// does not mutate `modelID`, does not write UserDefaults, and does not
+    /// reload the meeting engine. Calls remain serialized with live and
+    /// final-pass transcription through the same in-actor slot.
+    func transcribe(
+        samples: [Float],
+        language: String?,
+        modelID requestedModelID: String,
+        profile: DecodeProfile = .full,
+        biasTerms: [String] = []
+    ) async throws -> [WhisperSegment] {
+        await acquireSlot()
+        defer { releaseSlot() }
+        try Task.checkCancellation()
+
+        let box: WhisperKitBox
+        if requestedModelID == modelID {
+            await ensureLoaded()
+            guard let current = kitBox else { throw WhisperEngineError.notReady }
+            box = current
+        } else {
+            box = try await alternateModelBox(for: requestedModelID)
+        }
+
+        return try await transcribeLocked(
+            samples: samples,
+            language: language,
+            profile: profile,
+            biasTerms: biasTerms,
+            box: box
+        )
+    }
+
+    /// Drop a large alternate CoreML graph as soon as the batch job ends.
+    /// The normal meeting model remains loaded throughout.
+    func releaseAlternateModel(_ requestedModelID: String) {
+        guard alternateModelID == requestedModelID else { return }
+        alternateKitBox = nil
+        alternateModelID = nil
+    }
+
+    private func alternateModelBox(for requestedModelID: String) async throws -> WhisperKitBox {
+        guard Self.availableModels.contains(where: { $0.id == requestedModelID }) else {
+            throw WhisperEngineError.unsupportedModel(requestedModelID)
+        }
+        if alternateModelID == requestedModelID, let alternateKitBox {
+            return alternateKitBox
+        }
+
+        alternateKitBox = nil
+        alternateModelID = nil
+        if let available = Self.availableDiskBytes(),
+           Self.cachedModelFolder(variant: requestedModelID) == nil,
+           available < Self.minRequiredDiskBytes {
+            throw WhisperEngineError.notEnoughDiskSpace
+        }
+
+        let folder: URL
+        if let cached = Self.cachedModelFolder(variant: requestedModelID) {
+            folder = cached
+        } else {
+            folder = try await Self.download(
+                variant: requestedModelID,
+                repo: "argmaxinc/whisperkit-coreml",
+                progress: { _ in }
+            )
+        }
+        try Task.checkCancellation()
+        let box = WhisperKitBox(try await Self.loadKit(folder: folder))
+        alternateModelID = requestedModelID
+        alternateKitBox = box
+        return box
+    }
+
+    /// Core decode pipeline. The caller owns the engine slot and supplies
+    /// the exact model box, which lets normal and job-scoped entry points
+    /// share every VAD, vocabulary and hallucination safeguard.
+    private func transcribeLocked(
+        samples: [Float],
+        language: String?,
+        profile: DecodeProfile,
+        biasTerms: [String],
+        box: WhisperKitBox
+    ) async throws -> [WhisperSegment] {
 
         // Vocabulary biasing (dictation only — every other caller passes
         // `biasTerms: []`, so this stays a no-op for meetings/voice notes).
@@ -1269,9 +1570,15 @@ struct WhisperSegment: Sendable, Equatable {
 
 nonisolated enum WhisperEngineError: LocalizedError {
     case notReady
+    case unsupportedModel(String)
+    case notEnoughDiskSpace
     var errorDescription: String? {
         switch self {
         case .notReady: return String(localized: "Whisper model isn't loaded yet. Open Settings → Transcription.")
+        case .unsupportedModel(let id):
+            return String(localized: "The transcription model \(id) is not supported.")
+        case .notEnoughDiskSpace:
+            return String(localized: "There is not enough free disk space to download the selected transcription model.")
         }
     }
 }

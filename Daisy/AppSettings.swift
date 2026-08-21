@@ -66,6 +66,20 @@ final class AppSettings {
         didSet { defaults.set(selectedMicDeviceUID, forKey: Self.k_selectedMicDeviceUID) }
     }
 
+    /// Optional conservative microphone noise gate. Processing stays
+    /// entirely on-device and is applied before audio reaches the live
+    /// transcriber or archive. Off by default: a gate can make very quiet
+    /// speech less natural, so users should enable it only after listening
+    /// to their own setup through Recording → Audio diagnostics.
+    var microphoneNoiseSuppressionEnabled: Bool {
+        didSet {
+            defaults.set(
+                microphoneNoiseSuppressionEnabled,
+                forKey: Self.k_microphoneNoiseSuppressionEnabled
+            )
+        }
+    }
+
     var screenshotsEnabled: Bool {
         didSet { defaults.set(screenshotsEnabled, forKey: Self.k_screenshotsEnabled) }
     }
@@ -1158,6 +1172,9 @@ final class AppSettings {
         // is zero until the user actually starts recording.
         self.captureSystemAudio = defaults.object(forKey: Self.k_captureSystemAudio) as? Bool ?? true
         self.selectedMicDeviceUID = defaults.string(forKey: Self.k_selectedMicDeviceUID) ?? ""
+        self.microphoneNoiseSuppressionEnabled = defaults.bool(
+            forKey: Self.k_microphoneNoiseSuppressionEnabled
+        )
         self.screenshotsEnabled = defaults.bool(forKey: Self.k_screenshotsEnabled)
         let interval = defaults.integer(forKey: Self.k_screenshotInterval)
         self.screenshotIntervalSec = interval > 0 ? interval : 60
@@ -1594,6 +1611,8 @@ final class AppSettings {
 
     private static let k_captureSystemAudio = "daisy.captureSystemAudio"
     private static let k_selectedMicDeviceUID = "daisy.selectedMicDeviceUID"
+    private static let k_microphoneNoiseSuppressionEnabled =
+        "daisy.microphoneNoiseSuppressionEnabled"
     private static let k_screenshotsEnabled = "daisy.screenshotsEnabled"
     private static let k_screenshotInterval = "daisy.screenshotIntervalSec"
     private static let k_screenTextInSummary = "daisy.screenTextInSummary"

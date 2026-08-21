@@ -255,6 +255,11 @@ final class CoreAudioMicRecorder {
     /// same device choice. Empty string == "follow system default".
     @ObservationIgnored
     private var activePreferredDeviceUID: String = ""
+    /// Snapshot of the opt-in background-noise setting for this capture.
+    /// A route rebuild reuses it so processing cannot change halfway
+    /// through a recording merely because the input device changed.
+    @ObservationIgnored
+    private var activeNoiseSuppressionEnabled = false
     /// The device we're currently bound to (authoritative, set by US at
     /// bind time, not read back from the unit). nil until first bind.
     @ObservationIgnored
@@ -332,7 +337,11 @@ final class CoreAudioMicRecorder {
     /// is the stable device UID the user picked; empty/nil follows the
     /// macOS system default. Throws `DaisyError` on unrecoverable setup
     /// failure (no device, format read failed, unit won't initialize).
-    func start(archiveURL: URL? = nil, preferredDeviceUID: String? = nil) throws {
+    func start(
+        archiveURL: URL? = nil,
+        preferredDeviceUID: String? = nil,
+        noiseSuppressionEnabled: Bool = false
+    ) throws {
         guard state != .recording else { return }
         lastError = nil
         // Clear signal accounting up front, not after the unit is
@@ -343,6 +352,7 @@ final class CoreAudioMicRecorder {
         micLiveness.reset(to: Date())
 
         activePreferredDeviceUID = preferredDeviceUID ?? ""
+        activeNoiseSuppressionEnabled = noiseSuppressionEnabled
 
         // Resolve the device BEFORE creating the unit so we read the
         // right device's real format.
@@ -808,7 +818,8 @@ final class CoreAudioMicRecorder {
             bufferTimestamp: bufferTimestamp,
             micLiveness: micLiveness,
             archiveGate: archiveGate,
-            levelSpectrum: levelSpectrum
+            levelSpectrum: levelSpectrum,
+            noiseSuppressionEnabled: activeNoiseSuppressionEnabled
         )
         renderContext = ctx
 
@@ -1514,6 +1525,9 @@ private final class RenderContext: @unchecked Sendable {
     /// fire-and-forget `Task { @MainActor [weak owner] }` per buffer —
     /// see `process(...)` and `CoreAudioMicRecorder.spectrumBands`.
     let levelSpectrum: LevelSpectrumBox
+    /// Conservative opt-in gate, evaluated on `workQueue` before the
+    /// buffer is archived or handed to the transcriber.
+    let noiseSuppressionEnabled: Bool
 
     /// Per-context rate-limit clock for the spectrum/level publish.
     /// Instance-scoped (NOT a type-wide static) so a fresh capture
@@ -1557,7 +1571,8 @@ private final class RenderContext: @unchecked Sendable {
         bufferTimestamp: TimestampBox,
         micLiveness: LivenessBox,
         archiveGate: AtomicFlag,
-        levelSpectrum: LevelSpectrumBox
+        levelSpectrum: LevelSpectrumBox,
+        noiseSuppressionEnabled: Bool
     ) {
         self.audioUnit = audioUnit
         self.format = format
@@ -1570,6 +1585,7 @@ private final class RenderContext: @unchecked Sendable {
         self.micLiveness = micLiveness
         self.archiveGate = archiveGate
         self.levelSpectrum = levelSpectrum
+        self.noiseSuppressionEnabled = noiseSuppressionEnabled
     }
 
     /// THE REAL-TIME HOT PATH. Runs on the AUHAL hard real-time render
@@ -1659,6 +1675,18 @@ private final class RenderContext: @unchecked Sendable {
     private func handle(_ chunk: AudioChunk) {
         let pcm = chunk.pcm
 
+        // The silence watchdog must judge the RAW signal. The gate
+        // multiplies quiet-but-alive speech by 0.18 (−15 dB), which would
+        // push a live mic (−55 dB RMS) under the liveness floor and
+        // falsely pause the session as "dead input". Capture the raw RMS
+        // BEFORE the in-place gate; the rate-limited publish below reuses
+        // it. Peak/spectrum stay post-gate on purpose — the level meter
+        // should show what actually lands in the archive.
+        let rawRMSDB = Self.rmsLevelDB(of: pcm)
+        if noiseSuppressionEnabled {
+            MicrophoneNoiseSuppression.apply(to: pcm)
+        }
+
         // Archive write (gated), now off the RT thread — this is the
         // worst former RT offender (it can block on disk I/O). Same
         // try/accumulate pattern as AudioRecorder's tap: only count frames
@@ -1692,7 +1720,7 @@ private final class RenderContext: @unchecked Sendable {
             lastSpectrumPublishRefTime = nowRefTime
             let peak = Self.peakLevelDB(of: pcm)
             micLiveness.record(
-                rms: Self.rmsLevelDB(of: pcm),
+                rms: rawRMSDB,
                 at: Date(),
                 floor: CoreAudioMicRecorder.micLivenessFloorDB
             )

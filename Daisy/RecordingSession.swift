@@ -1093,6 +1093,18 @@ final class RecordingSession {
     }
 
     func start() async {
+        // Stored-audio re-transcription temporarily owns the shared
+        // Whisper engine and can load a second CoreML graph. Starting a
+        // live capture in the middle of that job would make both workflows
+        // compete for the same serialized decoder and memory budget.
+        guard !SessionAudioProcessing.shared.isRunning else {
+            ToastCenter.shared.show(
+                String(localized: "Wait for stored audio processing to finish."),
+                style: .info
+            )
+            return
+        }
+
         // If a previous Stop's summary task is still in flight, the
         // user has explicitly asked for a NEW recording — drop the
         // old finalize. transcript.md is already on disk (synchronous
@@ -1344,11 +1356,9 @@ final class RecordingSession {
         // same media time afterwards.
         momentMarkers = []
 
-        // Tell SessionStore which folder is live so its husk-cleanup never
-        // deletes this in-progress recording: until Stop writes transcript.md,
-        // the folder is "audio, no transcript" and (past the 5-min age guard)
-        // would be classified .orphan and deleted by any refresh() that fires
-        // mid-session (MCP query, Library open) — orphaning the .caf to 0 bytes.
+        // Tell SessionStore which visible folder is live. Refresh can show it,
+        // but interrupted-recording recovery and every bulk-delete path must
+        // leave the open `.caf` descriptors alone until Stop finishes.
         SessionStore.shared.activeRecordingDirName = dir?.lastPathComponent
 
         // Pattern (d) per the 2026-05-28 competitor research:
@@ -1387,8 +1397,8 @@ final class RecordingSession {
         let nowStarted = Date()
 
         // P1 — write the in-progress marker so a crash / power-loss leftover
-        // is recognised as a recoverable recording (not deleted as a husk)
-        // on next launch. Only when we're actually archiving audio: in the
+        // is recognised as a recoverable recording on next launch. Only when
+        // we're actually archiving audio: in the
         // no-audio retention mode there's nothing on disk to recover.
         if !skipAudioArchive, let dir {
             try? Data(ISO8601DateFormatter().string(from: nowStarted).utf8)
@@ -1414,7 +1424,8 @@ final class RecordingSession {
         do {
             try recorder.start(
                 archiveURL: micArchive,
-                preferredDeviceUID: settings.selectedMicDeviceUID
+                preferredDeviceUID: settings.selectedMicDeviceUID,
+                noiseSuppressionEnabled: settings.microphoneNoiseSuppressionEnabled
             )
         } catch {
             await failFast(error.localizedDescription)

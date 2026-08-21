@@ -556,8 +556,9 @@ struct ContentView: View {
             switch WhisperEngine.shared.state {
             case .downloading(let progress):
                 return String(localized: "Downloading Whisper model… \(Int(progress * 100))%")
-            case .loading(let status):
-                return status
+            case .loading:
+                let percent = Int((WhisperEngine.shared.loadProgress * 100).rounded())
+                return String(localized: "Preparing model… about \(percent)%")
             default:
                 return String(localized: "Preparing…")
             }
@@ -584,8 +585,8 @@ struct ContentView: View {
     /// still idle and the label just says "Ready". Same engine-priority
     /// logic as the sidebar's `ModelDownloadPill` (via
     /// `ModelLoadActivity`, defined in MainView.swift). The brief
-    /// `.loading` CoreML-init phase has no meaningful fraction → no
-    /// bar; the status text covers it. Reading the `@Observable`
+    /// `.loading` CoreML-init phase uses the engine's explicitly
+    /// approximate estimate. Reading the `@Observable`
     /// engine state here re-renders the popover as progress ticks —
     /// no timers.
     @ViewBuilder
@@ -606,7 +607,15 @@ struct ContentView: View {
                 .controlSize(.small)
                 .tint(Color.daisyAccent)
                 .help("One-time setup: Daisy transcribes on-device, so the model has to download first.")
-        case .loading?, nil:
+        case .loading(let estimatedProgress)?:
+            if let estimatedProgress {
+                ProgressView(value: min(max(estimatedProgress, 0), 1), total: 1.0)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+                    .tint(Color.daisyAccent)
+                    .help("Preparing the on-device transcription model…")
+            }
+        case nil:
             EmptyView()
         }
     }
