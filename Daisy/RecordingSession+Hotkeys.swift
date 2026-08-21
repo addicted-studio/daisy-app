@@ -185,6 +185,18 @@ extension RecordingSession {
             }
             await start()
         case .recording, .paused:
+            // The dictation key was pressed from ANOTHER app (that's
+            // what the key is for) — an in-window toast is invisible
+            // exactly then, and a silently dead key reads as "dictation
+            // broke" (field report 2026-08-21: held the key after a
+            // screenshot, nothing happened — a meeting was recording).
+            // Pill first, toast kept for the in-window case.
+            WidgetBubbleCenter.shared.present(
+                WidgetBubbleContent(
+                    text: String(localized: "Daisy is already recording. Stop the current session first.")
+                ),
+                notificationTitle: String(localized: "Daisy is already recording")
+            )
             ToastCenter.shared.show(
                 String(localized: "Daisy is already recording. Stop the current session first."),
                 style: .warning

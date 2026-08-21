@@ -126,6 +126,19 @@ final class WidgetBubbleCenter {
         host?.hideBubble()
     }
 
+    /// Freeze the countdown of OUR pill (tag-guarded, same contract as
+    /// `dismiss`). Used while a dictation hold is answering the prompt.
+    func pauseCountdown(tag: String) {
+        guard lastShownTag == tag else { return }
+        host?.pauseBubbleCountdown()
+    }
+
+    /// Restart the countdown of OUR pill from its full duration.
+    func restartCountdown(tag: String) {
+        guard lastShownTag == tag else { return }
+        host?.restartBubbleCountdown()
+    }
+
     private func postNotification(title: String, body: String) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized
@@ -161,6 +174,10 @@ protocol WidgetBubbleHosting: AnyObject {
     var isWidgetVisible: Bool { get }
     func showBubble(_ content: WidgetBubbleContent)
     func hideBubble()
+    /// Freeze / restart the visible pill's countdown (ring + dismiss
+    /// timer). Restart runs the FULL duration again, not the remainder.
+    func pauseBubbleCountdown()
+    func restartBubbleCountdown()
 }
 
 /// The bubble's content view. Mirrors `ToastView`'s look (elevated card,

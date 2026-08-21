@@ -175,7 +175,25 @@ extension RecordingSession {
             // Reached when the note write failed OR the transcript was
             // empty after trimming — say which, or this line sends
             // someone hunting a filesystem bug that isn't there.
-            log.info("Screenshot note not written (empty=\(transcriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, privacy: .public)) — falling through to the paste path")
+            let wasEmpty = transcriptText
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            log.info("Screenshot note not written (empty=\(wasEmpty, privacy: .public)) — \(wasEmpty ? "reopening the note window" : "falling through to the paste path", privacy: .public)")
+            if wasEmpty {
+                // Nothing recognized: don't burn the claim — give the
+                // window back whole so the person can immediately hold
+                // the key and try again (its pill was frozen at claim
+                // and restorePending replaces it with a fresh one).
+                ScreenshotNoteCapture.shared.restorePending(pending)
+                if let dir = sessionDirectory {
+                    try? FileManager.default.removeItem(at: dir)
+                }
+                releaseSessionsFolderTicket()
+                reset()
+                return
+            }
+            // Real text, broken write: the words go to the clipboard
+            // below; the frozen "hold" pill is moot and timer-less.
+            ScreenshotNoteCapture.shared.withdrawHoldHint()
         }
         DictationPaste.shared.handle(transcript: transcriptText)
         if let dir = sessionDirectory {

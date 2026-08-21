@@ -133,14 +133,13 @@ struct AnalyticsShareCard: View {
                 period: snapshot.period
             )
 
-            Divider()
-                .overlay(Color.black.opacity(0.07))
-
+            // No divider lines anywhere on the card (Egor, 2026-08-21) —
+            // whitespace alone separates the heatmap from the metrics.
             HStack(spacing: 0) {
-                metric(snapshot.meetingCount.formatted(.number), "Meetings", divider: true)
-                metric(duration(snapshot.totalMeetingSeconds), "Meeting time", divider: true)
-                metric(snapshot.activeDays.formatted(.number), "Active days", divider: true)
-                metric(snapshot.currentStreak.formatted(.number), "Current streak", divider: false)
+                metric(snapshot.meetingCount.formatted(.number), "Meetings")
+                metric(duration(snapshot.totalMeetingSeconds), "Meeting time")
+                metric(snapshot.activeDays.formatted(.number), "Active days")
+                metric(snapshot.currentStreak.formatted(.number), "Current streak")
             }
         }
         .padding(34)
@@ -153,14 +152,10 @@ struct AnalyticsShareCard: View {
         .environment(\.colorScheme, .light)
     }
 
+    // No avatar circle and no flower marks (Egor, 2026-08-21): just the
+    // name/period on the left and the word "Daisy" on the right.
     private var header: some View {
         HStack(alignment: .center, spacing: 14) {
-            ZStack {
-                Circle().fill(Color.daisyHomeAccent)
-                DaisyMark(size: 28, tint: .white)
-            }
-            .frame(width: 52, height: 52)
-
             VStack(alignment: .leading, spacing: 2) {
                 Text(snapshot.normalizedDisplayName ?? String(localized: "My activity"))
                     .font(.title3.weight(.semibold))
@@ -173,12 +168,9 @@ struct AnalyticsShareCard: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
-                DaisyMark(size: 20, tint: Color(hex: 0x77746F))
-                Text("Daisy")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Color(hex: 0x77746F))
-            }
+            Text("Daisy")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color(hex: 0x77746F))
         }
     }
 
@@ -194,8 +186,7 @@ struct AnalyticsShareCard: View {
 
     private func metric(
         _ value: String,
-        _ label: LocalizedStringKey,
-        divider: Bool
+        _ label: LocalizedStringKey
     ) -> some View {
         VStack(spacing: 5) {
             Text(value)
@@ -211,13 +202,6 @@ struct AnalyticsShareCard: View {
                 .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity)
-        .overlay(alignment: .trailing) {
-            if divider {
-                Rectangle()
-                    .fill(Color.black.opacity(0.07))
-                    .frame(width: 1, height: 46)
-            }
-        }
     }
 
     private func duration(_ seconds: Double) -> String {

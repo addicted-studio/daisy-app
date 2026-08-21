@@ -1,82 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Stop & save?" : {
+    "Daisy is already recording" : {
           "localizations": {
             "ru": {
               "stringUnit": {
                 "state": "translated",
-                "value": "Завершить?"
-              }
-            }
-          }
-        },
-    "Open" : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Открыть"
-              }
-            }
-          }
-        },
-    "Ask to stop when the meeting ends" : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Спрашивать о завершении по окончании встречи"
-              }
-            }
-          }
-        },
-    "Sounds, the start-of-recording prompts, and the long-silence check." : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Звуки, подсказки о старте записи и проверка долгой тишины."
-              }
-            }
-          }
-        },
-    "Only the start-of-recording prompts — no sounds, no long-silence check." : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Только подсказки о старте записи — без звуков и проверки долгой тишины."
-              }
-            }
-          }
-        },
-    "No sounds or prompts. The end-of-meeting ask keeps its own setting above." : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Без звуков и подсказок. Вопрос о завершении встречи настраивается отдельно выше."
-              }
-            }
-          }
-        },
-    "Apps that offer to record" : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Приложения, предлагающие запись"
-              }
-            }
-          }
-        },
-    "When one of %lld known call apps launches, Daisy offers to start recording. Add your own if it isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
-          "localizations": {
-            "ru": {
-              "stringUnit": {
-                "state": "translated",
-                "value": "Daisy предложит начать запись, когда запустится одно из %lld известных приложений для звонков. Добавьте своё, если его не находит. Считается только НОВЫЙ запуск — чтобы проверить, закройте приложение и откройте заново."
+                "value": "Daisy уже ведёт запись"
               }
             }
           }
@@ -2791,7 +2721,18 @@
         }
       }
     },
+    "Apps that offer to record" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Приложения, предлагающие запись"
+          }
+        }
+      }
+    },
     "Apps that start a recording" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2822,6 +2763,7 @@
       }
     },
     "Ask before auto-stopping" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2837,6 +2779,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Спрашивать меня сначала"
+          }
+        }
+      }
+    },
+    "Ask to stop when the meeting ends" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Спрашивать о завершении по окончании встречи"
           }
         }
       }
@@ -3147,6 +3099,7 @@
       }
     },
     "Auto-stop cancelled for this session." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -5873,6 +5826,7 @@
       }
     },
     "Daisy knows %lld meeting apps. Add your own if yours isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -6816,6 +6770,7 @@
       }
     },
     "Discard recording…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -8689,6 +8644,7 @@
       }
     },
     "Keep going" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9407,6 +9363,7 @@
       }
     },
     "Meeting has run well past its end — Daisy will stop & save in 30 seconds." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9477,6 +9434,7 @@
       }
     },
     "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -9487,6 +9445,7 @@
       }
     },
     "Meeting's been silent for 10 minutes — looks like it wrapped up early. Daisy will stop & save in 30 seconds." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10287,11 +10246,22 @@
       }
     },
     "No sounds or banners. Auto-stop still saves quietly." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Без звуков и баннеров. Автоостановка сохраняет запись без уведомления."
+          }
+        }
+      }
+    },
+    "No sounds or prompts. The end-of-meeting ask keeps its own setting above." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Без звуков и подсказок. Вопрос о завершении встречи настраивается отдельно выше."
           }
         }
       }
@@ -10650,6 +10620,7 @@
       }
     },
     "Notification with Stop & save / snooze options instead of stopping on its own." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -10999,6 +10970,7 @@
       }
     },
     "Only auto-start and auto-stop banners — no sounds, no long-silence check." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -11014,6 +10986,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только из проектов"
+          }
+        }
+      }
+    },
+    "Only the start-of-recording prompts — no sounds, no long-silence check." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Только подсказки о старте записи — без звуков и проверки долгой тишины."
           }
         }
       }
@@ -11054,6 +11036,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Только ваш голос — не удалось получить звук другой стороны"
+          }
+        }
+      }
+    },
+    "Open" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть"
           }
         }
       }
@@ -14145,11 +14137,22 @@
       }
     },
     "Sounds, auto-start/stop banners, and the long-silence check." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Звуки, баннеры автостарта и автоостановки, а также проверка долгой тишины."
+          }
+        }
+      }
+    },
+    "Sounds, the start-of-recording prompts, and the long-silence check." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Звуки, подсказки о старте записи и проверка долгой тишины."
           }
         }
       }
@@ -14349,7 +14352,18 @@
         }
       }
     },
+    "Stop & save?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить?"
+          }
+        }
+      }
+    },
     "Stop when the meeting ends" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -16227,6 +16241,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Когда функция включена, Daisy локально заменяет найденные имена людей, компании, контакты и ссылки перед внешним запросом, а затем восстанавливает их в результате. Пароли, API-ключи и номера банковских карт остаются скрытыми. Локальные провайдеры работают без изменений. Это снижает риск раскрытия данных, но не гарантирует анонимность."
+          }
+        }
+      }
+    },
+    "When one of %lld known call apps launches, Daisy offers to start recording. Add your own if it isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Daisy предложит начать запись, когда запустится одно из %lld известных приложений для звонков. Добавьте своё, если его не находит. Считается только НОВЫЙ запуск — чтобы проверить, закройте приложение и откройте заново."
           }
         }
       }

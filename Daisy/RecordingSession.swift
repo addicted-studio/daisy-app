@@ -2350,6 +2350,15 @@ final class RecordingSession {
     /// timers, then flip the status. Safe to call multiple times.
     private func failFast(_ message: String) async {
         log.error("Session start failed: \(message, privacy: .public)")
+        // A screenshot note claimed at key-down would otherwise die
+        // with the failed start: its pill sits frozen (claim paused the
+        // countdown) and the note can never be dictated into. Give the
+        // window back whole — restorePending re-presents a live pill
+        // (review find, 2026-08-21).
+        if let p = pendingScreenshotNote {
+            pendingScreenshotNote = nil
+            ScreenshotNoteCapture.shared.restorePending(p)
+        }
         releaseSessionsFolderTicket()
         micTranscriber.reset()
         systemTranscriber.reset()

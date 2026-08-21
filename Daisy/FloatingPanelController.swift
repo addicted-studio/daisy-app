@@ -24,6 +24,11 @@ final class FloatingPanelController {
     /// frame on show. Nil when nothing is being prompted.
     private var bubblePanel: NSPanel?
     private var bubbleDismissTimer: Timer?
+    /// The live pill's ✕ ring — kept to pause/restart the countdown
+    /// while a dictation hold is feeding a screenshot note.
+    private weak var bubbleCloseButton: CountdownCloseButton?
+    /// The live pill's configured lifetime, for `restartBubbleCountdown`.
+    private var bubbleAutoDismiss: TimeInterval = 12
     /// Objc target for the bubble's action button — see
     /// `BubbleActionTarget`. Lives exactly as long as the bubble.
     private var bubbleActionTarget: AnyObject?
@@ -484,6 +489,8 @@ extension FloatingPanelController: WidgetBubbleHosting {
         bubble.orderFrontRegardless()
         closeButton.startCountdown(content.autoDismiss)
         bubblePanel = bubble
+        bubbleCloseButton = closeButton
+        bubbleAutoDismiss = content.autoDismiss
         Logger(subsystem: "app.essazanov.Daisy", category: "WidgetBubble").info(
             "showBubble: frame=\(String(describing: bubble.frame), privacy: .public) fitting=\(String(describing: fitting), privacy: .public) anchor=\(String(describing: anchorFrame), privacy: .public) visible=\(bubble.isVisible, privacy: .public) screen=\(String(describing: screen.visibleFrame), privacy: .public)"
         )
@@ -504,6 +511,33 @@ extension FloatingPanelController: WidgetBubbleHosting {
         bubblePanel?.orderOut(nil)
         bubblePanel = nil
         bubbleActionTarget = nil
+        bubbleCloseButton = nil
+    }
+
+    /// Freeze the bubble's lifetime — ring stops unwinding, the dismiss
+    /// timer dies. Used while a dictation hold is feeding the screenshot
+    /// note: the prompt must not expire under the person mid-sentence
+    /// (Egor, 2026-08-21).
+    func pauseBubbleCountdown() {
+        bubbleDismissTimer?.invalidate()
+        bubbleDismissTimer = nil
+        bubbleCloseButton?.pauseCountdown()
+    }
+
+    /// Un-freeze: restart the ring and the dismiss timer from the FULL
+    /// original duration. Deliberately not "resume from where it was" —
+    /// after a failed dictation the person needs the whole window again,
+    /// and a ring that jumps back to full reads as "you have time", which
+    /// is the truth.
+    func restartBubbleCountdown() {
+        guard bubblePanel != nil else { return }
+        bubbleCloseButton?.startCountdown(bubbleAutoDismiss)
+        bubbleDismissTimer?.invalidate()
+        bubbleDismissTimer = Timer.scheduledTimer(
+            withTimeInterval: bubbleAutoDismiss, repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.hideBubble() }
+        }
     }
 
     /// The bubble's card: a full-end-cap pill in the daisy widget's own
@@ -608,6 +642,11 @@ extension FloatingPanelController: WidgetBubbleHosting {
         required init?(coder: NSCoder) { nil }
 
         func startCountdown(_ seconds: TimeInterval) {
+            // Reset any paused clock (see pauseCountdown) before a fresh run.
+            ringLayer.speed = 1
+            ringLayer.timeOffset = 0
+            ringLayer.beginTime = 0
+            ringLayer.removeAnimation(forKey: "countdown")
             ringLayer.strokeEnd = 0
             let animation = CABasicAnimation(keyPath: "strokeEnd")
             animation.fromValue = 1
@@ -615,6 +654,14 @@ extension FloatingPanelController: WidgetBubbleHosting {
             animation.duration = seconds
             animation.timingFunction = CAMediaTimingFunction(name: .linear)
             ringLayer.add(animation, forKey: "countdown")
+        }
+
+        /// Freeze the ring mid-unwind (standard CA pause: zero the layer
+        /// clock at the current media time). `startCountdown` resets it.
+        func pauseCountdown() {
+            let paused = ringLayer.convertTime(CACurrentMediaTime(), from: nil)
+            ringLayer.speed = 0
+            ringLayer.timeOffset = paused
         }
 
         override func mouseDown(with event: NSEvent) {

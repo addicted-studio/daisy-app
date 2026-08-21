@@ -289,9 +289,36 @@ final class ScreenshotNoteCapture {
         await SessionStore.shared.refresh()
         log.info("Screenshot note created")
 
-        // Name the key so the offer is actionable. With no dictation
-        // hotkey bound there is nothing to hold, so say the plain thing
-        // instead of pointing at a key that doesn't exist.
+        // The race the 2026-08-21 log report exposed: the screenshot
+        // FILE lands seconds after the shot (macOS holds it back for
+        // the floating thumbnail), so a fast reaction — screenshot,
+        // then immediately hold the dictation key — puts key-down
+        // BEFORE this window even opens, and the words sail past the
+        // note into the clipboard (15:41: shot at :08, hold at ~:16,
+        // note created after — dictation fell to ⌘V in Electron). If a
+        // dictation hold is ALREADY live and young, this screenshot is
+        // what it's answering: hand the note over now, late.
+        if let session = RecordingSession.current,
+           session.status == .recording,
+           session.currentMode == .dictation,
+           session.pendingScreenshotNote == nil,
+           session.elapsed < 10 {
+            session.pendingScreenshotNote = claimPending()
+            log.info("Live dictation hold adopted the fresh screenshot note (held \(Int(session.elapsed), privacy: .public)s)")
+            // No "hold your key" pill — they're already holding it; the
+            // confirmation pill lands at release via `announceAttached`.
+            return
+        }
+
+        announceHoldHint()
+    }
+
+    /// The "hold your key" offer. Reads the dictation hotkey LIVE from
+    /// settings at present time, so the pill always names whatever key
+    /// dictation is currently bound to. With no hotkey bound there is
+    /// nothing to hold, so say the plain thing instead of pointing at a
+    /// key that doesn't exist.
+    private func announceHoldHint() {
         let key = settings?.dictationHotkey
         let message: String
         if let key, key != .none {
@@ -315,7 +342,39 @@ final class ScreenshotNoteCapture {
         expiry?.cancel()
         expiry = nil
         self.pending = nil
+        // The person is answering the prompt RIGHT NOW — freeze the
+        // pill's countdown so it can't expire under them mid-sentence.
+        // Un-frozen by whatever ends the dictation: attach success
+        // presents the confirmation pill, an empty take re-opens the
+        // window via `restorePending`, a clipboard fallback dismisses
+        // via `withdrawHoldHint`.
+        WidgetBubbleCenter.shared.pauseCountdown(tag: Self.bubbleTag)
+        log.info("Pending screenshot note claimed by dictation key-down")
         return pending
+    }
+
+    /// The claimed dictation produced no usable text — give the window
+    /// back whole. Without this, an empty take silently burns the one
+    /// chance to attach context (field report, 2026-08-21: «зажимал Fn,
+    /// но комментарий не оставился» — and the note was unclaimable
+    /// afterwards). Full fresh window + a fresh pill, not the remainder.
+    func restorePending(_ p: Pending) {
+        pending = p
+        expiry?.cancel()
+        expiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Self.pendingWindow))
+            guard !Task.isCancelled else { return }
+            self?.clearPending()
+        }
+        log.info("Dictation produced no text — screenshot-note window reopened")
+        announceHoldHint()
+    }
+
+    /// The claimed dictation went to the clipboard instead (note write
+    /// failed with real text) — the frozen "hold" pill is moot and has
+    /// no timer left to remove itself.
+    func withdrawHoldHint() {
+        WidgetBubbleCenter.shared.dismiss(tag: Self.bubbleTag)
     }
 
     /// Confirm where the words went — same visibility rule as the
@@ -360,9 +419,13 @@ final class ScreenshotNoteCapture {
     /// it there when the widget is up, and falls back to a notification
     /// when it isn't. No action button — the affordance is "hold your
     /// dictation key", which is a gesture, not a tap.
+    /// Stable bubble tag so claim/restore/withdraw only ever touch the
+    /// screenshot-note pill, never an unrelated prompt.
+    private static let bubbleTag = "screenshot-note"
+
     private func announce(_ message: String) {
         WidgetBubbleCenter.shared.present(
-            WidgetBubbleContent(text: message),
+            WidgetBubbleContent(text: message, tag: Self.bubbleTag),
             notificationTitle: String(localized: "Screenshot saved to Notes")
         )
     }
