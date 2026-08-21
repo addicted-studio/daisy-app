@@ -29,9 +29,16 @@ xcuserdata/
 .env
 *.pem
 
-# Claude Code local settings (do not commit)
+# Agent working files (Claude Code / Codex context lives in the local
+# checkout only — it references Egor's private vault paths and must
+# never reach the public repo)
+/AGENTS.md
+/CLAUDE.md
 .claude/settings.local.json
 .ref-fluidaudio-asr/
+
+# Profiling artifacts (LLVM coverage dumps from test runs)
+*.profraw
 
 # Benchmark corpora and generated runs are intentionally local. Only the
 # reproducible harness, schemas, tiny synthetic fixtures, and explicitly
@@ -42,3 +49,7 @@ Benchmarks/reports/*.json
 Benchmarks/reports/*.md
 !Benchmarks/reports/.gitkeep
 Benchmarks/__pycache__/
+
+# Local holding pen for files relocated to the Obsidian vault (sandbox
+# can't unlink; Egor deletes this dir manually)
+_moved-to-vault/

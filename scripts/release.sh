@@ -4,7 +4,8 @@
 # Daisy release to mydaisy.io.
 #
 # This is the post-launch release flow. Before running it once, do
-# the bootstrap steps in scripts/release-bootstrap.md:
+# the bootstrap steps (documented in the private vault:
+# business/projects/daisy/playbook-release-bootstrap.md):
 #   • Sparkle SPM dependency added in Xcode
 #   • EdDSA key pair generated (private in Keychain, public in
 #     Info.plist as SUPublicEDKey)
