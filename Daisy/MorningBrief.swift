@@ -19,6 +19,7 @@
 //  schedule time and transcript content never belongs in a banner.
 //
 
+import AppKit
 import Foundation
 import Observation
 @preconcurrency import UserNotifications
@@ -236,52 +237,88 @@ final class MorningBriefStore {
         return out
     }
 
-    // MARK: - Daily notification
+    // MARK: - Daily nudge (widget bubble)
 
     private static let notificationID = "daisy.morningBrief.daily"
 
-    /// (Re)schedule the repeating daily notification per settings. Call
-    /// on launch and whenever the toggle/time changes. Generic content —
-    /// the banner's job is to bring the user to the card, not leak it.
+    /// The in-app timer that fires the daily bubble. One-shot,
+    /// re-armed after each fire; `Timer(fire:)` delivers late-but-once
+    /// after a sleep that spans the fire time, which is exactly the
+    /// "first thing after opening the lid" moment the brief is for.
+    @ObservationIgnored
+    private var briefNudgeTimer: Timer?
+
+    /// (Re)arm the daily nudge per settings. Call on launch and
+    /// whenever the toggle/time changes. Since 2026-08-21 this is an
+    /// IN-APP timer driving a widget bubble, not a scheduled system
+    /// banner — Daisy is a resident menu-bar app, so the process is
+    /// alive at brief time and the OS scheduler bought us nothing but
+    /// a notification-permission dependency. Name kept so the three
+    /// Settings/Home call sites didn't have to move.
     static func rescheduleNotification(settings: AppSettings) {
+        // Retire any banner scheduled by a previous build outright.
         UNUserNotificationCenter.current()
             .removePendingNotificationRequests(withIdentifiers: [notificationID])
+        shared.briefNudgeTimer?.invalidate()
+        shared.briefNudgeTimer = nil
         guard settings.morningBriefEnabled, settings.morningBriefNotifyEnabled else { return }
-        // Capture only a Sendable scalar; build the request on a MainActor
-        // hop inside each callback. UNUserNotificationCenter /
-        // UNNotificationRequest are NOT Sendable and Swift 6 rejects
-        // capturing them in the @Sendable completions (see the identical
-        // note in SilencePromptNotification.swift).
-        let minutes = settings.morningBriefNotifyMinutes
-
-        UNUserNotificationCenter.current().getNotificationSettings { s in
-            switch s.authorizationStatus {
-            case .notDetermined:
-                UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, _ in
-                    if granted { Task { @MainActor in addRequest(minutes: minutes) } }
-                }
-            case .authorized, .provisional:
-                Task { @MainActor in addRequest(minutes: minutes) }
-            case .denied, .ephemeral:
-                break
-            @unknown default:
-                break
-            }
-        }
+        shared.armBriefNudge(minutes: settings.morningBriefNotifyMinutes)
     }
 
-    private static func addRequest(minutes: Int) {
-        var comps = DateComponents()
+    private func armBriefNudge(minutes: Int) {
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
         comps.hour = minutes / 60
         comps.minute = minutes % 60
-        let content = UNMutableNotificationContent()
-        content.title = String(localized: "Your morning brief is ready")
-        content.body = String(localized: "Today's meetings and your open items are waiting in Daisy.")
-        content.sound = nil  // morning — no need to be loud
-        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: notificationID, content: content, trigger: trigger),
-            withCompletionHandler: nil
+        guard let todayFire = Calendar.current.date(from: comps) else { return }
+        let fire = todayFire > Date()
+            ? todayFire
+            : Calendar.current.date(byAdding: .day, value: 1, to: todayFire) ?? todayFire.addingTimeInterval(86_400)
+        let timer = Timer(fire: fire, interval: 0, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.presentBriefNudge()
+                // Re-arm for tomorrow. Same minutes is correct: any
+                // Settings change re-runs rescheduleNotification and
+                // replaces this timer wholesale.
+                self.armBriefNudge(minutes: minutes)
+            }
+        }
+        timer.tolerance = 60  // morning — a minute either way is fine
+        RunLoop.main.add(timer, forMode: .common)
+        briefNudgeTimer = timer
+        log.info("Morning-brief nudge armed for \(fire.description, privacy: .public)")
+    }
+
+    /// The nudge itself: an informational pill whose action (and
+    /// whole-pill tap) opens Daisy on Home, where the card lives.
+    /// Generic wording on purpose — the pill's job is to bring the
+    /// user to the card, not leak its contents.
+    private func presentBriefNudge() {
+        WidgetBubbleCenter.shared.present(
+            WidgetBubbleContent(
+                text: String(localized: "Your morning brief is ready"),
+                actionTitle: String(localized: "Open"),
+                actionSymbol: "sun.horizon",
+                tag: "morning-brief",
+                action: {
+                    AppNavigation.shared.section = .home
+                    if let open = WidgetBubbleCenter.shared.openMainWindow {
+                        open()
+                    } else {
+                        // Best-effort AppKit fallback: can surface an
+                        // existing window but cannot recreate a closed
+                        // scene (that needs SwiftUI's openWindow).
+                        NSApp.setActivationPolicy(.regular)
+                        NSApp.activate(ignoringOtherApps: true)
+                        for window in NSApp.windows where window.canBecomeMain {
+                            window.makeKeyAndOrderFront(nil)
+                            break
+                        }
+                    }
+                }
+            ),
+            notificationTitle: String(localized: "Your morning brief is ready"),
+            notificationBody: String(localized: "Today's meetings and your open items are waiting in Daisy.")
         )
     }
 }

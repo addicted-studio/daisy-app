@@ -437,13 +437,31 @@ enum CaptureProblemNotification {
 
     static let requestID = "app.essazanov.Daisy.captureProblem"
 
+    /// Bubble tag — `cancel()` withdraws the pill once capture is
+    /// healthy again, same contract as clearing the banner.
+    static let bubbleTag = "capture-problem"
+
     /// Fire-and-forget. Deliberately NOT gated on the auto-start
     /// notification toggle in Settings: that switch is about routine
     /// lifecycle chatter, this is a failure the user must know about.
-    /// Requests authorization when we've never asked — otherwise this
-    /// banner would silently never appear for the users who need it
-    /// most (Daisy doesn't request notification access at launch).
+    /// Widget bubble first (2026-08-21): the short `title` fits the
+    /// pill; the detailed `body` lives on in the paired in-app toast
+    /// every call site already shows, and in the banner fallback.
     static func post(title: String, body: String) {
+        Task { @MainActor in
+            let shown = WidgetBubbleCenter.shared.show(WidgetBubbleContent(
+                text: title,
+                tag: bubbleTag
+            ))
+            if !shown { postBanner(title: title, body: body) }
+        }
+    }
+
+    /// Pre-bubble banner path. Requests authorization when we've never
+    /// asked — otherwise this banner would silently never appear for
+    /// the users who need it most (Daisy doesn't request notification
+    /// access at launch).
+    private static func postBanner(title: String, body: String) {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             switch settings.authorizationStatus {
             case .notDetermined:
@@ -461,10 +479,13 @@ enum CaptureProblemNotification {
         }
     }
 
-    /// Clear the banner once capture is healthy again (lid opened, mic
-    /// reconnected) — otherwise "Daisy can't hear you" lingers in
-    /// Notification Center long after it stopped being true.
+    /// Clear the banner (and pill) once capture is healthy again (lid
+    /// opened, mic reconnected) — otherwise "Daisy can't hear you"
+    /// lingers long after it stopped being true.
     static func cancel() {
+        Task { @MainActor in
+            WidgetBubbleCenter.shared.dismiss(tag: bubbleTag)
+        }
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [requestID])
         center.removeDeliveredNotifications(withIdentifiers: [requestID])

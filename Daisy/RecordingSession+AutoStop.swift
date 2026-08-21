@@ -2,9 +2,11 @@
 //  RecordingSession+AutoStop.swift
 //  Daisy
 //
-//  Calendar-bound auto-stop: the silence-gated evaluator that stops
-//  a session once the bound meeting has ended and the room has gone
-//  quiet (or at a hard overrun backstop), plus the manual-start
+//  Calendar-bound end-of-meeting ask: the silence-gated evaluator
+//  that ASKS to stop («Stop & save?» widget bubble) once the bound
+//  meeting has ended and the room has gone quiet (or at a hard
+//  overrun backstop) — Daisy never stops on its own since 2026-08-21
+//  — plus the manual-start
 //  fallback that binds a hotkey-started session to a currently
 //  running calendar event so auto-stop still arms. Pure code motion
 //  out of RecordingSession.swift — timers and latch flags stay as
@@ -175,6 +177,7 @@ extension RecordingSession {
         // auto-stop is disarmed.
         autoStopSnoozeUntil = nil
         AutoStopPromptNotification.cancel()
+        WidgetBubbleCenter.shared.dismiss(tag: Self.autoStopAskBubbleTag)
     }
 
     /// Repeating evaluator (every `autoStopEvalIntervalSec`) for the
@@ -211,11 +214,7 @@ extension RecordingSession {
         // Is anyone still talking? Mic: live RMS (transient-proof).
         // System: recency of the last audible BUFFER, not the
         // published peak — see the constants above for why both
-        // replaced the old `peak > -55` checks. Computed before the
-        // hard-max branch so the prompt-mode "ignored ask" backstop
-        // below can keep the silence clock honest; the shared
-        // "conversation resumed" un-warn stays below it — past
-        // hardMax a pending stop is no longer cancellable by audio.
+        // replaced the old `peak > -55` checks.
         let micAudible = recorder.lastMicRMSDB > Self.autoStopMicRMSFloorDB
         let sysAudible: Bool = {
             guard let at = systemAudio.lastAudibleSampleAt else { return false }
@@ -224,41 +223,30 @@ extension RecordingSession {
         let audible = micAudible || sysAudible
         autoStopLog.debug("eval: micRMS=\(Int(self.recorder.lastMicRMSDB), privacy: .public)dB sysAudible=\(sysAudible, privacy: .public) silentFor=\(Int(now.timeIntervalSince(self.autoStopLastAudibleAt ?? now)), privacy: .public)s")
 
-        // Absolute backstop — stop no matter what's still on the line.
-        // In prompt mode even the backstop ASKS once; but an ignored
-        // ask can't record forever: once quiet has held for
-        // `autoStopSilenceToStopSec` past the unanswered question,
-        // stop for real.
+        // Absolute backstop — even here Daisy no longer stops on its
+        // own (2026-08-21, Egor: «не будет авто стопа — просто спросим
+        // в бабле»). One ask at the overrun mark; an ignored ask keeps
+        // recording. The trade-off is deliberate: a forgotten session
+        // can now run indefinitely, in exchange for never cutting a
+        // live conversation.
         if now >= hardMax {
-            if settings.autoStopPromptMode {
-                if !autoStopWarned {
-                    presentAutoStopPrompt(silence: false)
-                } else if audible {
-                    // Keep the silence clock honest while the prompt
-                    // sits ignored — the shared update below is
-                    // unreachable past hardMax.
-                    autoStopLastAudibleAt = now
-                } else if now.timeIntervalSince(autoStopLastAudibleAt ?? now) >= Self.autoStopSilenceToStopSec {
-                    autoStopLog.warning("Auto-stop: prompt ignored past hard max — forcing stop")
-                    Task { await self.performAutoStop() }
-                }
-            } else if !autoStopWarned {
-                armAutoStopWarningAndStop(silence: false)
+            if !autoStopWarned {
+                presentAutoStopPrompt(silence: false)
             }
             return
         }
 
         if audible {
             autoStopLastAudibleAt = now
-            // Conversation resumed during a pending stop — call it off.
+            // Conversation resumed while the ask was up (or after it
+            // was ignored) — the question is moot. Withdraw both
+            // surfaces and unlatch so it can be asked again when the
+            // room next goes quiet.
             if autoStopWarned {
-                autoStopWarningTimer?.invalidate()
-                autoStopWarningTimer = nil
                 autoStopWarned = false
-                // Prompt mode: the open question is moot too —
-                // withdraw the banner (no-op when none is up).
                 AutoStopPromptNotification.cancel()
-                autoStopLog.info("Auto-stop: audio resumed past scheduled end — stop deferred")
+                WidgetBubbleCenter.shared.dismiss(tag: Self.autoStopAskBubbleTag)
+                autoStopLog.info("Auto-stop ask: audio resumed — question withdrawn")
             }
             return
         }
@@ -275,121 +263,81 @@ extension RecordingSession {
             ? Self.autoStopSilenceToStopSec
             : Self.autoStopPreEndSilenceSec
         if silentFor >= threshold, !autoStopWarned {
-            if settings.autoStopPromptMode {
-                presentAutoStopPrompt(silence: true, beforeScheduledEnd: now < earliest)
-            } else {
-                armAutoStopWarningAndStop(silence: true, beforeScheduledEnd: now < earliest)
-            }
+            presentAutoStopPrompt(silence: true, beforeScheduledEnd: now < earliest)
         }
     }
 
-    /// Show the 30 s "Keep going" warning and arm the actual stop. Called
-    /// by `evaluateAutoStop` when the quiet/overrun condition is first met.
-    /// "Keep going" cancels auto-stop for the rest of the session.
-    private func armAutoStopWarningAndStop(silence: Bool, beforeScheduledEnd: Bool = false) {
-        guard status == .recording || status == .paused, !autoStopSuppressed else { return }
-        autoStopWarned = true
-        // SURVIVABLE decision record (.notice persists; the per-tick
-        // eval line is .debug and rotates out). When a tester reports
-        // "it stopped while we were still talking", this one line says
-        // exactly which gate fired and what the two liveness signals
-        // read at fire time — micRMS (her voice) and how long ago the
-        // SYSTEM side last delivered an audible buffer (the clients).
-        // A stale `sysAudibleAgo` with the call clearly still live is
-        // the macOS-26 capture-degradation fingerprint.
-        let micRMS = Int(recorder.lastMicRMSDB)
-        let sysAgo = systemAudio.lastAudibleSampleAt.map { Int(Date().timeIntervalSince($0)) }
-        let endDelta = boundMeeting.map { Int(Date().timeIntervalSince($0.endDate)) }
-        let silentFor = Int(Date().timeIntervalSince(autoStopLastAudibleAt ?? Date()))
-        let branch = silence ? (beforeScheduledEnd ? "preEndSilence(10min)" : "postEndSilence(2min)") : "overrun/hardMax"
-        autoStopLog.notice("Auto-stop FIRING — branch=\(branch, privacy: .public) micRMS=\(micRMS, privacy: .public)dB sysAudibleAgo=\(sysAgo.map { "\($0)s" } ?? "never", privacy: .public) boundEndDelta=\(endDelta.map { "\($0)s" } ?? "n/a", privacy: .public) silentFor=\(silentFor, privacy: .public)s")
-        let msg: String
-        if silence && beforeScheduledEnd {
-            msg = String(localized: "Meeting's been silent for 10 minutes — looks like it wrapped up early. Daisy will stop & save in 30 seconds.")
-        } else if silence {
-            msg = String(localized: "Meeting's been quiet for a couple of minutes — Daisy will stop & save in 30 seconds.")
-        } else {
-            msg = String(localized: "Meeting has run well past its end — Daisy will stop & save in 30 seconds.")
-        }
-        ToastCenter.shared.showAction(
-            msg,
-            actionLabel: String(localized: "Keep going"),
-            style: .warning,
-            duration: .seconds(30)
-        ) { [weak self] in
-            guard let self else { return }
-            self.cancelAutoStop()
-            self.autoStopSuppressed = true
-            ToastCenter.shared.show(String(localized: "Auto-stop cancelled for this session."), style: .info)
-        }
-        autoStopWarningTimer = Timer.scheduledTimer(
-            withTimeInterval: 30,
-            repeats: false
-        ) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in await self.performAutoStop() }
-        }
-    }
-
+    /// The confirmed stop — only ever reached from the user's own
+    /// answer to the ask (bubble tap / banner action / toast button).
+    /// Daisy never calls this on a timer anymore (2026-08-21), so the
+    /// "recording saved" banner is gone with the auto-stop: the person
+    /// who tapped Stop & save watched it happen.
     private func performAutoStop() async {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
-        autoStopLog.notice("Auto-stop performing stop() — meeting auto-ended; the SESSION SUMMARY that follows is the auto-stopped one")
+        autoStopLog.notice("Auto-stop performing stop() — user confirmed the end-of-meeting ask; the SESSION SUMMARY that follows is this one")
         ToastCenter.shared.show(String(localized: "Meeting ended — stopping & saving."), style: .info, duration: .seconds(2))
-        let meetingTitle = boundMeeting?.title ?? title
         await stop()
-        // Banner confirms the save completed — surfaces even when
-        // Daisy is in the background, which is the common case for
-        // an auto-stopped session. Gated on the per-class toggle.
-        if settings.notifyOnAutoStop {
-            AutoStopNotification.post(meetingTitle: meetingTitle)
-        }
     }
 
-    // MARK: - Prompt mode (ask instead of stopping)
+    // MARK: - The end-of-meeting ask
 
-    /// Prompt-mode replacement for `armAutoStopWarningAndStop`
-    /// (Settings → "Ask before auto-stopping"). Instead of a 30 s
-    /// countdown that stops on its own, surface a macOS banner
-    /// ("Meeting seems over" — Stop & save / 10 more minutes /
-    /// 30 more minutes) plus an in-app action toast, and leave the
-    /// session running until the user answers. The only forced path
-    /// is the hard-max backstop in `evaluateAutoStop`, which stops an
-    /// ignored ask once quiet has held for `autoStopSilenceToStopSec`.
+    /// Stable bubble tag so the withdrawal paths (audio resumed,
+    /// cancelAutoStop) only ever tear down their own pill.
+    static let autoStopAskBubbleTag = "autostop-ask"
+
+    /// The one end-of-meeting surface (2026-08-21): a widget-bubble
+    /// «Stop & save?» — tap the pill to stop & save, ✕ or the countdown
+    /// to keep recording. Daisy NEVER stops on its own anymore; every
+    /// timing gate (post-end quiet, early-wrap quiet, hard overrun)
+    /// funnels into this one question, and an ignored question just
+    /// keeps recording. Falls back to the actionable macOS banner
+    /// (Stop & save / snooze) + action toast only when no bubble host
+    /// exists.
     private func presentAutoStopPrompt(silence: Bool, beforeScheduledEnd: Bool = false) {
         guard status == .recording || status == .paused, !autoStopSuppressed else { return }
         guard !autoStopWarned else { return }
         autoStopWarned = true
-        // Restart the quiet clock at the moment of the ask so the
-        // hard-max "prompt ignored" forced stop can never land sooner
-        // than `autoStopSilenceToStopSec` after the question went up
-        // (matters when a snooze expires past hardMax with an
-        // already-stale autoStopLastAudibleAt).
+        // Keep the quiet clock honest at ask time (a snooze can expire
+        // with a stale autoStopLastAudibleAt).
         autoStopLastAudibleAt = Date()
-        let msg: String
-        if silence && beforeScheduledEnd {
-            msg = String(localized: "Meeting's been silent for 10 minutes — looks like it wrapped up early. Stop & save?")
-        } else if silence {
-            msg = String(localized: "Meeting seems over — it's been quiet for a couple of minutes. Stop & save?")
-        } else {
-            msg = String(localized: "Meeting has run well past its end. Stop & save?")
-        }
-        AutoStopPromptNotification.post(meetingTitle: boundMeeting?.title ?? title)
-        // In-app twin of the banner (and the whole ask when macOS
-        // notifications are denied). One action only — the snooze
-        // options live on the banner; ignoring the toast just keeps
-        // recording.
-        ToastCenter.shared.showAction(
-            msg,
-            actionLabel: "Stop & save",
-            style: .warning,
-            duration: .seconds(15)
-        ) { [weak self] in
-            guard let self else { return }
-            Task { @MainActor in await self.performAutoStopFromPrompt() }
+        let shown = WidgetBubbleCenter.shared.show(WidgetBubbleContent(
+            text: String(localized: "Stop & save?"),
+            actionTitle: String(localized: "Stop & save"),
+            actionSymbol: "stop.circle",
+            tag: Self.autoStopAskBubbleTag,
+            action: { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.performAutoStopFromPrompt()
+                }
+            }
+        ))
+        if !shown {
+            let msg: String
+            if silence && beforeScheduledEnd {
+                msg = String(localized: "Meeting's been silent for 10 minutes — looks like it wrapped up early. Stop & save?")
+            } else if silence {
+                msg = String(localized: "Meeting seems over — it's been quiet for a couple of minutes. Stop & save?")
+            } else {
+                msg = String(localized: "Meeting has run well past its end. Stop & save?")
+            }
+            AutoStopPromptNotification.post(meetingTitle: boundMeeting?.title ?? title)
+            // In-app twin of the banner (and the whole ask when macOS
+            // notifications are denied). One action only — the snooze
+            // options live on the banner; ignoring the toast just keeps
+            // recording.
+            ToastCenter.shared.showAction(
+                msg,
+                actionLabel: "Stop & save",
+                style: .warning,
+                duration: .seconds(15)
+            ) { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in await self.performAutoStopFromPrompt() }
+            }
         }
         let micRMS = Int(recorder.lastMicRMSDB)
         let sysAgo = systemAudio.lastAudibleSampleAt.map { Int(Date().timeIntervalSince($0)) }
-        autoStopLog.notice("Auto-stop PROMPT presented (silence=\(silence, privacy: .public) beforeScheduledEnd=\(beforeScheduledEnd, privacy: .public)) micRMS=\(micRMS, privacy: .public)dB sysAudibleAgo=\(sysAgo.map { "\($0)s" } ?? "never", privacy: .public) — waiting for the user")
+        autoStopLog.notice("Auto-stop ASK presented (surface=\(shown ? "bubble" : "banner+toast", privacy: .public) silence=\(silence, privacy: .public) beforeScheduledEnd=\(beforeScheduledEnd, privacy: .public)) micRMS=\(micRMS, privacy: .public)dB sysAudibleAgo=\(sysAgo.map { "\($0)s" } ?? "never", privacy: .public) — waiting for the user")
     }
 
     /// "10 / 30 more minutes" on the auto-stop prompt. Parks the

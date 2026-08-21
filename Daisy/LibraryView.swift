@@ -844,7 +844,9 @@ private struct SessionRow: View {
                 if session.hasSummary {
                     Text("·")
                         .foregroundStyle(.tertiary)
-                    Image(systemName: "sparkles")
+                    // Word, not the sparkle glyph — same reasoning as
+                    // the Home recents row: ✦ read as decoration.
+                    Text("Summary")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .help("Has AI summary")

@@ -286,6 +286,25 @@ final class DictationPaste {
         if context == .freshDictation, axOutcome == .noFocusedField,
            Self.frontmostIsVoid() {
             let text = transcript
+            // With the re-paste hotkey bound, the recovery is one
+            // keypress away — the pill just names it. Without it, fall
+            // back to the question + Copy button.
+            if let label = Self.repasteHotkeyLabel() {
+                WidgetBubbleCenter.shared.present(
+                    WidgetBubbleContent(
+                        text: String(
+                            format: String(localized: "Paste the text: %@"),
+                            label
+                        )
+                    ),
+                    notificationTitle: String(localized: "Dictation saved"),
+                    notificationBody: String(
+                        format: String(localized: "Paste the text: %@"),
+                        label
+                    )
+                )
+                return
+            }
             WidgetBubbleCenter.shared.present(
                 WidgetBubbleContent(
                     text: String(localized: "Dictation had nowhere to land. Keep it?"),
@@ -318,6 +337,17 @@ final class DictationPaste {
     /// lands nowhere — the "dictated into the void" case the widget
     /// bubble exists to catch.
     private enum AXInsertOutcome { case inserted, refused, noFocusedField }
+
+    /// Label of the bound "paste my last dictation" hotkey, or nil when
+    /// none is set. Read straight from defaults (same key `AppSettings`
+    /// persists to) — this singleton has no settings reference and the
+    /// one call site doesn't justify plumbing one through.
+    private static func repasteHotkeyLabel() -> String? {
+        guard let data = UserDefaults.standard.data(forKey: "daisy.repasteLastHotkey"),
+              let choice = try? JSONDecoder().decode(HotkeyChoice.self, from: data),
+              choice != .none else { return nil }
+        return choice.label
+    }
 
     /// True when nothing that could have received a paste is in front:
     /// the desktop (Finder), Daisy itself, or no frontmost app. Used to

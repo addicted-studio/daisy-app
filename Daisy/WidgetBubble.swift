@@ -36,6 +36,20 @@ struct WidgetBubbleContent: Identifiable, Equatable {
     let id = UUID()
     let text: String
     var actionTitle: String?
+    /// SF Symbol name — when set, the action renders as an icon-only
+    /// button (`actionTitle` becomes its tooltip / accessibility label)
+    /// instead of a text button. Used by the auto-start ask, whose pill
+    /// is deliberately word-light.
+    var actionSymbol: String?
+    /// How long the bubble lives before auto-dismissing; visualised by
+    /// the countdown ring around the close button.
+    var autoDismiss: TimeInterval = 12
+    /// Optional stable tag naming WHICH prompt this is
+    /// ("autostart-ask", "silence-ask", …). Lets a caller withdraw its
+    /// own bubble when the prompt becomes moot (speech resumed, trigger
+    /// consumed) without ever tearing down someone else's — see
+    /// `WidgetBubbleCenter.dismiss(tag:)`.
+    var tag: String?
     /// Closure isn't Equatable — identity is the `id`, and a given
     /// content value is never mutated, so comparing ids is sufficient
     /// for SwiftUI's diffing.
@@ -60,22 +74,56 @@ final class WidgetBubbleCenter {
     /// keeps a torn-down panel alive.
     weak var host: (any WidgetBubbleHosting)?
 
-    /// Show `content` on the best available surface. On the notification
-    /// fallback the bubble's action button can't come along, so a caller
-    /// whose bubble HAS an action must pass a `notificationBody` that
-    /// still makes sense without a button — otherwise a banner would ask
-    /// "Keep it?" with no way to answer. When the bubble has no action,
-    /// `notificationBody` defaults to the bubble text.
+    /// Set by the widget's SwiftUI layer (which owns an
+    /// `@Environment(\.openWindow)` action — the only reliable way to
+    /// RECREATE the main window scene once it's been closed). Bubble
+    /// actions that end in "open Daisy" (morning brief) call this;
+    /// AppKit-side fallbacks can only surface an existing window.
+    var openMainWindow: (@MainActor () -> Void)?
+
+    /// Tag of the most recently shown bubble — used by `dismiss(tag:)`
+    /// to withdraw a prompt only when it's still the one on screen.
+    private var lastShownTag: String?
+
+    /// Show `content` on the best available surface. Since 2026-08-21
+    /// the bubble no longer requires the widget to be VISIBLE — the
+    /// panel anchors to the bottom-right corner when the widget is
+    /// hidden — so the notification path is purely the "no panel host
+    /// at all" fallback. On that fallback the bubble's action button
+    /// can't come along, so a caller whose bubble HAS an action must
+    /// pass a `notificationBody` that still makes sense without a
+    /// button — otherwise a banner would ask "Keep it?" with no way to
+    /// answer. When the bubble has no action, `notificationBody`
+    /// defaults to the bubble text.
     func present(
         _ content: WidgetBubbleContent,
         notificationTitle: String,
         notificationBody: String? = nil
     ) {
-        if let host, host.isWidgetVisible {
-            host.showBubble(content)
-        } else {
+        if !show(content) {
             postNotification(title: notificationTitle, body: notificationBody ?? content.text)
         }
+    }
+
+    /// Show the bubble if a panel host exists; `false` means the caller
+    /// must surface its own fallback. For callers whose fallback is an
+    /// ACTIONABLE banner (Record/Ignore, Stop & save/snooze) rather
+    /// than `present`'s plain informational one.
+    func show(_ content: WidgetBubbleContent) -> Bool {
+        guard let host else { return false }
+        lastShownTag = content.tag
+        host.showBubble(content)
+        return true
+    }
+
+    /// Withdraw a prompt that became moot (speech resumed, capture
+    /// healthy again, trigger consumed) — but only if the bubble on
+    /// screen is OURS. Tag-guarded so a stale cancel can never eat an
+    /// unrelated prompt that replaced it.
+    func dismiss(tag: String) {
+        guard lastShownTag == tag else { return }
+        lastShownTag = nil
+        host?.hideBubble()
     }
 
     private func postNotification(title: String, body: String) {

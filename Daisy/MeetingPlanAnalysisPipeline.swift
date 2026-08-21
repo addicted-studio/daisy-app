@@ -48,23 +48,75 @@ nonisolated struct MeetingPlanAnalysisPipeline: Sendable {
             return .unchanged(existing)
         }
 
+        // Same privacy boundary as `Summarizer.summarizeWithPrivacy` —
+        // this pipeline used to be the ONE cloud egress that bypassed
+        // the pseudonymizer (audit 2026-08-21). Plan-analysis providers
+        // are cloud-only (OpenAI / Codex), so `providerIsLocal` is a
+        // constant false. Hashes above stay computed from the RAW plan
+        // + transcript: they key the cache, not the request.
+        let shouldProtect = SensitiveDataProtector.shouldProtect(
+            enabled: AppSettings.protectSensitiveDataBeforeCloudAIEnabled,
+            providerIsLocal: false
+        )
+        let protected: ProtectedPlanAnalysisRequest? = shouldProtect
+            ? SensitiveDataProtector.protectPlanAnalysis(
+                title: input.title,
+                planItemTexts: input.preparation.planItems.map(\.text),
+                transcript: evidenceIndex.transcript
+            )
+            : nil
+        if let protected {
+            Logger(subsystem: "app.essazanov.Daisy", category: "PlanAnalysis").info(
+                "Plan-analysis privacy filter prepared \(protected.report.distinctReplacements, privacy: .public) pseudonyms and \(protected.report.redactedOccurrences, privacy: .public) irreversible redactions"
+            )
+        }
+        let promptPlanItems: [MeetingPreparationSnapshot.PlanItem]
+        if let protected {
+            promptPlanItems = zip(input.preparation.planItems, protected.planItemTexts)
+                .map { MeetingPreparationSnapshot.PlanItem(id: $0.id, text: $1) }
+        } else {
+            promptPlanItems = input.preparation.planItems
+        }
+
         let raw = try await provider.generate(
             developerInstructions: MeetingPlanAnalysisPrompt.developerInstructions(
                 localeHint: input.localeHint
             ),
             userPrompt: MeetingPlanAnalysisPrompt.userPrompt(
-                title: input.title,
-                planItems: input.preparation.planItems,
-                transcript: evidenceIndex.transcript,
+                title: protected?.title ?? input.title,
+                planItems: promptPlanItems,
+                transcript: protected?.transcript ?? evidenceIndex.transcript,
                 durationSeconds: evidenceIndex.durationSeconds
             ),
             schema: MeetingPlanAnalysisPrompt.schemaData
         )
-        let decoded: Response
+        var decoded: Response
         do {
             decoded = try JSONDecoder().decode(Response.self, from: raw)
         } catch {
             throw MeetingPlanAnalysisValidationError.invalidJSON
+        }
+        // Restore BEFORE validation: evidence quotes come back carrying
+        // pseudonym tokens, and the validator matches them against the
+        // RAW transcript in the evidence index.
+        if let protected {
+            decoded = Response(items: decoded.items.map { item in
+                MeetingPlanItemAnalysis(
+                    itemID: item.itemID,
+                    status: item.status,
+                    rationale: protected.restore(item.rationale),
+                    evidence: item.evidence.map { evidence in
+                        MeetingPlanEvidence(
+                            quote: protected.restore(evidence.quote),
+                            startSeconds: evidence.startSeconds,
+                            endSeconds: evidence.endSeconds,
+                            speaker: evidence.speaker.map { protected.restore($0) }
+                        )
+                    },
+                    confidence: item.confidence,
+                    recommendations: item.recommendations.map { protected.restore($0) }
+                )
+            })
         }
         try MeetingPlanAnalysisValidator.validate(
             items: decoded.items,

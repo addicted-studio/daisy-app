@@ -1,6 +1,86 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Stop & save?" : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Завершить?"
+              }
+            }
+          }
+        },
+    "Open" : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Открыть"
+              }
+            }
+          }
+        },
+    "Ask to stop when the meeting ends" : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Спрашивать о завершении по окончании встречи"
+              }
+            }
+          }
+        },
+    "Sounds, the start-of-recording prompts, and the long-silence check." : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Звуки, подсказки о старте записи и проверка долгой тишины."
+              }
+            }
+          }
+        },
+    "Only the start-of-recording prompts — no sounds, no long-silence check." : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Только подсказки о старте записи — без звуков и проверки долгой тишины."
+              }
+            }
+          }
+        },
+    "No sounds or prompts. The end-of-meeting ask keeps its own setting above." : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Без звуков и подсказок. Вопрос о завершении встречи настраивается отдельно выше."
+              }
+            }
+          }
+        },
+    "Apps that offer to record" : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Приложения, предлагающие запись"
+              }
+            }
+          }
+        },
+    "When one of %lld known call apps launches, Daisy offers to start recording. Add your own if it isn't detected — only a NEW launch counts, so quit and reopen the app to test." : {
+          "localizations": {
+            "ru": {
+              "stringUnit": {
+                "state": "translated",
+                "value": "Daisy предложит начать запись, когда запустится одно из %lld известных приложений для звонков. Добавьте своё, если его не находит. Считается только НОВЫЙ запуск — чтобы проверить, закройте приложение и откройте заново."
+              }
+            }
+          }
+        },
     "" : {
       "localizations" : {
         "ru" : {
@@ -362,6 +442,16 @@
         }
       }
     },
+    "%@ is already assigned to “%@”. Free it up there first." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@ уже назначено на «%2$@». Сначала освободите его там."
+          }
+        }
+      }
+    },
     "%@ is already assigned to %@." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -389,6 +479,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ готов делать саммари."
+          }
+        }
+      }
+    },
+    "%@ launched — start a meeting?" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запущен «%@» — записать встречу?"
           }
         }
       }
@@ -2189,7 +2290,18 @@
         }
       }
     },
+    "Added to the note" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Добавлено в заметку"
+          }
+        }
+      }
+    },
     "Added to the screenshot note" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -2899,6 +3011,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Аудио не будет сохраняться на диск. Если запись прервётся — из-за сбоя или отключения питания — восстановить её будет нельзя; транскрипт сохранится только для завершённых записей."
+          }
+        }
+      }
+    },
+    "Audio, transcript and screenshots from this session will not be saved." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аудио, транскрипт и скриншоты этой сессии не будут сохранены."
           }
         }
       }
@@ -4108,7 +4230,14 @@
       }
     },
     "Combos must include ⌘ / ⌃ / ⌥, a bare function key (F1–F20), or the globe Fn key." : {
-
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сочетание должно включать ⌘ / ⌃ / ⌥, отдельную функциональную клавишу (F1–F20) или клавишу-глобус Fn."
+          }
+        }
+      }
     },
     "Common causes: headphones (audio bypasses the loopback path), no app played sound during the meeting, or Screen Recording access was revoked mid-session." : {
       "comment" : "A longer description of the common causes of the acoustic-loopback bug.",
@@ -4428,6 +4557,17 @@
         }
       }
     },
+    "Contact" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Контакты"
+          }
+        }
+      }
+    },
     "Continue" : {
       "localizations" : {
         "ru" : {
@@ -4594,16 +4734,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скопировать транскрипт"
-          }
-        }
-      }
-    },
-    "Contact" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Контакты"
           }
         }
       }
@@ -6675,6 +6805,36 @@
         }
       }
     },
+    "Discard recording" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить без сохранения"
+          }
+        }
+      }
+    },
+    "Discard recording…" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить без сохранения…"
+          }
+        }
+      }
+    },
+    "Discard this recording?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершить запись без сохранения?"
+          }
+        }
+      }
+    },
     "Disconnect" : {
       "localizations" : {
         "ru" : {
@@ -7819,6 +7979,7 @@
       }
     },
     "Grant Screen Recording permission, then run the test again." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -7981,6 +8142,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "История очищена"
+          }
+        }
+      }
+    },
+    "Hold %@ to add context" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Удерживайте %@, чтобы добавить контекст"
           }
         }
       }
@@ -11353,6 +11524,16 @@
         }
       }
     },
+    "Paste the text: %@" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вставьте текст: %@"
+          }
+        }
+      }
+    },
     "Paste your Notion integration secret." : {
       "localizations" : {
         "ru" : {
@@ -11640,11 +11821,22 @@
       }
     },
     "Play a video or call audio while Daisy listens for ten seconds." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "Включите видео или звук звонка, пока Daisy слушает в течение десяти секунд."
+          }
+        }
+      }
+    },
+    "Play any audio — the meter shows what Daisy hears from the other side." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включите любой звук — метр показывает, что Daisy слышит со стороны собеседника."
           }
         }
       }
@@ -12362,6 +12554,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Записываются обе стороны"
+          }
+        }
+      }
+    },
+    "Recording discarded — nothing was saved." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запись завершена без сохранения."
           }
         }
       }
@@ -13288,6 +13490,7 @@
       }
     },
     "Screenshot saved to Notes — hold %@ to add context" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -14065,6 +14268,16 @@
         }
       }
     },
+    "Start recording?" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Начать запись?"
+          }
+        }
+      }
+    },
     "Start using Daisy" : {
       "localizations" : {
         "ru" : {
@@ -14162,16 +14375,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Хранилище"
-          }
-        }
-      }
-    },
-    "Support" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Поддержка"
           }
         }
       }
@@ -14447,6 +14650,17 @@
         }
       }
     },
+    "Support" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поддержка"
+          }
+        }
+      }
+    },
     "Switch the input source after a fix" : {
       "localizations" : {
         "ru" : {
@@ -14684,6 +14898,7 @@
       }
     },
     "Test while audio plays" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -14694,6 +14909,7 @@
       }
     },
     "Testing…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {
@@ -15027,6 +15243,7 @@
       }
     },
     "The stream is running, but every buffer was silent. Try non-DRM audio and a wired, USB, or built-in output." : {
+      "extractionState" : "stale",
       "localizations" : {
         "ru" : {
           "stringUnit" : {

@@ -20,10 +20,8 @@ struct RecordingAudioSettingsSection: View {
     @State private var systemAudioProbe = SystemAudioCapture()
     @State private var microphoneLevelDB: Float = -160
     @State private var systemAudioLevelDB: Float = -160
-    @State private var systemAudioTestID = 0
     @State private var microphoneResult: ProbeResult = .idle
     @State private var systemAudioResult: ProbeResult = .idle
-    @State private var systemAudioTesting = false
 
     var body: some View {
         Section {
@@ -43,16 +41,7 @@ struct RecordingAudioSettingsSection: View {
             outputPicker
 
             if settings.captureSystemAudio {
-                probeRow(
-                    title: String(localized: "Other-side level"),
-                    levelDB: systemAudioLevelDB,
-                    result: systemAudioResult,
-                    buttonTitle: String(localized: "Test while audio plays"),
-                    isTesting: systemAudioTesting,
-                    disabled: recordingIsActive
-                ) {
-                    systemAudioTestID &+= 1
-                }
+                systemAudioLevelRow
 
                 if !ScreenRecordingPermission.isGranted {
                     HStack(alignment: .firstTextBaseline) {
@@ -98,9 +87,15 @@ struct RecordingAudioSettingsSection: View {
         .task(id: liveMonitorKey) {
             await runLiveMicrophoneMonitor()
         }
-        .task(id: systemAudioTestID) {
-            guard systemAudioTestID > 0 else { return }
-            await runSystemAudioTest()
+        // Live other-side monitor — same lifecycle contract as the mic
+        // meter: runs only while the section is on screen, restarts on
+        // output-device / toggle / recording changes, and is silenced
+        // during a real recording (the session owns its own SCStream;
+        // two captures would fight). Runs SCStream in quiet-diagnostics
+        // mode, so all in-class toasts are suppressed and the verdicts
+        // below are the only messaging.
+        .task(id: systemLiveMonitorKey) {
+            await runLiveSystemAudioMonitor()
         }
         .onDisappear {
             microphoneProbe.stop()
@@ -197,6 +192,30 @@ struct RecordingAudioSettingsSection: View {
         }
     }
 
+    /// Live other-side row — mirrors `microphoneLevelRow`. The meter
+    /// shows the peak of the latest captured system-audio buffer; the
+    /// caption under it carries the rolling verdict (play something /
+    /// audio confirmed / route broken).
+    private var systemAudioLevelRow: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Other-side level")
+                Spacer()
+                Text(levelLabel(systemAudioLevelDB))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                SegmentLevelMeter(progress: levelProgress(systemAudioLevelDB))
+            }
+            if let message = systemAudioResult.message {
+                Label(message, systemImage: systemAudioResult.symbol)
+                    .font(.caption)
+                    .foregroundStyle(systemAudioResult.color)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     private var recordingIsActive: Bool {
         guard let status = RecordingSession.current?.status else { return false }
         switch status {
@@ -207,41 +226,17 @@ struct RecordingAudioSettingsSection: View {
         }
     }
 
-    @ViewBuilder
-    private func probeRow(
-        title: String,
-        levelDB: Float,
-        result: ProbeResult,
-        buttonTitle: String,
-        isTesting: Bool,
-        disabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text(title)
-                Spacer()
-                Text(levelLabel(levelDB))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Button(isTesting ? String(localized: "Testing…") : buttonTitle, action: action)
-                    .disabled(isTesting || disabled)
-            }
-            ProgressView(value: levelProgress(levelDB))
-                .tint(levelTint(levelDB))
-            if let message = result.message {
-                Label(message, systemImage: result.symbol)
-                    .font(.caption)
-                    .foregroundStyle(result.color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
     /// Key that restarts the live monitor task on any relevant change.
     private var liveMonitorKey: String {
         "\(settings.selectedMicDeviceUID)|\(settings.microphoneNoiseSuppressionEnabled)|\(recordingIsActive)"
+    }
+
+    /// Restart key for the other-side monitor. Output UID is included so
+    /// picking a new output tears the SCStream down and rebinds cleanly
+    /// instead of leaning on the in-class route-change rebuild (which is
+    /// budgeted for real recordings).
+    private var systemLiveMonitorKey: String {
+        "\(settings.captureSystemAudio)|\(recordingIsActive)|\(selectedOutputUID)|\(ScreenRecordingPermission.isGranted)"
     }
 
     /// Continuous mic monitor. Runs while the section is on screen (the
@@ -290,42 +285,61 @@ struct RecordingAudioSettingsSection: View {
         }
     }
 
-    private func runSystemAudioTest() async {
-        guard !recordingIsActive, !systemAudioTesting else { return }
-        guard ScreenRecordingPermission.isGranted else {
-            systemAudioResult = .warning(String(localized: "Grant Screen Recording permission, then run the test again."))
+    /// Continuous other-side monitor — the system-audio twin of
+    /// `runLiveMicrophoneMonitor`. One important asymmetry: a silent
+    /// meter is AMBIGUOUS here (nothing playing vs. broken route), so
+    /// the verdicts only claim what's provable:
+    ///   • SCStream delivers buffers even for silence — ZERO buffers
+    ///     after ~8 s means the route is broken (classic Bluetooth
+    ///     loopback failure) → honest failure.
+    ///   • buffers-but-silent just shows the "play any audio" hint.
+    ///   • the first audible buffer flips a lasting green verdict.
+    private func runLiveSystemAudioMonitor() async {
+        systemAudioResult = .idle
+        systemAudioLevelDB = -160
+        guard settings.captureSystemAudio, !recordingIsActive else { return }
+        guard ScreenRecordingPermission.isGranted else { return }
+
+        do {
+            try await systemAudioProbe.start(quietDiagnostics: true)
+        } catch {
+            systemAudioResult = .failed(error.localizedDescription)
             return
         }
 
-        systemAudioTesting = true
-        systemAudioResult = .running(String(localized: "Play a video or call audio while Daisy listens for ten seconds."))
-        systemAudioLevelDB = -160
+        systemAudioResult = .running(String(localized: "Play any audio — the meter shows what Daisy hears from the other side."))
 
-        do {
-            try await systemAudioProbe.start()
-            for _ in 0..<100 {
-                try await Task.sleep(for: .milliseconds(100))
-                systemAudioLevelDB = systemAudioProbe.peakLevelDB
-                if systemAudioProbe.receivedAudibleAudio { break }
+        var ticks = 0
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(100))
+            if Task.isCancelled { break }
+
+            // The stream died and in-class recovery gave up (quiet mode
+            // suppressed its toasts) — surface it here instead.
+            if systemAudioProbe.state == .stopped {
+                systemAudioLevelDB = -160
+                systemAudioResult = .failed(String(localized: "No system-audio buffers arrived. Change the macOS output device, avoid Bluetooth, and test again."))
+                return
             }
-            let receivedBuffers = systemAudioProbe.hasReceivedAudio
-            let receivedAudibleAudio = systemAudioProbe.receivedAudibleAudio
-            await systemAudioProbe.stop()
 
-            if receivedAudibleAudio {
-                systemAudioResult = .passed(String(localized: "System audio is reaching Daisy."))
-            } else if receivedBuffers {
-                systemAudioResult = .warning(String(localized: "The stream is running, but every buffer was silent. Try non-DRM audio and a wired, USB, or built-in output."))
-            } else {
+            systemAudioLevelDB = systemAudioProbe.peakLevelDB
+            ticks += 1
+
+            if systemAudioProbe.receivedAudibleAudio {
+                let verdict = ProbeResult.passed(String(localized: "System audio is reaching Daisy."))
+                if systemAudioResult != verdict { systemAudioResult = verdict }
+            } else if systemAudioProbe.hasReceivedAudio {
+                // Buffers flow (route works), nothing audible yet —
+                // recover from an earlier no-buffers verdict if the
+                // route came back without a task restart.
+                if case .failed = systemAudioResult {
+                    systemAudioResult = .running(String(localized: "Play any audio — the meter shows what Daisy hears from the other side."))
+                }
+            } else if ticks == 80 {
                 systemAudioResult = .failed(String(localized: "No system-audio buffers arrived. Change the macOS output device, avoid Bluetooth, and test again."))
             }
-        } catch is CancellationError {
-            await systemAudioProbe.stop()
-        } catch {
-            await systemAudioProbe.stop()
-            systemAudioResult = .failed(error.localizedDescription)
         }
-        systemAudioTesting = false
+        await systemAudioProbe.stop()
     }
 
     private func refreshDevices() {
@@ -342,11 +356,6 @@ struct RecordingAudioSettingsSection: View {
         db <= -120 ? String(localized: "silent") : String(format: "%.0f dB", db)
     }
 
-    private func levelTint(_ db: Float) -> Color {
-        if db > -12 { return .orange }
-        if db > -48 { return .green }
-        return .secondary
-    }
 }
 
 /// System-Settings-style input level meter: a row of capsules that fill

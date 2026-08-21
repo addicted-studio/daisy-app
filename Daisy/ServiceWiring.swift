@@ -162,25 +162,18 @@ enum ServiceWiring {
             MeetingDetector.shared.stop()
             return
         }
-        let promptMode = settings.autoStartPromptMode
         MeetingDetector.shared.start { [weak session] bundleID in
             Task { @MainActor in
                 guard let session else { return }
                 let appName = MeetingDetector.displayName(for: bundleID)
-                if promptMode {
-                    // Prompt policy: ask before recording (handles the
-                    // already-recording case internally with a toast).
-                    session.promptToStartFromAppLaunch(appName: appName)
-                    return
-                }
-                if session.status == .recording || session.status == .paused {
-                    ToastCenter.shared.show(
-                        "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one.",
-                        style: .info
-                    )
-                    return
-                }
-                await session.start()
+                // App launches ALWAYS ask before recording, regardless of
+                // the auto-start policy (2026-08-21). Launching Discord/
+                // Telegram to send a text used to silently start a
+                // session in Always mode — a weak trigger deserves a
+                // confirmation tap, not a hot mic. The ask surfaces as a
+                // widget bubble (or a notification when the widget is
+                // hidden); the already-recording case toasts inside.
+                session.promptToStartFromAppLaunch(appName: appName)
             }
         }
     }

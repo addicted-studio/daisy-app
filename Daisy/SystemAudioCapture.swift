@@ -79,6 +79,12 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
     /// `silenceWarningFired` (the no-buffers-at-all warning).
     private var silentContentWarningFired: Bool = false
 
+    /// Settings-meter mode: suppress every toast/notification this class
+    /// emits (silence monitor, route-change info, restart-failure
+    /// warnings) — the diagnostics UI reads the published state itself
+    /// and renders verdicts inline. Set per `start()`.
+    private var quietDiagnostics: Bool = false
+
     /// Wall-clock time `start()` flipped state to `.capturing`,
     /// used to compute the "never received any audio" timeout.
     private var captureStartedAt: Date?
@@ -249,7 +255,12 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         }
     }
 
-    func start(archiveURL: URL? = nil) async throws {
+    /// `quietDiagnostics: true` — the Settings live meter. No silence-
+    /// monitor toasts, no BT/speakers nudges: at meter cadence "nothing
+    /// audible for 30 s" just means nothing is playing, and the settings
+    /// UI already shows the Bluetooth caveat inline. The caller reads
+    /// `peakLevelDB` / `hasReceivedAudio` / `receivedAudibleAudio` itself.
+    func start(archiveURL: URL? = nil, quietDiagnostics: Bool = false) async throws {
         guard state == .idle || state == .stopped || state == .paused else { return }
         // Distinguish a fresh start from a resume: on resume
         // (state == .paused) we KEEP the already-open archive writer +
@@ -288,6 +299,7 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         }
         state = .starting
         lastError = nil
+        self.quietDiagnostics = quietDiagnostics
         captureGeneration &+= 1
 
         let newStream: SCStream
@@ -302,7 +314,9 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         self.stream = newStream
         state = .capturing
         captureStartedAt = Date()
-        startSilenceMonitor()
+        if !quietDiagnostics {
+            startSilenceMonitor()
+        }
         installOutputDeviceListener()
 
         // NO eager placeholder file. (Removed 2026-05-31 — root cause of
@@ -335,7 +349,10 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         // the safety net for cases where output changes mid-session
         // or this initial BT check misses (e.g. transport type
         // reported as "unknown" for some BT devices).
-        if Self.currentOutputDeviceIsBluetooth() {
+        if quietDiagnostics {
+            // Settings meter — the diagnostics UI shows route caveats
+            // inline; toasts here would nag on every section visit.
+        } else if Self.currentOutputDeviceIsBluetooth() {
             log.warning("Default output is Bluetooth — SCStream loopback may not deliver frames")
             ToastCenter.shared.show(
                 String(localized: "Bluetooth headphones detected — Daisy may not capture the remote side. Use built-in speakers, wired headphones, or install BlackHole for reliable system-audio capture."),
@@ -713,10 +730,12 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         log.info("Default output device changed mid-capture — restarting SCStream")
 
         if await rebuildStream(reason: "output-device-change") {
-            ToastCenter.shared.show(
-                String(localized: "Output device changed — system audio capture continues."),
-                style: .info
-            )
+            if !quietDiagnostics {
+                ToastCenter.shared.show(
+                    String(localized: "Output device changed — system audio capture continues."),
+                    style: .info
+                )
+            }
         } else {
             // Don't kill the rest of the recording session — mic
             // capture is in a separate recorder instance and is
@@ -724,10 +743,12 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             // user so they can stop & restart if they need the
             // remote side captured.
             state = .stopped
-            ToastCenter.shared.show(
-                String(localized: "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it."),
-                style: .warning
-            )
+            if !quietDiagnostics {
+                ToastCenter.shared.show(
+                    String(localized: "Output changed and Daisy couldn't keep recording the other side. Stop & restart the recording if you need it."),
+                    style: .warning
+                )
+            }
         }
     }
 
@@ -821,14 +842,16 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
             log.error("SCStream died again after \(Self.maxAutoRestarts, privacy: .public) restarts — giving up: \(error.localizedDescription, privacy: .public)")
             lastError = error.localizedDescription
             state = .stopped
-            CaptureProblemNotification.post(
-                title: String(localized: "Daisy stopped hearing the other side"),
-                body: String(localized: "System audio capture stopped and couldn’t be restarted. Your microphone is still being recorded.")
-            )
-            ToastCenter.shared.show(
-                String(localized: "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side."),
-                style: .warning
-            )
+            if !quietDiagnostics {
+                CaptureProblemNotification.post(
+                    title: String(localized: "Daisy stopped hearing the other side"),
+                    body: String(localized: "System audio capture stopped and couldn’t be restarted. Your microphone is still being recorded.")
+                )
+                ToastCenter.shared.show(
+                    String(localized: "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side."),
+                    style: .warning
+                )
+            }
             return
         }
 
@@ -849,14 +872,16 @@ final class SystemAudioCapture: NSObject, SCStreamDelegate, SCStreamOutput {
         }
         lastError = error.localizedDescription
         state = .stopped
-        CaptureProblemNotification.post(
-            title: String(localized: "Daisy stopped hearing the other side"),
-            body: String(localized: "System audio capture stopped and couldn’t be restarted. Your microphone is still being recorded.")
-        )
-        ToastCenter.shared.show(
-            String(localized: "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side."),
-            style: .warning
-        )
+        if !quietDiagnostics {
+            CaptureProblemNotification.post(
+                title: String(localized: "Daisy stopped hearing the other side"),
+                body: String(localized: "System audio capture stopped and couldn’t be restarted. Your microphone is still being recorded.")
+            )
+            ToastCenter.shared.show(
+                String(localized: "System audio capture stopped and couldn’t restart — only your microphone is being recorded. Stop & restart if you need the other side."),
+                style: .warning
+            )
+        }
     }
 
     /// Begin polling for the silent-capture condition. Polls every

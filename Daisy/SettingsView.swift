@@ -302,14 +302,81 @@ struct SettingsView: View {
     /// different semantics — having "Voice note saves to Notes,
     /// dictation auto-pastes" jammed into a single wall of text
     /// made all three modes feel interchangeable.
+    /// The seven hotkey slots, in row order. Each knows its display
+    /// name (for the conflict toast) and how to read its current value
+    /// off AppSettings — which is what lets `conflictGuarded` compare a
+    /// new combo against every OTHER slot without comparing bindings.
+    private enum HotkeySlot: CaseIterable {
+        case record, voiceNote, dictation, rewrite, layoutFix, markMoment, repaste
+
+        var displayName: String {
+            switch self {
+            case .record: return String(localized: "Record a meeting")
+            case .voiceNote: return String(localized: "Voice note")
+            case .dictation: return String(localized: "Dictation")
+            case .rewrite: return String(localized: "Rewrite in my voice")
+            case .layoutFix: return String(localized: "Fix the keyboard layout")
+            case .markMoment: return String(localized: "Mark this moment")
+            case .repaste: return String(localized: "Paste my last dictation")
+            }
+        }
+
+        func value(in settings: AppSettings) -> HotkeyChoice {
+            switch self {
+            case .record: return settings.recordHotkey
+            case .voiceNote: return settings.voiceNoteHotkey
+            case .dictation: return settings.dictationHotkey
+            case .rewrite: return settings.rewriteSelectionHotkey
+            case .layoutFix: return settings.layoutFixHotkey
+            case .markMoment: return settings.markMomentHotkey
+            case .repaste: return settings.repasteLastHotkey
+            }
+        }
+    }
+
+    /// Wrap a hotkey binding so an assignment that collides with another
+    /// slot is REFUSED (toast naming the owner) instead of silently
+    /// creating two actions on one combo — the field case was Fn bound
+    /// to both Dictation and Paste-last, where only one ever fired.
+    /// Comparison is keyCode + modifiers, not label, so a preset and an
+    /// identical custom recording still collide. `.none` never conflicts.
+    private func conflictGuarded(
+        _ binding: Binding<HotkeyChoice>,
+        slot: HotkeySlot
+    ) -> Binding<HotkeyChoice> {
+        Binding(
+            get: { binding.wrappedValue },
+            set: { newValue in
+                if let keyCode = newValue.keyCode {
+                    let owner = HotkeySlot.allCases.first { other in
+                        guard other != slot else { return false }
+                        let existing = other.value(in: settings)
+                        return existing.keyCode == keyCode
+                            && (existing.modifiers ?? 0) == (newValue.modifiers ?? 0)
+                    }
+                    if let owner {
+                        ToastCenter.shared.show(
+                            String(localized: "\(newValue.label) is already assigned to “\(owner.displayName)”. Free it up there first."),
+                            style: .warning
+                        )
+                        return
+                    }
+                }
+                binding.wrappedValue = newValue
+            }
+        )
+    }
+
     @ViewBuilder
     private func shortcutRow(
         title: LocalizedStringKey,
         caption: LocalizedStringKey,
-        binding: Binding<HotkeyChoice>
+        binding: Binding<HotkeyChoice>,
+        slot: HotkeySlot,
+        presets: [HotkeyChoice] = HotkeyChoice.allPresets
     ) -> some View {
         LabeledContent {
-            hotkeyEditor(binding: binding)
+            hotkeyEditor(binding: conflictGuarded(binding, slot: slot), presets: presets)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -322,11 +389,14 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func hotkeyEditor(binding: Binding<HotkeyChoice>) -> some View {
+    private func hotkeyEditor(
+        binding: Binding<HotkeyChoice>,
+        presets: [HotkeyChoice] = HotkeyChoice.allPresets
+    ) -> some View {
         HStack(spacing: 8) {
             HotkeyRecorder(value: binding)
             Menu {
-                ForEach(HotkeyChoice.allPresets) { preset in
+                ForEach(presets) { preset in
                     Button {
                         binding.wrappedValue = preset
                     } label: {
@@ -991,37 +1061,47 @@ struct SettingsView: View {
                 shortcutRow(
                     title: "Record a meeting",
                     caption: "Tap once to start, tap again to pause / resume",
-                    binding: $settings.recordHotkey
+                    binding: $settings.recordHotkey,
+                    slot: .record
                 )
                 shortcutRow(
                     title: "Voice note",
                     caption: "Tap once to start, tap again to stop",
-                    binding: $settings.voiceNoteHotkey
+                    binding: $settings.voiceNoteHotkey,
+                    slot: .voiceNote
                 )
                 shortcutRow(
                     title: "Dictation",
                     caption: "Hold to talk, release to paste",
-                    binding: $settings.dictationHotkey
+                    binding: $settings.dictationHotkey,
+                    slot: .dictation
                 )
                 shortcutRow(
                     title: "Rewrite in my voice",
                     caption: "Select text anywhere, tap to rewrite it in your tone (needs a Voice Profile)",
-                    binding: $settings.rewriteSelectionHotkey
+                    binding: $settings.rewriteSelectionHotkey,
+                    slot: .rewrite
                 )
                 shortcutRow(
                     title: "Fix the keyboard layout",
                     caption: "«ghbdtn» becomes «привет» — the selection, or the word you're typing",
-                    binding: $settings.layoutFixHotkey
+                    binding: $settings.layoutFixHotkey,
+                    slot: .layoutFix
                 )
                 shortcutRow(
                     title: "Mark this moment",
                     caption: "While recording, flag the minute you’re in — it lands in the transcript and leads the summary",
-                    binding: $settings.markMomentHotkey
+                    binding: $settings.markMomentHotkey,
+                    slot: .markMoment
                 )
                 shortcutRow(
                     title: "Paste my last dictation",
                     caption: "Re-inserts your most recent dictation at the cursor — for when it landed in the wrong window or nowhere at all",
-                    binding: $settings.repasteLastHotkey
+                    binding: $settings.repasteLastHotkey,
+                    slot: .repaste,
+                    // V-presets: paste mnemonic (⌘V muscle memory),
+                    // not the record/dictate letters the other rows use.
+                    presets: HotkeyChoice.pastePresets
                 )
             } header: {
                 VStack(alignment: .leading, spacing: 2) {
@@ -1126,29 +1206,21 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Calendar-only. Merged on/off + grace: -1 → off, 0 → stop
+                // Calendar-only. Merged on/off + grace: -1 → off, 0 → ask
                 // at the scheduled end, 300 → 5 min after (the grace also
-                // doubles as the rejoin window).
-                Picker("Stop when the meeting ends", selection: autoStopSelection) {
+                // doubles as the rejoin window). Since 2026-08-21 Daisy
+                // never stops on its own — the timing gates raise the
+                // «Stop & save?» widget bubble, so the copy says "ask",
+                // and the old "Ask before auto-stopping" toggle is gone
+                // (asking IS the only behaviour now; the persisted
+                // autoStopPromptMode flag stays, unread).
+                Picker("Ask to stop when the meeting ends", selection: autoStopSelection) {
                     Text("Off").tag(-1)
                     Text("At the scheduled end").tag(0)
                     Text("5 minutes after").tag(300)
                 }
                 .pickerStyle(.menu)
                 .disabled(!hasAnyCalendarSource)
-
-                // Rides on the auto-stop row above: when ON, the
-                // silence-gated stop asks first (macOS banner with
-                // Stop & save / 10 / 30 more minutes + an in-app
-                // toast) instead of counting down and stopping on
-                // its own. Greyed out while auto-stop itself is off.
-                Toggle(isOn: $settings.autoStopPromptMode) {
-                    Text("Ask before auto-stopping")
-                    Text("Notification with Stop & save / snooze options instead of stopping on its own.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .disabled(!hasAnyCalendarSource || !settings.autoStopFromCalendar)
             } header: {
                 Text("Meetings")
             } footer: {
@@ -1928,11 +2000,11 @@ struct SettingsView: View {
     private var notificationLevelCaption: String {
         switch notificationLevelBinding.wrappedValue {
         case .all:
-            return String(localized: "Sounds, auto-start/stop banners, and the long-silence check.")
+            return String(localized: "Sounds, the start-of-recording prompts, and the long-silence check.")
         case .important:
-            return String(localized: "Only auto-start and auto-stop banners — no sounds, no long-silence check.")
+            return String(localized: "Only the start-of-recording prompts — no sounds, no long-silence check.")
         case .off:
-            return String(localized: "No sounds or banners. Auto-stop still saves quietly.")
+            return String(localized: "No sounds or prompts. The end-of-meeting ask keeps its own setting above.")
         case .custom:
             return String(localized: "A custom per-notification mix from an earlier version. Picking a preset replaces it.")
         }
@@ -2717,7 +2789,7 @@ struct SettingsView: View {
                 .tint(Color.daisyTextPrimary)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Apps that start a recording")
+                Text("Apps that offer to record")
                 Text(meetingAppsSummary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -2753,7 +2825,10 @@ struct SettingsView: View {
         let builtIn = Set(
             MeetingDetector.builtInMeetingBundleIDs.map(MeetingDetector.displayName(for:))
         ).count
-        return String(localized: "Daisy knows \(builtIn) meeting apps. Add your own if yours isn't detected — only a NEW launch counts, so quit and reopen the app to test.")
+        // "Offer", not "start": since 2026-08-21 an app launch never
+        // records silently — it raises the widget-bubble ask, under
+        // every policy. The copy must not promise a hot mic.
+        return String(localized: "When one of \(builtIn) known call apps launches, Daisy offers to start recording. Add your own if it isn't detected — only a NEW launch counts, so quit and reopen the app to test.")
     }
 
     /// Standard open panel over /Applications. The bundle id comes from

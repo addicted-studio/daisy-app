@@ -1727,7 +1727,10 @@ private struct RecentSessionRow: View {
                         Text(formattedDuration)
                         if session.hasSummary {
                             Text("·")
-                            Image(systemName: "sparkles")
+                            // A word beats the sparkle glyph here —
+                            // testers read ✦ as decoration, not as
+                            // "this one has a summary" (Egor, 2026-08-21).
+                            Text("Summary")
                                 .foregroundStyle(Color.daisyHomeAccent)
                         }
                     }

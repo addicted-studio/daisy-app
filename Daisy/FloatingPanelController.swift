@@ -11,6 +11,7 @@
 import AppKit
 import SwiftUI
 import Observation
+import os
 
 @MainActor
 final class FloatingPanelController {
@@ -23,10 +24,9 @@ final class FloatingPanelController {
     /// frame on show. Nil when nothing is being prompted.
     private var bubblePanel: NSPanel?
     private var bubbleDismissTimer: Timer?
-    /// How long a bubble stays up on its own. Matches the screenshot-note
-    /// pending window — the prompt shouldn't outlive the chance to act on
-    /// it.
-    private static let bubbleAutoDismiss: TimeInterval = 12
+    /// Objc target for the bubble's action button — see
+    /// `BubbleActionTarget`. Lives exactly as long as the bubble.
+    private var bubbleActionTarget: AnyObject?
     /// When set, the panel stays hidden until this date — regardless of
     /// session status. Set by the right-click "Hide for…" menu. Backed by
     /// AppSettings so the suspension is persisted and survives an app
@@ -195,6 +195,21 @@ final class FloatingPanelController {
 
     // MARK: - Panel construction
 
+    /// Borderless panel that moves with an explicit drag. The widget
+    /// used to rely solely on `isMovableByWindowBackground`, but the
+    /// SwiftUI hosting view claims ever more of the mouse pipeline with
+    /// each macOS release (the daisy has tap + context-menu gestures),
+    /// and on macOS 27 beta background-drag stopped working entirely
+    /// (field report 2026-08-21). `mouseDragged` reaching the window
+    /// means no view claimed the drag — hand it to `performDrag`, which
+    /// moves the panel with correct screen clamping. Clicks still hit
+    /// SwiftUI first, so tap-to-record and right-click are unaffected.
+    private final class WidgetPanel: NSPanel {
+        override func mouseDragged(with event: NSEvent) {
+            performDrag(with: event)
+        }
+    }
+
     private func buildPanel() {
         let widget = DaisyWidget(
             session: session,
@@ -218,7 +233,7 @@ final class FloatingPanelController {
         hosting.view.wantsLayer = true
         hosting.view.layer?.backgroundColor = CGColor.clear
 
-        let panel = NSPanel(
+        let panel = WidgetPanel(
             contentRect: NSRect(x: 0, y: 0, width: 59.84, height: 59.84),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
@@ -324,30 +339,127 @@ extension FloatingPanelController: WidgetBubbleHosting {
     }
 
     func showBubble(_ content: WidgetBubbleContent) {
-        guard let widget = panel, let screen = widget.screen ?? bestScreen() else { return }
+        guard let screen = panel?.screen ?? bestScreen() else {
+            Logger(subsystem: "app.essazanov.Daisy", category: "WidgetBubble")
+                .error("showBubble: no screen to anchor to — bubble dropped")
+            return
+        }
+        // Anchor to the live widget when it's on screen; otherwise to a
+        // synthetic point in the bottom-right corner — where the widget
+        // would live. The bubble must not silently vanish just because
+        // the widget is hidden (field case 2026-08-21: auto-start ask
+        // never appeared), so the widget is an anchor preference, not a
+        // requirement.
+        let anchorFrame: NSRect
+        if let widget = panel, widget.isVisible {
+            anchorFrame = widget.frame
+        } else {
+            let visible = screen.visibleFrame
+            anchorFrame = NSRect(x: visible.maxX - 24, y: visible.minY + 24, width: 1, height: 1)
+        }
         // Fresh panel each time — the content (and its captured action)
         // changes per prompt, and a 12 s-lived panel isn't worth pooling.
         hideBubble()
 
-        let view = WidgetBubbleView(
-            content: content,
-            onAction: { [weak self] in
+        // Plain AppKit content, deliberately. This surface went through
+        // three invisible incarnations inside an NSHostingController
+        // (300×1 sliver, then a correctly-sized panel whose SwiftUI
+        // content still never painted on macOS 27 beta — field logs
+        // 2026-08-21, `visible=true` with nothing on screen). Label +
+        // button + layer card have no render pipeline to go wrong.
+        let card = BubbleCardView()
+        // The whole pill is the affordance: when the content carries an
+        // action, a click anywhere accepts it (Egor, 2026-08-21 — aiming
+        // at a 15 pt glyph to start recording is fiddly). Dismissal
+        // stays on the ✕, which swallows its own mouseDown as an
+        // NSButton subview. Action-less pills keep tap-to-dismiss.
+        card.onTap = { [weak self] in
+            if let action = content.action {
+                action()
+            }
+            self?.hideBubble()
+        }
+
+        // Single-line pill, matched to the PASSIVE (mini) daisy: same
+        // dark warm surface, same visual height (canvas 42 × 0.80 ≈ 34),
+        // full end-cap rounding, the widget's white for text.
+        // One line, never wrapped, never "…" — the pill grows to fit the
+        // text (Egor, 2026-08-21). The near-required compression
+        // resistance keeps the label whole; only the screen-width cap
+        // below outranks it, and then the text clips rather than
+        // ellipsizes.
+        let label = NSTextField(labelWithString: content.text)
+        label.font = .systemFont(ofSize: 12)
+        label.textColor = NSColor.white.withAlphaComponent(0.92)
+        label.lineBreakMode = .byClipping
+        label.isSelectable = false
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.setContentCompressionResistancePriority(.init(999), for: .horizontal)
+        card.addSubview(label)
+
+        var actionControl: NSView?
+        if content.actionSymbol != nil || content.actionTitle != nil {
+            let target = BubbleActionTarget { [weak self] in
                 content.action?()
                 self?.hideBubble()
-            },
-            onDismiss: { [weak self] in self?.hideBubble() }
-        )
-        let hosting = NSHostingController(rootView: view)
-        hosting.view.wantsLayer = true
-        hosting.view.layer?.backgroundColor = CGColor.clear
-        // Size to the SwiftUI content. Pin the width to the view's cap
-        // FIRST, then read fittingSize: an unconstrained NSHostingView
-        // reports a single-line width and would clip a message that wraps
-        // to two lines. Laying out at the real width gives the true
-        // wrapped height.
-        hosting.view.setFrameSize(NSSize(width: 300, height: 1))
-        hosting.view.layoutSubtreeIfNeeded()
-        let fitting = hosting.view.fittingSize
+            }
+            bubbleActionTarget = target
+            let button: NSButton
+            if let symbol = content.actionSymbol {
+                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: content.actionTitle)?
+                    .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold))
+                button = NSButton(image: image ?? NSImage(), target: target, action: #selector(BubbleActionTarget.fire))
+                button.toolTip = content.actionTitle
+            } else {
+                button = NSButton(title: content.actionTitle ?? "", target: target, action: #selector(BubbleActionTarget.fire))
+                button.font = .systemFont(ofSize: 12, weight: .semibold)
+            }
+            button.isBordered = false
+            button.contentTintColor = NSColor(Color.daisyAccent)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            card.addSubview(button)
+            actionControl = button
+        }
+
+        // Close affordance: an ✕ inside a countdown ring that unwinds
+        // over the bubble's lifetime — "act now or this goes away".
+        let closeButton = CountdownCloseButton(diameter: 22)
+        closeButton.onTap = { [weak self] in self?.hideBubble() }
+        card.addSubview(closeButton)
+
+        let pillHeight: CGFloat = 34
+        NSLayoutConstraint.activate([
+            card.heightAnchor.constraint(equalToConstant: pillHeight),
+            label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
+            label.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -6),
+            closeButton.centerYAnchor.constraint(equalTo: card.centerYAnchor),
+            // Only cap: the physical screen. Normal texts size the pill
+            // freely; a pathological one clips against this, no "…".
+            card.widthAnchor.constraint(
+                lessThanOrEqualToConstant: screen.visibleFrame.width - 80
+            )
+        ])
+        if let actionControl {
+            NSLayoutConstraint.activate([
+                actionControl.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 10),
+                actionControl.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8),
+                actionControl.centerYAnchor.constraint(equalTo: card.centerYAnchor)
+            ])
+        } else {
+            label.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -8).isActive = true
+        }
+
+        card.layoutSubtreeIfNeeded()
+        var fitting = card.fittingSize
+        if fitting.width < 40 || fitting.height < 20 {
+            fitting = NSSize(width: 300, height: pillHeight)
+        }
+        card.translatesAutoresizingMaskIntoConstraints = true
+        card.frame = NSRect(origin: .zero, size: fitting)
+        card.autoresizingMask = [.width, .height]
 
         let bubble = NSPanel(
             contentRect: NSRect(origin: .zero, size: fitting),
@@ -357,20 +469,27 @@ extension FloatingPanelController: WidgetBubbleHosting {
         )
         bubble.isOpaque = false
         bubble.backgroundColor = .clear
-        bubble.hasShadow = false
+        // AppKit's own shadow follows the rounded layer well enough —
+        // the SwiftUI drop shadow left with the hosting view.
+        bubble.hasShadow = true
         bubble.level = .floating
         bubble.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         bubble.isReleasedWhenClosed = false
         bubble.hidesOnDeactivate = false
         bubble.ignoresMouseEvents = false
-        bubble.contentViewController = hosting
+        bubble.contentView = card
+        bubble.setContentSize(fitting)
 
-        positionBubble(bubble, over: widget.frame, on: screen)
+        positionBubble(bubble, over: anchorFrame, on: screen)
         bubble.orderFrontRegardless()
+        closeButton.startCountdown(content.autoDismiss)
         bubblePanel = bubble
+        Logger(subsystem: "app.essazanov.Daisy", category: "WidgetBubble").info(
+            "showBubble: frame=\(String(describing: bubble.frame), privacy: .public) fitting=\(String(describing: fitting), privacy: .public) anchor=\(String(describing: anchorFrame), privacy: .public) visible=\(bubble.isVisible, privacy: .public) screen=\(String(describing: screen.visibleFrame), privacy: .public)"
+        )
 
         bubbleDismissTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.bubbleAutoDismiss, repeats: false
+            withTimeInterval: content.autoDismiss, repeats: false
         ) { [weak self] _ in
             // The inner `[weak self]` re-capture is REQUIRED under Swift 6:
             // referencing the outer closure's captured `self` from inside
@@ -384,25 +503,149 @@ extension FloatingPanelController: WidgetBubbleHosting {
         bubbleDismissTimer = nil
         bubblePanel?.orderOut(nil)
         bubblePanel = nil
+        bubbleActionTarget = nil
     }
 
-    /// Place the bubble above the widget with right edges aligned, then
-    /// clamp the whole rect into the screen's visible frame. If there's
-    /// no room above (widget near the top), flip below. No tail, no
-    /// side-awareness — the clamp is the entire positioning logic, on
-    /// purpose (see the file header of `WidgetBubble`).
+    /// The bubble's card: a full-end-cap pill in the daisy widget's own
+    /// dark warm circle color (same in both appearances — the widget's
+    /// circle doesn't theme either). Tap anywhere that isn't the button
+    /// dismisses.
+    private final class BubbleCardView: NSView {
+        var onTap: (() -> Void)?
+
+        init() {
+            super.init(frame: .zero)
+            wantsLayer = true
+            layer?.cornerCurve = .continuous
+            // The widget's circle fill — see DaisyWidget's passive body.
+            layer?.backgroundColor = NSColor(
+                red: 28.0 / 255, green: 26.0 / 255, blue: 23.0 / 255, alpha: 1
+            ).cgColor
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func layout() {
+            super.layout()
+            // Pill: end caps fully rounded whatever the height ends up.
+            layer?.cornerRadius = bounds.height / 2
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            onTap?()
+        }
+    }
+
+    /// Objc trampoline for the bubble's action button —
+    /// `FloatingPanelController` isn't an NSObject, so it can't be a
+    /// target itself. Retained in `bubbleActionTarget` for the bubble's
+    /// lifetime.
+    private final class BubbleActionTarget: NSObject {
+        private let onFire: () -> Void
+        init(onFire: @escaping () -> Void) { self.onFire = onFire }
+        @objc func fire() { onFire() }
+    }
+
+    /// ✕ inside a countdown ring. The ring starts full and unwinds
+    /// clockwise over the bubble's lifetime — a visible "answer now or
+    /// this closes itself". Tap = dismiss. Pure CALayer, no SwiftUI.
+    private final class CountdownCloseButton: NSView {
+        var onTap: (() -> Void)?
+        private let ringLayer = CAShapeLayer()
+
+        init(diameter: CGFloat) {
+            super.init(frame: NSRect(x: 0, y: 0, width: diameter, height: diameter))
+            wantsLayer = true
+            translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                widthAnchor.constraint(equalToConstant: diameter),
+                heightAnchor.constraint(equalToConstant: diameter)
+            ])
+
+            let inset: CGFloat = 1.5
+            let center = CGPoint(x: diameter / 2, y: diameter / 2)
+            let radius = diameter / 2 - inset
+
+            // Faint full track under the countdown arc.
+            let track = CAShapeLayer()
+            track.path = CGPath(
+                ellipseIn: CGRect(x: inset, y: inset, width: radius * 2, height: radius * 2),
+                transform: nil
+            )
+            track.fillColor = NSColor.clear.cgColor
+            track.strokeColor = NSColor.white.withAlphaComponent(0.16).cgColor
+            track.lineWidth = 1.5
+            layer?.addSublayer(track)
+
+            // Countdown arc — starts at 12 o'clock, unwinds visually
+            // clockwise (negative angular direction in y-up coords).
+            let path = CGMutablePath()
+            path.addArc(
+                center: center,
+                radius: radius,
+                startAngle: .pi / 2,
+                endAngle: .pi / 2 - 2 * .pi,
+                clockwise: true
+            )
+            ringLayer.path = path
+            ringLayer.fillColor = NSColor.clear.cgColor
+            ringLayer.strokeColor = NSColor.white.withAlphaComponent(0.72).cgColor
+            ringLayer.lineWidth = 1.5
+            ringLayer.lineCap = .round
+            layer?.addSublayer(ringLayer)
+
+            let xImage = NSImageView()
+            xImage.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 8, weight: .bold))
+            xImage.contentTintColor = NSColor.white.withAlphaComponent(0.72)
+            xImage.frame = bounds
+            xImage.autoresizingMask = [.width, .height]
+            addSubview(xImage)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        func startCountdown(_ seconds: TimeInterval) {
+            ringLayer.strokeEnd = 0
+            let animation = CABasicAnimation(keyPath: "strokeEnd")
+            animation.fromValue = 1
+            animation.toValue = 0
+            animation.duration = seconds
+            animation.timingFunction = CAMediaTimingFunction(name: .linear)
+            ringLayer.add(animation, forKey: "countdown")
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            onTap?()
+        }
+
+        /// The ✕ must NEVER be click-dead: the NSImageView child could
+        /// otherwise win hit-testing and swallow the mouseDown, and
+        /// with a whole-pill tap meaning ACCEPT, a dead ✕ would leave
+        /// no way to decline the ask. Claim every hit in our bounds
+        /// for the button itself.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            super.hitTest(point) != nil ? self : nil
+        }
+    }
+
+    /// Place the pill to the LEFT of the widget, vertically centered on
+    /// it — it reads as the daisy speaking. If there's no room on the
+    /// left (widget dragged to the left edge), flip to the right. Then
+    /// clamp whole into the visible frame; the clamp stays the entire
+    /// safety net, no tail, no further side-awareness.
     private func positionBubble(_ bubble: NSPanel, over widgetFrame: NSRect, on screen: NSScreen) {
         let visible = screen.visibleFrame
         let size = bubble.frame.size
-        let gap: CGFloat = 8
+        let gap: CGFloat = 7
 
-        // Right edges aligned.
-        var x = widgetFrame.maxX - size.width
-        // Prefer above; flip below only if above overflows the top.
-        var y = widgetFrame.maxY + gap
-        if y + size.height > visible.maxY {
-            y = widgetFrame.minY - gap - size.height
+        var x = widgetFrame.minX - gap - size.width
+        if x < visible.minX + 4 {
+            x = widgetFrame.maxX + gap
         }
+        var y = widgetFrame.midY - size.height / 2
 
         // Clamp into the visible frame on both axes.
         x = min(max(visible.minX + 4, x), visible.maxX - size.width - 4)

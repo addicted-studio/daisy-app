@@ -296,7 +296,7 @@ final class ScreenshotNoteCapture {
         let message: String
         if let key, key != .none {
             message = String(
-                format: String(localized: "Screenshot saved to Notes — hold %@ to add context"),
+                format: String(localized: "Hold %@ to add context"),
                 key.label
             )
         } else {
@@ -322,7 +322,7 @@ final class ScreenshotNoteCapture {
     /// prompt: a dictation that vanished from the frontmost app needs to
     /// say where it landed, and it can't say it in a hidden window.
     func announceAttached() {
-        announce(String(localized: "Added to the screenshot note"))
+        announce(String(localized: "Added to the note"))
     }
 
     /// Write dictated context into a claimed note. Returns whether it

@@ -70,9 +70,58 @@ nonisolated struct ProtectedSummaryRequest: Sendable {
     }
 }
 
+/// Generic counterpart of `ProtectedSummaryRequest` for features that
+/// don't speak `MeetingSummary` — currently the plan-analysis pipeline,
+/// whose provider returns raw JSON. Same lifetime contract: value type,
+/// never encoded, lives across exactly one provider request. The caller
+/// runs `restore(_:)` over every model-produced string before it is
+/// validated or persisted.
+nonisolated struct ProtectedPlanAnalysisRequest: Sendable {
+    let title: String
+    /// Plan-item texts in the caller's original order, ids untouched.
+    let planItemTexts: [String]
+    let transcript: String
+    let report: SensitiveDataProtectionReport
+
+    fileprivate let originalsByToken: [String: String]
+
+    func restore(_ text: String) -> String {
+        originalsByToken.reduce(text) { restored, pair in
+            restored.replacingOccurrences(of: pair.key, with: pair.value)
+        }
+    }
+}
+
 nonisolated enum SensitiveDataProtector {
     static func shouldProtect(enabled: Bool, providerIsLocal: Bool) -> Bool {
         enabled && !providerIsLocal
+    }
+
+    /// Plan-analysis boundary: pseudonymize the plan FIRST so canonical
+    /// plan wording seeds the mapping, then the title, then the
+    /// transcript — mentions of the same entity in all three share one
+    /// token, which is what lets evidence quotes survive the round-trip
+    /// (restored quote == raw-transcript text the validator checks).
+    static func protectPlanAnalysis(
+        title: String,
+        planItemTexts: [String],
+        transcript: String,
+        detectNamedEntities: Bool = true
+    ) -> ProtectedPlanAnalysisRequest {
+        var context = Context(detectNamedEntities: detectNamedEntities)
+        let protectedPlan = planItemTexts.map { context.protect($0) }
+        let protectedTitle = context.protect(title)
+        let protectedTranscript = context.protect(transcript)
+        return ProtectedPlanAnalysisRequest(
+            title: protectedTitle,
+            planItemTexts: protectedPlan,
+            transcript: protectedTranscript,
+            report: SensitiveDataProtectionReport(
+                distinctReplacements: context.originalsByToken.count,
+                redactedOccurrences: context.redactedOccurrences
+            ),
+            originalsByToken: context.originalsByToken
+        )
     }
 
     static func protect(

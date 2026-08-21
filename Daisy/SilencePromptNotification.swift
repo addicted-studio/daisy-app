@@ -98,11 +98,37 @@ enum SilencePromptNotification {
 
     // MARK: - Post
 
-    /// Surface a silence-prompt banner. If notification permission
+    /// Bubble tag for the silence ask — lets `cancel()` withdraw only
+    /// its own pill when speech resumes.
+    static let bubbleTag = "silence-ask"
+
+    /// Surface the silence ask. Widget bubble first (2026-08-21 —
+    /// system banners are being retired): «Stop & save?», tap the pill
+    /// to stop, ✕/countdown to keep going (the "Not yet" snooze is the
+    /// monitor's own re-prompt cadence either way). Falls back to the
+    /// actionable banner only when no bubble host exists.
+    static func post() {
+        Task { @MainActor in
+            let shown = WidgetBubbleCenter.shared.show(WidgetBubbleContent(
+                text: String(localized: "Stop & save?"),
+                actionTitle: String(localized: "Stop & save"),
+                actionSymbol: "stop.circle",
+                tag: bubbleTag,
+                action: {
+                    // Same bus the banner action rides — SilenceMonitor
+                    // listens and runs the stop on the live session.
+                    NotificationCenter.default.post(name: stopRequested, object: nil)
+                }
+            ))
+            if !shown { postBanner() }
+        }
+    }
+
+    /// The pre-bubble banner path. If notification permission
     /// hasn't been requested yet, ask first; if the user declines,
     /// fall through silently (the recording itself isn't affected,
     /// the user just doesn't get the nudge).
-    static func post() {
+    private static func postBanner() {
         // Fetch a fresh center reference inside each closure rather
         // than capturing one — `UNUserNotificationCenter` is not
         // Sendable, and Swift 6 strict concurrency rejects the
@@ -134,6 +160,9 @@ enum SilencePromptNotification {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [requestID])
         center.removeDeliveredNotifications(withIdentifiers: [requestID])
+        Task { @MainActor in
+            WidgetBubbleCenter.shared.dismiss(tag: bubbleTag)
+        }
     }
 
     // MARK: - Internals

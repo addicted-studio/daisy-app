@@ -157,6 +157,16 @@ struct DaisyWidget: View {
         }
         .onAppear {
             passiveScale = Self.targetPassiveScale(session.status)
+            // Lend the SwiftUI-only openWindow action to AppKit-side
+            // bubble actions (morning brief's "Open") — it's the only
+            // way to RECREATE the main window scene once closed. The
+            // widget view lives as long as the floating panel, so the
+            // captured action stays valid.
+            // Same sequence the widget's own context-menu items use.
+            WidgetBubbleCenter.shared.openMainWindow = {
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
@@ -212,6 +222,25 @@ struct DaisyWidget: View {
         }
     }
 
+    /// Confirmation for the destructive discard. A plain NSAlert on
+    /// purpose: SwiftUI presentation (sheet / confirmationDialog) from a
+    /// 60 pt borderless non-activating panel is exactly the surface that
+    /// produced three invisible bubbles in a row (2026-08-21) — the
+    /// alert runs as its own app-modal window and cannot fail to appear.
+    private func confirmAndDiscard() {
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Discard this recording?")
+        alert.informativeText = String(localized: "Audio, transcript and screenshots from this session will not be saved.")
+        alert.alertStyle = .warning
+        let discard = alert.addButton(withTitle: String(localized: "Discard recording"))
+        discard.hasDestructiveAction = true
+        alert.addButton(withTitle: String(localized: "Keep recording"))
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            Task { await session.discard() }
+        }
+    }
+
     // MARK: - Right-click context menu
 
     @ViewBuilder
@@ -232,6 +261,11 @@ struct DaisyWidget: View {
             } label: {
                 Label("Stop & save", systemImage: "stop.fill")
             }
+            Button(role: .destructive) {
+                confirmAndDiscard()
+            } label: {
+                Label("Discard recording", systemImage: "trash")
+            }
         case .paused:
             Button {
                 Task { await session.resume() }
@@ -242,6 +276,11 @@ struct DaisyWidget: View {
                 Task { await session.stop() }
             } label: {
                 Label("Stop & save", systemImage: "stop.fill")
+            }
+            Button(role: .destructive) {
+                confirmAndDiscard()
+            } label: {
+                Label("Discard recording", systemImage: "trash")
             }
         case .idle, .finished, .failed:
             Button {

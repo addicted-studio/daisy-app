@@ -980,12 +980,22 @@ final class RecordingSession {
 
         await start()
 
-        // macOS banner so the user notices Daisy just auto-started
-        // their meeting (and can bail via "Stop & save" if they
-        // didn't want this one tracked). Gated on the per-class
+        // Surface the fact that Daisy just auto-started — the user may
+        // be anywhere on screen. Widget bubble first (2026-08-21:
+        // system banners are being retired); info-only, no action — the
+        // stop/discard affordances live in the widget the pill is
+        // anchored to, and a whole-pill tap is an ACCEPT gesture we
+        // don't want to mean "stop". Falls back to the actionable
+        // banner when no panel host exists. Gated on the per-class
         // toggle in Settings → General → Notifications.
         if settings.notifyOnAutoStart {
-            AutoStartNotification.post(meetingTitle: meeting.title)
+            let shown = WidgetBubbleCenter.shared.show(WidgetBubbleContent(
+                text: String(localized: "Recording started"),
+                tag: "recording-started"
+            ))
+            if !shown {
+                AutoStartNotification.post(meetingTitle: meeting.title)
+            }
         }
     }
 
@@ -1016,15 +1026,22 @@ final class RecordingSession {
     private func promptToStartFromMeeting(_ meeting: DaisyMeeting) {
         pendingAutoStartTrigger = .calendar(meeting)
         log.info("Auto-start prompt: asking to record calendar meeting '\(meeting.title, privacy: .private)'")
-        AutoStartPromptNotification.post(subject: meeting.title)
+        presentAutoStartAsk(fallbackSubject: meeting.title)
     }
 
-    /// Entry point for the NSWorkspace app-launch detector when policy
-    /// is `.prompt`. Stash the app name as the pending trigger and ask.
-    /// A generic (non-calendar) start runs on Record.
+    /// Entry point for the NSWorkspace app-launch detector — for EVERY
+    /// policy, not just `.prompt` (2026-08-21). An app launch is a much
+    /// weaker "meeting is happening" signal than a calendar event:
+    /// opening Discord to type a message used to silently start a
+    /// recording in Always mode (field log: 132 s of dead air the user
+    /// only found by noticing the session). So app launches always ASK —
+    /// via the widget bubble when the widget is on screen (immediate,
+    /// over whatever app just launched), else the actionable
+    /// notification. Calendar auto-start keeps its policy-driven
+    /// behaviour untouched.
     func promptToStartFromAppLaunch(appName: String) {
         // If we're already recording, an app launch shouldn't prompt —
-        // mirrors the non-prompt app-launch path which just toasts.
+        // mirrors the old non-prompt app-launch path which just toasted.
         guard status == .idle || status == .finished || isFailed else {
             ToastCenter.shared.show(
                 String(localized: "\(appName) launched while Daisy is already recording — stop the current session first if you want a fresh one."),
@@ -1034,7 +1051,40 @@ final class RecordingSession {
         }
         pendingAutoStartTrigger = .appLaunch(appName)
         log.info("Auto-start prompt: asking to record after \(appName, privacy: .public) launch")
-        AutoStartPromptNotification.post(subject: appName)
+        presentAutoStartAsk(fallbackSubject: appName)
+    }
+
+    /// Stable bubble tag for the "Start recording?" ask, so cancel
+    /// paths can withdraw it without touching unrelated bubbles.
+    static let autoStartAskBubbleTag = "autostart-ask"
+
+    /// The one "Start recording?" surface, shared by the calendar
+    /// prompt (policy = Ask me first) and the app-launch ask: widget
+    /// bubble when the panel exists (anchored to the widget, or the
+    /// bottom-right corner when it's hidden), else the actionable
+    /// Record/Ignore banner. Deliberately word-light (Egor,
+    /// 2026-08-21): no app/meeting name, just the question + record
+    /// icon; the ✕'s countdown ring makes the window visible. A tap
+    /// anywhere on the pill records.
+    private func presentAutoStartAsk(fallbackSubject: String) {
+        let shown = WidgetBubbleCenter.shared.show(WidgetBubbleContent(
+            text: String(localized: "Start recording?"),
+            actionTitle: String(localized: "Record"),
+            actionSymbol: "record.circle",
+            autoDismiss: 7,
+            tag: Self.autoStartAskBubbleTag,
+            action: { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.consumePendingAutoStartTrigger()
+                }
+            }
+        ))
+        if shown {
+            log.info("Auto-start prompt surface: bubble")
+        } else {
+            log.info("Auto-start prompt surface: notification (no bubble host)")
+            AutoStartPromptNotification.post(subject: fallbackSubject)
+        }
     }
 
     /// User tapped "Record" on the prompt — start whatever was pending.
@@ -1043,6 +1093,7 @@ final class RecordingSession {
     /// start or rotate unexpectedly.
     private func consumePendingAutoStartTrigger() async {
         AutoStartPromptNotification.cancel()
+        WidgetBubbleCenter.shared.dismiss(tag: Self.autoStartAskBubbleTag)
         guard let trigger = pendingAutoStartTrigger else { return }
         pendingAutoStartTrigger = nil
         switch trigger {
@@ -1671,6 +1722,52 @@ final class RecordingSession {
         // Resume cue removed — same reasoning as pause (mid-capture leak
         // window + redundant with the widget colour). See SoundEffects.
         log.info("Session resumed")
+    }
+
+    /// Stop capture and throw the whole session away — audio, live
+    /// transcript, screenshots, the directory itself (Trash when
+    /// possible, hard delete as fallback). Explicit user action from
+    /// the widget's context menu, guarded there by a confirmation
+    /// dialog — this is the ONE path allowed to delete a live
+    /// recording deliberately, as opposed to husk-cleanup and
+    /// crash-recovery which must never delete on their own
+    /// (see the husk-deletes-live-recording incident).
+    func discard() async {
+        guard status == .recording || status == .paused else { return }
+        skipFinalPassOnNextStop = false
+        status = .stopping
+        recorder.stop()
+        await systemAudio.stop()
+        screenshots.stop()
+        silenceMonitor.stop()
+        cancelAutoStop()
+        removeThermalDowngrade()
+
+        let dir = sessionDirectory
+        // Clear the live-directory marker BEFORE deleting, so no scan
+        // or recovery path sees a "live" folder vanish mid-flight.
+        SessionStore.shared.activeRecordingDirName = nil
+        // reset() BEFORE the delete, not after: it tears down the
+        // transcribers, and a final ASR segment landing in the window
+        // between trash and reset could write into (or recreate paths
+        // under) the just-deleted directory — the husk-resurrection
+        // class of bug (review find, 2026-08-21).
+        let captured = elapsed
+        reset()
+        if let dir {
+            do {
+                try FileManager.default.trashItem(at: dir, resultingItemURL: nil)
+            } catch {
+                try? FileManager.default.removeItem(at: dir)
+            }
+            log.info("Session discarded by user — directory removed (\(captured, privacy: .public)s captured)")
+        }
+        ToastCenter.shared.show(
+            String(localized: "Recording discarded — nothing was saved."),
+            style: .info,
+            duration: .seconds(4)
+        )
+        await SessionStore.shared.refresh()
     }
 
     func stop() async {
@@ -2386,6 +2483,7 @@ final class RecordingSession {
         // starting/resetting supersedes a pending ask.
         pendingAutoStartTrigger = nil
         AutoStartPromptNotification.cancel()
+        WidgetBubbleCenter.shared.dismiss(tag: Self.autoStartAskBubbleTag)
         status = .idle
     }
 

@@ -65,6 +65,21 @@ struct HotkeyChoice: Hashable, Codable, Sendable, Identifiable {
         modifiers: UInt32(shiftKey | cmdKey),
         label: "⇧⌘R"
     )
+    // V-presets for the paste-flavoured action (re-paste last
+    // dictation). V is the paste mnemonic users already know from
+    // ⌘V / Wispr Flow; R and D read as "record"/"dictate" and are
+    // wrong hints for this row. ⇧⌘V is deliberately absent — many
+    // apps bind it to "Paste and Match Style".
+    static let ctrlOptCmdV = HotkeyChoice(
+        keyCode: UInt32(kVK_ANSI_V),
+        modifiers: UInt32(controlKey | optionKey | cmdKey),
+        label: "⌃⌥⌘V"
+    )
+    static let ctrlOptV = HotkeyChoice(
+        keyCode: UInt32(kVK_ANSI_V),
+        modifiers: UInt32(controlKey | optionKey),
+        label: "⌃⌥V"
+    )
     static let f5 = HotkeyChoice(
         keyCode: UInt32(kVK_F5),
         modifiers: 0,
@@ -90,6 +105,10 @@ struct HotkeyChoice: Hashable, Codable, Sendable, Identifiable {
     /// alongside — see `HotkeyRecorder` view.
     static let allPresets: [HotkeyChoice] = [.none, .ctrlOptCmdR, .ctrlOptCmdD, .ctrlOptSpace, .shiftCmdR, .f5, .fn]
 
+    /// Paste-flavoured preset list — used by the "Paste my last
+    /// dictation" row instead of `allPresets`.
+    static let pastePresets: [HotkeyChoice] = [.none, .ctrlOptCmdV, .ctrlOptV, .fn]
+
     /// True when this choice is the bare Fn / globe key — handled
     /// by the NSEvent global-monitor path, not Carbon. Read by
     /// `HotkeyManager.register` to pick the right registration
@@ -101,7 +120,7 @@ struct HotkeyChoice: Hashable, Codable, Sendable, Identifiable {
     /// Whether this choice is one of the canonical presets above.
     /// UI uses this to mark presets in the menu (vs custom recordings).
     var isPreset: Bool {
-        Self.allPresets.contains(self)
+        Self.allPresets.contains(self) || Self.pastePresets.contains(self)
     }
 
     // MARK: Custom recording
