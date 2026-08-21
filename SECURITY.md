@@ -4,7 +4,7 @@ Thank you for taking the time to look at Daisy's attack surface.
 
 ## Reporting a vulnerability
 
-Email **essazanov@pm.me** with the subject prefixed `[SECURITY]`. Please do not file a public GitHub issue for vulnerabilities — disclose privately first, give time for a fix, then we can coordinate public disclosure together.
+Email **support@mydaisy.io** with the subject prefixed `[SECURITY]`. Please do not file a public GitHub issue for vulnerabilities — disclose privately first, give time for a fix, then we can coordinate public disclosure together.
 
 Helpful things to include:
 

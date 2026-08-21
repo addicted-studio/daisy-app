@@ -142,8 +142,14 @@ struct AboutView: View {
                 aboutLinkRow(
                     icon: "envelope",
                     title: "Contact",
-                    detail: "essazanov@pm.me",
-                    url: URL(string: "mailto:essazanov@pm.me")
+                    detail: "hello@mydaisy.io",
+                    url: URL(string: "mailto:hello@mydaisy.io")
+                )
+                aboutLinkRow(
+                    icon: "lifepreserver",
+                    title: "Support",
+                    detail: "support@mydaisy.io",
+                    url: URL(string: "mailto:support@mydaisy.io")
                 )
             } header: {
                 Text("Links")

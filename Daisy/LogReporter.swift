@@ -37,7 +37,7 @@ enum LogReporter {
     /// Where tester reports go. Single hard-coded recipient on
     /// purpose — this is a built-in feedback channel, not a generic
     /// share sheet.
-    private static let recipient = "essazanov@pm.me"
+    private static let recipient = "support@mydaisy.io"
     /// Cap the attachment at ~5 MB — `log show --info --debug` over a
     /// chatty day can balloon, and mail providers bounce huge mails.
     /// We keep the TAIL (most recent lines) when trimming.

@@ -78,8 +78,8 @@ enum AboutPanel {
         result.append(link("mydaisy.io", url: "https://mydaisy.io", base: base))
         result.append(.init(string: "\n", attributes: base))
         result.append(link(
-            "essazanov@pm.me",
-            url: "mailto:essazanov@pm.me",
+            "hello@mydaisy.io",
+            url: "mailto:hello@mydaisy.io",
             base: base
         ))
         return result

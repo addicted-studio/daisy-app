@@ -4598,6 +4598,16 @@
         }
       }
     },
+    "Contact" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Контакты"
+          }
+        }
+      }
+    },
     "Copy Transcript" : {
       "localizations" : {
         "ru" : {
@@ -14152,6 +14162,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Хранилище"
+          }
+        }
+      }
+    },
+    "Support" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поддержка"
           }
         }
       }
